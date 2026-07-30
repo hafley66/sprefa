@@ -26,7 +26,10 @@ use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use super::{derive_family, derive_family_timed_cached, reconcile, DepKey, Family, OutRow, RowDelta, ScanCache};
+use super::{
+    derive_family, derive_family_timed_cached, reconcile, DepKey, Family, OutRow, RowDelta,
+    ScanCache,
+};
 use crate::db::Db;
 
 /// Memoized state for one family: the rows it last emitted and the set of input
@@ -65,7 +68,11 @@ pub(crate) struct FamilyRouter<'f> {
 
 impl<'f> FamilyRouter<'f> {
     pub(crate) fn new(families: Vec<&'f dyn Family>) -> Self {
-        Self { families, memo: HashMap::new(), last_timings: Vec::new() }
+        Self {
+            families,
+            memo: HashMap::new(),
+            last_timings: Vec::new(),
+        }
     }
 
     /// Cold load: derive every family and populate the memo. Returns the names
@@ -76,7 +83,10 @@ impl<'f> FamilyRouter<'f> {
             let (rows, deps) = derive_family(db, *family)?;
             self.memo.insert(
                 family.name(),
-                FamilyMemo { rows, rels: rel_footprint(*family, &deps) },
+                FamilyMemo {
+                    rows,
+                    rels: rel_footprint(*family, &deps),
+                },
             );
             derived.push(family.name());
         }
@@ -105,7 +115,13 @@ impl<'f> FamilyRouter<'f> {
                 continue;
             }
             let (rows, deps) = derive_family(db, *family)?;
-            self.memo.insert(name, FamilyMemo { rows, rels: rel_footprint(*family, &deps) });
+            self.memo.insert(
+                name,
+                FamilyMemo {
+                    rows,
+                    rels: rel_footprint(*family, &deps),
+                },
+            );
             rerun.push(name);
         }
         Ok(rerun)
@@ -156,7 +172,11 @@ impl<'f> FamilyRouter<'f> {
             if !affected {
                 continue;
             }
-            let prev = self.memo.get(name).map(|memo| memo.rows.clone()).unwrap_or_default();
+            let prev = self
+                .memo
+                .get(name)
+                .map(|memo| memo.rows.clone())
+                .unwrap_or_default();
             let (rows, deps, timing) = derive_family_timed_cached(db, *family, &mut cache)?;
             let rows_out = rows.len();
             let reconcile_started = Instant::now();
@@ -170,7 +190,13 @@ impl<'f> FamilyRouter<'f> {
                 rows_out,
                 cache_hits: timing.cache_hits,
             });
-            staged.push((name, FamilyMemo { rows, rels: rel_footprint(*family, &deps) }));
+            staged.push((
+                name,
+                FamilyMemo {
+                    rows,
+                    rels: rel_footprint(*family, &deps),
+                },
+            ));
             deltas.push((name, delta));
         }
         for (name, memo) in staged {
@@ -199,7 +225,10 @@ impl<'f> FamilyRouter<'f> {
     /// The registered family with this name, so the render can read its
     /// `out_cols` and write the public rel generically (no per-family arm).
     pub(crate) fn family(&self, name: &str) -> Option<&'f dyn Family> {
-        self.families.iter().copied().find(|family| family.name() == name)
+        self.families
+            .iter()
+            .copied()
+            .find(|family| family.name() == name)
     }
 }
 

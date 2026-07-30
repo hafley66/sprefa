@@ -64,18 +64,34 @@ fn sections(out: &str) -> Vec<String> {
 fn rows(sec: &str) -> Vec<Vec<String>> {
     sec.lines()
         .filter(|l| !l.starts_with("? ") && l.contains('\t') && !l.contains("(0 rows)"))
-        .map(|l| l.trim_start().split('\t').map(|s| s.trim_end().to_string()).collect())
+        .map(|l| {
+            l.trim_start()
+                .split('\t')
+                .map(|s| s.trim_end().to_string())
+                .collect()
+        })
         .collect()
 }
 
 /// The single df_node id matching (kind, var). Asserts uniqueness so the proof
 /// pins one node, not a set.
-fn node_id(nodes: &[Vec<String>], kind: &str, var: &str, out: &str, lang: &str) -> (String, String) {
+fn node_id(
+    nodes: &[Vec<String>],
+    kind: &str,
+    var: &str,
+    out: &str,
+    lang: &str,
+) -> (String, String) {
     let hits: Vec<&Vec<String>> = nodes
         .iter()
         .filter(|r| r.len() >= 4 && r[1] == kind && r[2] == var)
         .collect();
-    assert_eq!(hits.len(), 1, "[{lang}] expected one {kind}/{var} node, got {}:\n{out}", hits.len());
+    assert_eq!(
+        hits.len(),
+        1,
+        "[{lang}] expected one {kind}/{var} node, got {}:\n{out}",
+        hits.len()
+    );
     (hits[0][0].clone(), hits[0][3].clone()) // (id, fn)
 }
 
@@ -89,7 +105,11 @@ fn value_flows_across_the_call_boundary_per_language() {
     let kotlin = "fun callee(p: Int): Int { val z = p; return z }\n\
                   fun caller(tainted: Int) {\n    val r = callee(tainted)\n    val u = r\n}\n";
 
-    for (lang, ext, srcfile) in [("rust", "rs", rust), ("ts", "ts", ts), ("kotlin", "kt", kotlin)] {
+    for (lang, ext, srcfile) in [
+        ("rust", "rs", rust),
+        ("ts", "ts", ts),
+        ("kotlin", "kt", kotlin),
+    ] {
         let d = sandbox(lang);
         fs::write(d.join(format!("src/lib.{ext}")), srcfile).unwrap();
         let (code, out, err) = run(&d);
@@ -97,7 +117,10 @@ fn value_flows_across_the_call_boundary_per_language() {
 
         let secs = sections(&out);
         // order: flow_edge, flow_reach, flow_param_type, flow_node_type, df_node
-        assert!(secs.len() >= 5, "[{lang}] expected 5 query sections:\n{out}");
+        assert!(
+            secs.len() >= 5,
+            "[{lang}] expected 5 query sections:\n{out}"
+        );
         let mut edges: HashSet<(String, String)> = HashSet::new();
         for r in rows(&secs[0]) {
             edges.insert((r[0].clone(), r[1].clone()));
@@ -112,7 +135,10 @@ fn value_flows_across_the_call_boundary_per_language() {
         let (p, callee_fn) = node_id(&nodes, "param", "p", &out, lang);
 
         // The two params live in different functions: this is a cross-fn claim.
-        assert_ne!(caller_fn, callee_fn, "[{lang}] params must be in different fns:\n{out}");
+        assert_ne!(
+            caller_fn, callee_fn,
+            "[{lang}] params must be in different fns:\n{out}"
+        );
 
         // DECISIVE 1: not a direct edge (it spans the call boundary) ...
         assert!(
@@ -127,10 +153,7 @@ fn value_flows_across_the_call_boundary_per_language() {
 
         // The interprocedural edge itself exists: some node in the caller fn
         // flows directly into the callee's param p.
-        let inter: Vec<&(String, String)> = edges
-            .iter()
-            .filter(|(_, to)| to == &p)
-            .collect();
+        let inter: Vec<&(String, String)> = edges.iter().filter(|(_, to)| to == &p).collect();
         assert!(
             !inter.is_empty(),
             "[{lang}] expected an interprocedural edge into p:\n{out}"
@@ -152,7 +175,11 @@ fn args_flow_to_matching_param_positions_only() {
     let kotlin = "fun callee(x: Int, y: Int) { val u = x; val w = y }\n\
                   fun caller(a: Int, b: Int) {\n    val r = callee(a, b)\n    val q = r\n}\n";
 
-    for (lang, ext, srcfile) in [("rust", "rs", rust), ("ts", "ts", ts), ("kotlin", "kt", kotlin)] {
+    for (lang, ext, srcfile) in [
+        ("rust", "rs", rust),
+        ("ts", "ts", ts),
+        ("kotlin", "kt", kotlin),
+    ] {
         let d = sandbox(&format!("pos_{lang}"));
         fs::write(d.join(format!("src/lib.{ext}")), srcfile).unwrap();
         let (code, out, err) = run(&d);
@@ -170,11 +197,23 @@ fn args_flow_to_matching_param_positions_only() {
         let (y, _) = node_id(&nodes, "param", "y", &out, lang);
 
         // Positive halves: each arg crosses into its own slot.
-        assert!(reach.contains(&(a.clone(), x.clone())), "[{lang}] a must reach x (slot 0):\n{out}");
-        assert!(reach.contains(&(b.clone(), y.clone())), "[{lang}] b must reach y (slot 1):\n{out}");
+        assert!(
+            reach.contains(&(a.clone(), x.clone())),
+            "[{lang}] a must reach x (slot 0):\n{out}"
+        );
+        assert!(
+            reach.contains(&(b.clone(), y.clone())),
+            "[{lang}] b must reach y (slot 1):\n{out}"
+        );
         // DECISIVE negative halves: no cross-slot leakage.
-        assert!(!reach.contains(&(a.clone(), y.clone())), "[{lang}] a must NOT reach y (blind hop leak):\n{out}");
-        assert!(!reach.contains(&(b.clone(), x.clone())), "[{lang}] b must NOT reach x (blind hop leak):\n{out}");
+        assert!(
+            !reach.contains(&(a.clone(), y.clone())),
+            "[{lang}] a must NOT reach y (blind hop leak):\n{out}"
+        );
+        assert!(
+            !reach.contains(&(b.clone(), x.clone())),
+            "[{lang}] b must NOT reach x (blind hop leak):\n{out}"
+        );
     }
 }
 
@@ -197,7 +236,11 @@ fn value_flows_back_out_of_a_callee_per_language() {
                   fun sink(v: Int) { val _u = v }\n\
                   fun driver(secret: Int) {\n    val r = ident(secret)\n    sink(r)\n}\n";
 
-    for (lang, ext, srcfile) in [("rust", "rs", rust), ("ts", "ts", ts), ("kotlin", "kt", kotlin)] {
+    for (lang, ext, srcfile) in [
+        ("rust", "rs", rust),
+        ("ts", "ts", ts),
+        ("kotlin", "kt", kotlin),
+    ] {
         let d = sandbox(&format!("ret_{lang}"));
         fs::write(d.join(format!("src/lib.{ext}")), srcfile).unwrap();
         let (code, out, err) = run(&d);
@@ -248,7 +291,9 @@ fn ts_arrow_const_is_lifted_as_a_function() {
     let nodes = rows(&secs[4]);
     // The arrow was lifted: it has a param `p` under the `ident` fn sym.
     assert!(
-        nodes.iter().any(|r| r.len() >= 4 && r[1] == "param" && r[2] == "p" && r[3].contains("::ident")),
+        nodes
+            .iter()
+            .any(|r| r.len() >= 4 && r[1] == "param" && r[2] == "p" && r[3].contains("::ident")),
         "arrow param p not lifted under ident:\n{out}"
     );
     let mut reach: HashSet<(String, String)> = HashSet::new();
@@ -287,9 +332,9 @@ fn typed_view_carries_resolved_param_types() {
         .map(|r| ((r[0].clone(), r[1].clone()), r[2].clone()))
         .collect();
 
-    let hit = typed
-        .iter()
-        .find(|((sym, pos), ty)| sym.contains("::sink") && pos == "0" && ty.contains("::struct::Secret"));
+    let hit = typed.iter().find(|((sym, pos), ty)| {
+        sym.contains("::sink") && pos == "0" && ty.contains("::struct::Secret")
+    });
     assert!(
         hit.is_some(),
         "expected sink param 0 typed as Secret:\n{out}\ntyped={typed:?}"

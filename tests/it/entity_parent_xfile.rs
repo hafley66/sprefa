@@ -17,7 +17,13 @@ use std::process::Command;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let ok = Command::new("git").current_dir(dir).args(args).output().expect("git").status.success();
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("git")
+        .status
+        .success();
     assert!(ok, "git {args:?} in {}", dir.display());
 }
 
@@ -45,7 +51,11 @@ fn dump_entities(dir: &std::path::Path, root: &std::path::Path) -> String {
         .output()
         .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     stdout
 }
 
@@ -68,8 +78,16 @@ fn cross_file_impl_parent_resolves_to_declaring_file_sym() {
     let root = d.join("solo");
     fs::create_dir_all(root.join("src")).unwrap();
     // struct Engine and `impl Engine { fn tick }` live in DIFFERENT files.
-    fs::write(root.join("src/engine.rs"), "pub struct Engine { pub n: i64 }\n").unwrap();
-    fs::write(root.join("src/tick.rs"), "impl Engine { pub fn tick(&self) {} }\n").unwrap();
+    fs::write(
+        root.join("src/engine.rs"),
+        "pub struct Engine { pub n: i64 }\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("src/tick.rs"),
+        "impl Engine { pub fn tick(&self) {} }\n",
+    )
+    .unwrap();
     init_repo(&root);
 
     let stdout = dump_entities(&d, &root);
@@ -84,7 +102,9 @@ fn cross_file_impl_parent_resolves_to_declaring_file_sym() {
     );
     // And that sym must actually exist as a type_entity row (a real join).
     assert!(
-        stdout.lines().any(|l| l.split('\t').nth(1) == Some(engine_sym)),
+        stdout
+            .lines()
+            .any(|l| l.split('\t').nth(1) == Some(engine_sym)),
         "owner entity row present:\n{stdout}"
     );
 }
@@ -99,7 +119,11 @@ fn ambiguous_cross_file_owner_stays_file_scoped() {
     // ambiguous in-repo, so the impl's parent must NOT pick one arbitrarily.
     fs::write(root.join("src/a.rs"), "pub struct Engine { pub a: i64 }\n").unwrap();
     fs::write(root.join("src/b.rs"), "pub struct Engine { pub b: i64 }\n").unwrap();
-    fs::write(root.join("src/c.rs"), "impl Engine { pub fn tick(&self) {} }\n").unwrap();
+    fs::write(
+        root.join("src/c.rs"),
+        "impl Engine { pub fn tick(&self) {} }\n",
+    )
+    .unwrap();
     init_repo(&root);
 
     let stdout = dump_entities(&d, &root);
@@ -111,6 +135,12 @@ fn ambiguous_cross_file_owner_stays_file_scoped() {
         tick_parent, "dup::src/c.rs::struct::Engine",
         "ambiguous owner keeps the file-scoped parent:\n{stdout}"
     );
-    assert_ne!(tick_parent, "dup::src/a.rs::struct::Engine", "did not pick a.rs:\n{stdout}");
-    assert_ne!(tick_parent, "dup::src/b.rs::struct::Engine", "did not pick b.rs:\n{stdout}");
+    assert_ne!(
+        tick_parent, "dup::src/a.rs::struct::Engine",
+        "did not pick a.rs:\n{stdout}"
+    );
+    assert_ne!(
+        tick_parent, "dup::src/b.rs::struct::Engine",
+        "did not pick b.rs:\n{stdout}"
+    );
 }

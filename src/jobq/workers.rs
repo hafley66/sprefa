@@ -59,7 +59,10 @@ pub(crate) async fn open_pool(db_path: &std::path::Path) -> Result<SqlitePool> {
         .filename(db_path)
         .create_if_missing(true)
         .busy_timeout(Duration::from_secs(5));
-    let pool = PoolOptions::new().max_connections(2).connect_with(opts).await?;
+    let pool = PoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts)
+        .await?;
     SqliteStorage::setup(&pool).await?;
     Ok(pool)
 }
@@ -89,9 +92,16 @@ pub(crate) fn spawn_workers(
     n_engine_workers: usize,
 ) {
     let pid = std::process::id();
-    let handler_ctx = HandlerCtx { jobq: jobq.clone(), runner };
+    let handler_ctx = HandlerCtx {
+        jobq: jobq.clone(),
+        runner,
+    };
     for (queue, name, concurrency) in [
-        (ENGINE_QUEUE, format!("dl-engine-{pid}"), n_engine_workers.max(1)),
+        (
+            ENGINE_QUEUE,
+            format!("dl-engine-{pid}"),
+            n_engine_workers.max(1),
+        ),
         (COLD_QUEUE, format!("dl-cold-{pid}"), 1usize),
     ] {
         let config = Config::new(queue)

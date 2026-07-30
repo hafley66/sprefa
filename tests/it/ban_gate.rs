@@ -48,7 +48,11 @@ fn run(root: &Path, extra: &[&str]) -> (i32, String, String) {
 #[test]
 fn clean_code_passes() {
     let d = sandbox("clean");
-    write(&d, "src/clean.rs", "fn ok() { let x = 1; println!(\"{}\", x); }\n");
+    write(
+        &d,
+        "src/clean.rs",
+        "fn ok() { let x = 1; println!(\"{}\", x); }\n",
+    );
     let (code, _, _) = run(&d, &["--check"]);
     assert_eq!(code, 0, "clean tree must exit 0");
 }
@@ -57,30 +61,53 @@ fn clean_code_passes() {
 fn structural_not_textual() {
     // `dbg!` appears in a comment AND a string literal but in no real call.
     let d = sandbox("structural");
-    write(&d, "src/decoy.rs",
+    write(
+        &d,
+        "src/decoy.rs",
         "// TODO: never use dbg!(x) in committed code\n\
-         fn note() { let s = \"dbg!(y)\"; println!(\"{}\", s); }\n");
+         fn note() { let s = \"dbg!(y)\"; println!(\"{}\", s); }\n",
+    );
     let (code, _, err) = run(&d, &["--check"]);
-    assert_eq!(code, 0, "dbg! in comment/string must NOT trip the gate (structural, not grep)");
+    assert_eq!(
+        code, 0,
+        "dbg! in comment/string must NOT trip the gate (structural, not grep)"
+    );
     assert!(!err.contains("decoy.rs"), "no finding expected, got: {err}");
 }
 
 #[test]
 fn real_call_fails_with_exact_location() {
     let d = sandbox("realcall");
-    write(&d, "src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
+    write(
+        &d,
+        "src/bad.rs",
+        "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n",
+    );
     // decoy in the same tree must stay silent
     write(&d, "src/decoy.rs", "// dbg!(z) in a comment\n");
     let (code, _, err) = run(&d, &["--check"]);
-    assert_eq!(code, 2, "a real dbg!() call must fail the gate with the blocking-hook code");
-    assert!(err.contains("src/bad.rs:3"), "must point at bad.rs:3, got: {err}");
-    assert!(!err.contains("decoy.rs"), "decoy must not be reported, got: {err}");
+    assert_eq!(
+        code, 2,
+        "a real dbg!() call must fail the gate with the blocking-hook code"
+    );
+    assert!(
+        err.contains("src/bad.rs:3"),
+        "must point at bad.rs:3, got: {err}"
+    );
+    assert!(
+        !err.contains("decoy.rs"),
+        "decoy must not be reported, got: {err}"
+    );
 }
 
 #[test]
 fn diag_json_is_machine_checkable() {
     let d = sandbox("json");
-    write(&d, "src/bad.rs", "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n");
+    write(
+        &d,
+        "src/bad.rs",
+        "fn risky() {\n    let x = 7;\n    dbg!(x);\n}\n",
+    );
     let (_, out, _) = run(&d, &["--diag-json"]);
     // exactly one finding, at line 3, in bad.rs, severity error, code no-dbg
     let v: serde_json::Value = serde_json::from_str(&out).expect("valid JSON");

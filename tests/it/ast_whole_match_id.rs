@@ -26,8 +26,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -100,13 +105,23 @@ match_text(t) <- match_hit(mid), ref(mid, msid, _mf, _mlo, _mhi), string(msid, t
     let recs = run_json(&d, prog);
     assert_eq!(recs.len(), 2, "two queries -> two json lines: {recs:?}");
 
-    let ast_q = recs.iter().find(|r| r["query"] == "ast_text").expect("ast_text query");
+    let ast_q = recs
+        .iter()
+        .find(|r| r["query"] == "ast_text")
+        .expect("ast_text query");
     assert_eq!(ast_q["count"], 1, "one ast whole-match text: {ast_q}");
-    assert_eq!(ast_q["rows"][0][0], "fn alpha() {}",
-        "ast id resolves through string() to the whole function_item text: {ast_q}");
+    assert_eq!(
+        ast_q["rows"][0][0], "fn alpha() {}",
+        "ast id resolves through string() to the whole function_item text: {ast_q}"
+    );
 
-    let match_q = recs.iter().find(|r| r["query"] == "match_text").expect("match_text query");
+    let match_q = recs
+        .iter()
+        .find(|r| r["query"] == "match_text")
+        .expect("match_text query");
     assert_eq!(match_q["count"], 1, "one match whole-match text: {match_q}");
-    assert_eq!(match_q["rows"][0][0], "fn alpha",
-        "match id resolves through string() to the regex whole-match text: {match_q}");
+    assert_eq!(
+        match_q["rows"][0][0], "fn alpha",
+        "match id resolves through string() to the regex whole-match text: {match_q}"
+    );
 }

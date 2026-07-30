@@ -41,8 +41,8 @@
 use sprefa_v5::ast::{Col, RelDecl, Type};
 use sprefa_v5::daemon::gc;
 use sprefa_v5::db::{self, Db};
-use sprefa_v5::lower;
 use sprefa_v5::engine::{all_builtin_decls, Engine};
+use sprefa_v5::lower;
 use sprefa_v5::spine::StringId;
 use sprefa_v5::{lex, parse};
 use std::fs;
@@ -128,7 +128,9 @@ fn string_row_exists(db: &Db, id: i64) -> bool {
 fn ensure_fk_carrier(db: &Db, table: &str, text: &str) -> i64 {
     db.execute_batch_on(
         table,
-        &format!("CREATE TABLE IF NOT EXISTS \"{table}\" (sid INTEGER NOT NULL REFERENCES _strings(id))"),
+        &format!(
+            "CREATE TABLE IF NOT EXISTS \"{table}\" (sid INTEGER NOT NULL REFERENCES _strings(id))"
+        ),
     )
     .unwrap();
     // `plant_orphan`'s insert (idempotent via OR IGNORE): the referenced
@@ -153,34 +155,67 @@ fn sweep_removes_only_true_orphans() {
     let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
     let alpha_id = StringId::of("alpha").sqlite();
     let beta_id = StringId::of("beta").sqlite();
-    assert!(string_row_exists(&db, alpha_id), "tick should have interned 'alpha' via rel_seen.name");
-    assert!(string_row_exists(&db, beta_id), "tick should have interned 'beta' via rel_seen.name");
+    assert!(
+        string_row_exists(&db, alpha_id),
+        "tick should have interned 'alpha' via rel_seen.name"
+    );
+    assert!(
+        string_row_exists(&db, beta_id),
+        "tick should have interned 'beta' via rel_seen.name"
+    );
     ensure_fk_carrier(&db, "_fixture_call_like", "fk-carrier-anchor-string");
 
     let orphan_id = plant_orphan(&db, "salted-leftover-orphan");
-    assert!(string_row_exists(&db, orphan_id), "the planted orphan must be present before the sweep");
+    assert!(
+        string_row_exists(&db, orphan_id),
+        "the planted orphan must be present before the sweep"
+    );
 
     let decls = full_decls();
 
     // Dry run: report the orphan, delete nothing.
     let dry = gc::sweep(&db, &decls, false).unwrap();
     assert!(!dry.applied, "dry run must not apply: {dry:?}");
-    assert_eq!(dry.orphans, 1, "dry run should see exactly the planted orphan: {dry:?}");
-    assert!(string_row_exists(&db, orphan_id), "dry run must not delete anything");
+    assert_eq!(
+        dry.orphans, 1,
+        "dry run should see exactly the planted orphan: {dry:?}"
+    );
+    assert!(
+        string_row_exists(&db, orphan_id),
+        "dry run must not delete anything"
+    );
     assert!(string_row_exists(&db, alpha_id));
     assert!(string_row_exists(&db, beta_id));
 
     // Apply: exactly the orphan goes, both live strings survive.
     let applied = gc::sweep(&db, &decls, true).unwrap();
-    assert!(applied.applied, "apply run must report applied=true: {applied:?}");
-    assert_eq!(applied.orphans, 1, "apply should have deleted exactly one row: {applied:?}");
-    assert!(!string_row_exists(&db, orphan_id), "the true orphan must be gone after --apply");
-    assert!(string_row_exists(&db, alpha_id), "'alpha' is referenced by rel_seen.name and must survive");
-    assert!(string_row_exists(&db, beta_id), "'beta' is referenced by rel_seen.name and must survive");
+    assert!(
+        applied.applied,
+        "apply run must report applied=true: {applied:?}"
+    );
+    assert_eq!(
+        applied.orphans, 1,
+        "apply should have deleted exactly one row: {applied:?}"
+    );
+    assert!(
+        !string_row_exists(&db, orphan_id),
+        "the true orphan must be gone after --apply"
+    );
+    assert!(
+        string_row_exists(&db, alpha_id),
+        "'alpha' is referenced by rel_seen.name and must survive"
+    );
+    assert!(
+        string_row_exists(&db, beta_id),
+        "'beta' is referenced by rel_seen.name and must survive"
+    );
 
     // Idempotent: a second sweep over the now-clean db finds nothing to do.
     let clean = gc::sweep(&db, &decls, true).unwrap();
-    assert_eq!(clean.orphans, 0, "a second sweep should find no orphans left: {clean:?}");
+    assert_eq!(
+        clean.orphans, 0,
+        "a second sweep should find no orphans left: {clean:?}"
+    );
 }
 
 /// Mutation check: with the `seen` decl dropped from the reachability set
@@ -198,7 +233,10 @@ fn broken_reachability_wrongly_deletes_a_live_string() {
 
     let db = db::open(Some(db_path.to_str().unwrap())).unwrap();
     let alpha_id = StringId::of("alpha").sqlite();
-    assert!(string_row_exists(&db, alpha_id), "tick should have interned 'alpha' via rel_seen.name");
+    assert!(
+        string_row_exists(&db, alpha_id),
+        "tick should have interned 'alpha' via rel_seen.name"
+    );
     ensure_fk_carrier(&db, "_fixture_call_like", "fk-carrier-anchor-string");
 
     // The mutation: every built-in decl is present (so the fixed core-spine
@@ -207,7 +245,10 @@ fn broken_reachability_wrongly_deletes_a_live_string() {
     // that walks `prepare_paths(...).0.items` skipped it.
     let broken_decls: Vec<RelDecl> = all_builtin_decls();
     let broken = gc::sweep(&db, &broken_decls, true).unwrap();
-    assert!(broken.applied, "the broken sweep should still report applied=true: {broken:?}");
+    assert!(
+        broken.applied,
+        "the broken sweep should still report applied=true: {broken:?}"
+    );
     assert!(
         !string_row_exists(&db, alpha_id),
         "mutation check failed to trigger: 'alpha' survived a sweep run with \
@@ -240,11 +281,17 @@ fn fk_declared_root_survives_the_sweep() {
     // _where_bytes/_embeddings/_node_embeddings — reachable ONLY through a
     // declared FK on a second, distinct table.
     let fk_only_id = ensure_fk_carrier(&db, "_fixture_call_owner_like", "fk-only-live-string");
-    assert!(string_row_exists(&db, fk_only_id), "the FK-referenced string must be present before the sweep");
+    assert!(
+        string_row_exists(&db, fk_only_id),
+        "the FK-referenced string must be present before the sweep"
+    );
 
     let decls = full_decls();
     let applied = gc::sweep(&db, &decls, true).unwrap();
-    assert!(applied.fk_columns_scanned >= 2, "expected at least the two planted FK columns: {applied:?}");
+    assert!(
+        applied.fk_columns_scanned >= 2,
+        "expected at least the two planted FK columns: {applied:?}"
+    );
     assert!(
         string_row_exists(&db, fk_only_id),
         "a string referenced only by a table declaring REFERENCES _strings(id) \
@@ -299,7 +346,10 @@ fn build_stress_fixture(tag: &str, n: usize) -> (Db, Vec<RelDecl>, i64) {
 fn chunked_inserts_scan_every_root_past_the_compound_select_ceiling() {
     let (small_db, small_decls, small_orphan) = build_stress_fixture("chunk_small", 10);
     let small_report = gc::sweep(&small_db, &small_decls, false).unwrap();
-    assert_eq!(small_report.orphans, 1, "small fixture: exactly the one planted orphan: {small_report:?}");
+    assert_eq!(
+        small_report.orphans, 1,
+        "small fixture: exactly the one planted orphan: {small_report:?}"
+    );
 
     let (large_db, large_decls, large_orphan) = build_stress_fixture("chunk_large", 600);
     let large_report = gc::sweep(&large_db, &large_decls, false).unwrap();
@@ -307,7 +357,10 @@ fn chunked_inserts_scan_every_root_past_the_compound_select_ceiling() {
         large_report.decl_columns_scanned > 500,
         "fixture must actually exceed SQLITE_MAX_COMPOUND_SELECT's default 500 to exercise chunking: {large_report:?}"
     );
-    assert_eq!(large_report.orphans, 1, "large fixture: exactly the one planted orphan: {large_report:?}");
+    assert_eq!(
+        large_report.orphans, 1,
+        "large fixture: exactly the one planted orphan: {large_report:?}"
+    );
 
     assert_eq!(
         small_report.orphans, large_report.orphans,
@@ -317,8 +370,14 @@ fn chunked_inserts_scan_every_root_past_the_compound_select_ceiling() {
     // End-to-end past the ceiling under --apply too, not just a dry-run count:
     // the true orphan goes, a sample of the 600 live stress strings survives.
     let applied = gc::sweep(&large_db, &large_decls, true).unwrap();
-    assert_eq!(applied.orphans, 1, "apply on the large fixture should delete exactly one row: {applied:?}");
-    assert!(!string_row_exists(&large_db, large_orphan), "the large fixture's orphan must be gone after --apply");
+    assert_eq!(
+        applied.orphans, 1,
+        "apply on the large fixture should delete exactly one row: {applied:?}"
+    );
+    assert!(
+        !string_row_exists(&large_db, large_orphan),
+        "the large fixture's orphan must be gone after --apply"
+    );
     assert!(
         string_row_exists(&large_db, StringId::of("stress-live-599").sqlite()),
         "a live stress string must survive --apply past the compound-select ceiling"

@@ -105,8 +105,9 @@ pub(crate) fn apply_daemon_budget() -> (&'static str, i32, usize) {
     // (pid 4424, NI=0, XPC_SERVICE_NAME=0, failure-modes class 19/20 receipt).
     // Only our own label, which launchd sets when it spawns the LaunchAgent,
     // counts.
-    let launchd_managed = std::env::var_os("XPC_SERVICE_NAME")
-        .is_some_and(|name| name.to_string_lossy() == crate::supervise::service_label().to_string());
+    let launchd_managed = std::env::var_os("XPC_SERVICE_NAME").is_some_and(|name| {
+        name.to_string_lossy() == crate::supervise::service_label().to_string()
+    });
     if !launchd_managed {
         apply_process_budget();
 
@@ -144,17 +145,16 @@ pub(crate) fn apply_daemon_budget() -> (&'static str, i32, usize) {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    let desired = daemon_thread_count(
-        cores,
-        std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
-    );
+    let desired = daemon_thread_count(cores, std::env::var("DL_DAEMON_THREADS").ok().as_deref());
 
     // Bound the global rayon pool. This may already have been configured by the
     // CLI entry path; build_global returns an error in that case rather than
     // panicking, so the daemon stays safe to run both foreground and detached.
     // Thread caps stay bespoke regardless of supervision (plan section 3.5
     // point 3): rayon/tokio pool sizing has no OS-level equivalent.
-    let _ = rayon::ThreadPoolBuilder::new().num_threads(desired).build_global();
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(desired)
+        .build_global();
     let threads = rayon::current_num_threads();
 
     let qos_label = if launchd_managed {
@@ -164,12 +164,19 @@ pub(crate) fn apply_daemon_budget() -> (&'static str, i32, usize) {
     } else {
         "none"
     };
-    let priority = if launchd_managed { 0 } else if cfg!(unix) { DAEMON_NICE } else { 0 };
+    let priority = if launchd_managed {
+        0
+    } else if cfg!(unix) {
+        DAEMON_NICE
+    } else {
+        0
+    };
     (qos_label, priority, threads)
 }
 
 pub(crate) fn idle_timeout_secs() -> u64 {
-    std::env::var("DL_DAEMON_IDLE_SECS").ok()
+    std::env::var("DL_DAEMON_IDLE_SECS")
+        .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_IDLE_SECS)
 }
@@ -193,20 +200,32 @@ pub(crate) struct ExeStamp {
 /// Return the current executable's stat identity. A missing stat is unknown,
 /// not evidence that the daemon's binary was replaced.
 pub(crate) fn current_exe_stamp() -> Option<ExeStamp> {
-    if std::env::var_os("DL_EXE_STAMP").is_some() { return None; }
+    if std::env::var_os("DL_EXE_STAMP").is_some() {
+        return None;
+    }
     let path = std::env::current_exe().ok()?;
     let metadata = std::fs::metadata(path).ok()?;
-    Some(ExeStamp { len: metadata.len(), mtime: metadata.modified().ok()? })
+    Some(ExeStamp {
+        len: metadata.len(),
+        mtime: metadata.modified().ok()?,
+    })
 }
 
-pub(crate) fn should_exit_for_binary_change(launch: Option<ExeStamp>, current: Option<ExeStamp>) -> bool {
+pub(crate) fn should_exit_for_binary_change(
+    launch: Option<ExeStamp>,
+    current: Option<ExeStamp>,
+) -> bool {
     matches!((launch, current), (Some(before), Some(after)) if before != after)
 }
 
 pub(crate) fn enforce_fresh_binary(launch_exe_stamp: Option<ExeStamp>) {
-    if launch_exe_stamp.is_none() { return; }
+    if launch_exe_stamp.is_none() {
+        return;
+    }
     if should_exit_for_binary_change(launch_exe_stamp, current_exe_stamp()) {
-        tracing::info!("[daemon] binary replaced on disk, exiting so the next call runs the new version");
+        tracing::info!(
+            "[daemon] binary replaced on disk, exiting so the next call runs the new version"
+        );
         std::process::exit(0);
     }
 }
@@ -227,8 +246,14 @@ pub(crate) fn self_rss_mb() -> Option<u64> {
         .arg(std::process::id().to_string())
         .output()
         .ok()?;
-    if !out.status.success() { return None; }
-    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok().map(|kb| kb / 1024)
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(|kb| kb / 1024)
 }
 
 /// Exit the process if RSS has crossed the ceiling. Called on the serve loop's
@@ -238,8 +263,10 @@ pub(crate) fn enforce_mem_limit(label: &str) {
     let Some(limit) = mem_limit_mb() else { return };
     let Some(rss) = self_rss_mb() else { return };
     if rss > limit {
-        tracing::warn!("[{label}] RSS {rss}MB exceeded limit {limit}MB — exiting (memory guard; \
-                   set DL_DAEMON_MEM_MB to adjust, 0 to disable)");
+        tracing::warn!(
+            "[{label}] RSS {rss}MB exceeded limit {limit}MB — exiting (memory guard; \
+                   set DL_DAEMON_MEM_MB to adjust, 0 to disable)"
+        );
         std::process::exit(MEM_GUARD_EXIT_CODE);
     }
 }

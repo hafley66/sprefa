@@ -89,7 +89,13 @@ const INDEXERS: &[Indexer] = &[
         markers: &["compile_commands.json", "CMakeLists.txt"],
         bin: "scip-clang",
         install: "download from github.com/sourcegraph/scip-clang/releases",
-        run: &["scip-clang", "--compdb-path", "compile_commands.json", "-o", "{out}"],
+        run: &[
+            "scip-clang",
+            "--compdb-path",
+            "compile_commands.json",
+            "-o",
+            "{out}",
+        ],
     },
 ];
 
@@ -155,9 +161,14 @@ fn resolve_dir(args: &[String]) -> Result<(PathBuf, Args)> {
             "--install" => parsed.install = true,
             "--force" | "-f" => parsed.force = true,
             "-h" | "--help" => parsed.help = true,
-            "--rev" => { i += 1; parsed.rev = args.get(i).cloned(); }
+            "--rev" => {
+                i += 1;
+                parsed.rev = args.get(i).cloned();
+            }
             other if !other.starts_with('-') => dir = Some(other.to_string()),
-            other => { parsed.unknown = Some(other.to_string()); }
+            other => {
+                parsed.unknown = Some(other.to_string());
+            }
         }
         i += 1;
     }
@@ -223,7 +234,10 @@ pub fn run_index(args: &[String]) -> Result<i32> {
         println!("[dl index] to index rev {rev}, worktree it and index there:");
         println!("             git worktree add /tmp/dl-{rev} {rev}");
         println!("             dl index /tmp/dl-{rev}");
-        println!("             cp /tmp/dl-{rev}/.dl/.state/index.scip {}", index_out(&root).display());
+        println!(
+            "             cp /tmp/dl-{rev}/.dl/.state/index.scip {}",
+            index_out(&root).display()
+        );
         println!("             git worktree remove /tmp/dl-{rev}");
         return Ok(0);
     }
@@ -235,7 +249,9 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     if root == crate::daemon::daemon_home() && !opts.force {
         let root_display = root.display();
         tracing::warn!(root = %root_display, "[dl index] {root_display} is the daemon serving home, not a single project.");
-        tracing::warn!("[dl index] cd into a specific repo and run `dl index` there (or pass --force).");
+        tracing::warn!(
+            "[dl index] cd into a specific repo and run `dl index` there (or pass --force)."
+        );
         return Ok(2);
     }
     if let Some(repos) = nested_repos(&root) {
@@ -243,9 +259,15 @@ pub fn run_index(args: &[String]) -> Result<i32> {
             let root_display = root.display();
             let repo_count = repos.len();
             tracing::warn!(root = %root_display, repo_count, "[dl index] {root_display} looks like a collection of {repo_count} repos (nested .git dirs):");
-            for r in repos.iter().take(5) { tracing::warn!("             {r}"); }
-            if repos.len() > 5 { tracing::warn!("             … and {} more", repos.len() - 5); }
-            tracing::warn!("[dl index] indexing here would run the indexer over every repo. Run `dl index`");
+            for r in repos.iter().take(5) {
+                tracing::warn!("             {r}");
+            }
+            if repos.len() > 5 {
+                tracing::warn!("             … and {} more", repos.len() - 5);
+            }
+            tracing::warn!(
+                "[dl index] indexing here would run the indexer over every repo. Run `dl index`"
+            );
             tracing::warn!("[dl index] inside one repo, or pass --force to index this whole tree deliberately.");
             return Ok(2);
         }
@@ -254,23 +276,35 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     let found = detect(&root);
     if found.is_empty() {
         let root_display = root.display();
-        let markers = INDEXERS.iter()
-            .flat_map(|i| i.markers.iter().copied()).collect::<Vec<_>>().join(", ");
+        let markers = INDEXERS
+            .iter()
+            .flat_map(|i| i.markers.iter().copied())
+            .collect::<Vec<_>>()
+            .join(", ");
         tracing::warn!(root = %root_display, markers = %markers, "[dl index] no known language markers under {root_display}");
         tracing::warn!(markers = %markers, "[dl index] looked for: {markers}");
         return Ok(1);
     }
-    println!("[dl index] detected: {}", found.iter().map(|i| i.lang).collect::<Vec<_>>().join(", "));
+    println!(
+        "[dl index] detected: {}",
+        found.iter().map(|i| i.lang).collect::<Vec<_>>().join(", ")
+    );
 
     // Missing indexers: --install runs the install command, otherwise print it.
     let missing: Vec<&&Indexer> = found.iter().filter(|ix| !installed(ix.bin)).collect();
     if !missing.is_empty() {
         for ix in &missing {
             if opts.install {
-                println!("[dl index] installing {} for {}: {}", ix.bin, ix.lang, ix.install);
+                println!(
+                    "[dl index] installing {} for {}: {}",
+                    ix.bin, ix.lang, ix.install
+                );
                 run_install(ix.install);
             } else {
-                println!("[dl index] {} not found (for {}). install with:", ix.bin, ix.lang);
+                println!(
+                    "[dl index] {} not found (for {}). install with:",
+                    ix.bin, ix.lang
+                );
                 println!("             {}", ix.install);
             }
         }
@@ -290,8 +324,11 @@ pub fn run_index(args: &[String]) -> Result<i32> {
             continue;
         }
         let part = dl_dir.join(format!("index.{}.scip", ix.lang.replace('/', "_")));
-        println!("[dl index] {} -> {} (first run can take a minute or two; no progress bar)",
-            ix.bin, part.display());
+        println!(
+            "[dl index] {} -> {} (first run can take a minute or two; no progress bar)",
+            ix.bin,
+            part.display()
+        );
         if run_indexer(ix, &root, &part)? {
             ran_any = true;
             parts.push(part);
@@ -307,11 +344,13 @@ pub fn run_index(args: &[String]) -> Result<i32> {
 
     // Place the index where the auto-loader finds it (single vs merged).
     if parts.len() == 1 {
-        std::fs::rename(&parts[0], &out)
-            .or_else(|_| std::fs::copy(&parts[0], &out).map(|_| ()))?;
+        std::fs::rename(&parts[0], &out).or_else(|_| std::fs::copy(&parts[0], &out).map(|_| ()))?;
     } else {
         let n = crate::scip_import::merge_files(&parts, &out)?;
-        println!("[dl index] merged {} language indexes ({n} documents)", parts.len());
+        println!(
+            "[dl index] merged {} language indexes ({n} documents)",
+            parts.len()
+        );
         for p in &parts {
             let _ = std::fs::remove_file(p);
         }
@@ -319,12 +358,20 @@ pub fn run_index(args: &[String]) -> Result<i32> {
     gitignore_index(&root);
 
     // Confirm with row counts so the user sees SCIP actually loaded.
-    let slug = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+    let slug = root
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
     match crate::scip_import::load(&out, &root, &slug) {
         Ok(rows) => {
             println!("[dl index] wrote {} ({})", out.display(), human_size(&out));
-            println!("[dl index] scip_def={} scip_ref={} scip_edge={} scip_fn_edge={}",
-                rows.defs.len(), rows.refs.len(), rows.edges.len(), rows.fn_edges.len());
+            println!(
+                "[dl index] scip_def={} scip_ref={} scip_edge={} scip_fn_edge={}",
+                rows.defs.len(),
+                rows.refs.len(),
+                rows.edges.len(),
+                rows.fn_edges.len()
+            );
             if !path_join_ok(&root, &rows) {
                 let root_display = root.display();
                 tracing::warn!(root = %root_display, "[dl index] WARNING: index paths do not join under {root_display} — \
@@ -337,7 +384,10 @@ pub fn run_index(args: &[String]) -> Result<i32> {
             tracing::error!(out = %out_display, error = %e, "[dl index] wrote {out_display} but failed to read it back: {e}");
         }
     }
-    println!("[dl index] scip_* relations now load automatically when you run dl from {}.", root.display());
+    println!(
+        "[dl index] scip_* relations now load automatically when you run dl from {}.",
+        root.display()
+    );
     Ok(0)
 }
 
@@ -370,15 +420,19 @@ pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
         if run_indexer(ix, root, &part)? {
             parts.push(part);
         } else {
-            tracing::warn!("[scip_want] {} failed under {}; skipping {}", ix.bin, root.display(), ix.lang);
+            tracing::warn!(
+                "[scip_want] {} failed under {}; skipping {}",
+                ix.bin,
+                root.display(),
+                ix.lang
+            );
         }
     }
     if parts.is_empty() {
         return Ok(None);
     }
     if parts.len() == 1 {
-        std::fs::rename(&parts[0], &out)
-            .or_else(|_| std::fs::copy(&parts[0], &out).map(|_| ()))?;
+        std::fs::rename(&parts[0], &out).or_else(|_| std::fs::copy(&parts[0], &out).map(|_| ()))?;
     } else {
         crate::scip_import::merge_files(&parts, &out)?;
         for p in &parts {
@@ -393,8 +447,16 @@ pub fn ensure_index(root: &Path) -> Result<Option<PathBuf>> {
 /// so the indexer's own progress is visible. Returns whether it exited 0.
 fn run_indexer(ix: &Indexer, root: &Path, out: &Path) -> Result<bool> {
     let out_abs = out.to_string_lossy().into_owned();
-    let argv: Vec<String> = ix.run.iter()
-        .map(|a| if *a == "{out}" { out_abs.clone() } else { a.to_string() })
+    let argv: Vec<String> = ix
+        .run
+        .iter()
+        .map(|a| {
+            if *a == "{out}" {
+                out_abs.clone()
+            } else {
+                a.to_string()
+            }
+        })
         .collect();
     let status = std::process::Command::new(&argv[0])
         .args(&argv[1..])
@@ -425,7 +487,9 @@ fn print_index_help() {
     eprintln!("  --install            run the install command for any missing indexer"); // @eprintln-ok: usage/help text
     eprintln!("  --rev REV            print the worktree-and-index recipe for a git rev"); // @eprintln-ok: usage/help text
     eprintln!("  detects rust / typescript / python / go / kotlin-java / cpp by marker files,"); // @eprintln-ok: usage/help text
-    eprintln!("  runs each indexer with cwd=root, merges to <root>/.dl/.state/index.scip (gitignored)."); // @eprintln-ok: usage/help text
+    eprintln!(
+        "  runs each indexer with cwd=root, merges to <root>/.dl/.state/index.scip (gitignored)."
+    ); // @eprintln-ok: usage/help text
     eprintln!("  see `dl doctor` for the health screen."); // @eprintln-ok: usage/help text
 }
 
@@ -460,16 +524,25 @@ pub fn run_doctor(args: &[String]) -> Result<i32> {
     match crate::scip_import::index_path(&root) {
         None => {
             println!("  index:     none — scip_* relations are EMPTY; the syntactic");
-            println!("             call/type graph carries. Run `dl index` for compiler precision.");
+            println!(
+                "             call/type graph carries. Run `dl index` for compiler precision."
+            );
         }
         Some(path) => {
             println!("  index:     {} ({})", path.display(), human_size(&path));
             match freshness(&root, &path) {
                 Freshness::Fresh => println!("             freshness: fresh (newer than HEAD)"),
-                Freshness::Stale => println!("             freshness: STALE — older than HEAD; re-run `dl index`"),
-                Freshness::Unknown => println!("             freshness: unknown (not a git repo or no HEAD)"),
+                Freshness::Stale => {
+                    println!("             freshness: STALE — older than HEAD; re-run `dl index`")
+                }
+                Freshness::Unknown => {
+                    println!("             freshness: unknown (not a git repo or no HEAD)")
+                }
             }
-            let slug = root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let slug = root
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
             match crate::scip_import::load(&path, &root, &slug) {
                 Ok(rows) => {
                     println!("             scip_def={} scip_ref={} scip_edge={} scip_fn_edge={} scip_impl={}",
@@ -489,24 +562,41 @@ pub fn run_doctor(args: &[String]) -> Result<i32> {
     Ok(0)
 }
 
-enum Freshness { Fresh, Stale, Unknown }
+enum Freshness {
+    Fresh,
+    Stale,
+    Unknown,
+}
 
 /// Compare the index mtime to the HEAD commit time. Older than HEAD = stale
 /// (source moved on since the index was cut). Not a git repo / no HEAD = unknown.
 fn freshness(root: &Path, index: &Path) -> Freshness {
-    let Ok(meta) = index.metadata() else { return Freshness::Unknown };
-    let Ok(index_mtime) = meta.modified() else { return Freshness::Unknown };
+    let Ok(meta) = index.metadata() else {
+        return Freshness::Unknown;
+    };
+    let Ok(index_mtime) = meta.modified() else {
+        return Freshness::Unknown;
+    };
     let out = std::process::Command::new("git")
-        .arg("-C").arg(root)
+        .arg("-C")
+        .arg(root)
         .args(["log", "-1", "--format=%ct"])
         .output();
-    let Ok(out) = out else { return Freshness::Unknown };
-    if !out.status.success() { return Freshness::Unknown; }
+    let Ok(out) = out else {
+        return Freshness::Unknown;
+    };
+    if !out.status.success() {
+        return Freshness::Unknown;
+    }
     let Ok(secs) = String::from_utf8_lossy(&out.stdout).trim().parse::<u64>() else {
         return Freshness::Unknown;
     };
     let head_time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
-    if index_mtime >= head_time { Freshness::Fresh } else { Freshness::Stale }
+    if index_mtime >= head_time {
+        Freshness::Fresh
+    } else {
+        Freshness::Stale
+    }
 }
 
 /// True if a sample of the index's def paths resolve to real files under root —
@@ -516,7 +606,10 @@ fn path_join_ok(root: &Path, rows: &crate::scip_import::ScipRows) -> bool {
     if rows.defs.is_empty() {
         return true; // nothing to check; don't warn on an empty index
     }
-    rows.defs.iter().take(64).any(|(_, file, _)| root.join(file).exists())
+    rows.defs
+        .iter()
+        .take(64)
+        .any(|(_, file, _)| root.join(file).exists())
 }
 
 fn human_size(path: &Path) -> String {
@@ -572,8 +665,11 @@ mod tests {
         assert!(body.contains(".state/"), "state dir ignored: {body:?}");
         // Second call must not duplicate.
         gitignore_index(&d);
-        let count = std::fs::read_to_string(&gi).unwrap()
-            .lines().filter(|l| l.trim() == ".state/").count();
+        let count = std::fs::read_to_string(&gi)
+            .unwrap()
+            .lines()
+            .filter(|l| l.trim() == ".state/")
+            .count();
         assert_eq!(count, 1, "idempotent");
         let _ = std::fs::remove_dir_all(&d);
     }
@@ -607,7 +703,10 @@ mod tests {
         let solo = tmp("solo");
         std::fs::create_dir_all(solo.join(".git")).unwrap();
         std::fs::create_dir_all(solo.join("src")).unwrap();
-        assert!(nested_repos(&solo).is_none(), "single repo is not a collection");
+        assert!(
+            nested_repos(&solo).is_none(),
+            "single repo is not a collection"
+        );
         // A collection: children each carry their own `.git` -> Some(list).
         let coll = tmp("coll");
         for name in ["repo_a", "repo_b", "repo_c"] {
@@ -623,9 +722,17 @@ mod tests {
     fn every_indexer_run_has_out_placeholder() {
         // Each indexer's argv must carry {out} so the index lands where we place it.
         for ix in INDEXERS {
-            assert!(ix.run.iter().any(|a| a.contains("{out}")),
-                "{} run args must include {{out}}: {:?}", ix.lang, ix.run);
-            assert_eq!(ix.run[0], ix.bin, "{}: argv[0] must be the probed bin", ix.lang);
+            assert!(
+                ix.run.iter().any(|a| a.contains("{out}")),
+                "{} run args must include {{out}}: {:?}",
+                ix.lang,
+                ix.run
+            );
+            assert_eq!(
+                ix.run[0], ix.bin,
+                "{}: argv[0] must be the probed bin",
+                ix.lang
+            );
         }
     }
 }

@@ -12,32 +12,32 @@ use std::collections::HashMap;
 /// a grammar here without updating the skill matrix fails the matrix-honesty
 /// test. Shared by the `sg` AND `ast_yaml` ops (both call `sg_lang`).
 const SG_LANG_TABLE: &[(&str, &[&str], SupportLang)] = &[
-    ("rust",       &["rs"],                SupportLang::Rust),
-    ("typescript", &["ts"],                SupportLang::TypeScript),
-    ("tsx",        &[],                    SupportLang::Tsx),
-    ("javascript", &["js", "jsx"],         SupportLang::JavaScript),
-    ("python",     &["py"],                SupportLang::Python),
-    ("go",         &["golang"],            SupportLang::Go),
-    ("json",       &[],                    SupportLang::Json),
-    ("c",          &[],                    SupportLang::C),
-    ("cpp",        &["cc", "cxx", "c++"],  SupportLang::Cpp),
-    ("kotlin",     &["kt"],                SupportLang::Kotlin),
+    ("rust", &["rs"], SupportLang::Rust),
+    ("typescript", &["ts"], SupportLang::TypeScript),
+    ("tsx", &[], SupportLang::Tsx),
+    ("javascript", &["js", "jsx"], SupportLang::JavaScript),
+    ("python", &["py"], SupportLang::Python),
+    ("go", &["golang"], SupportLang::Go),
+    ("json", &[], SupportLang::Json),
+    ("c", &[], SupportLang::C),
+    ("cpp", &["cc", "cxx", "c++"], SupportLang::Cpp),
+    ("kotlin", &["kt"], SupportLang::Kotlin),
     // The rest of ast-grep-language's SupportLang set (every grammar the crate
     // ships) — the embedded-language seam wants css/html for styled-components and
     // markdown fences, and the polyglot corpus wants the compiled-language grammars.
-    ("css",        &[],                    SupportLang::Css),
-    ("html",       &[],                    SupportLang::Html),
-    ("bash",       &["sh"],                SupportLang::Bash),
-    ("csharp",     &["cs"],                SupportLang::CSharp),
-    ("java",       &[],                    SupportLang::Java),
-    ("scala",      &[],                    SupportLang::Scala),
-    ("swift",      &[],                    SupportLang::Swift),
-    ("ruby",       &["rb"],                SupportLang::Ruby),
-    ("php",        &[],                    SupportLang::Php),
-    ("lua",        &[],                    SupportLang::Lua),
-    ("elixir",     &["ex"],                SupportLang::Elixir),
-    ("haskell",    &["hs"],                SupportLang::Haskell),
-    ("yaml",       &["yml"],               SupportLang::Yaml),
+    ("css", &[], SupportLang::Css),
+    ("html", &[], SupportLang::Html),
+    ("bash", &["sh"], SupportLang::Bash),
+    ("csharp", &["cs"], SupportLang::CSharp),
+    ("java", &[], SupportLang::Java),
+    ("scala", &[], SupportLang::Scala),
+    ("swift", &[], SupportLang::Swift),
+    ("ruby", &["rb"], SupportLang::Ruby),
+    ("php", &[], SupportLang::Php),
+    ("lua", &[], SupportLang::Lua),
+    ("elixir", &["ex"], SupportLang::Elixir),
+    ("haskell", &["hs"], SupportLang::Haskell),
+    ("yaml", &["yml"], SupportLang::Yaml),
 ];
 
 fn sg_lang(lang: &str) -> Result<SupportLang> {
@@ -50,7 +50,9 @@ fn sg_lang(lang: &str) -> Result<SupportLang> {
 /// for the `ast` op.
 fn sg_lang_resolved(lang: &str) -> Result<(&'static str, SupportLang)> {
     for (canon, aliases, sl) in SG_LANG_TABLE {
-        if lang == *canon || aliases.contains(&lang) { return Ok((canon, *sl)); }
+        if lang == *canon || aliases.contains(&lang) {
+            return Ok((canon, *sl));
+        }
     }
     bail!("no ast-grep grammar for :{lang}")
 }
@@ -61,8 +63,7 @@ fn sg_lang_resolved(lang: &str) -> Result<(&'static str, SupportLang)> {
 /// parses each file at most once per grammar. Sibling of `AST_PARSE_COUNT`
 /// (eval.rs); the two families count separately because they parse with
 /// different grammar tables.
-pub static SG_PARSE_COUNT: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static SG_PARSE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Serializes every test that reads an `AST_PARSE_COUNT`/`SG_PARSE_COUNT`
 /// delta OR parses through `run_sg` (which bumps the sg counter): a held lock
@@ -137,7 +138,9 @@ fn metavar_names(pattern: &str) -> Vec<String> {
     let mut seen = Vec::new();
     for c in re.captures_iter(pattern) {
         let n = c[1].to_string();
-        if !seen.contains(&n) { seen.push(n); }
+        if !seen.contains(&n) {
+            seen.push(n);
+        }
     }
     seen
 }
@@ -149,7 +152,15 @@ fn metavar_names(pattern: &str) -> Vec<String> {
 /// range. `mlo`/`mhi` cover the ENTIRE match (literal text included), so a
 /// `gen(:replace, …)` keyed off the match `id` rewrites the whole pattern — not
 /// just the captures' bounding box.
-pub type SgHit = (i64, i64, i64, i64, usize, usize, Vec<(String, String, usize, usize)>);
+pub type SgHit = (
+    i64,
+    i64,
+    i64,
+    i64,
+    usize,
+    usize,
+    Vec<(String, String, usize, usize)>,
+);
 
 /// Run a matcher (`Pattern` or relational `RuleCore`) over a parsed root and
 /// collect every match as an `SgHit`. The one find_all loop both ops share.
@@ -167,7 +178,15 @@ fn collect_hits(grep: &SgRoot, matcher: &impl Matcher, names: &[String]) -> Vec<
         let mr = m.range();
         let (sl, sc) = m.start_pos().byte_point();
         let (el, ec) = m.end_pos().byte_point();
-        out.push((sl as i64 + 1, sc as i64, el as i64 + 1, ec as i64, mr.start, mr.end, caps));
+        out.push((
+            sl as i64 + 1,
+            sc as i64,
+            el as i64 + 1,
+            ec as i64,
+            mr.start,
+            mr.end,
+            caps,
+        ));
     }
     out
 }
@@ -221,8 +240,8 @@ pub(crate) fn run_ast_yaml(
     yaml: &str,
 ) -> Result<Vec<SgHit>> {
     let l = sg_lang(lang)?;
-    let value: serde_yaml::Value = serde_yaml::from_str(yaml)
-        .map_err(|e| anyhow!("ast_yaml YAML invalid: {e}"))?;
+    let value: serde_yaml::Value =
+        serde_yaml::from_str(yaml).map_err(|e| anyhow!("ast_yaml YAML invalid: {e}"))?;
     // ast-grep 0.38's SerializableRuleCore requires a top-level `rule:` field.
     // The common case is a bare rule body (pattern/inside/has/any/...); wrap
     // it under `rule:`. An already-wrapped `{rule: {...}}` passes through.
@@ -230,7 +249,10 @@ pub(crate) fn run_ast_yaml(
     // present but the engine only runs the relational `rule` body.)
     let core_value = match &value {
         serde_yaml::Value::Mapping(m)
-            if m.contains_key(serde_yaml::Value::String("rule".into())) => value,
+            if m.contains_key(serde_yaml::Value::String("rule".into())) =>
+        {
+            value
+        }
         _ => {
             let mut wrapper = serde_yaml::Mapping::new();
             wrapper.insert(serde_yaml::Value::String("rule".into()), value);
@@ -239,7 +261,8 @@ pub(crate) fn run_ast_yaml(
     };
     let core: SerializableRuleCore = serde_yaml::from_value(core_value)
         .map_err(|e| anyhow!("ast_yaml RuleCore deserialise failed: {e}"))?;
-    let rule_core = core.get_matcher(DeserializeEnv::new(l))
+    let rule_core = core
+        .get_matcher(DeserializeEnv::new(l))
         .map_err(|e| anyhow!("ast_yaml rule build failed: {e}"))?;
 
     // The shared root is an AstGrep<StrDoc<SupportLang>> with the full
@@ -262,7 +285,10 @@ mod tests {
     #[test]
     fn sg_langs_all_resolve() {
         for name in sg_langs() {
-            assert!(sg_lang(name).is_ok(), "sg_langs lists `{name}` but sg_lang rejects it");
+            assert!(
+                sg_lang(name).is_ok(),
+                "sg_langs lists `{name}` but sg_lang rejects it"
+            );
         }
         assert_eq!(sg_langs().len(), SG_LANG_TABLE.len());
     }
@@ -279,24 +305,31 @@ mod tests {
             // (lang, source, pattern) — pattern must produce >=1 hit. Patterns are
             // grammar-tuned: css declarations need the trailing `;` to parse as a
             // declaration node, php's `$x` is the whole variable node (no `$$$`).
-            ("css",     ".card { position: fixed; }", "$PROP: $VAL;"),
-            ("html",    "<div class=\"x\">hi</div>",  "<div class=\"x\">hi</div>"),
-            ("bash",    "echo hello",                 "echo $ARG"),
-            ("csharp",  "class C { }",                "class $NAME { }"),
-            ("java",    "class C { }",                "class $NAME { }"),
-            ("scala",   "object O { }",               "object $NAME { }"),
-            ("swift",   "let x = 1",                   "let $NAME = $VAL"),
-            ("ruby",    "def f; end",                 "def $NAME; end"),
-            ("php",     "<?php $x = 1;",              "$VAR = $V"),
-            ("lua",     "local x = 1",                 "local $NAME = $VAL"),
-            ("elixir",  "x = 1",                       "$NAME = $VAL"),
-            ("haskell", "main = putStrLn x",           "main = $BODY"),
-            ("yaml",    "key: value",                  "$K: $V"),
+            ("css", ".card { position: fixed; }", "$PROP: $VAL;"),
+            (
+                "html",
+                "<div class=\"x\">hi</div>",
+                "<div class=\"x\">hi</div>",
+            ),
+            ("bash", "echo hello", "echo $ARG"),
+            ("csharp", "class C { }", "class $NAME { }"),
+            ("java", "class C { }", "class $NAME { }"),
+            ("scala", "object O { }", "object $NAME { }"),
+            ("swift", "let x = 1", "let $NAME = $VAL"),
+            ("ruby", "def f; end", "def $NAME; end"),
+            ("php", "<?php $x = 1;", "$VAR = $V"),
+            ("lua", "local x = 1", "local $NAME = $VAL"),
+            ("elixir", "x = 1", "$NAME = $VAL"),
+            ("haskell", "main = putStrLn x", "main = $BODY"),
+            ("yaml", "key: value", "$K: $V"),
         ];
         for (lang, src, pat) in cases {
-            let hits = run_sg(src, lang, pat)
-                .unwrap_or_else(|e| panic!("run_sg({lang}) errored: {e}"));
-            assert!(!hits.is_empty(), "pattern `{pat}` matched nothing in {lang} source `{src}`");
+            let hits =
+                run_sg(src, lang, pat).unwrap_or_else(|e| panic!("run_sg({lang}) errored: {e}"));
+            assert!(
+                !hits.is_empty(),
+                "pattern `{pat}` matched nothing in {lang} source `{src}`"
+            );
         }
     }
 
@@ -311,10 +344,15 @@ mod tests {
         let css_body = "position: fixed;\ncolor: red;";
         let hits = run_sg(css_body, "css", "$PROP: $VAL;").unwrap();
         assert_eq!(hits.len(), 2, "expected two declarations");
-        let position = hits.iter().find(|h| {
-            h.6.iter().any(|(n, t, ..)| n == "PROP" && t == "position")
-        }).expect("a position declaration");
-        let val = position.6.iter().find(|(n, ..)| n == "VAL").map(|(_, t, ..)| t.as_str());
+        let position = hits
+            .iter()
+            .find(|h| h.6.iter().any(|(n, t, ..)| n == "PROP" && t == "position"))
+            .expect("a position declaration");
+        let val = position
+            .6
+            .iter()
+            .find(|(n, ..)| n == "VAL")
+            .map(|(_, t, ..)| t.as_str());
         assert_eq!(val, Some("fixed"));
     }
 }

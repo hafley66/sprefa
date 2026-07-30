@@ -25,10 +25,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -38,8 +41,12 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("run git");
-    assert!(out.status.success(), "git {args:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?} failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -72,11 +79,23 @@ fn changed_line_lists_edited_lines_only() {
     let d = fixture("list");
     let (code, out, err) = run(&d, "? changed_line(p, l).\n", &[]);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("src/edited.rs\t2"), "appended line 2 must appear:\n{out}");
-    assert!(out.contains("src/new.rs\t1"), "untracked file's line must appear:\n{out}");
-    assert!(!out.contains("src/clean.rs"), "clean file must not appear:\n{out}");
+    assert!(
+        out.contains("src/edited.rs\t2"),
+        "appended line 2 must appear:\n{out}"
+    );
+    assert!(
+        out.contains("src/new.rs\t1"),
+        "untracked file's line must appear:\n{out}"
+    );
+    assert!(
+        !out.contains("src/clean.rs"),
+        "clean file must not appear:\n{out}"
+    );
     // precision: line 1 of edited.rs is unchanged even though the file is touched
-    assert!(!out.contains("src/edited.rs\t1"), "unchanged line 1 must not appear:\n{out}");
+    assert!(
+        !out.contains("src/edited.rs\t1"),
+        "unchanged line 1 must not appear:\n{out}"
+    );
 }
 
 /// (2) The rails shape tightened to line scope: a /fn / hit on every line joined
@@ -91,14 +110,29 @@ fn rail_joined_with_changed_line_scopes_to_the_edited_line() {
         "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /fn /, l).\n",
         "diag(path: p, line: l, severity: \"error\", code: \"rail\", msg: \"hit on changed line\") <- hit(p, l), changed_line(p, l).\n",
     );
-    let (code, out, _err) = run(&d, &format!("{prog}? diag(path: p, line: l, severity: s, code: c, msg: m).\n"), &[]);
+    let (code, out, _err) = run(
+        &d,
+        &format!("{prog}? diag(path: p, line: l, severity: s, code: c, msg: m).\n"),
+        &[],
+    );
     assert_eq!(code, 0);
-    assert!(out.contains("src/edited.rs\t2"), "the appended line must trip the rail:\n{out}");
-    assert!(out.contains("src/new.rs\t1"), "the untracked file must trip the rail:\n{out}");
-    assert!(!out.contains("src/clean.rs"), "clean file must not trip the rail:\n{out}");
+    assert!(
+        out.contains("src/edited.rs\t2"),
+        "the appended line must trip the rail:\n{out}"
+    );
+    assert!(
+        out.contains("src/new.rs\t1"),
+        "the untracked file must trip the rail:\n{out}"
+    );
+    assert!(
+        !out.contains("src/clean.rs"),
+        "clean file must not trip the rail:\n{out}"
+    );
     // the precision win: edited.rs is touched but its unchanged line 1 stays silent
-    assert!(!out.contains("src/edited.rs\t1"),
-        "line-scope rail must skip the unchanged line 1 of a touched file:\n{out}");
+    assert!(
+        !out.contains("src/edited.rs\t1"),
+        "line-scope rail must skip the unchanged line 1 of a touched file:\n{out}"
+    );
 }
 
 /// (3) Outside a git repo the relation is empty (no error).
@@ -118,5 +152,8 @@ fn changed_line_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel changed_line(p: text, l: int).\n", &[]);
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }

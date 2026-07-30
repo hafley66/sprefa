@@ -149,9 +149,16 @@ impl<'a> SqliteStageSink<'a> {
         let values: Vec<Vec<Value>> = self
             .rows
             .drain(..)
-            .map(|row| vec![Value::Text(row.scope), Value::Text(row.name), Value::Int(row.value)])
+            .map(|row| {
+                vec![
+                    Value::Text(row.scope),
+                    Value::Text(row.name),
+                    Value::Int(row.value),
+                ]
+            })
             .collect();
-        self.db.insert_rows("_next", &["scope", "name", "value"], &values)?;
+        self.db
+            .insert_rows("_next", &["scope", "name", "value"], &values)?;
         self.stats.rows_flushed += attempted;
         self.buffered_bytes = 0;
         self.stats.flushes += 1;
@@ -194,7 +201,9 @@ impl StagedDeltaHarness {
     }
 
     fn open_file(path: &Path) -> Result<Self, StageError> {
-        let path_str = path.to_str().expect("stage harness path must be valid UTF-8");
+        let path_str = path
+            .to_str()
+            .expect("stage harness path must be valid UTF-8");
         Self::from_db(crate::db::open(Some(path_str))?)
     }
 
@@ -209,13 +218,16 @@ impl StagedDeltaHarness {
         }
         let values: Vec<Vec<Value>> = rows
             .iter()
-            .map(|row| vec![
-                Value::Text(row.scope.clone()),
-                Value::Text(row.name.clone()),
-                Value::Int(row.value),
-            ])
+            .map(|row| {
+                vec![
+                    Value::Text(row.scope.clone()),
+                    Value::Text(row.name.clone()),
+                    Value::Int(row.value),
+                ]
+            })
             .collect();
-        self.db.insert_rows("rel_fixture", &["scope", "name", "value"], &values)?;
+        self.db
+            .insert_rows("rel_fixture", &["scope", "name", "value"], &values)?;
         Ok(())
     }
 
@@ -238,9 +250,15 @@ impl StagedDeltaHarness {
         if !changed.is_empty() {
             let values: Vec<Vec<Value>> = changed
                 .iter()
-                .map(|key| vec![Value::Text(key.scope.clone()), Value::Text(key.name.clone())])
+                .map(|key| {
+                    vec![
+                        Value::Text(key.scope.clone()),
+                        Value::Text(key.name.clone()),
+                    ]
+                })
                 .collect();
-            self.db.insert_rows("_changed_key", &["scope", "name"], &values)?;
+            self.db
+                .insert_rows("_changed_key", &["scope", "name"], &values)?;
         }
         let mut sink = SqliteStageSink::new(&self.db, limits)?;
         for row in next {
@@ -277,7 +295,8 @@ impl StagedDeltaHarness {
     }
 
     fn abort_stage(&self) -> Result<(), StageError> {
-        self.db.exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
+        self.db
+            .exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
         Ok(())
     }
 
@@ -344,7 +363,8 @@ impl StagedDeltaHarness {
                  generation = excluded.generation, digest = excluded.digest",
             &[ready.generation.into(), ready.digest.to_vec().into()],
         )?;
-        self.db.exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
+        self.db
+            .exec_on("_stage_ready", "DELETE FROM _stage_ready")?;
         if fail == FailPoint::AfterManifestWatermark {
             return Err(StageError::Injected(fail));
         }
@@ -434,13 +454,25 @@ enum StageError {
     /// carrying the failing rel + statement head — see `db::sql_err`).
     Sqlite(anyhow::Error),
     InvalidLimits,
-    RowTooLarge { bytes: usize, limit: usize },
+    RowTooLarge {
+        bytes: usize,
+        limit: usize,
+    },
     IdentityTooLarge,
     StageNotReady,
     StageSealMismatch,
-    RowOutsideChangedKey { scope: String, name: String },
-    ApplyCount { expected: usize, actual: usize },
-    Plan { label: &'static str, detail: String },
+    RowOutsideChangedKey {
+        scope: String,
+        name: String,
+    },
+    ApplyCount {
+        expected: usize,
+        actual: usize,
+    },
+    Plan {
+        label: &'static str,
+        detail: String,
+    },
     Injected(FailPoint),
 }
 

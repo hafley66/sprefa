@@ -27,22 +27,31 @@ fn fmt_of(path: &str) -> Fmt {
 /// Extract leaf values along a dotted path from a json/yaml/toml/jsonl file.
 pub fn run_data(path: &str, content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
     let fmt = fmt_of(path);
-    if fmt == Fmt::Jsonl { return run_data_jsonl(content, jpath); }
+    if fmt == Fmt::Jsonl {
+        return run_data_jsonl(content, jpath);
+    }
     let lang: tree_sitter::Language = match fmt {
         Fmt::Json | Fmt::Jsonl => tree_sitter_json::LANGUAGE.into(),
         Fmt::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Fmt::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
     };
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&lang).is_err() { return vec![]; }
-    let tree = match parser.parse(content, None) { Some(t) => t, None => return vec![] };
+    if parser.set_language(&lang).is_err() {
+        return vec![];
+    }
+    let tree = match parser.parse(content, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
     let src = content.as_bytes();
     let segs: Vec<&str> = jpath.split('.').collect();
     let mut hits: Vec<tree_sitter::Node> = Vec::new();
     for root in root_values(fmt, tree.root_node()) {
         descend(fmt, root, &segs, src, &mut hits);
     }
-    hits.iter().map(|n| value_text_span(fmt, *n, content)).collect()
+    hits.iter()
+        .map(|n| value_text_span(fmt, *n, content))
+        .collect()
 }
 
 /// JSONL: each non-empty line is an independent JSON document. Parse each,
@@ -50,7 +59,9 @@ pub fn run_data(path: &str, content: &str, jpath: &str) -> Vec<(String, usize, u
 fn run_data_jsonl(content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
     let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&lang).is_err() { return vec![]; }
+    if parser.set_language(&lang).is_err() {
+        return vec![];
+    }
     let segs: Vec<&str> = jpath.split('.').collect();
     let mut out: Vec<(String, usize, usize)> = Vec::new();
     let mut line_start = 0usize;
@@ -58,8 +69,13 @@ fn run_data_jsonl(content: &str, jpath: &str) -> Vec<(String, usize, usize)> {
         let ls = line_start;
         line_start += line.len() + 1;
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        let tree = match parser.parse(trimmed, None) { Some(t) => t, None => continue };
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tree = match parser.parse(trimmed, None) {
+            Some(t) => t,
+            None => continue,
+        };
         let src = trimmed.as_bytes();
         let mut hits: Vec<tree_sitter::Node> = Vec::new();
         for root in root_values(Fmt::Json, tree.root_node()) {
@@ -87,7 +103,9 @@ fn root_values<'a>(fmt: Fmt, root: tree_sitter::Node<'a>) -> Vec<tree_sitter::No
             let mut out = Vec::new();
             let mut c = root.walk();
             for doc in root.named_children(&mut c) {
-                if doc.kind() != "document" { continue; }
+                if doc.kind() != "document" {
+                    continue;
+                }
                 let mut dc = doc.walk();
                 for n in doc.named_children(&mut dc) {
                     if matches!(n.kind(), "block_node" | "flow_node") {
@@ -103,7 +121,10 @@ fn root_values<'a>(fmt: Fmt, root: tree_sitter::Node<'a>) -> Vec<tree_sitter::No
 /// Match the remaining path segments against a value node. Object entries may
 /// consume several segments at once (TOML dotted keys); arrays consume one.
 fn descend<'a>(
-    fmt: Fmt, node: tree_sitter::Node<'a>, segs: &[&str], src: &[u8],
+    fmt: Fmt,
+    node: tree_sitter::Node<'a>,
+    segs: &[&str],
+    src: &[u8],
     out: &mut Vec<tree_sitter::Node<'a>>,
 ) {
     if segs.is_empty() {
@@ -111,43 +132,61 @@ fn descend<'a>(
         return;
     }
     for (ksegs, v) in entries(fmt, node, src) {
-        if ksegs.len() <= segs.len()
-            && ksegs.iter().zip(segs).all(|(k, s)| *s == "*" || k == s)
-        {
+        if ksegs.len() <= segs.len() && ksegs.iter().zip(segs).all(|(k, s)| *s == "*" || k == s) {
             descend(fmt, v, &segs[ksegs.len()..], src, out);
         }
     }
     let items = items(fmt, node);
     if segs[0] == "*" {
-        for it in items { descend(fmt, it, &segs[1..], src, out); }
+        for it in items {
+            descend(fmt, it, &segs[1..], src, out);
+        }
     } else if let Ok(idx) = segs[0].parse::<usize>() {
-        if let Some(it) = items.get(idx) { descend(fmt, *it, &segs[1..], src, out); }
+        if let Some(it) = items.get(idx) {
+            descend(fmt, *it, &segs[1..], src, out);
+        }
     }
 }
 
 /// Key/value pairs of an object node. Keys come pre-split into segments: one
 /// for json/yaml, one per part for a TOML dotted key.
 fn entries<'a>(
-    fmt: Fmt, node: tree_sitter::Node<'a>, src: &[u8],
+    fmt: Fmt,
+    node: tree_sitter::Node<'a>,
+    src: &[u8],
 ) -> Vec<(Vec<String>, tree_sitter::Node<'a>)> {
     let mut out = Vec::new();
     match fmt {
         Fmt::Json | Fmt::Jsonl => {
-            if node.kind() != "object" { return out; }
+            if node.kind() != "object" {
+                return out;
+            }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {
-                if pair.kind() != "pair" { continue; }
-                if let (Some(k), Some(v)) = (pair.child_by_field_name("key"), pair.child_by_field_name("value")) {
+                if pair.kind() != "pair" {
+                    continue;
+                }
+                if let (Some(k), Some(v)) = (
+                    pair.child_by_field_name("key"),
+                    pair.child_by_field_name("value"),
+                ) {
                     out.push((vec![json_str_value(k, src)], v));
                 }
             }
         }
         Fmt::Yaml => {
-            if !matches!(node.kind(), "block_mapping" | "flow_mapping") { return out; }
+            if !matches!(node.kind(), "block_mapping" | "flow_mapping") {
+                return out;
+            }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {
-                if !matches!(pair.kind(), "block_mapping_pair" | "flow_pair") { continue; }
-                if let (Some(k), Some(v)) = (pair.child_by_field_name("key"), pair.child_by_field_name("value")) {
+                if !matches!(pair.kind(), "block_mapping_pair" | "flow_pair") {
+                    continue;
+                }
+                if let (Some(k), Some(v)) = (
+                    pair.child_by_field_name("key"),
+                    pair.child_by_field_name("value"),
+                ) {
                     out.push((vec![yaml_scalar_text(yaml_unwrap(k), src)], yaml_unwrap(v)));
                 }
             }
@@ -172,7 +211,9 @@ fn entries<'a>(
             "table" | "table_array_element" | "inline_table" => {
                 let mut c = node.walk();
                 for child in node.named_children(&mut c) {
-                    if child.kind() == "pair" { out.extend(toml_pair(child, src)); }
+                    if child.kind() == "pair" {
+                        out.extend(toml_pair(child, src));
+                    }
                 }
             }
             _ => {}
@@ -186,17 +227,23 @@ fn items<'a>(fmt: Fmt, node: tree_sitter::Node<'a>) -> Vec<tree_sitter::Node<'a>
     let mut out = Vec::new();
     match fmt {
         Fmt::Json | Fmt::Jsonl | Fmt::Toml => {
-            if node.kind() != "array" { return out; }
+            if node.kind() != "array" {
+                return out;
+            }
             let mut c = node.walk();
             out.extend(node.named_children(&mut c));
         }
         Fmt::Yaml => {
-            if !matches!(node.kind(), "block_sequence" | "flow_sequence") { return out; }
+            if !matches!(node.kind(), "block_sequence" | "flow_sequence") {
+                return out;
+            }
             let mut c = node.walk();
             for child in node.named_children(&mut c) {
                 match child.kind() {
                     "block_sequence_item" => {
-                        if let Some(inner) = child.named_child(0) { out.push(yaml_unwrap(inner)); }
+                        if let Some(inner) = child.named_child(0) {
+                            out.push(yaml_unwrap(inner));
+                        }
                     }
                     "flow_node" => out.push(yaml_unwrap(child)),
                     _ => {}
@@ -213,12 +260,21 @@ fn value_text_span(fmt: Fmt, n: tree_sitter::Node, content: &str) -> (String, us
     let (lo, hi) = (n.start_byte(), n.end_byte());
     let raw = &content[lo..hi];
     match fmt {
-        Fmt::Json | Fmt::Jsonl if n.kind() == "string" && hi - lo >= 2 =>
-            (json_unescape(&raw[1..raw.len() - 1]), lo + 1, hi - 1),
-        Fmt::Yaml if matches!(n.kind(), "double_quote_scalar" | "single_quote_scalar") && hi - lo >= 2 =>
-            (yaml_scalar_text(n, content.as_bytes()), lo + 1, hi - 1),
+        Fmt::Json | Fmt::Jsonl if n.kind() == "string" && hi - lo >= 2 => {
+            (json_unescape(&raw[1..raw.len() - 1]), lo + 1, hi - 1)
+        }
+        Fmt::Yaml
+            if matches!(n.kind(), "double_quote_scalar" | "single_quote_scalar")
+                && hi - lo >= 2 =>
+        {
+            (yaml_scalar_text(n, content.as_bytes()), lo + 1, hi - 1)
+        }
         Fmt::Toml if n.kind() == "string" => {
-            let q = if raw.starts_with("\"\"\"") || raw.starts_with("'''") { 3 } else { 1 };
+            let q = if raw.starts_with("\"\"\"") || raw.starts_with("'''") {
+                3
+            } else {
+                1
+            };
             if raw.len() >= 2 * q {
                 (toml_unquote(raw), lo + q, hi - q)
             } else {
@@ -242,11 +298,16 @@ fn json_str_value(n: tree_sitter::Node, src: &[u8]) -> String {
 }
 
 fn json_unescape(s: &str) -> String {
-    if !s.contains('\\') { return s.to_string(); }
+    if !s.contains('\\') {
+        return s.to_string();
+    }
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
-        if c != '\\' { out.push(c); continue; }
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
         match chars.next() {
             Some('n') => out.push('\n'),
             Some('t') => out.push('\t'),
@@ -254,7 +315,10 @@ fn json_unescape(s: &str) -> String {
             Some('"') => out.push('"'),
             Some('\\') => out.push('\\'),
             Some('/') => out.push('/'),
-            Some(o) => { out.push('\\'); out.push(o); }
+            Some(o) => {
+                out.push('\\');
+                out.push(o);
+            }
             None => out.push('\\'),
         }
     }
@@ -266,10 +330,14 @@ fn json_unescape(s: &str) -> String {
 /// Strip the grammar's block_node/flow_node wrapper (skipping anchor/tag) to
 /// the payload mapping/sequence/scalar.
 fn yaml_unwrap(n: tree_sitter::Node) -> tree_sitter::Node {
-    if !matches!(n.kind(), "block_node" | "flow_node") { return n; }
+    if !matches!(n.kind(), "block_node" | "flow_node") {
+        return n;
+    }
     let mut c = n.walk();
     for child in n.named_children(&mut c) {
-        if !matches!(child.kind(), "anchor" | "tag") { return child; }
+        if !matches!(child.kind(), "anchor" | "tag") {
+            return child;
+        }
     }
     n
 }
@@ -296,11 +364,20 @@ fn yaml_scalar_text(n: tree_sitter::Node, src: &[u8]) -> String {
 // ── toml ─────────────────────────────────────────────────────────────────────
 
 /// A `pair` as (key segments, value node). The key may be dotted.
-fn toml_pair<'a>(pair: tree_sitter::Node<'a>, src: &[u8]) -> Option<(Vec<String>, tree_sitter::Node<'a>)> {
+fn toml_pair<'a>(
+    pair: tree_sitter::Node<'a>,
+    src: &[u8],
+) -> Option<(Vec<String>, tree_sitter::Node<'a>)> {
     let k = toml_key_node(pair)?;
     let mut c = pair.walk();
-    let v = pair.named_children(&mut c)
-        .filter(|n| !matches!(n.kind(), "bare_key" | "dotted_key" | "quoted_key" | "comment"))
+    let v = pair
+        .named_children(&mut c)
+        .filter(|n| {
+            !matches!(
+                n.kind(),
+                "bare_key" | "dotted_key" | "quoted_key" | "comment"
+            )
+        })
         .last()?;
     Some((toml_key_segs(k, src), v))
 }
@@ -308,7 +385,8 @@ fn toml_pair<'a>(pair: tree_sitter::Node<'a>, src: &[u8]) -> Option<(Vec<String>
 /// The key node of a pair / table header (first key-kind child).
 fn toml_key_node(n: tree_sitter::Node) -> Option<tree_sitter::Node> {
     let mut c = n.walk();
-    let found = n.named_children(&mut c)
+    let found = n
+        .named_children(&mut c)
         .find(|child| matches!(child.kind(), "bare_key" | "dotted_key" | "quoted_key"));
     found
 }
@@ -317,7 +395,11 @@ fn toml_key_node(n: tree_sitter::Node) -> Option<tree_sitter::Node> {
 fn toml_key_segs(k: tree_sitter::Node, src: &[u8]) -> Vec<String> {
     let part = |n: tree_sitter::Node| {
         let raw = String::from_utf8_lossy(&src[n.start_byte()..n.end_byte()]).into_owned();
-        if n.kind() == "quoted_key" { toml_unquote(&raw) } else { raw }
+        if n.kind() == "quoted_key" {
+            toml_unquote(&raw)
+        } else {
+            raw
+        }
     };
     if k.kind() == "dotted_key" {
         let mut segs = Vec::new();
@@ -327,7 +409,11 @@ fn toml_key_segs(k: tree_sitter::Node, src: &[u8]) -> Vec<String> {
             let mut c = n.walk();
             let kids: Vec<_> = n.named_children(&mut c).collect();
             for child in kids.into_iter().rev() {
-                if child.kind() == "dotted_key" { stack.push(child); } else { segs.push(part(child)); }
+                if child.kind() == "dotted_key" {
+                    stack.push(child);
+                } else {
+                    segs.push(part(child));
+                }
             }
         }
         segs.reverse();
@@ -338,10 +424,19 @@ fn toml_key_segs(k: tree_sitter::Node, src: &[u8]) -> Vec<String> {
 }
 
 fn toml_unquote(s: &str) -> String {
-    for (open, close) in [("\"\"\"", "\"\"\""), ("'''", "'''"), ("\"", "\""), ("'", "'")] {
+    for (open, close) in [
+        ("\"\"\"", "\"\"\""),
+        ("'''", "'''"),
+        ("\"", "\""),
+        ("'", "'"),
+    ] {
         if s.len() >= open.len() + close.len() && s.starts_with(open) && s.ends_with(close) {
             let inner = &s[open.len()..s.len() - close.len()];
-            return if open.starts_with('"') { json_unescape(inner) } else { inner.to_string() };
+            return if open.starts_with('"') {
+                json_unescape(inner)
+            } else {
+                inner.to_string()
+            };
         }
     }
     s.to_string()
@@ -384,7 +479,9 @@ pub enum Step {
     /// Value position: pattern over the value text (a quoted string containing `$`).
     LeafPattern { pattern: String },
     /// Object pattern: each entry is (key matcher, sub-pattern).
-    Object { entries: Vec<(KeyMatcher, Vec<Step>)> },
+    Object {
+        entries: Vec<(KeyMatcher, Vec<Step>)>,
+    },
     /// Array spread: `[... pattern]`.
     Array { item: Vec<Step> },
 }
@@ -405,26 +502,44 @@ pub enum KeyMatcher {
 /// Parse a brace pattern body into (top steps, capture names in first-seen order).
 /// Capture names are deduped; a repeated `$NAME` is the same var referenced twice.
 pub fn parse_pattern(body: &str) -> Result<(Vec<Step>, Vec<String>), String> {
-    let mut p = PatParser { src: body, pos: 0, caps: Vec::new() };
+    let mut p = PatParser {
+        src: body,
+        pos: 0,
+        caps: Vec::new(),
+    };
     let steps = p.pattern()?;
     p.ws();
     let rest = p.src[p.pos..].trim();
     if !rest.is_empty() {
-        return Err(format!("unexpected trailing content in json pattern: {:?}", rest));
+        return Err(format!(
+            "unexpected trailing content in json pattern: {:?}",
+            rest
+        ));
     }
     let mut seen: Vec<String> = Vec::new();
     for c in p.caps {
-        if !seen.contains(&c) { seen.push(c); }
+        if !seen.contains(&c) {
+            seen.push(c);
+        }
     }
     Ok((steps, seen))
 }
 
-enum Dollar { Wildcard, Name(String) }
+enum Dollar {
+    Wildcard,
+    Name(String),
+}
 
-struct PatParser<'a> { src: &'a str, pos: usize, caps: Vec<String> }
+struct PatParser<'a> {
+    src: &'a str,
+    pos: usize,
+    caps: Vec<String>,
+}
 
 impl<'a> PatParser<'a> {
-    fn b(&self) -> &'a [u8] { self.src.as_bytes() }
+    fn b(&self) -> &'a [u8] {
+        self.src.as_bytes()
+    }
 
     fn ws(&mut self) {
         while self.pos < self.src.len() && self.b()[self.pos].is_ascii_whitespace() {
@@ -432,17 +547,30 @@ impl<'a> PatParser<'a> {
         }
     }
 
-    fn peek(&self) -> Option<u8> { self.b().get(self.pos).copied() }
+    fn peek(&self) -> Option<u8> {
+        self.b().get(self.pos).copied()
+    }
 
     fn expect(&mut self, expected: u8) -> Result<(), String> {
         match self.peek() {
-            Some(b) if b == expected => { self.pos += 1; Ok(()) }
-            Some(b) => Err(format!("expected {:?}, found {:?}", expected as char, b as char)),
-            None => Err(format!("expected {:?}, found end of input", expected as char)),
+            Some(b) if b == expected => {
+                self.pos += 1;
+                Ok(())
+            }
+            Some(b) => Err(format!(
+                "expected {:?}, found {:?}",
+                expected as char, b as char
+            )),
+            None => Err(format!(
+                "expected {:?}, found end of input",
+                expected as char
+            )),
         }
     }
 
-    fn record(&mut self, name: &str) { self.caps.push(name.to_string()); }
+    fn record(&mut self, name: &str) {
+        self.caps.push(name.to_string());
+    }
 
     fn pattern(&mut self) -> Result<Vec<Step>, String> {
         self.ws();
@@ -463,7 +591,9 @@ impl<'a> PatParser<'a> {
         self.ws();
         if self.peek() == Some(b'}') {
             self.pos += 1;
-            return Ok(vec![Step::Object { entries: Vec::new() }]);
+            return Ok(vec![Step::Object {
+                entries: Vec::new(),
+            }]);
         }
         let mut entries: Vec<(KeyMatcher, Vec<Step>)> = Vec::new();
         loop {
@@ -472,11 +602,16 @@ impl<'a> PatParser<'a> {
             // `**` consumes the rest of the object as recursive descent.
             if matches!(key, KeyMatcher::Exact(ref s) if s == "**") {
                 self.ws();
-                if self.peek() == Some(b',') { self.pos += 1; }
+                if self.peek() == Some(b',') {
+                    self.pos += 1;
+                }
                 self.ws();
                 self.expect(b'}')?;
-                let mut steps = if entries.is_empty() { Vec::new() }
-                                else { vec![Step::Object { entries }] };
+                let mut steps = if entries.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![Step::Object { entries }]
+                };
                 steps.push(Step::Any);
                 steps.extend(value);
                 return Ok(steps);
@@ -484,9 +619,19 @@ impl<'a> PatParser<'a> {
             entries.push((key, value));
             self.ws();
             match self.peek() {
-                Some(b',') => { self.pos += 1; }
-                Some(b'}') => { self.pos += 1; break; }
-                Some(c) => return Err(format!("expected `,` or `}}` in object, found {:?}", c as char)),
+                Some(b',') => {
+                    self.pos += 1;
+                }
+                Some(b'}') => {
+                    self.pos += 1;
+                    break;
+                }
+                Some(c) => {
+                    return Err(format!(
+                        "expected `,` or `}}` in object, found {:?}",
+                        c as char
+                    ))
+                }
                 None => return Err("unclosed `{` in json pattern".into()),
             }
         }
@@ -509,12 +654,18 @@ impl<'a> PatParser<'a> {
         if self.peek() == Some(b'"') {
             self.pos += 1;
             let start = self.pos;
-            while self.pos < self.src.len() && self.b()[self.pos] != b'"' { self.pos += 1; }
-            if self.pos >= self.src.len() { return Err("unclosed `\"` in key position".into()); }
+            while self.pos < self.src.len() && self.b()[self.pos] != b'"' {
+                self.pos += 1;
+            }
+            if self.pos >= self.src.len() {
+                return Err("unclosed `\"` in key position".into());
+            }
             let inner = self.src[start..self.pos].to_string();
             self.pos += 1;
             let m = key_classify(inner);
-            if let KeyMatcher::Capture(ref n) = m { self.record(n); }
+            if let KeyMatcher::Capture(ref n) = m {
+                self.record(n);
+            }
             return Ok(m);
         }
         // `**` recursive marker (valid only as the sole consuming key).
@@ -546,18 +697,27 @@ impl<'a> PatParser<'a> {
         // `$NAME` / `$_` capture key.
         if self.peek() == Some(b'$') {
             let m = match self.dollar_read()? {
-                Dollar::Name(n) => { self.record(&n); KeyMatcher::Capture(n) }
+                Dollar::Name(n) => {
+                    self.record(&n);
+                    KeyMatcher::Capture(n)
+                }
                 Dollar::Wildcard => KeyMatcher::Wildcard,
             };
             return Ok(m);
         }
         // Bare key: read until the entry colon. Glob chars classify as Glob.
         let start = self.pos;
-        while self.pos < self.src.len() && self.b()[self.pos] != b':' { self.pos += 1; }
+        while self.pos < self.src.len() && self.b()[self.pos] != b':' {
+            self.pos += 1;
+        }
         let s = self.src[start..self.pos].trim();
-        if s.is_empty() { return Err("empty key in json pattern".into()); }
+        if s.is_empty() {
+            return Err("empty key in json pattern".into());
+        }
         let m = key_classify(s.to_string());
-        if let KeyMatcher::Capture(ref n) = m { self.record(n); }
+        if let KeyMatcher::Capture(ref n) = m {
+            self.record(n);
+        }
         Ok(m)
     }
 
@@ -577,7 +737,10 @@ impl<'a> PatParser<'a> {
     /// Value-position `$...`: `$_` (wildcard leaf) or `$NAME`/`${NAME}` (capture).
     fn value_dollar(&mut self) -> Result<Vec<Step>, String> {
         let leaf = match self.dollar_read()? {
-            Dollar::Name(n) => { self.record(&n); Step::Leaf { capture: Some(n) } }
+            Dollar::Name(n) => {
+                self.record(&n);
+                Step::Leaf { capture: Some(n) }
+            }
             Dollar::Wildcard => Step::Leaf { capture: None },
         };
         Ok(vec![leaf])
@@ -590,8 +753,12 @@ impl<'a> PatParser<'a> {
         if self.peek() == Some(b'{') {
             self.pos += 1;
             let start = self.pos;
-            while self.pos < self.src.len() && self.b()[self.pos] != b'}' { self.pos += 1; }
-            if self.pos >= self.src.len() { return Err("unclosed `${` in json pattern".into()); }
+            while self.pos < self.src.len() && self.b()[self.pos] != b'}' {
+                self.pos += 1;
+            }
+            if self.pos >= self.src.len() {
+                return Err("unclosed `${` in json pattern".into());
+            }
             let inner = self.src[start..self.pos].trim();
             self.pos += 1; // consume `}`
             let name = inner.strip_suffix('?').unwrap_or(inner);
@@ -610,15 +777,21 @@ impl<'a> PatParser<'a> {
             self.pos += 1;
         }
         let name = &self.src[start..self.pos];
-        if name.is_empty() { return Err("empty capture name after `$`".into()); }
+        if name.is_empty() {
+            return Err("empty capture name after `$`".into());
+        }
         Ok(Dollar::Name(validate_name(name)?.to_string()))
     }
 
     fn quoted_value(&mut self) -> Result<Vec<Step>, String> {
         self.pos += 1; // consume opening `"`
         let start = self.pos;
-        while self.pos < self.src.len() && self.b()[self.pos] != b'"' { self.pos += 1; }
-        if self.pos >= self.src.len() { return Err("unclosed `\"` in json pattern".into()); }
+        while self.pos < self.src.len() && self.b()[self.pos] != b'"' {
+            self.pos += 1;
+        }
+        if self.pos >= self.src.len() {
+            return Err("unclosed `\"` in json pattern".into());
+        }
         let content = self.src[start..self.pos].to_string();
         self.pos += 1; // consume closing `"`
         Ok(vec![if content.contains('$') {
@@ -637,8 +810,12 @@ impl<'a> PatParser<'a> {
             }
         }
         let text = self.src[start..self.pos].trim();
-        if text.is_empty() { return Err("empty value in json pattern".into()); }
-        Ok(vec![Step::LeafEq { text: text.to_string() }])
+        if text.is_empty() {
+            return Err("empty value in json pattern".into());
+        }
+        Ok(vec![Step::LeafEq {
+            text: text.to_string(),
+        }])
     }
 }
 
@@ -659,9 +836,11 @@ fn validate_name(name: &str) -> Result<&str, String> {
 fn key_classify(s: String) -> KeyMatcher {
     if s == "$_" {
         KeyMatcher::Wildcard
-    } else if s.starts_with('$') && s.len() > 1
+    } else if s.starts_with('$')
+        && s.len() > 1
         && s[1..].starts_with(|c: char| c.is_ascii_uppercase())
-        && !s.contains('/') && !s.contains(':')
+        && !s.contains('/')
+        && !s.contains(':')
     {
         KeyMatcher::Capture(s[1..].to_string())
     } else if s.contains('*') || s.contains('?') || s.contains('[') || s.contains('$') {
@@ -683,15 +862,22 @@ pub type Binding = (String, String, usize, usize);
 /// the same `Step` IR later without touching the parser or this walker's core.
 pub fn run_pattern(path: &str, content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
     let fmt = fmt_of(path);
-    if fmt == Fmt::Jsonl { return run_pattern_jsonl(content, steps); }
+    if fmt == Fmt::Jsonl {
+        return run_pattern_jsonl(content, steps);
+    }
     let lang: tree_sitter::Language = match fmt {
         Fmt::Json | Fmt::Jsonl => tree_sitter_json::LANGUAGE.into(),
         Fmt::Yaml => tree_sitter_yaml::LANGUAGE.into(),
         Fmt::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
     };
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&lang).is_err() { return vec![]; }
-    let tree = match parser.parse(content, None) { Some(t) => t, None => return vec![] };
+    if parser.set_language(&lang).is_err() {
+        return vec![];
+    }
+    let tree = match parser.parse(content, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
     let src = content.as_bytes();
     let mut out: Vec<Vec<Binding>> = Vec::new();
     for root in root_values(fmt, tree.root_node()) {
@@ -704,15 +890,22 @@ pub fn run_pattern(path: &str, content: &str, steps: &[Step]) -> Vec<Vec<Binding
 fn run_pattern_jsonl(content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
     let lang: tree_sitter::Language = tree_sitter_json::LANGUAGE.into();
     let mut parser = tree_sitter::Parser::new();
-    if parser.set_language(&lang).is_err() { return vec![]; }
+    if parser.set_language(&lang).is_err() {
+        return vec![];
+    }
     let mut out: Vec<Vec<Binding>> = Vec::new();
     let mut line_start = 0usize;
     for line in content.lines() {
         let ls = line_start;
         line_start += line.len() + 1;
         let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        let tree = match parser.parse(trimmed, None) { Some(t) => t, None => continue };
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tree = match parser.parse(trimmed, None) {
+            Some(t) => t,
+            None => continue,
+        };
         let src = trimmed.as_bytes();
         let leading_ws = line.len() - line.trim_start().len();
         let base = ls + leading_ws;
@@ -720,7 +913,12 @@ fn run_pattern_jsonl(content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
             let mut batch: Vec<Vec<Binding>> = Vec::new();
             walk_steps(Fmt::Json, root, steps, src, trimmed, Vec::new(), &mut batch);
             for binds in batch {
-                out.push(binds.into_iter().map(|(n, t, lo, hi)| (n, t, lo + base, hi + base)).collect());
+                out.push(
+                    binds
+                        .into_iter()
+                        .map(|(n, t, lo, hi)| (n, t, lo + base, hi + base))
+                        .collect(),
+                );
             }
         }
     }
@@ -728,9 +926,13 @@ fn run_pattern_jsonl(content: &str, steps: &[Step]) -> Vec<Vec<Binding>> {
 }
 
 fn walk_steps<'a>(
-    fmt: Fmt, node: tree_sitter::Node<'a>, steps: &[Step],
-    src: &'a [u8], content: &str,
-    binds: Vec<Binding>, out: &mut Vec<Vec<Binding>>,
+    fmt: Fmt,
+    node: tree_sitter::Node<'a>,
+    steps: &[Step],
+    src: &'a [u8],
+    content: &str,
+    binds: Vec<Binding>,
+    out: &mut Vec<Vec<Binding>>,
 ) {
     if steps.is_empty() {
         out.push(binds);
@@ -748,13 +950,17 @@ fn walk_steps<'a>(
         }
         Step::LeafEq { text } => {
             let (t, _, _) = value_text_span(fmt, node, content);
-            if t == *text { walk_steps(fmt, node, &steps[1..], src, content, binds, out); }
+            if t == *text {
+                walk_steps(fmt, node, &steps[1..], src, content, binds, out);
+            }
         }
         Step::LeafPattern { pattern } => {
             // A quoted value containing `$`: matched literally (including the
             // `$`) for now. A real interpolation matcher is a follow-up.
             let (t, _, _) = value_text_span(fmt, node, content);
-            if t == *pattern { walk_steps(fmt, node, &steps[1..], src, content, binds, out); }
+            if t == *pattern {
+                walk_steps(fmt, node, &steps[1..], src, content, binds, out);
+            }
         }
         Step::Array { item } => {
             for elem in items(fmt, node) {
@@ -781,13 +987,19 @@ fn walk_steps<'a>(
 /// conjunctive (bind each Exact key's leaf value, emit one match). Mixed and
 /// nested multi-entry patterns generalize in Step 5 via continuation-passing.
 fn walk_object<'a>(
-    fmt: Fmt, node: tree_sitter::Node<'a>, entries: &[(KeyMatcher, Vec<Step>)],
-    src: &'a [u8], content: &str,
-    binds: Vec<Binding>, out: &mut Vec<Vec<Binding>>,
+    fmt: Fmt,
+    node: tree_sitter::Node<'a>,
+    entries: &[(KeyMatcher, Vec<Step>)],
+    src: &'a [u8],
+    content: &str,
+    binds: Vec<Binding>,
+    out: &mut Vec<Vec<Binding>>,
 ) {
     let kds = entries_kd(fmt, node, src);
     if entries.is_empty() {
-        if is_container(fmt, node) { out.push(binds); }
+        if is_container(fmt, node) {
+            out.push(binds);
+        }
         return;
     }
     if entries.len() == 1 {
@@ -815,7 +1027,9 @@ fn walk_object<'a>(
             }
             KeyMatcher::Glob(g) => {
                 // `re:REGEX` or a glob (`*`/`?`); match keys, descend each hit.
-                let Some(re) = compile_key_matcher(g) else { return };
+                let Some(re) = compile_key_matcher(g) else {
+                    return;
+                };
                 for (kt, _, v) in &kds {
                     if re.is_match(kt) {
                         walk_steps(fmt, *v, vpat, src, content, binds.clone(), out);
@@ -842,7 +1056,9 @@ fn walk_object<'a>(
         for b in &frontier {
             walk_object_entry(fmt, &kds, km, vpat, src, content, b.clone(), &mut next);
         }
-        if next.is_empty() { return; }
+        if next.is_empty() {
+            return;
+        }
         frontier = next;
     }
     out.extend(frontier);
@@ -855,9 +1071,12 @@ fn walk_object<'a>(
 fn walk_object_entry<'a>(
     fmt: Fmt,
     kds: &[(String, (usize, usize), tree_sitter::Node<'a>)],
-    km: &KeyMatcher, vpat: &[Step],
-    src: &'a [u8], content: &str,
-    binds: Vec<Binding>, out: &mut Vec<Vec<Binding>>,
+    km: &KeyMatcher,
+    vpat: &[Step],
+    src: &'a [u8],
+    content: &str,
+    binds: Vec<Binding>,
+    out: &mut Vec<Vec<Binding>>,
 ) {
     match km {
         KeyMatcher::Capture(name) => {
@@ -881,7 +1100,9 @@ fn walk_object_entry<'a>(
             }
         }
         KeyMatcher::Glob(g) => {
-            let Some(re) = compile_key_matcher(g) else { return };
+            let Some(re) = compile_key_matcher(g) else {
+                return;
+            };
             for (kt, _, v) in kds {
                 if re.is_match(kt) {
                     walk_steps(fmt, *v, vpat, src, content, binds.clone(), out);
@@ -943,33 +1164,49 @@ fn compile_key_matcher(g: &str) -> Option<regex::Regex> {
 /// Like `entries` but yields (joined key text, key byte span, value node) — the
 /// key span feeds capture binding (a captured key binds its text AND its span).
 fn entries_kd<'a>(
-    fmt: Fmt, node: tree_sitter::Node<'a>, src: &[u8],
+    fmt: Fmt,
+    node: tree_sitter::Node<'a>,
+    src: &[u8],
 ) -> Vec<(String, (usize, usize), tree_sitter::Node<'a>)> {
     let mut out = Vec::new();
     match fmt {
         Fmt::Json | Fmt::Jsonl => {
-            if node.kind() != "object" { return out; }
+            if node.kind() != "object" {
+                return out;
+            }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {
-                if pair.kind() != "pair" { continue; }
-                if let (Some(k), Some(v)) =
-                    (pair.child_by_field_name("key"), pair.child_by_field_name("value"))
-                {
+                if pair.kind() != "pair" {
+                    continue;
+                }
+                if let (Some(k), Some(v)) = (
+                    pair.child_by_field_name("key"),
+                    pair.child_by_field_name("value"),
+                ) {
                     out.push((json_str_value(k, src), (k.start_byte(), k.end_byte()), v));
                 }
             }
         }
         Fmt::Yaml => {
-            if !matches!(node.kind(), "block_mapping" | "flow_mapping") { return out; }
+            if !matches!(node.kind(), "block_mapping" | "flow_mapping") {
+                return out;
+            }
             let mut c = node.walk();
             for pair in node.named_children(&mut c) {
-                if !matches!(pair.kind(), "block_mapping_pair" | "flow_pair") { continue; }
-                if let (Some(k), Some(v)) =
-                    (pair.child_by_field_name("key"), pair.child_by_field_name("value"))
-                {
+                if !matches!(pair.kind(), "block_mapping_pair" | "flow_pair") {
+                    continue;
+                }
+                if let (Some(k), Some(v)) = (
+                    pair.child_by_field_name("key"),
+                    pair.child_by_field_name("value"),
+                ) {
                     let ku = yaml_unwrap(k);
                     let vu = yaml_unwrap(v);
-                    out.push((yaml_scalar_text(ku, src), (ku.start_byte(), ku.end_byte()), vu));
+                    out.push((
+                        yaml_scalar_text(ku, src),
+                        (ku.start_byte(), ku.end_byte()),
+                        vu,
+                    ));
                 }
             }
         }
@@ -978,7 +1215,11 @@ fn entries_kd<'a>(
                 let mut c = node.walk();
                 for child in node.named_children(&mut c) {
                     match child.kind() {
-                        "pair" => { if let Some(r) = toml_pair_kd(child, src) { out.push(r); } }
+                        "pair" => {
+                            if let Some(r) = toml_pair_kd(child, src) {
+                                out.push(r);
+                            }
+                        }
                         "table" | "table_array_element" => {
                             if let Some(k) = toml_key_node(child) {
                                 let kt = toml_key_segs(k, src).join(".");
@@ -993,7 +1234,9 @@ fn entries_kd<'a>(
                 let mut c = node.walk();
                 for child in node.named_children(&mut c) {
                     if child.kind() == "pair" {
-                        if let Some(r) = toml_pair_kd(child, src) { out.push(r); }
+                        if let Some(r) = toml_pair_kd(child, src) {
+                            out.push(r);
+                        }
                     }
                 }
             }
@@ -1005,7 +1248,8 @@ fn entries_kd<'a>(
 
 /// A toml `pair` as (joined key text, key span, value node).
 fn toml_pair_kd<'a>(
-    pair: tree_sitter::Node<'a>, src: &[u8],
+    pair: tree_sitter::Node<'a>,
+    src: &[u8],
 ) -> Option<(String, (usize, usize), tree_sitter::Node<'a>)> {
     let k = toml_key_node(pair)?;
     let kt = toml_key_segs(k, src).join(".");
@@ -1013,7 +1257,12 @@ fn toml_pair_kd<'a>(
     let mut c = pair.walk();
     let v = pair
         .named_children(&mut c)
-        .filter(|n| !matches!(n.kind(), "bare_key" | "dotted_key" | "quoted_key" | "comment"))
+        .filter(|n| {
+            !matches!(
+                n.kind(),
+                "bare_key" | "dotted_key" | "quoted_key" | "comment"
+            )
+        })
         .last()?;
     Some((kt, ks, v))
 }
@@ -1159,8 +1408,10 @@ mod run_pattern_tests {
     fn captured_key_and_value_iterates_entries() {
         let ms = run("{ $k: $v }", r#"{"name":"x","age":7}"#);
         assert_eq!(ms.len(), 2, "{:?}", ms);
-        let by_key: HashMap<String, String> =
-            ms.iter().map(|m| (m["k"].clone(), m["v"].clone())).collect();
+        let by_key: HashMap<String, String> = ms
+            .iter()
+            .map(|m| (m["k"].clone(), m["v"].clone()))
+            .collect();
         assert_eq!(by_key["name"], "x");
         assert_eq!(by_key["age"], "7");
     }
@@ -1258,10 +1509,16 @@ mod run_pattern_tests {
         // The gh list-endpoint shape: an array of objects, each normalized into a
         // row of flat fields plus a nested descent (user.login), correlated.
         let json = r#"[{"number":1,"user":{"login":"a"}},{"number":2,"user":{"login":"b"}}]"#;
-        let mut got: Vec<(String, String)> = run_json("[... { number: $n, user: { login: $u } }]", json)
-            .into_iter().map(|m| (m["n"].clone(), m["u"].clone())).collect();
+        let mut got: Vec<(String, String)> =
+            run_json("[... { number: $n, user: { login: $u } }]", json)
+                .into_iter()
+                .map(|m| (m["n"].clone(), m["u"].clone()))
+                .collect();
         got.sort();
-        assert_eq!(got, vec![("1".into(), "a".into()), ("2".into(), "b".into())]);
+        assert_eq!(
+            got,
+            vec![("1".into(), "a".into()), ("2".into(), "b".into())]
+        );
     }
 
     #[test]

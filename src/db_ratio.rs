@@ -71,7 +71,9 @@ pub(crate) fn corpus_bytes(root: &Path) -> u64 {
 /// scan rules — the ratio is undefined, not infinite, so there's nothing
 /// honest to warn about).
 pub fn emit_verdict(root: &Path, db_path: &Path) {
-    let Ok(db_meta) = std::fs::metadata(db_path) else { return };
+    let Ok(db_meta) = std::fs::metadata(db_path) else {
+        return;
+    };
     let db_bytes = db_meta.len();
     let corpus_bytes = corpus_bytes(root);
     if corpus_bytes == 0 {
@@ -146,7 +148,10 @@ mod tests {
     fn ratio_threshold_parse_falls_back_on_garbage_zero_negative_and_unset() {
         assert_eq!(parse_ratio_threshold(None), DEFAULT_RATIO_WARN);
         assert_eq!(parse_ratio_threshold(Some("42".into())), 42.0);
-        assert_eq!(parse_ratio_threshold(Some("not-a-number".into())), DEFAULT_RATIO_WARN);
+        assert_eq!(
+            parse_ratio_threshold(Some("not-a-number".into())),
+            DEFAULT_RATIO_WARN
+        );
         assert_eq!(parse_ratio_threshold(Some("0".into())), DEFAULT_RATIO_WARN);
         assert_eq!(parse_ratio_threshold(Some("-5".into())), DEFAULT_RATIO_WARN);
     }

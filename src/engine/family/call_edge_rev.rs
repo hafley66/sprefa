@@ -53,8 +53,12 @@ impl Family for CallEdgeRev {
         for (site_id, row) in &resolutions {
             let callee = as_int(&row[0]);
             let kind = as_int(&row[1]);
-            let Some(&(owner_id, caller)) = caller_of_site.get(site_id) else { continue };
-            let Some(&rev) = rev_by_owner.get(&owner_id) else { continue };
+            let Some(&(owner_id, caller)) = caller_of_site.get(site_id) else {
+                continue;
+            };
+            let Some(&rev) = rev_by_owner.get(&owner_id) else {
+                continue;
+            };
             *support.entry([caller, callee, kind, rev]).or_default() += 1;
         }
 

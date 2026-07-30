@@ -82,8 +82,8 @@ impl Engine {
         &self,
         coords: &[(String, u32, u32, String)],
     ) -> Result<std::collections::HashMap<(i64, u32, u32, i64), i64>> {
-        use std::collections::HashMap;
         use crate::spine::StringId;
+        use std::collections::HashMap;
         if coords.is_empty() {
             return Ok(HashMap::new());
         }
@@ -109,13 +109,15 @@ impl Engine {
                 ]);
             }
         }
-        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
+        self.db
+            .flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
         self.db.exec_on(
             "_df_coord_probe",
             "CREATE TEMP TABLE IF NOT EXISTS _df_coord_probe \
              (file INTEGER, line INTEGER, col INTEGER, kind INTEGER)",
         )?;
-        self.db.exec_on("_df_coord_probe", "DELETE FROM _df_coord_probe")?;
+        self.db
+            .exec_on("_df_coord_probe", "DELETE FROM _df_coord_probe")?;
         self.db.insert_rows_keyed(
             "_df_coord_probe",
             "INSERT _df_coord_probe",
@@ -157,8 +159,8 @@ impl Engine {
         &self,
         coords: &[(String, String, u32, u32, String)],
     ) -> Result<std::collections::HashMap<String, i64>> {
-        use std::collections::HashMap;
         use crate::spine::StringId;
+        use std::collections::HashMap;
         if coords.is_empty() {
             return Ok(HashMap::new());
         }
@@ -254,7 +256,10 @@ impl Engine {
                 anyhow::anyhow!(
                     "dataflow node {}:{}:{}:{} has no _df_node_dict surrogate \
                      (identity invariant: every node coordinate resolves)",
-                    n.file, n.line, n.col, n.kind
+                    n.file,
+                    n.line,
+                    n.col,
+                    n.kind
                 )
             })
         };
@@ -544,7 +549,11 @@ impl Engine {
     /// reinsert; `INSERT OR IGNORE` covers a crash-resumed slice and the rare
     /// content-addressed id shared across two slices.
     fn append_dataflow_rows(&self, rows: &DataflowRowSet) -> Result<()> {
-        self.append_rel("df_node", &["id", "kind", "var", "fn", "file", "line", "col"], &rows.node)?;
+        self.append_rel(
+            "df_node",
+            &["id", "kind", "var", "fn", "file", "line", "col"],
+            &rows.node,
+        )?;
         // df_node_repo, df_arg, df_field are VIEW-backed (see refresh_dataflow_rows);
         // no base-table append, only their `_rev` twins.
         self.append_rel("df_edge", &["from", "to"], &rows.edge)?;
@@ -554,7 +563,11 @@ impl Engine {
             &rows.loop_over,
         )?;
         self.append_rel("allocates", &["fn"], &rows.alloc)?;
-        self.append_rel("nest", &["call_id", "loop_id", "depth", "collection"], &rows.nest)?;
+        self.append_rel(
+            "nest",
+            &["call_id", "loop_id", "depth", "collection"],
+            &rows.nest,
+        )?;
         self.append_rel("df_param", &["id", "pos"], &rows.param)?;
         self.append_rel("df_lit", &["id", "text", "kind"], &rows.lit)?;
         self.append_rel(
@@ -562,9 +575,17 @@ impl Engine {
             &["id", "kind", "var", "fn", "file", "line", "col", "rev"],
             &rows.node_rev,
         )?;
-        self.append_rel("df_node_repo_rev", &["id", "repo", "rev"], &rows.node_repo_rev)?;
+        self.append_rel(
+            "df_node_repo_rev",
+            &["id", "repo", "rev"],
+            &rows.node_repo_rev,
+        )?;
         self.append_rel("df_arg_rev", &["call", "pos", "arg", "rev"], &rows.arg_rev)?;
-        self.append_rel("df_field_rev", &["id", "field", "value", "rev"], &rows.field_rev)?;
+        self.append_rel(
+            "df_field_rev",
+            &["id", "field", "value", "rev"],
+            &rows.field_rev,
+        )?;
         self.append_rel("df_lit_rev", &["id", "text", "kind", "rev"], &rows.lit_rev)?;
         Ok(())
     }

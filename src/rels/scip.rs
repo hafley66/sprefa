@@ -37,9 +37,18 @@ pub struct ScipKind;
 
 impl RelKind for ScipKind {
     fn rels(&self) -> &'static [&'static str] {
-        &["scip_def", "scip_name", "scip_ref", "scip_edge",
-          "scip_fn_edge", "scip_callee_type", "scip_local", "scip_impl",
-          "scip_occurrence", "scip_binding"]
+        &[
+            "scip_def",
+            "scip_name",
+            "scip_ref",
+            "scip_edge",
+            "scip_fn_edge",
+            "scip_callee_type",
+            "scip_local",
+            "scip_impl",
+            "scip_occurrence",
+            "scip_binding",
+        ]
     }
     fn decls(&self) -> Vec<RelDecl> {
         // pk_never_null (storage-diet step 4a) on every 2-4 column rel below:
@@ -92,9 +101,7 @@ impl RelKind for ScipKind {
         // a silent no-op for exactly the programs it should improve (the
         // ModuleFamily gate bug, same shape). With no index on disk the
         // refresh is a cheap no-op, so the wider gate costs nothing.
-        rels_used(prog, self.rels())
-            || super::TypeFamily.used(prog)
-            || super::CallFamily.used(prog)
+        rels_used(prog, self.rels()) || super::TypeFamily.used(prog) || super::CallFamily.used(prog)
     }
     fn dirty(&self, eng: &Engine, changed: &HashSet<String>) -> bool {
         // Match the root `index.scip` and the `.dl/index.scip` that `dl index`
@@ -124,16 +131,25 @@ impl RelKind for ScipKind {
         if inputs.is_empty() {
             rows_changed |= eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &[])?;
             rows_changed |= eng.refresh_rel("scip_name", &["symbol", "name"], &[])?;
-            rows_changed |= eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &[])?;
+            rows_changed |=
+                eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &[])?;
             rows_changed |= eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &[])?;
             rows_changed |= eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &[])?;
             rows_changed |= eng.refresh_rel("scip_callee_type", &["sym", "type"], &[])?;
             rows_changed |= eng.refresh_rel("scip_local", &["fn", "name"], &[])?;
             rows_changed |= eng.refresh_rel("scip_impl", &["impl", "iface"], &[])?;
-            rows_changed |= eng.refresh_rel("scip_occurrence",
-                &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &[])?;
-            rows_changed |= eng.refresh_rel("scip_binding",
-                &["file", "symbol", "local_name", "line", "col", "repo"], &[])?;
+            rows_changed |= eng.refresh_rel(
+                "scip_occurrence",
+                &[
+                    "file", "symbol", "line", "col", "end_line", "end_col", "role", "repo",
+                ],
+                &[],
+            )?;
+            rows_changed |= eng.refresh_rel(
+                "scip_binding",
+                &["file", "symbol", "local_name", "line", "col", "repo"],
+                &[],
+            )?;
             eng.save_rel_digest(SCIP_INDEX_STAT_KEY, &self_index_stat_digest(eng))?;
             return Ok(rows_changed);
         }
@@ -156,7 +172,11 @@ impl RelKind for ScipKind {
             all.impls.extend(rows.impls);
         }
         let rows = all;
-        let defs: Vec<Vec<Value>> = rows.defs.iter().map(|(sym, file, repo)| vec![t(sym), t(file), t(repo)]).collect();
+        let defs: Vec<Vec<Value>> = rows
+            .defs
+            .iter()
+            .map(|(sym, file, repo)| vec![t(sym), t(file), t(repo)])
+            .collect();
         // The symbol's descriptor name (last identifier run), computed where the
         // SCIP moniker grammar lives. A pure-dl `split` chain can't isolate it:
         // `…/impl#[Type]method().` needs the `[`/`]`/`#` separators that single-
@@ -167,39 +187,84 @@ impl RelKind for ScipKind {
                 name_set.insert((sym.clone(), name));
             }
         }
-        let names: Vec<Vec<Value>> = name_set.iter().map(|(sym, name)| vec![t(sym), t(name)]).collect();
-        let refs: Vec<Vec<Value>> = rows.refs.iter()
-            .map(|(file, sym, def, repo)| vec![t(file), t(sym), t(def), t(repo)]).collect();
-        let edges: Vec<Vec<Value>> = rows.edges.iter().map(|(src, dst, repo)| vec![t(src), t(dst), t(repo)]).collect();
-        let fn_edges: Vec<Vec<Value>> = rows.fn_edges.iter()
-            .map(|(caller, callee)| vec![t(caller), t(callee)]).collect();
-        let callee_types: Vec<Vec<Value>> = rows.callee_types.iter()
-            .map(|(sym, ty)| vec![t(sym), t(ty)]).collect();
-        let locals: Vec<Vec<Value>> = rows.locals.iter()
-            .map(|(fn_, name)| vec![t(fn_), t(name)]).collect();
-        let impls: Vec<Vec<Value>> = rows.impls.iter()
-            .map(|(im, iface)| vec![t(im), t(iface)]).collect();
-        let n = |v: &i32| Value::Int(*v as i64);
-        let occurrences: Vec<Vec<Value>> = rows.occurrences.iter()
-            .map(|(file, sym, sl, sc, el, ec, role, repo)|
-                vec![t(file), t(sym), n(sl), n(sc), n(el), n(ec), t(role), t(repo)])
+        let names: Vec<Vec<Value>> = name_set
+            .iter()
+            .map(|(sym, name)| vec![t(sym), t(name)])
             .collect();
-        let bindings: Vec<Vec<Value>> = all_bindings.iter()
-            .map(|(file, sym, name, sl, sc, repo)|
-                vec![t(file), t(sym), t(name), n(sl), n(sc), t(repo)])
+        let refs: Vec<Vec<Value>> = rows
+            .refs
+            .iter()
+            .map(|(file, sym, def, repo)| vec![t(file), t(sym), t(def), t(repo)])
+            .collect();
+        let edges: Vec<Vec<Value>> = rows
+            .edges
+            .iter()
+            .map(|(src, dst, repo)| vec![t(src), t(dst), t(repo)])
+            .collect();
+        let fn_edges: Vec<Vec<Value>> = rows
+            .fn_edges
+            .iter()
+            .map(|(caller, callee)| vec![t(caller), t(callee)])
+            .collect();
+        let callee_types: Vec<Vec<Value>> = rows
+            .callee_types
+            .iter()
+            .map(|(sym, ty)| vec![t(sym), t(ty)])
+            .collect();
+        let locals: Vec<Vec<Value>> = rows
+            .locals
+            .iter()
+            .map(|(fn_, name)| vec![t(fn_), t(name)])
+            .collect();
+        let impls: Vec<Vec<Value>> = rows
+            .impls
+            .iter()
+            .map(|(im, iface)| vec![t(im), t(iface)])
+            .collect();
+        let n = |v: &i32| Value::Int(*v as i64);
+        let occurrences: Vec<Vec<Value>> = rows
+            .occurrences
+            .iter()
+            .map(|(file, sym, sl, sc, el, ec, role, repo)| {
+                vec![
+                    t(file),
+                    t(sym),
+                    n(sl),
+                    n(sc),
+                    n(el),
+                    n(ec),
+                    t(role),
+                    t(repo),
+                ]
+            })
+            .collect();
+        let bindings: Vec<Vec<Value>> = all_bindings
+            .iter()
+            .map(|(file, sym, name, sl, sc, repo)| {
+                vec![t(file), t(sym), t(name), n(sl), n(sc), t(repo)]
+            })
             .collect();
         rows_changed |= eng.refresh_rel("scip_def", &["symbol", "file", "repo"], &defs)?;
         rows_changed |= eng.refresh_rel("scip_name", &["symbol", "name"], &names)?;
-        rows_changed |= eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
+        rows_changed |=
+            eng.refresh_rel("scip_ref", &["file", "symbol", "def_file", "repo"], &refs)?;
         rows_changed |= eng.refresh_rel("scip_edge", &["src", "dst", "repo"], &edges)?;
         rows_changed |= eng.refresh_rel("scip_fn_edge", &["caller", "callee"], &fn_edges)?;
         rows_changed |= eng.refresh_rel("scip_callee_type", &["sym", "type"], &callee_types)?;
         rows_changed |= eng.refresh_rel("scip_local", &["fn", "name"], &locals)?;
         rows_changed |= eng.refresh_rel("scip_impl", &["impl", "iface"], &impls)?;
-        rows_changed |= eng.refresh_rel("scip_occurrence",
-            &["file", "symbol", "line", "col", "end_line", "end_col", "role", "repo"], &occurrences)?;
-        rows_changed |= eng.refresh_rel("scip_binding",
-            &["file", "symbol", "local_name", "line", "col", "repo"], &bindings)?;
+        rows_changed |= eng.refresh_rel(
+            "scip_occurrence",
+            &[
+                "file", "symbol", "line", "col", "end_line", "end_col", "role", "repo",
+            ],
+            &occurrences,
+        )?;
+        rows_changed |= eng.refresh_rel(
+            "scip_binding",
+            &["file", "symbol", "local_name", "line", "col", "repo"],
+            &bindings,
+        )?;
         eng.save_rel_digest(SCIP_INDEX_STAT_KEY, &self_index_stat_digest(eng))?;
         Ok(rows_changed)
     }
@@ -244,11 +309,16 @@ impl ScipKind {
     /// origin repo. No pre-merge — that lost which input each document came from,
     /// collapsing the second root's rows. Empty = no index anywhere (the caller
     /// clears the rels).
-    fn index_inputs(&self, eng: &Engine) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf, String)>> {
+    fn index_inputs(
+        &self,
+        eng: &Engine,
+    ) -> Result<Vec<(std::path::PathBuf, std::path::PathBuf, String)>> {
         let self_slug = eng.self_slug();
         let self_index = scip_import::index_path(&eng.root);
-        let mut inputs: Vec<(std::path::PathBuf, std::path::PathBuf, String)> =
-            self_index.into_iter().map(|p| (p, eng.root.clone(), self_slug.clone())).collect();
+        let mut inputs: Vec<(std::path::PathBuf, std::path::PathBuf, String)> = self_index
+            .into_iter()
+            .map(|p| (p, eng.root.clone(), self_slug.clone()))
+            .collect();
         let want: Vec<String> = match eng.rels.get("scip_want") {
             None => Vec::new(),
             Some(meta) => {
@@ -259,7 +329,8 @@ impl ScipKind {
                     "scip_want",
                     &format!(
                         "SELECT DISTINCT \"{}\" FROM {} ORDER BY 1",
-                        meta.col_name(0), crate::lower::txt_tbl("scip_want")
+                        meta.col_name(0),
+                        crate::lower::txt_tbl("scip_want")
                     ),
                     &[],
                     |r| Ok(r.get::<_, String>(0)?),
@@ -275,7 +346,9 @@ impl ScipKind {
                 "." | "" | "self" => self_slug.clone(),
                 _ => repo.clone(),
             };
-            if key == self_slug { continue; } // self index already an input
+            if key == self_slug {
+                continue;
+            } // self index already an input
             let Some(root) = roots.get(&key) else {
                 tracing::warn!(repo = %repo, "[scip_want] skip {repo}: unknown repo slug");
                 continue;

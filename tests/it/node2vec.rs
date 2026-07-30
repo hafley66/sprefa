@@ -25,9 +25,13 @@ fn sandbox(tag: &str) -> PathBuf {
 fn edges_txt() -> String {
     let mut lines = Vec::new();
     for p in ["a", "b"] {
-        for i in 0..4 { for j in 0..4 { if i != j {
-            lines.push(format!("{p}{i} {p}{j}"));
-        }}}
+        for i in 0..4 {
+            for j in 0..4 {
+                if i != j {
+                    lines.push(format!("{p}{i} {p}{j}"));
+                }
+            }
+        }
     }
     lines.push("a0 b0".into());
     lines.push("b0 a0".into());
@@ -72,11 +76,18 @@ fn sim_rows(out: &str) -> Vec<(String, String, i64)> {
     let mut rows = Vec::new();
     let mut in_block = false;
     for line in out.lines() {
-        if line.starts_with("? node_sim") { in_block = true; continue; }
+        if line.starts_with("? node_sim") {
+            in_block = true;
+            continue;
+        }
         if in_block {
-            if line.starts_with("? ") { break; }
+            if line.starts_with("? ") {
+                break;
+            }
             let t = line.trim();
-            if t.is_empty() || t.starts_with('(') { continue; }
+            if t.is_empty() || t.starts_with('(') {
+                continue;
+            }
             let cols: Vec<&str> = t.split('\t').map(|s| s.trim()).collect();
             if cols.len() == 3 {
                 if let Ok(sc) = cols[2].parse::<i64>() {
@@ -95,7 +106,10 @@ fn node2vec_separates_two_clusters() {
     assert_eq!(code, 0, "dl failed: {err}\n{out}");
 
     let rows = sim_rows(&out);
-    assert!(!rows.is_empty(), "node_sim came back empty\nstdout:\n{out}\nstderr:\n{err}");
+    assert!(
+        !rows.is_empty(),
+        "node_sim came back empty\nstdout:\n{out}\nstderr:\n{err}"
+    );
 
     // Every node should have neighbors, and each 'a' node's single best neighbor
     // (highest score) must be another 'a' node — same cluster.
@@ -135,10 +149,18 @@ node_sim(a, b, score) <- node2vec(edge).
         .env("SPREFA_N2V_WALKLEN", "4")
         .env("SPREFA_N2V_EPOCHS", "1")
         .env("SPREFA_N2V_SEED", "1")
-        .output().expect("run integer node2vec");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
-    assert!(!sim_rows(&String::from_utf8_lossy(&out.stdout)).is_empty(),
-        "integer edges must not be silently dropped: {}", String::from_utf8_lossy(&out.stdout));
+        .output()
+        .expect("run integer node2vec");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !sim_rows(&String::from_utf8_lossy(&out.stdout)).is_empty(),
+        "integer edges must not be silently dropped: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 /// Edge columns named with SQL reserved words (`from`/`to`) must work across
@@ -173,15 +195,24 @@ dep_scc(rep, member) <- scc(dep).
         .env("SPREFA_N2V_WALKLEN", "4")
         .env("SPREFA_N2V_EPOCHS", "1")
         .env("SPREFA_N2V_SEED", "1")
-        .output().expect("run reserved-column graph ops");
+        .output()
+        .expect("run reserved-column graph ops");
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "stderr: {stderr}\nstdout: {stdout}");
-    assert!(!stderr.contains("syntax error"),
-        "reserved-word edge columns must be quoted in graph-op SQL: {stderr}");
+    assert!(
+        !stderr.contains("syntax error"),
+        "reserved-word edge columns must be quoted in graph-op SQL: {stderr}"
+    );
     // 3-cycle: closure reaches all 9 ordered pairs, scc has one component.
-    let reach = stdout.split("? dep_reach").nth(1).expect("dep_reach section");
-    assert!(reach.contains("(9 rows)"), "closure over the 3-cycle: {stdout}");
+    let reach = stdout
+        .split("? dep_reach")
+        .nth(1)
+        .expect("dep_reach section");
+    assert!(
+        reach.contains("(9 rows)"),
+        "closure over the 3-cycle: {stdout}"
+    );
     let scc = stdout.split("? dep_scc").nth(1).expect("dep_scc section");
     assert!(scc.contains("(3 rows)"), "one 3-member component: {stdout}");
 }
@@ -225,16 +256,24 @@ fn node2vec_digest_skip_on_unchanged_graph() {
     let db = dir.join("db");
 
     let first = run_db(&dir, &db);
-    assert!(first.contains("graph 'edge': re-embed"),
-        "first run over a fresh db must re-embed; stderr:\n{first}");
-    assert!(!first.contains("graph 'edge': skip"),
-        "first run cannot skip (no stored digest); stderr:\n{first}");
+    assert!(
+        first.contains("graph 'edge': re-embed"),
+        "first run over a fresh db must re-embed; stderr:\n{first}"
+    );
+    assert!(
+        !first.contains("graph 'edge': skip"),
+        "first run cannot skip (no stored digest); stderr:\n{first}"
+    );
 
     let second = run_db(&dir, &db);
-    assert!(second.contains("graph 'edge': skip (digest unchanged)"),
-        "second run over an unchanged graph must skip the embed; stderr:\n{second}");
-    assert!(!second.contains("graph 'edge': re-embed"),
-        "second run must not re-embed an unchanged graph; stderr:\n{second}");
+    assert!(
+        second.contains("graph 'edge': skip (digest unchanged)"),
+        "second run over an unchanged graph must skip the embed; stderr:\n{second}"
+    );
+    assert!(
+        !second.contains("graph 'edge': re-embed"),
+        "second run must not re-embed an unchanged graph; stderr:\n{second}"
+    );
 }
 
 /// W2 recent-digest cache: bouncing between two graphs (A -> B -> A) must not
@@ -255,18 +294,26 @@ fn node2vec_w2_cache_hit_on_revisited_graph() {
     let graph_b = format!("{graph_a}c0 c1\nc1 c0\n");
 
     let a1 = run_db_edges(&dir, &db, &graph_a);
-    assert!(a1.contains("graph 'edge': re-embed"),
-        "first sight of A must embed; stderr:\n{a1}");
+    assert!(
+        a1.contains("graph 'edge': re-embed"),
+        "first sight of A must embed; stderr:\n{a1}"
+    );
 
     let b1 = run_db_edges(&dir, &db, &graph_b);
-    assert!(b1.contains("graph 'edge': re-embed"),
-        "B is a new graph, must embed; stderr:\n{b1}");
+    assert!(
+        b1.contains("graph 'edge': re-embed"),
+        "B is a new graph, must embed; stderr:\n{b1}"
+    );
 
     let a2 = run_db_edges(&dir, &db, &graph_a);
-    assert!(a2.contains("graph 'edge': cache hit (digest seen)"),
-        "revisiting A must hit the W2 cache, not re-embed; stderr:\n{a2}");
-    assert!(!a2.contains("graph 'edge': re-embed"),
-        "revisiting A must not re-embed; stderr:\n{a2}");
+    assert!(
+        a2.contains("graph 'edge': cache hit (digest seen)"),
+        "revisiting A must hit the W2 cache, not re-embed; stderr:\n{a2}"
+    );
+    assert!(
+        !a2.contains("graph 'edge': re-embed"),
+        "revisiting A must not re-embed; stderr:\n{a2}"
+    );
 }
 
 /// The W2 cache is bounded: with SPREFA_N2V_CACHE=1 only the most recent digest
@@ -291,18 +338,27 @@ fn node2vec_w2_cache_is_bounded() {
             .arg(dir.join("p.dl"))
             .args(["--db", db.to_str().unwrap(), "--no-daemon"])
             .current_dir(&dir)
-            .env("SPREFA_N2V_DIM", "32").env("SPREFA_N2V_NUMWALKS", "40")
-            .env("SPREFA_N2V_WALKLEN", "20").env("SPREFA_N2V_EPOCHS", "3")
-            .env("SPREFA_N2V_SEED", "1").env("SPREFA_NODE_SIM_K", "7")
-            .env("SPREFA_N2V_TRACE", "1").env("SPREFA_N2V_CACHE", "1")
-            .output().expect("run dl");
+            .env("SPREFA_N2V_DIM", "32")
+            .env("SPREFA_N2V_NUMWALKS", "40")
+            .env("SPREFA_N2V_WALKLEN", "20")
+            .env("SPREFA_N2V_EPOCHS", "3")
+            .env("SPREFA_N2V_SEED", "1")
+            .env("SPREFA_NODE_SIM_K", "7")
+            .env("SPREFA_N2V_TRACE", "1")
+            .env("SPREFA_N2V_CACHE", "1")
+            .output()
+            .expect("run dl");
         String::from_utf8_lossy(&out.stderr).into_owned()
     };
-    let _ = run(&graph_a);   // embed A, cache = {A}
-    let _ = run(&graph_b);   // embed B, cap=1 evicts A, cache = {B}
-    let a2 = run(&graph_a);  // A is gone -> must re-embed (not a cache hit)
-    assert!(a2.contains("graph 'edge': re-embed"),
-        "cap=1 must evict A after B, so the revisit re-embeds; stderr:\n{a2}");
-    assert!(!a2.contains("cache hit"),
-        "with cap=1 the revisit cannot be a cache hit; stderr:\n{a2}");
+    let _ = run(&graph_a); // embed A, cache = {A}
+    let _ = run(&graph_b); // embed B, cap=1 evicts A, cache = {B}
+    let a2 = run(&graph_a); // A is gone -> must re-embed (not a cache hit)
+    assert!(
+        a2.contains("graph 'edge': re-embed"),
+        "cap=1 must evict A after B, so the revisit re-embeds; stderr:\n{a2}"
+    );
+    assert!(
+        !a2.contains("cache hit"),
+        "with cap=1 the revisit cannot be a cache hit; stderr:\n{a2}"
+    );
 }

@@ -40,10 +40,12 @@ static AST_LANG_TABLE: &[(&str, &[&str], TsLangCtor)] = &[
             tree_sitter_language::LanguageFn::from_raw(tree_sitter_dockerfile)
         })
     }),
-    ("yaml", &["yml"], || { tree_sitter_yaml::LANGUAGE.into() }),
-    ("toml", &[], || { tree_sitter_toml_ng::LANGUAGE.into() }),
-    ("json", &[], || { tree_sitter_json::LANGUAGE.into() }),
-    ("css", &[], || { tree_sitter::Language::new(tree_sitter_css::LANGUAGE) }),
+    ("yaml", &["yml"], || tree_sitter_yaml::LANGUAGE.into()),
+    ("toml", &[], || tree_sitter_toml_ng::LANGUAGE.into()),
+    ("json", &[], || tree_sitter_json::LANGUAGE.into()),
+    ("css", &[], || {
+        tree_sitter::Language::new(tree_sitter_css::LANGUAGE)
+    }),
     // todo(feature): add html once tree-sitter-html is a Cargo dep.
 ];
 

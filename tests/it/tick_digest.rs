@@ -60,8 +60,11 @@ fn a_blank_slate_still_full_derives() {
     eng.tick(&prog, true).unwrap();
     let mut rebuilt = eng.last_derived_rebuilt.clone();
     rebuilt.sort();
-    assert_eq!(rebuilt, vec!["gate".to_string(), "live".to_string()],
-        "cold tick must derive every rel, empty-destined or not");
+    assert_eq!(
+        rebuilt,
+        vec!["gate".to_string(), "live".to_string()],
+        "cold tick must derive every rel, empty-destined or not"
+    );
 
     let gate_rows = eng.query_sql("SELECT w FROM rel_gate_txt", &[]).unwrap();
     assert!(gate_rows.is_empty(), "gate legitimately matches nothing");
@@ -80,13 +83,20 @@ fn c_inert_empty_rel_does_not_force_full_rebuild() {
     let (mut eng, prog) = fresh_engine(&d);
 
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.last_derived_rebuilt.len(), 2, "cold tick derives both rels");
+    assert_eq!(
+        eng.last_derived_rebuilt.len(),
+        2,
+        "cold tick derives both rels"
+    );
 
     for i in 0..3 {
         eng.tick(&prog, true).unwrap();
-        assert!(eng.last_derived_rebuilt.is_empty(),
+        assert!(
+            eng.last_derived_rebuilt.is_empty(),
             "unchanged tick #{i} must rebuild nothing despite `gate` being durably \
-             empty, got {:?}", eng.last_derived_rebuilt);
+             empty, got {:?}",
+            eng.last_derived_rebuilt
+        );
     }
 }
 
@@ -117,9 +127,14 @@ brand_new(w) <- src_a(_, w).
 "#;
     let prog2 = parse::parse(lex::lex(PROG2).unwrap()).unwrap();
     eng.tick(&prog2, true).unwrap();
-    assert!(eng.last_derived_rebuilt.contains(&"brand_new".to_string()),
-        "a program edit adding a derived rel must derive it, got {:?}", eng.last_derived_rebuilt);
-    let rows = eng.query_sql("SELECT w FROM rel_brand_new_txt", &[]).unwrap();
+    assert!(
+        eng.last_derived_rebuilt.contains(&"brand_new".to_string()),
+        "a program edit adding a derived rel must derive it, got {:?}",
+        eng.last_derived_rebuilt
+    );
+    let rows = eng
+        .query_sql("SELECT w FROM rel_brand_new_txt", &[])
+        .unwrap();
     assert_eq!(rows.len(), 1);
 
     // The edit's full rebuild should also settle: a further unchanged tick
@@ -146,14 +161,21 @@ fn e_rel_deriving_to_empty_stays_empty_not_stale() {
     fs::remove_file(d.join("src/a.rs")).unwrap();
     eng.tick(&prog, true).unwrap();
     let rows = eng.query_sql("SELECT w FROM rel_live_txt", &[]).unwrap();
-    assert!(rows.is_empty(), "live must reflect the deletion, not serve a stale row");
-    assert!(eng.last_derived_rebuilt.contains(&"live".to_string()),
-        "the deletion must have actually re-derived `live`");
+    assert!(
+        rows.is_empty(),
+        "live must reflect the deletion, not serve a stale row"
+    );
+    assert!(
+        eng.last_derived_rebuilt.contains(&"live".to_string()),
+        "the deletion must have actually re-derived `live`"
+    );
 
     eng.tick(&prog, true).unwrap();
-    assert!(eng.last_derived_rebuilt.is_empty(),
+    assert!(
+        eng.last_derived_rebuilt.is_empty(),
         "`live` freshly-empty-by-deletion must not force full rebuilds either, got {:?}",
-        eng.last_derived_rebuilt);
+        eng.last_derived_rebuilt
+    );
 }
 
 /// (d) Sanity: `tick_paths` (the incremental/watcher path) shares the same
@@ -173,9 +195,11 @@ fn d_tick_paths_also_respects_the_completion_marker() {
     // A path-scoped tick with an unrelated no-op changed-path list (the file
     // watcher's shape) must not force a full rebuild.
     eng.tick_paths(&prog, &[], true).unwrap();
-    assert!(eng.last_derived_rebuilt.is_empty(),
+    assert!(
+        eng.last_derived_rebuilt.is_empty(),
         "tick_paths with no changed files must rebuild nothing, got {:?}",
-        eng.last_derived_rebuilt);
+        eng.last_derived_rebuilt
+    );
 }
 
 /// (f) A term-extract (json-over-bound-string) head whose row set is in steady
@@ -206,9 +230,12 @@ downstream(word) <- item(word).
 
     for i in 0..3 {
         eng.tick(&prog, true).unwrap();
-        assert!(eng.last_derived_rebuilt.is_empty(),
+        assert!(
+            eng.last_derived_rebuilt.is_empty(),
             "unchanged tick #{i}: a steady-state extract head must not force a \
-             full derived rebuild, got {:?}", eng.last_derived_rebuilt);
+             full derived rebuild, got {:?}",
+            eng.last_derived_rebuilt
+        );
     }
 }
 
@@ -235,46 +262,81 @@ fn perf_log_end_to_end() {
         let before = fs::read_to_string(&perf_path).unwrap_or_default();
         let before_lines = before.lines().count();
         let mut cmd = Command::new(DL);
-        cmd.args([".dl/prog.dl", "--check", "--no-daemon", "--db", ".dl/cache.db"])
-            .current_dir(&d)
-            .env("DL_NO_DAEMON", "1");
-        for (k, v) in extra_env { cmd.env(k, v); }
+        cmd.args([
+            ".dl/prog.dl",
+            "--check",
+            "--no-daemon",
+            "--db",
+            ".dl/cache.db",
+        ])
+        .current_dir(&d)
+        .env("DL_NO_DAEMON", "1");
+        for (k, v) in extra_env {
+            cmd.env(k, v);
+        }
         let out = cmd.output().expect("run dl --check");
-        assert!(out.status.success() || out.status.code() == Some(0),
+        assert!(
+            out.status.success() || out.status.code() == Some(0),
             "dl --check should exit clean on this program: {}",
-            String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stderr)
+        );
         let after = fs::read_to_string(&perf_path).unwrap_or_default();
-        after.lines().skip(before_lines)
+        after
+            .lines()
+            .skip(before_lines)
             .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
             .collect()
     };
 
     // Cold run.
     let cold = run(&[]);
-    assert!(!cold.is_empty(), "cold run must write at least one perf.jsonl record");
+    assert!(
+        !cold.is_empty(),
+        "cold run must write at least one perf.jsonl record"
+    );
     for rec in &cold {
-        assert!(rec.get("pid").and_then(|v| v.as_u64()).is_some(),
-            "every perf.jsonl record carries a pid (P2), got {rec}");
+        assert!(
+            rec.get("pid").and_then(|v| v.as_u64()).is_some(),
+            "every perf.jsonl record carries a pid (P2), got {rec}"
+        );
     }
-    let cold_derived_phase = cold.iter()
-        .find(|r| r.get("type").and_then(|v| v.as_str()) == Some("phase")
-                && r.get("phase").and_then(|v| v.as_str()) == Some("derived"));
-    assert!(cold_derived_phase.is_some(),
-        "the one-shot --check path must emit a \"derived\" phase record (P3), got {cold:?}");
-    let cold_tick = cold.iter().find(|r| r.get("type").and_then(|v| v.as_str()) == Some("tick"))
+    let cold_derived_phase = cold.iter().find(|r| {
+        r.get("type").and_then(|v| v.as_str()) == Some("phase")
+            && r.get("phase").and_then(|v| v.as_str()) == Some("derived")
+    });
+    assert!(
+        cold_derived_phase.is_some(),
+        "the one-shot --check path must emit a \"derived\" phase record (P3), got {cold:?}"
+    );
+    let cold_tick = cold
+        .iter()
+        .find(|r| r.get("type").and_then(|v| v.as_str()) == Some("tick"))
         .expect("cold run emits a tick record");
-    assert_eq!(cold_tick["derived"]["strategy"].as_str(), Some("full"),
-        "cold run must be a full rebuild: {cold_tick}");
-    assert_eq!(cold_tick["derived"]["full_reason"].as_str(), Some("blank-slate"),
-        "cold run's reason must be blank-slate: {cold_tick}");
+    assert_eq!(
+        cold_tick["derived"]["strategy"].as_str(),
+        Some("full"),
+        "cold run must be a full rebuild: {cold_tick}"
+    );
+    assert_eq!(
+        cold_tick["derived"]["full_reason"].as_str(),
+        Some("blank-slate"),
+        "cold run's reason must be blank-slate: {cold_tick}"
+    );
 
     // Warm rerun: nothing changed, and `gate` is durably empty in the db
     // that now exists — the P1 bug would force this to "full" again.
     let warm = run(&[]);
-    let warm_tick = warm.iter().find(|r| r.get("type").and_then(|v| v.as_str()) == Some("tick"))
+    let warm_tick = warm
+        .iter()
+        .find(|r| r.get("type").and_then(|v| v.as_str()) == Some("tick"))
         .expect("warm run emits a tick record");
-    assert_eq!(warm_tick["derived"]["strategy"].as_str(), Some("unchanged"),
-        "warm rerun must NOT full-rebuild just because `gate` is durably empty (P1): {warm_tick}");
-    assert!(warm_tick["derived"]["full_reason"].is_null(),
-        "warm rerun must carry no full_reason: {warm_tick}");
+    assert_eq!(
+        warm_tick["derived"]["strategy"].as_str(),
+        Some("unchanged"),
+        "warm rerun must NOT full-rebuild just because `gate` is durably empty (P1): {warm_tick}"
+    );
+    assert!(
+        warm_tick["derived"]["full_reason"].is_null(),
+        "warm rerun must carry no full_reason: {warm_tick}"
+    );
 }

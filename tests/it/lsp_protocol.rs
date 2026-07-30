@@ -93,8 +93,12 @@ impl Session {
                     if v.get("method").and_then(|m| m.as_str())
                         == Some("textDocument/publishDiagnostics")
                     {
-                        if let Some(p) = parse_publish(&v) { pubs.push(p); }
-                        if want(&pubs) { return pubs; }
+                        if let Some(p) = parse_publish(&v) {
+                            pubs.push(p);
+                        }
+                        if want(&pubs) {
+                            return pubs;
+                        }
                     }
                 }
                 Err(_) => return pubs, // timeout: hand back what we have
@@ -126,7 +130,9 @@ impl Session {
         self.send(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
         // Give it a beat to exit cleanly, then force it so CI never hangs.
         for _ in 0..20 {
-            if let Ok(Some(_)) = self.child.try_wait() { return; }
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = self.child.kill();
@@ -143,18 +149,28 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
         let mut len = 0usize;
         loop {
             let mut line = String::new();
-            if r.read_line(&mut line).unwrap_or(0) == 0 { return; }
+            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
             let trimmed = line.trim_end();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
                 len = rest.trim().parse().unwrap_or(0);
             }
         }
-        if len == 0 { continue; }
+        if len == 0 {
+            continue;
+        }
         let mut buf = vec![0u8; len];
-        if r.read_exact(&mut buf).is_err() { return; }
+        if r.read_exact(&mut buf).is_err() {
+            return;
+        }
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) {
-            if tx.send(v).is_err() { return; }
+            if tx.send(v).is_err() {
+                return;
+            }
         }
     }
 }
@@ -162,12 +178,29 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
 fn parse_publish(v: &serde_json::Value) -> Option<Published> {
     let params = v.get("params")?;
     let uri = params.get("uri")?.as_str()?.to_string();
-    let diags = params.get("diagnostics")?.as_array()?.iter().filter_map(|d| {
-        let line0 = d.get("range")?.get("start")?.get("line")?.as_i64()?;
-        let code = d.get("code").and_then(|c| c.as_str()).unwrap_or("").to_string();
-        let message = d.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
-        Some(Diag { line0, code, message })
-    }).collect();
+    let diags = params
+        .get("diagnostics")?
+        .as_array()?
+        .iter()
+        .filter_map(|d| {
+            let line0 = d.get("range")?.get("start")?.get("line")?.as_i64()?;
+            let code = d
+                .get("code")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string();
+            let message = d
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(Diag {
+                line0,
+                code,
+                message,
+            })
+        })
+        .collect();
     Some(Published { uri, diags })
 }
 
@@ -176,7 +209,9 @@ fn parse_publish(v: &serde_json::Value) -> Option<Published> {
 fn drain_stderr(child: &mut Child) -> String {
     let _ = child.kill();
     let mut s = String::new();
-    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut s); }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut s);
+    }
     s
 }
 
@@ -217,17 +252,25 @@ fn lint_imports_publishes_broken_import() {
 
     let target_uri_tail = "src/main.rs";
     let pubs = s.collect_publishes_until(|ps| {
-        ps.iter().any(|p| p.uri.ends_with(target_uri_tail) && !p.diags.is_empty())
+        ps.iter()
+            .any(|p| p.uri.ends_with(target_uri_tail) && !p.diags.is_empty())
     });
 
-    let hit = pubs.iter().find(|p| p.uri.ends_with(target_uri_tail) && !p.diags.is_empty());
-    assert!(hit.is_some(),
+    let hit = pubs
+        .iter()
+        .find(|p| p.uri.ends_with(target_uri_tail) && !p.diags.is_empty());
+    assert!(
+        hit.is_some(),
         "expected a broken-import publishDiagnostics for src/main.rs; got: {pubs:?}\nstderr: {}",
-        drain_stderr(&mut s.child));
+        drain_stderr(&mut s.child)
+    );
     let d = &hit.unwrap().diags[0];
     assert_eq!(d.code, "broken-import", "code mismatch: {d:?}");
     assert_eq!(d.line0, 0, "mod missing is on line 1 (0-based 0): {d:?}");
-    assert!(d.message.contains("missing"), "message names the missing mod: {d:?}");
+    assert!(
+        d.message.contains("missing"),
+        "message names the missing mod: {d:?}"
+    );
 
     s.shutdown();
 }
@@ -242,16 +285,20 @@ fn brand_mismatch_publishes_on_program_uri() {
     let root = sandbox("brand");
     fs::write(root.join("a.txt"), "x\n").unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        "type Sym <: text.\n",
-        "type Mod <: text.\n",
-        "rel a(s: Sym).\n",
-        "rel b(m: Mod).\n",
-        "rel bad(x: text).\n",
-        "a(\"foo\") <- scan(\"WORK\", \"*.txt\", f, rev), match(f, rev, /./, ln).\n",
-        "b(\"foo\") <- scan(\"WORK\", \"*.txt\", f, rev), match(f, rev, /./, ln).\n",
-        "bad(x) <- a(x), b(x).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "type Sym <: text.\n",
+            "type Mod <: text.\n",
+            "rel a(s: Sym).\n",
+            "rel b(m: Mod).\n",
+            "rel bad(x: text).\n",
+            "a(\"foo\") <- scan(\"WORK\", \"*.txt\", f, rev), match(f, rev, /./, ln).\n",
+            "b(\"foo\") <- scan(\"WORK\", \"*.txt\", f, rev), match(f, rev, /./, ln).\n",
+            "bad(x) <- a(x), b(x).\n",
+        ),
+    )
+    .unwrap();
 
     let prog_abs = fs::canonicalize(&prog).unwrap();
     let mut s = Session::spawn(&prog, &root, &root.join("brand.db"));
@@ -261,19 +308,31 @@ fn brand_mismatch_publishes_on_program_uri() {
 
     let prog_tail = "p.dl";
     let pubs = s.collect_publishes_until(|ps| {
-        ps.iter().any(|p| p.uri.ends_with(prog_tail)
-            && p.diags.iter().any(|d| d.code == "brand-mismatch"))
+        ps.iter().any(|p| {
+            p.uri.ends_with(prog_tail) && p.diags.iter().any(|d| d.code == "brand-mismatch")
+        })
     });
 
-    let hit = pubs.iter().find(|p| p.uri.ends_with(prog_tail)
-        && p.diags.iter().any(|d| d.code == "brand-mismatch"));
+    let hit = pubs
+        .iter()
+        .find(|p| p.uri.ends_with(prog_tail) && p.diags.iter().any(|d| d.code == "brand-mismatch"));
     assert!(hit.is_some(),
         "expected a brand-mismatch publishDiagnostics on the program URI; got: {pubs:?}\nstderr: {}",
         drain_stderr(&mut s.child));
-    let d = hit.unwrap().diags.iter().find(|d| d.code == "brand-mismatch").unwrap();
-    assert_eq!(d.line0, 0, "var-level brand mismatch is line 1 (0-based 0) by design: {d:?}");
-    assert!(d.message.contains("Sym") && d.message.contains("Mod"),
-        "message names both brands: {d:?}");
+    let d = hit
+        .unwrap()
+        .diags
+        .iter()
+        .find(|d| d.code == "brand-mismatch")
+        .unwrap();
+    assert_eq!(
+        d.line0, 0,
+        "var-level brand mismatch is line 1 (0-based 0) by design: {d:?}"
+    );
+    assert!(
+        d.message.contains("Sym") && d.message.contains("Mod"),
+        "message names both brands: {d:?}"
+    );
 
     s.shutdown();
 }
@@ -305,38 +364,73 @@ fn references_returns_all_spans_of_string() {
     fs::write(root.join("src/a.rs"), "fn shared() {}\n").unwrap();
     fs::write(root.join("src/b.rs"), "fn shared() {}\nfn only_b() {}\n").unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        "rel sym(name: text, path: file, line: int).\n",
-        "sym(name, f, ln) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
-        "match(f, rev, /fn (?<name>[a-z_]+)/, ln).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "rel sym(name: text, path: file, line: int).\n",
+            "sym(name, f, ln) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+            "match(f, rev, /fn (?<name>[a-z_]+)/, ln).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("refs.db"));
     initialize(&mut s, &root);
 
     // Cursor on `shared` in a.rs (line 0, char 5, inside bytes 3..9).
-    let result = s.request(2, "textDocument/references",
-        reference_params(&root.join("src/a.rs"), 0, 5));
-    let locs = result.as_array().unwrap_or_else(|| panic!(
-        "expected a location array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
-    let uris: Vec<&str> = locs.iter()
+    let result = s.request(
+        2,
+        "textDocument/references",
+        reference_params(&root.join("src/a.rs"), 0, 5),
+    );
+    let locs = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a location array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
+    let uris: Vec<&str> = locs
+        .iter()
         .filter_map(|l| l.get("uri").and_then(|u| u.as_str()))
         .collect();
-    assert!(uris.iter().any(|u| u.ends_with("src/a.rs")), "a.rs missing: {locs:?}");
-    assert!(uris.iter().any(|u| u.ends_with("src/b.rs")), "b.rs missing: {locs:?}");
+    assert!(
+        uris.iter().any(|u| u.ends_with("src/a.rs")),
+        "a.rs missing: {locs:?}"
+    );
+    assert!(
+        uris.iter().any(|u| u.ends_with("src/b.rs")),
+        "b.rs missing: {locs:?}"
+    );
     for l in locs {
         let start = &l["range"]["start"];
-        assert_eq!(start["line"].as_i64(), Some(0), "span starts on line 1: {l}");
-        assert_eq!(start["character"].as_i64(), Some(3), "span starts at `shared`: {l}");
+        assert_eq!(
+            start["line"].as_i64(),
+            Some(0),
+            "span starts on line 1: {l}"
+        );
+        assert_eq!(
+            start["character"].as_i64(),
+            Some(3),
+            "span starts at `shared`: {l}"
+        );
     }
     // Cursor on `only_b` (interned once): exactly one location.
-    let result = s.request(3, "textDocument/references",
-        reference_params(&root.join("src/b.rs"), 1, 5));
-    assert_eq!(result.as_array().map(|a| a.len()), Some(1),
-        "only_b has one occurrence: {result}");
+    let result = s.request(
+        3,
+        "textDocument/references",
+        reference_params(&root.join("src/b.rs"), 1, 5),
+    );
+    assert_eq!(
+        result.as_array().map(|a| a.len()),
+        Some(1),
+        "only_b has one occurrence: {result}"
+    );
     // Cursor on whitespace: null.
-    let result = s.request(4, "textDocument/references",
-        reference_params(&root.join("src/a.rs"), 0, 2));
+    let result = s.request(
+        4,
+        "textDocument/references",
+        reference_params(&root.join("src/a.rs"), 0, 2),
+    );
     assert!(result.is_null(), "no located span under `fn `: {result}");
 
     s.shutdown();
@@ -350,30 +444,47 @@ fn references_returns_all_spans_of_string() {
 fn definition_jumps_to_module_edge_target() {
     let root = sandbox("def");
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/main.rs"),
-        "mod foo;\nuse crate::foo::thing;\nfn main() { thing() }\n").unwrap();
+    fs::write(
+        root.join("src/main.rs"),
+        "mod foo;\nuse crate::foo::thing;\nfn main() { thing() }\n",
+    )
+    .unwrap();
     fs::write(root.join("src/foo.rs"), "pub fn thing() {}\n").unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        "rel seen(p: file).\n",
-        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
-        "rel edge(a: path, b: path).\n",
-        "edge(a, b) <- module_edge(a, b).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "rel seen(p: file).\n",
+            "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+            "rel edge(a: path, b: path).\n",
+            "edge(a, b) <- module_edge(a, b).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("def.db"));
     initialize(&mut s, &root);
 
     // Cursor inside the `crate::foo::thing` specifier (line 1, char 10).
-    let result = s.request(2, "textDocument/definition",
-        position_params(&root.join("src/main.rs"), 1, 10));
-    let locs = result.as_array().unwrap_or_else(|| panic!(
-        "expected a location array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    let result = s.request(
+        2,
+        "textDocument/definition",
+        position_params(&root.join("src/main.rs"), 1, 10),
+    );
+    let locs = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a location array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
     assert_eq!(locs.len(), 1, "one target: {locs:?}");
     let uri = locs[0]["uri"].as_str().unwrap();
     assert!(uri.ends_with("src/foo.rs"), "target is foo.rs: {locs:?}");
-    assert_eq!(locs[0]["range"]["start"]["line"].as_i64(), Some(0),
-        "file-level target lands at 0:0: {locs:?}");
+    assert_eq!(
+        locs[0]["range"]["start"]["line"].as_i64(),
+        Some(0),
+        "file-level target lands at 0:0: {locs:?}"
+    );
 
     s.shutdown();
 }
@@ -389,32 +500,50 @@ fn definition_via_def_target_lands_at_real_line() {
     let root = sandbox("def_target");
     fs::create_dir_all(root.join("src")).unwrap();
     // `alpha` defined on line 2 (0-based 1) of lib.rs.
-    fs::write(root.join("src/lib.rs"), "// comment\nfn alpha() {}\nfn beta() {}\n").unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        "// comment\nfn alpha() {}\nfn beta() {}\n",
+    )
+    .unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        // Locate `alpha` / `beta` spans via regex capture.
-        "rel sym(name: text, f: file, l: int).\n",
-        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
-        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
-        // Phase E: the program drives go-to-def. type_entity populates because
-        // the rule references it; def_target resolves each name to its def row.
-        "def_target(name, f, l, \"fn\") <- type_entity(_, _, name, \"function\", _, f, l).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            // Locate `alpha` / `beta` spans via regex capture.
+            "rel sym(name: text, f: file, l: int).\n",
+            "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+            "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+            // Phase E: the program drives go-to-def. type_entity populates because
+            // the rule references it; def_target resolves each name to its def row.
+            "def_target(name, f, l, \"fn\") <- type_entity(_, _, name, \"function\", _, f, l).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("def_target.db"));
     initialize(&mut s, &root);
 
     // Cursor inside `alpha` on line 2 (0-based 1), char 5 (inside the name).
-    let result = s.request(2, "textDocument/definition",
-        position_params(&root.join("src/lib.rs"), 1, 5));
-    let locs = result.as_array().unwrap_or_else(|| panic!(
-        "expected a location array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
+    let result = s.request(
+        2,
+        "textDocument/definition",
+        position_params(&root.join("src/lib.rs"), 1, 5),
+    );
+    let locs = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a location array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
     assert_eq!(locs.len(), 1, "one def_target row for alpha: {locs:?}");
     let uri = locs[0]["uri"].as_str().unwrap();
     assert!(uri.ends_with("src/lib.rs"), "target is lib.rs: {locs:?}");
     // alpha is on line 2 (1-based) = 0-based 1. NOT 0:0 (the module_edge fallback).
-    assert_eq!(locs[0]["range"]["start"]["line"].as_i64(), Some(1),
-        "Phase E lands at the real def line (0-based 1), not 0:0: {locs:?}");
+    assert_eq!(
+        locs[0]["range"]["start"]["line"].as_i64(),
+        Some(1),
+        "Phase E lands at the real def line (0-based 1), not 0:0: {locs:?}"
+    );
 
     s.shutdown();
 }
@@ -429,33 +558,50 @@ fn hover_returns_entity_summary() {
     fs::create_dir_all(root.join("src")).unwrap();
     fs::write(root.join("src/lib.rs"), "fn alpha() {}\nfn beta() {}\n").unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        // Locate the fn-name spans.
-        "rel sym(name: text, f: file, l: int).\n",
-        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
-        "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
-        // Reference type_entity so the type indexer populates (lazy gate).
-        "rel te(name: text).\n",
-        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            // Locate the fn-name spans.
+            "rel sym(name: text, f: file, l: int).\n",
+            "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+            "match(f, rev, /fn (?<name>[a-z_]+)/, l).\n",
+            // Reference type_entity so the type indexer populates (lazy gate).
+            "rel te(name: text).\n",
+            "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("hover.db"));
     initialize(&mut s, &root);
 
     // Cursor inside `alpha` (line 0, char 5 — inside the captured bytes 3..8).
-    let result = s.request(2, "textDocument/hover",
-        position_params(&root.join("src/lib.rs"), 0, 5));
-    let hover = result.as_object().unwrap_or_else(|| panic!(
-        "expected a hover object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
-    let md = hover.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
+    let result = s.request(
+        2,
+        "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 5),
+    );
+    let hover = result.as_object().unwrap_or_else(|| {
+        panic!(
+            "expected a hover object, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
+    let md = hover
+        .get("contents")
+        .and_then(|c| c.get("value"))
+        .and_then(|v| v.as_str())
         .unwrap_or_else(|| panic!("expected markdown contents: {result}"));
     assert!(md.contains("alpha"), "hover names the entity: {md}");
     assert!(md.contains("function"), "hover names the kind: {md}");
     assert!(md.contains("src/lib.rs"), "hover locates the file: {md}");
 
     // Cursor on whitespace (before `fn`): no located span -> null.
-    let result = s.request(3, "textDocument/hover",
-        position_params(&root.join("src/lib.rs"), 0, 0));
+    let result = s.request(
+        3,
+        "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 0),
+    );
     assert!(result.is_null(), "no located span at col 0: {result}");
 
     s.shutdown();
@@ -469,30 +615,48 @@ fn hover_returns_entity_summary() {
 fn hover_includes_type_profile_overlay_for_data_types() {
     let root = sandbox("hover-profile");
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/lib.rs"), concat!(
-        "pub struct Alpha { beta: Beta, other: Beta }\n",
-        "pub struct Beta {}\n",
-        "pub fn use_it(a: Alpha) {}\n",
-    )).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        concat!(
+            "pub struct Alpha { beta: Beta, other: Beta }\n",
+            "pub struct Beta {}\n",
+            "pub fn use_it(a: Alpha) {}\n",
+        ),
+    )
+    .unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        "rel sym(name: text, f: file, l: int).\n",
-        "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
-        "match(f, rev, /(?<name>[A-Z][a-zA-Z_]*)/, l).\n",
-        // Opt into type rels so type_entity + type_edge populate.
-        "rel te(name: text).\n",
-        "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "rel sym(name: text, f: file, l: int).\n",
+            "sym(name, f, l) <- scan(\"WORK\", \"src/**/*.rs\", f, rev), ",
+            "match(f, rev, /(?<name>[A-Z][a-zA-Z_]*)/, l).\n",
+            // Opt into type rels so type_entity + type_edge populate.
+            "rel te(name: text).\n",
+            "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("hover-profile.db"));
     initialize(&mut s, &root);
 
     // Cursor inside `Alpha` (line 0, char 14 — inside the captured bytes 11..16).
-    let result = s.request(2, "textDocument/hover",
-        position_params(&root.join("src/lib.rs"), 0, 14));
-    let hover = result.as_object().unwrap_or_else(|| panic!(
-        "expected a hover object, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
-    let md = hover.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
+    let result = s.request(
+        2,
+        "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 14),
+    );
+    let hover = result.as_object().unwrap_or_else(|| {
+        panic!(
+            "expected a hover object, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
+    let md = hover
+        .get("contents")
+        .and_then(|c| c.get("value"))
+        .and_then(|v| v.as_str())
         .unwrap_or_else(|| panic!("expected markdown contents: {result}"));
     assert!(md.contains("struct"), "hover names the kind: {md}");
     assert!(md.contains("Alpha"), "hover names the entity: {md}");
@@ -514,44 +678,86 @@ fn dl_query_returns_rows_over_lsp() {
     fs::write(root.join("src/a.rs"), "fn a() {}\n").unwrap();
     fs::write(root.join("src/b.rs"), "fn b() {}\n").unwrap();
     let prog = root.join("p.dl");
-    fs::write(&prog, concat!(
-        "rel seen(p: file).\n",
-        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "rel seen(p: file).\n",
+            "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+        ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("query.db"));
     initialize(&mut s, &root);
 
-    let result = s.request(2, "dl/query",
-        serde_json::json!({"sql": "SELECT p FROM rel_seen_txt ORDER BY p"}));
-    let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
-        "expected rows, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
-    let paths: Vec<&str> = rows.iter()
+    let result = s.request(
+        2,
+        "dl/query",
+        serde_json::json!({"sql": "SELECT p FROM rel_seen_txt ORDER BY p"}),
+    );
+    let rows = result
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected rows, got: {result}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
+    let paths: Vec<&str> = rows
+        .iter()
         .filter_map(|r| r.get(0).and_then(|v| v.as_str()))
         .collect();
-    assert_eq!(paths, vec!["src/a.rs", "src/b.rs"], "positional rows: {rows:?}");
+    assert_eq!(
+        paths,
+        vec!["src/a.rs", "src/b.rs"],
+        "positional rows: {rows:?}"
+    );
 
     // Bound params round-trip.
-    let result = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT p FROM rel_seen_txt WHERE p = ?", "params": ["src/b.rs"]}));
-    let rows = result.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    let result = s.request(
+        3,
+        "dl/query",
+        serde_json::json!({
+        "sql": "SELECT p FROM rel_seen_txt WHERE p = ?", "params": ["src/b.rs"]}),
+    );
+    let rows = result
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
     assert_eq!(rows.len(), 1, "one bound match: {result}");
 
     // Malformed SQL: error response, so the helper surfaces a null result.
-    let result = s.request(4, "dl/query",
-        serde_json::json!({"sql": "SELECT nope FROM does_not_exist"}));
+    let result = s.request(
+        4,
+        "dl/query",
+        serde_json::json!({"sql": "SELECT nope FROM does_not_exist"}),
+    );
     assert!(result.is_null(), "bad SQL is a JSON-RPC error: {result}");
 
     // The LSP `dl/query` path NO LONGER logs to `_query_log` (A4: the panel
     // auto-refresh polls this door and two writes per read on the single engine
     // lock was hot-path waste). Reading the `query_log` projection back returns
     // zero rows here — no daemon runs, and the LSP handler no longer appends.
-    let result = s.request(5, "dl/query",
-        serde_json::json!({"sql": "SELECT method, body FROM rel_query_log_txt ORDER BY ts"}));
-    let rows = result.get("rows").and_then(|r| r.as_array()).unwrap_or_else(|| panic!(
-        "expected a rows array, got: {result}\nstderr: {}", drain_stderr(&mut s.child)));
-    assert!(rows.is_empty(),
-        "LSP dl/query no longer logs; query_log stays empty without a daemon: {rows:?}");
+    let result = s.request(
+        5,
+        "dl/query",
+        serde_json::json!({"sql": "SELECT method, body FROM rel_query_log_txt ORDER BY ts"}),
+    );
+    let rows = result
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a rows array, got: {result}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
+    assert!(
+        rows.is_empty(),
+        "LSP dl/query no longer logs; query_log stays empty without a daemon: {rows:?}"
+    );
 
     s.shutdown();
 }
@@ -567,12 +773,16 @@ fn literal_coerce_diag_lands_at_real_line() {
     fs::write(root.join("src/x.rs"), "fn a() {}\n").unwrap();
     let prog = root.join("p.dl");
     // The `fs:src/x.rs` literal is on line 4; the coerce diag must report line 4.
-    fs::write(&prog, concat!(
-        "rel seen(path: file).\n",
-        "rel note(x: text).\n",
-        "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
-        "note(fs:src/x.rs) <- seen(p).\n",
-    )).unwrap();
+    fs::write(
+        &prog,
+        concat!(
+            "rel seen(path: file).\n",
+            "rel note(x: text).\n",
+            "seen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+            "note(fs:src/x.rs) <- seen(p).\n",
+        ),
+    )
+    .unwrap();
 
     let prog_abs = fs::canonicalize(&prog).unwrap();
     let mut s = Session::spawn(&prog, &root, &root.join("coerce.db"));
@@ -580,16 +790,26 @@ fn literal_coerce_diag_lands_at_real_line() {
     did_open(&mut s, &prog_abs, "datalog");
 
     let pubs = s.collect_publishes_until(|ps| {
-        ps.iter().any(|p| p.uri.ends_with("p.dl")
-            && p.diags.iter().any(|d| d.code == "coerce-text-path"))
+        ps.iter().any(|p| {
+            p.uri.ends_with("p.dl") && p.diags.iter().any(|d| d.code == "coerce-text-path")
+        })
     });
-    let hit = pubs.iter().find(|p| p.uri.ends_with("p.dl")
-        && p.diags.iter().any(|d| d.code == "coerce-text-path"));
+    let hit = pubs
+        .iter()
+        .find(|p| p.uri.ends_with("p.dl") && p.diags.iter().any(|d| d.code == "coerce-text-path"));
     assert!(hit.is_some(),
         "expected a coerce-text-path publishDiagnostics on the program URI; got: {pubs:?}\nstderr: {}",
         drain_stderr(&mut s.child));
-    let d = hit.unwrap().diags.iter().find(|d| d.code == "coerce-text-path").unwrap();
-    assert_eq!(d.line0, 3, "the fs: literal is on line 4 (0-based 3), not line 1: {d:?}");
+    let d = hit
+        .unwrap()
+        .diags
+        .iter()
+        .find(|d| d.code == "coerce-text-path")
+        .unwrap();
+    assert_eq!(
+        d.line0, 3,
+        "the fs: literal is on line 4 (0-based 3), not line 1: {d:?}"
+    );
 
     s.shutdown();
 }

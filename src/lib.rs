@@ -1,9 +1,9 @@
 pub mod activity;
 pub mod agent;
 pub mod anchor;
+pub mod ast;
 pub mod budget;
 pub mod cancel;
-pub mod ast;
 pub mod channel;
 pub mod cli;
 pub mod comment;
@@ -23,9 +23,9 @@ pub mod db;
 pub mod db_ratio;
 pub mod desc;
 pub mod docs_cmd;
+pub mod effect;
 pub mod embed;
 pub mod engine;
-pub mod effect;
 pub mod eventlog;
 pub mod frontend;
 pub mod hook;
@@ -41,28 +41,28 @@ pub mod mcp;
 pub mod parse;
 pub mod perflog;
 pub mod propose;
-pub mod rpc;
 pub mod refactor;
 pub mod rels;
 pub mod repo;
 pub mod reqid;
 pub mod reserved_names;
+pub mod rpc;
 pub mod rspath;
 pub mod scip_import;
 pub mod scip_setup;
 pub mod setup;
 pub mod sg;
+pub mod spine;
 pub mod stage;
 pub mod stale_binary;
-pub mod verdict;
-pub mod spine;
 pub mod storage;
 pub mod supervise;
-pub mod tray;
 pub mod trace;
+pub mod tray;
+pub mod typecheck;
 pub mod update;
 pub mod verbs;
-pub mod typecheck;
+pub mod verdict;
 pub mod watchdog;
 pub mod watchgate;
 pub mod why;
@@ -93,7 +93,9 @@ pub fn state_dir(root: &Path) -> PathBuf {
 /// directory is a loud error: a typo'd dir must never let `--check` pass green
 /// by checking nothing.
 pub fn resolve_programs(programs: &[String], root: &Path) -> Result<Vec<PathBuf>> {
-    if !programs.is_empty() { return Ok(programs.iter().map(PathBuf::from).collect()); }
+    if !programs.is_empty() {
+        return Ok(programs.iter().map(PathBuf::from).collect());
+    }
     // Discover the `.dl` CHAIN: `<root>/.dl` plus any `.dl/` in ancestors, up to
     // and including the nearest git root (the natural workspace boundary). A
     // plain repo root collects one dir and stops at its own `.git`, byte-for-byte
@@ -103,17 +105,29 @@ pub fn resolve_programs(programs: &[String], root: &Path) -> Result<Vec<PathBuf>
     let mut dirs: Vec<PathBuf> = Vec::new();
     for anc in root.ancestors() {
         let d = anc.join(".dl");
-        if d.is_dir() { dirs.push(d); }
-        if anc.join(".git").exists() { break; } // a root: stop the walk (inclusive)
+        if d.is_dir() {
+            dirs.push(d);
+        }
+        if anc.join(".git").exists() {
+            break;
+        } // a root: stop the walk (inclusive)
     }
     if dirs.is_empty() {
-        anyhow::bail!("no program argument and no .dl/ directory in {} or any ancestor up to the repo root", root.display());
+        anyhow::bail!(
+            "no program argument and no .dl/ directory in {} or any ancestor up to the repo root",
+            root.display()
+        );
     }
     dirs.reverse(); // outermost first
     let mut files: Vec<PathBuf> = Vec::new();
     for dir in &dirs {
-        let mut in_dir: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten()
-            .map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "dl")).collect();
+        let mut in_dir: Vec<PathBuf> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|e| e == "dl"))
+            .collect();
         in_dir.sort();
         files.extend(in_dir);
     }
@@ -145,7 +159,10 @@ pub fn prepare_paths(paths: &[PathBuf]) -> Result<(ast::Program, Vec<ast::TypeDi
     let display = if paths.len() == 1 {
         paths[0].display().to_string()
     } else {
-        format!("{}/*.dl", paths[0].parent().unwrap_or(Path::new(".dl")).display())
+        format!(
+            "{}/*.dl",
+            paths[0].parent().unwrap_or(Path::new(".dl")).display()
+        )
     };
     let mut prog = ast::Program { items };
     // Import-resolution diagnostics (an unresolvable `use`) ride the same channel
@@ -169,13 +186,29 @@ pub fn render_type_diags_eprintln(diags: &[ast::TypeDiag]) {
     let show_coerce = std::env::var_os("DL_COERCE_WARN").is_some();
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
     for d in diags {
-        if d.code == "coerce-text-path" && !show_coerce { continue; }
-        if !seen.insert((d.code.clone(), d.msg.clone())) { continue; }
-        eprintln!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg); // @eprintln-ok: diagnostic output contract for --check/--parse-only
+        if d.code == "coerce-text-path" && !show_coerce {
+            continue;
+        }
+        if !seen.insert((d.code.clone(), d.msg.clone())) {
+            continue;
+        }
+        eprintln!(
+            "{}:1: {}[{}]: {}",
+            d.path,
+            d.severity.as_str(),
+            d.code,
+            d.msg
+        ); // @eprintln-ok: diagnostic output contract for --check/--parse-only
     }
 }
 
-pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, query_format: engine::QueryOutputFormat) -> Result<()> {
+pub fn run_file(
+    programs: &[String],
+    db_path: Option<&str>,
+    db_defaulted: bool,
+    root: PathBuf,
+    query_format: engine::QueryOutputFormat,
+) -> Result<()> {
     // An explicit multi-file merge is an ad-hoc in-process run: the daemon
     // serves its own loaded program set, not the positionals.
     if daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) && programs.len() <= 1 {
@@ -198,15 +231,28 @@ pub fn run_file(programs: &[String], db_path: Option<&str>, db_defaulted: bool, 
 
 /// Daemon path: ensure the daemon is up, send `query` + `diag` RPCs, render the
 /// results in the same shape as `run_file_inproc` prints.
-fn run_file_via_daemon(program: Option<&str>, root: &Path, query_format: engine::QueryOutputFormat) -> Result<()> {
+fn run_file_via_daemon(
+    program: Option<&str>,
+    root: &Path,
+    query_format: engine::QueryOutputFormat,
+) -> Result<()> {
     daemon::ensure_daemon(root, program)?;
     let mut s = daemon::connect()?;
     // The `root` envelope key names which engine to query; an unregistered `.dl`
     // root auto-registers (cold-ticks) inside the daemon on this call.
-    let req = rpc::Request::new(1, "query", serde_json::json!({"root": root.to_string_lossy()}));
+    let req = rpc::Request::new(
+        1,
+        "query",
+        serde_json::json!({"root": root.to_string_lossy()}),
+    );
     let resp = daemon::rpc_call(&mut s, &req)?;
-    if let Some(e) = resp.error { anyhow::bail!("daemon query: {}", e.message); }
-    let results = resp.result.and_then(|v| v.get("results").cloned()).unwrap_or(serde_json::Value::Array(vec![]));
+    if let Some(e) = resp.error {
+        anyhow::bail!("daemon query: {}", e.message);
+    }
+    let results = resp
+        .result
+        .and_then(|v| v.get("results").cloned())
+        .unwrap_or(serde_json::Value::Array(vec![]));
     match query_format {
         engine::QueryOutputFormat::Ndjson => {
             // One JSON-lines object per query, same shape as --query-json.
@@ -221,17 +267,31 @@ fn run_file_via_daemon(program: Option<&str>, root: &Path, query_format: engine:
             // as --format json's in-process path (`emit_query_json_rows`).
             if let Some(arr) = results.as_array() {
                 for r in arr {
-                    let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+                    let cols: Vec<String> = r
+                        .get("columns")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|c| c.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                    let objects: Vec<serde_json::Value> = rows.iter().filter_map(|row| row.as_array()).map(|cells| {
-                        let mut obj = serde_json::Map::with_capacity(cols.len());
-                        for (col, cell) in cols.iter().zip(cells.iter()) {
-                            obj.insert(col.clone(), cell.clone());
-                        }
-                        serde_json::Value::Object(obj)
-                    }).collect();
+                    let rows = r
+                        .get("rows")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    let objects: Vec<serde_json::Value> = rows
+                        .iter()
+                        .filter_map(|row| row.as_array())
+                        .map(|cells| {
+                            let mut obj = serde_json::Map::with_capacity(cols.len());
+                            for (col, cell) in cols.iter().zip(cells.iter()) {
+                                obj.insert(col.clone(), cell.clone());
+                            }
+                            serde_json::Value::Object(obj)
+                        })
+                        .collect();
                     println!("{}", serde_json::Value::Array(objects));
                 }
             }
@@ -240,11 +300,29 @@ fn run_file_via_daemon(program: Option<&str>, root: &Path, query_format: engine:
             if let Some(arr) = results.as_array() {
                 for r in arr {
                     let rel = r.get("rel").and_then(|v| v.as_str()).unwrap_or("?");
-                    let cols: Vec<String> = r.get("columns").and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|c| c.as_str().map(String::from)).collect())
+                    let cols: Vec<String> = r
+                        .get("columns")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|c| c.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let rows = r.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
-                    println!("? {} => {}", rel, if cols.is_empty() { "(count)".into() } else { cols.join("\t") });
+                    let rows = r
+                        .get("rows")
+                        .and_then(|v| v.as_array())
+                        .cloned()
+                        .unwrap_or_default();
+                    println!(
+                        "? {} => {}",
+                        rel,
+                        if cols.is_empty() {
+                            "(count)".into()
+                        } else {
+                            cols.join("\t")
+                        }
+                    );
                     for cells in rows.iter().filter_map(|r| r.as_array()) {
                         let s: Vec<String> = cells.iter().map(json_cell_tsv_render).collect();
                         println!("{}", s.join("\t"));
@@ -267,13 +345,21 @@ fn json_cell_tsv_render(v: &serde_json::Value) -> String {
 
 /// The pre-daemon `run_file` body, in-process. Kept for the no-daemon fallback
 /// and the test path (`DL_NO_DAEMON=1`).
-fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, query_format: engine::QueryOutputFormat) -> Result<()> {
+fn run_file_inproc(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    query_format: engine::QueryOutputFormat,
+) -> Result<()> {
     watchdog::arm_wall_watchdog("run_file");
     watchdog::test_hang_hook();
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
-    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    let n_errors = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
     if n_errors == 0 {
         let conn = db::open(db_path)?;
         let mut eng = engine::Engine::new(conn, root);
@@ -283,8 +369,10 @@ fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, qu
         // LAST tick's coordinate/pull state. A fresh one-shot run has no prior
         // tick, so prime once silently (derive coords / pull repos), then the
         // real run reads them and prints answers.
-        let needs_prime = prog.items.iter().any(|i| matches!(i,
-            ast::Item::Rule(r) if engine::scan_has_var_coords(r) || r.is_repo_sink()));
+        let needs_prime = prog.items.iter().any(|i| {
+            matches!(i,
+            ast::Item::Rule(r) if engine::scan_has_var_coords(r) || r.is_repo_sink())
+        });
         if needs_prime {
             eng.set_prime_tick(true);
             eng.tick(&prog, true)?;
@@ -311,7 +399,9 @@ fn run_file_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, qu
 /// structural brand/var diagnostic) also lands at line 1. `json` is reserved for
 /// the `--diag-json` path which folds these into the JSON array there.
 fn render_type_diags(diags: &[ast::TypeDiag], json: bool) {
-    if json { return; }
+    if json {
+        return;
+    }
     render_type_diags_eprintln(diags);
 }
 
@@ -321,11 +411,18 @@ fn load_repos() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => {
             let count = cfg.repos.len();
-            tracing::debug!(count, "[config] {count} repo(s) registered (scan + type/call/doc ingestion)");
+            tracing::debug!(
+                count,
+                "[config] {count} repo(s) registered (scan + type/call/doc ingestion)"
+            );
             cfg.repos
         }
         Ok(_) => Vec::new(),
-        Err(e) => { let error = e; tracing::warn!(error = %error, "[config] ignored: {error}"); Vec::new() }
+        Err(e) => {
+            let error = e;
+            tracing::warn!(error = %error, "[config] ignored: {error}");
+            Vec::new()
+        }
     }
 }
 
@@ -344,14 +441,20 @@ fn load_repos() -> Vec<config::RepoConfig> {
 /// if it exits 0; otherwise restore every touched file to its pre-run bytes.
 /// Returns `true` if kept (checker passed), `false` if rolled back. Always
 /// in-process (never the daemon) — a verify run owns the tree transactionally.
-pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, checker: &str)
-    -> Result<bool>
-{
+pub fn run_verify(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    checker: &str,
+) -> Result<bool> {
     watchdog::arm_wall_watchdog("run_verify");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
-    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    let n_errors = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
     if n_errors > 0 {
         anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
     }
@@ -363,12 +466,16 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
 
     tracing::debug!(checker = %checker, "[verify] checker: {checker}");
     let status = std::process::Command::new("sh")
-        .arg("-c").arg(checker)
+        .arg("-c")
+        .arg(checker)
         .current_dir(&root)
         .status()?;
     if status.success() {
         let edited = eng.commit_writes();
-        tracing::debug!(edited, "[verify] checker passed — kept {edited} edited file(s)");
+        tracing::debug!(
+            edited,
+            "[verify] checker passed — kept {edited} edited file(s)"
+        );
         Ok(true)
     } else {
         let rolled_back = eng.rollback_writes()?;
@@ -385,7 +492,15 @@ pub fn run_verify(programs: &[String], db_path: Option<&str>, root: PathBuf, che
 /// (stale-by-one-tick answers, zero write contention with a live daemon).
 /// Applies only to the defaulted per-root db; an explicit `--db` keeps the
 /// full in-process engine.
-pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf, json: bool, stage: &str, readonly_fallback: bool) -> Result<usize> {
+pub fn run_check(
+    programs: &[String],
+    db_path: Option<&str>,
+    db_defaulted: bool,
+    root: PathBuf,
+    json: bool,
+    stage: &str,
+    readonly_fallback: bool,
+) -> Result<usize> {
     // Same daemon gate as run_file: explicit multi-file merges stay in-process.
     // The discovery-mode default db does NOT opt out (it names the daemon's own
     // per-root `roots/<key>/db.sqlite` via `db_defaulted`), matching run_file's gate.
@@ -415,14 +530,28 @@ pub fn run_check(programs: &[String], db_path: Option<&str>, db_defaulted: bool,
 /// `stage` (R7) filters the diags to the routing stage before render — the db
 /// still holds every row; the `diag` RPC returns the `diag_stage` routes so the
 /// filter runs client-side (one round trip).
-fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &str) -> Result<usize> {
+fn run_check_via_daemon(
+    program: Option<&str>,
+    root: &Path,
+    json: bool,
+    stage: &str,
+) -> Result<usize> {
     daemon::ensure_daemon(root, program)?;
     let mut s = daemon::connect()?;
-    let req = rpc::Request::new(1, "diag", serde_json::json!({"root": root.to_string_lossy()}));
+    let req = rpc::Request::new(
+        1,
+        "diag",
+        serde_json::json!({"root": root.to_string_lossy()}),
+    );
     let resp = daemon::rpc_call(&mut s, &req)?;
-    if let Some(e) = resp.error { anyhow::bail!("daemon diag: {}", e.message); }
+    if let Some(e) = resp.error {
+        anyhow::bail!("daemon diag: {}", e.message);
+    }
     let result = resp.result.unwrap_or(serde_json::Value::Null);
-    let mut arr = result.get("rows").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    let mut arr = result
+        .get("rows")
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default();
     // R7 stage routing: drop diags not routed to `stage`. `stage_rows` are the
     // `diag_stage` [code, stage] pairs the daemon read alongside the diags.
     let stage_rows = diag_stage_rows_from_json(result.get("stages"));
@@ -433,9 +562,17 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &
         let sev = d.get("severity").and_then(|v| v.as_str()).unwrap_or("");
         stage::routed_to(code, sev, stage, &routes)
     });
-    tracing::debug!(stage, kept = arr.len(), dropped = before - arr.len(), "check stage routing (daemon)");
+    tracing::debug!(
+        stage,
+        kept = arr.len(),
+        dropped = before - arr.len(),
+        "check stage routing (daemon)"
+    );
     if json {
-        println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr.clone()))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Array(arr.clone()))?
+        );
     } else {
         for d in &arr {
             let path = d.get("path").and_then(|v| v.as_str()).unwrap_or("");
@@ -443,14 +580,23 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &
             let sev = d.get("severity").and_then(|v| v.as_str()).unwrap_or("");
             let code = d.get("code").and_then(|v| v.as_str()).unwrap_or("");
             let msg = d.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            let code_s = if code.is_empty() { String::new() } else { format!("[{code}]") };
+            let code_s = if code.is_empty() {
+                String::new()
+            } else {
+                format!("[{code}]")
+            };
             eprintln!("{path}:{line}: {sev}{code_s}: {msg}"); // @eprintln-ok: diagnostic output contract for --check
             if let Some(h) = d.get("hint").and_then(|v| v.as_str()) {
-                if !h.is_empty() { eprintln!("    hint: {h}"); } // @eprintln-ok: diagnostic output contract for --check
+                if !h.is_empty() {
+                    eprintln!("    hint: {h}");
+                } // @eprintln-ok: diagnostic output contract for --check
             }
         }
     }
-    Ok(arr.iter().filter(|d| d.get("severity").and_then(|v| v.as_str()) == Some("error")).count())
+    Ok(arr
+        .iter()
+        .filter(|d| d.get("severity").and_then(|v| v.as_str()) == Some("error"))
+        .count())
 }
 
 /// Parse the `diag` RPC's `stages` field — a JSON array of `[code, stage]`
@@ -458,28 +604,50 @@ fn run_check_via_daemon(program: Option<&str>, root: &Path, json: bool, stage: &
 /// consumes. Tolerant of a missing/absent field (empty = no routing rows =
 /// severity defaults everywhere).
 fn diag_stage_rows_from_json(v: Option<&serde_json::Value>) -> Vec<Vec<String>> {
-    let Some(arr) = v.and_then(|v| v.as_array()) else { return Vec::new() };
+    let Some(arr) = v.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
     arr.iter()
         .filter_map(|row| row.as_array())
-        .map(|cells| cells.iter().map(|c| c.as_str().unwrap_or("").to_string()).collect())
+        .map(|cells| {
+            cells
+                .iter()
+                .map(|c| c.as_str().unwrap_or("").to_string())
+                .collect()
+        })
         .collect()
 }
 
-fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, json: bool, stage: &str) -> Result<usize> {
+fn run_check_inproc(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    json: bool,
+    stage: &str,
+) -> Result<usize> {
     let files = resolve_programs(programs, &root)?;
     // Drop `?` queries so their stdout rows don't mix with --diag-json output.
     let (mut prog, type_diags, _) = prepare_paths(&files)?;
-    if json { prog.items.retain(|i| !matches!(i, ast::Item::Query(_))); }
+    if json {
+        prog.items.retain(|i| !matches!(i, ast::Item::Query(_)));
+    }
     // `gen` never writes from a check tick: --check is the enforcement rail
     // (hooks, CI); codegen runs only on a direct `dl prog.dl` invocation.
     prog.items.retain(|i| !matches!(i, ast::Item::Gen(_)));
     // A lower-time error (brand mismatch, escaping literal, not-stratified) means
     // the program is ill-defined: skip the tick so its diagnostic, not a downstream
     // engine bail (e.g. the stratify defense) or a SQLite datatype error, surfaces.
-    let type_errors = type_diags.iter().any(|d| d.severity == ast::Severity::Error);
+    let type_errors = type_diags
+        .iter()
+        .any(|d| d.severity == ast::Severity::Error);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root);
-    let diags = if type_errors { Vec::new() } else { eng.tick(&prog, true)?; eng.diags(None)? };
+    let diags = if type_errors {
+        Vec::new()
+    } else {
+        eng.tick(&prog, true)?;
+        eng.diags(None)?
+    };
     // Class-17 db-ratio rail (docs/failure-modes.md:407-441): the cold
     // `--no-daemon --check` completion is the one-shot twin of a daemon's
     // per-root boot (`ServedRoot::open` in `src/daemon.rs` carries the other
@@ -494,24 +662,43 @@ fn run_check_inproc(programs: &[String], db_path: Option<&str>, root: PathBuf, j
     let routes = stage::routes_from_rows(&stage_rows);
     let before = diags.len();
     let diags = stage::stage_filter(diags, stage, &routes);
-    tracing::debug!(stage, kept = diags.len(), dropped = before - diags.len(), "check stage routing (in-process)");
+    tracing::debug!(
+        stage,
+        kept = diags.len(),
+        dropped = before - diags.len(),
+        "check stage routing (in-process)"
+    );
 
     emit_check_output(&diags, &type_diags, json)?;
-    let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
-    if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
+    let n_type = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
+    if n_type > 0 {
+        anyhow::bail!("{n_type} type error(s) in the program");
+    }
     Ok(diags.iter().filter(|d| d.severity == "error").count())
 }
 
 /// The one `--check` renderer: JSON array to stdout (`--diag-json`) or
 /// compiler-style lines to stderr. Shared by the full in-process path and the
 /// L2 read-only fallback so both surfaces print byte-identically.
-fn emit_check_output(diags: &[engine::DiagRow], type_diags: &[ast::TypeDiag], json: bool) -> Result<()> {
+fn emit_check_output(
+    diags: &[engine::DiagRow],
+    type_diags: &[ast::TypeDiag],
+    json: bool,
+) -> Result<()> {
     if json {
-        let mut arr: Vec<serde_json::Value> = diags.iter().map(|d| serde_json::json!({
-            "path": d.path, "line": d.line, "col": d.col,
-            "endLine": d.end_line, "endCol": d.end_col,
-            "severity": d.severity, "code": d.code, "message": d.msg, "hint": d.hint,
-        })).collect();
+        let mut arr: Vec<serde_json::Value> = diags
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "path": d.path, "line": d.line, "col": d.col,
+                    "endLine": d.end_line, "endCol": d.end_col,
+                    "severity": d.severity, "code": d.code, "message": d.msg, "hint": d.hint,
+                })
+            })
+            .collect();
         // Fold the lower-time type diagnostics into the same JSON array (line 1;
         // span-to-line mapping is T3). The `diag`-relation rows and these share one
         // shape so a consumer treats them uniformly.
@@ -522,13 +709,22 @@ fn emit_check_output(diags: &[engine::DiagRow], type_diags: &[ast::TypeDiag], js
                 "severity": d.severity.as_str(), "code": d.code, "message": d.msg, "hint": serde_json::Value::Null,
             }));
         }
-        println!("{}", serde_json::to_string_pretty(&serde_json::Value::Array(arr))?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::Value::Array(arr))?
+        );
     } else {
         render_type_diags(type_diags, false);
         for d in diags {
-            let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
+            let code = if d.code.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", d.code)
+            };
             eprintln!("{}:{}: {}{}: {}", d.path, d.line, d.severity, code, d.msg); // @eprintln-ok: diagnostic output contract for --check
-            if let Some(h) = &d.hint { eprintln!("    hint: {h}"); } // @eprintln-ok: diagnostic output contract for --check
+            if let Some(h) = &d.hint {
+                eprintln!("    hint: {h}");
+            } // @eprintln-ok: diagnostic output contract for --check
         }
     }
     Ok(())
@@ -540,26 +736,46 @@ fn emit_check_output(diags: &[engine::DiagRow], type_diags: &[ast::TypeDiag], js
 /// contend for the write lock a live-but-unreachable daemon holds. Program
 /// parse/typecheck still runs (static, no db). A blank or absent db renders
 /// the type diags alone with a loud warn.
-fn run_check_readonly(programs: &[String], db_path: &str, root: &Path, json: bool, stage: &str) -> Result<usize> {
+fn run_check_readonly(
+    programs: &[String],
+    db_path: &str,
+    root: &Path,
+    json: bool,
+    stage: &str,
+) -> Result<usize> {
     let files = resolve_programs(programs, root)?;
     let (_prog, type_diags, _) = prepare_paths(&files)?;
-    let db_is_cold = std::fs::metadata(db_path).map(|m| m.len() == 0).unwrap_or(true);
+    let db_is_cold = std::fs::metadata(db_path)
+        .map(|m| m.len() == 0)
+        .unwrap_or(true);
     let (diags, stage_rows) = if db_is_cold {
         tracing::warn!(db = db_path,
             "[check] root db blank or absent — read-only hook check has no diag rows, cold build skipped; warm it: dl daemon start, or a one-shot dl run");
         (Vec::new(), Vec::new())
     } else {
         let read_db = db::ReadDb::open(db_path)?;
-        (read_diag_rows(&read_db)?, read_rel_string_rows(&read_db, "diag_stage"))
+        (
+            read_diag_rows(&read_db)?,
+            read_rel_string_rows(&read_db, "diag_stage"),
+        )
     };
     let routes = stage::routes_from_rows(&stage_rows);
     let before = diags.len();
     let diags = stage::stage_filter(diags, stage, &routes);
-    tracing::debug!(stage, kept = diags.len(), dropped = before - diags.len(),
-        "check stage routing (read-only fallback)");
+    tracing::debug!(
+        stage,
+        kept = diags.len(),
+        dropped = before - diags.len(),
+        "check stage routing (read-only fallback)"
+    );
     emit_check_output(&diags, &type_diags, json)?;
-    let n_type = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
-    if n_type > 0 { anyhow::bail!("{n_type} type error(s) in the program"); }
+    let n_type = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
+    if n_type > 0 {
+        anyhow::bail!("{n_type} type error(s) in the program");
+    }
     Ok(diags.iter().filter(|d| d.severity == "error").count())
 }
 
@@ -567,12 +783,15 @@ fn run_check_readonly(programs: &[String], db_path: &str, root: &Path, json: boo
 /// program that never declared the rel has no table to read).
 fn rel_view_exists(read_db: &db::ReadDb, rel: &str) -> bool {
     let view = lower::txt_tbl(rel);
-    read_db.query_one(
-        rel,
-        "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
-        &[db::SqlVal::Text(view)],
-        |row| Ok(row.get::<_, i64>(0)?),
-    ).map(|n| n > 0).unwrap_or(false)
+    read_db
+        .query_one(
+            rel,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name = ?1",
+            &[db::SqlVal::Text(view)],
+            |row| Ok(row.get::<_, i64>(0)?),
+        )
+        .map(|n| n > 0)
+        .unwrap_or(false)
 }
 
 /// Read the persisted `diag` relation off a read-only connection, with the
@@ -581,11 +800,14 @@ fn rel_view_exists(read_db: &db::ReadDb, rel: &str) -> bool {
 /// tick-time products and have no persisted twin, so a read-only render is
 /// the last tick's `diag` rows alone.
 fn read_diag_rows(read_db: &db::ReadDb) -> Result<Vec<engine::DiagRow>> {
-    if !rel_view_exists(read_db, "diag") { return Ok(Vec::new()); }
+    if !rel_view_exists(read_db, "diag") {
+        return Ok(Vec::new());
+    }
     let sql = format!(
         "SELECT \"path\", \"line\", \"col\", \"end_line\", \"end_col\", \
          \"severity\", \"code\", \"msg\", \"hint\" FROM {}",
-        lower::txt_tbl("diag"));
+        lower::txt_tbl("diag")
+    );
     let raw_rows = read_db.query_values("diag", &sql, &[])?;
     let mut out = Vec::new();
     for row in &raw_rows {
@@ -613,7 +835,11 @@ fn read_diag_rows(read_db: &db::ReadDb) -> Result<Vec<engine::DiagRow>> {
             msg: text(7),
             hint: {
                 let hint = text(8);
-                if hint.is_empty() { None } else { Some(hint) }
+                if hint.is_empty() {
+                    None
+                } else {
+                    Some(hint)
+                }
             },
         });
     }
@@ -624,10 +850,13 @@ fn read_diag_rows(read_db: &db::ReadDb) -> Result<Vec<engine::DiagRow>> {
 /// `Engine::rel_rows` twin for the L2 read-only check (drives the
 /// `diag_stage` routing read). Missing rel or any read error = empty.
 fn read_rel_string_rows(read_db: &db::ReadDb, rel: &str) -> Vec<Vec<String>> {
-    if !rel_view_exists(read_db, rel) { return Vec::new(); }
+    if !rel_view_exists(read_db, rel) {
+        return Vec::new();
+    }
     let sql = format!("SELECT * FROM {}", lower::txt_tbl(rel));
     match read_db.query_values(rel, &sql, &[]) {
-        Ok(raw_rows) => raw_rows.iter()
+        Ok(raw_rows) => raw_rows
+            .iter()
             .map(|row| row.iter().map(|cell| cell.to_lossy_string()).collect())
             .collect(),
         Err(_) => Vec::new(),
@@ -651,26 +880,41 @@ pub fn run_parse_only(programs: &[String], root: PathBuf) -> Result<i32> {
     let regex_diags = engine::regex_literal_diags(&prog, &display);
     render_type_diags(&type_diags, false);
     render_type_diags(&regex_diags, false);
-    let n_errors = type_diags.iter().chain(&regex_diags)
-        .filter(|d| d.severity == ast::Severity::Error).count();
+    let n_errors = type_diags
+        .iter()
+        .chain(&regex_diags)
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
     // A reserved engine relation is a command-contract collision, matching the
     // `--check` gate's exit-2 convention while other parse/type errors retain
     // parse-only's historical exit 1.
-    Ok(if type_diags.iter().any(|d| d.code == "reserved-name") { 2 }
-       else if n_errors > 0 { 1 } else { 0 })
+    Ok(if type_diags.iter().any(|d| d.code == "reserved-name") {
+        2
+    } else if n_errors > 0 {
+        1
+    } else {
+        0
+    })
 }
 
 /// Drive one incremental tick over an existing db for a set of changed paths
 /// (relative to root or absolute). The delta entry point the watcher uses.
-pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, changed: Vec<PathBuf>) -> Result<()> {
+pub fn run_changed(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    changed: Vec<PathBuf>,
+) -> Result<()> {
     watchdog::arm_wall_watchdog("run_changed");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
     let conn = db::open(db_path)?;
     let mut eng = engine::Engine::new(conn, root.clone());
-    let abs: Vec<PathBuf> = changed.into_iter()
-        .map(|p| if p.is_absolute() { p } else { root.join(p) }).collect();
+    let abs: Vec<PathBuf> = changed
+        .into_iter()
+        .map(|p| if p.is_absolute() { p } else { root.join(p) })
+        .collect();
     eng.tick_paths(&prog, &abs, false)
 }
 
@@ -682,13 +926,21 @@ pub fn run_changed(programs: &[String], db_path: Option<&str>, root: PathBuf, ch
 /// leaving requests stuck 'queued'. Bails loudly if the program cannot settle
 /// within `budget` ticks (a `@next` counter, an always-changing poll), naming
 /// the still-moving rels/effects. See plans/2026-07-06-settle-quiescence.md.
-pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
-                  budget: usize, query_format: engine::QueryOutputFormat) -> Result<()> {
+pub fn run_settle(
+    programs: &[String],
+    db_path: Option<&str>,
+    root: PathBuf,
+    budget: usize,
+    query_format: engine::QueryOutputFormat,
+) -> Result<()> {
     watchdog::arm_wall_watchdog("run_settle");
     let files = resolve_programs(programs, &root)?;
     let (prog, type_diags, _) = prepare_paths(&files)?;
     render_type_diags(&type_diags, false);
-    let n_errors = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    let n_errors = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
     if n_errors > 0 {
         anyhow::bail!("{n_errors} type error(s) in path literals / brands / stratification");
     }
@@ -718,18 +970,28 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
         // in `poll_tick`; here we do it inline so a one-shot converges. Rebuild
         // the exec each pass so a dynamic `effect_cmd(kind, template)` overlay is
         // picked up (same construction as poll_tick).
-        let drained = if arity.is_empty() { 0 } else {
+        let drained = if arity.is_empty() {
+            0
+        } else {
             let mut templates = engine::shell_templates(&prog);
             let effect_cmd_txt = crate::lower::txt_tbl("effect_cmd");
-            if let Ok(rows) = eng.query_sql(&format!("SELECT kind, template FROM {effect_cmd_txt}"), &[]) {
+            if let Ok(rows) =
+                eng.query_sql(&format!("SELECT kind, template FROM {effect_cmd_txt}"), &[])
+            {
                 for row in rows {
-                    if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
-                                                 row.get(1).and_then(|v| v.as_str())) {
+                    if let (Some(k), Some(t)) = (
+                        row.first().and_then(|v| v.as_str()),
+                        row.get(1).and_then(|v| v.as_str()),
+                    ) {
                         templates.insert(k.to_string(), t.to_string());
                     }
                 }
             }
-            let exec = engine::ShellEffectExec { templates, n_out: arity.clone(), cwd: eng.root() };
+            let exec = engine::ShellEffectExec {
+                templates,
+                n_out: arity.clone(),
+                cwd: eng.root(),
+            };
             eng.drain_effects(&prog, &exec)? + eng.drain_streams(&prog, &exec)?
         } + sinks_drained;
         // Settled AND nothing drained this pass (a drain lands a response the
@@ -742,20 +1004,32 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
             eprintln!("[settle] converged after {ticks} tick(s)");
             return Ok(());
         }
-        let non_timer: Vec<&String> = report.changed_rels.iter()
-            .filter(|rel| !engine::is_timer_rel(rel)).collect();
-        let remaining = non_timer.len() + report.inflight_effects
-            + report.staged_next as usize + drained;
-        if remaining < best_remaining { best_remaining = remaining; stall = 0; }
-        else { stall += 1; }
+        let non_timer: Vec<&String> = report
+            .changed_rels
+            .iter()
+            .filter(|rel| !engine::is_timer_rel(rel))
+            .collect();
+        let remaining =
+            non_timer.len() + report.inflight_effects + report.staged_next as usize + drained;
+        if remaining < best_remaining {
+            best_remaining = remaining;
+            stall = 0;
+        } else {
+            stall += 1;
+        }
         if stall >= STALL {
-            anyhow::bail!("program did not settle (no progress for {STALL} ticks): still \
+            anyhow::bail!(
+                "program did not settle (no progress for {STALL} ticks): still \
                 moving = rels {non_timer:?}, in-flight effects {}, staged @next {}",
-                report.inflight_effects, report.staged_next);
+                report.inflight_effects,
+                report.staged_next
+            );
         }
     }
-    anyhow::bail!("program did not settle within {budget} ticks (raise --settle-max, or it \
-        has a non-converging @next/effect loop)");
+    anyhow::bail!(
+        "program did not settle within {budget} ticks (raise --settle-max, or it \
+        has a non-converging @next/effect loop)"
+    );
 }
 
 /// Run as an LSP server over stdio. The program's `diag` relation becomes live
@@ -764,7 +1038,10 @@ pub fn run_settle(programs: &[String], db_path: Option<&str>, root: PathBuf,
 /// instead poll that sqlite file's `diag_v5` view for diagnostics — see
 /// `lsp::run_lsp`'s doc for the mode's semantics.
 pub fn run_lsp(
-    programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf,
+    programs: &[String],
+    db_path: Option<&str>,
+    db_defaulted: bool,
+    root: PathBuf,
     diag_db: Option<PathBuf>,
 ) -> Result<()> {
     lsp::run_lsp(programs, db_path, db_defaulted, root, diag_db)
@@ -788,14 +1065,16 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     tracing::debug!(root = %root_display, "[watch] watching {root_display} (ctrl-c to stop)");
 
     let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = notify::recommended_watcher(move |res| { let _ = tx.send(res); })?;
+    let mut watcher = notify::recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    })?;
     watcher.watch(&root, RecursiveMode::Recursive)?;
 
     // Watch the turnkey config file too: editing the repo list re-registers
     // repos and re-ticks. Watch its parent dir (the file may not exist yet, and
     // editors replace-on-save, which a file-level watch can miss).
-    let cfg_path = config::SprfConfig::config_path().and_then(|p| p.canonicalize().ok()
-        .or(Some(p)));
+    let cfg_path =
+        config::SprfConfig::config_path().and_then(|p| p.canonicalize().ok().or(Some(p)));
     if let Some(cp) = &cfg_path {
         if let Some(dir) = cp.parent() {
             if dir.exists() && watcher.watch(dir, RecursiveMode::NonRecursive).is_ok() {
@@ -813,17 +1092,32 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
     // ref (commit, checkout, branch/tag update) fires a tick even when root is a
     // subdir of the repo and `.git` is not under it — without the objects churn.
     let scans_git = prog.items.iter().any(|i| matches!(i, ast::Item::Rule(r)
-        if r.body.iter().any(|b| matches!(b, ast::BodyItem::Scan { rev: ast::Term::Str(s), .. } if s.as_str() != engine::WORK_ALIAS)))); 
+        if r.body.iter().any(|b| matches!(b, ast::BodyItem::Scan { rev: ast::Term::Str(s), .. } if s.as_str() != engine::WORK_ALIAS))));
     if scans_git {
-        if let Ok(out) = std::process::Command::new("git").arg("-C").arg(&root).args(["rev-parse", "--git-dir"]).output() {
+        if let Ok(out) = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["rev-parse", "--git-dir"])
+            .output()
+        {
             if out.status.success() {
                 let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                let gdp = if std::path::Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
+                let gdp = if std::path::Path::new(&gd).is_absolute() {
+                    PathBuf::from(&gd)
+                } else {
+                    root.join(&gd)
+                };
                 if gdp.exists() {
                     gate.add_git_dir(&gdp);
                     for (path, recursive) in gate.git_watch_targets(&gdp) {
-                        if !path.exists() { continue; }
-                        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+                        if !path.exists() {
+                            continue;
+                        }
+                        let mode = if recursive {
+                            RecursiveMode::Recursive
+                        } else {
+                            RecursiveMode::NonRecursive
+                        };
                         let _ = watcher.watch(&path, mode);
                     }
                     let git_dir = gdp.display();
@@ -840,17 +1134,34 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut rescan = false;
         match first {
-            Ok(ev) => { if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); } }
+            Ok(ev) => {
+                if ev.need_rescan() {
+                    rescan = true;
+                } else {
+                    paths.extend(ev.paths);
+                }
+            }
             Err(_) => rescan = true,
         }
         let window_start = std::time::Instant::now();
         loop {
             match rx.recv_timeout(QUIET) {
                 Ok(Ok(ev)) => {
-                    if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
-                    if window_start.elapsed() > MAX_WINDOW { break; }
+                    if ev.need_rescan() {
+                        rescan = true;
+                    } else {
+                        paths.extend(ev.paths);
+                    }
+                    if window_start.elapsed() > MAX_WINDOW {
+                        break;
+                    }
                 }
-                Ok(Err(_)) => { rescan = true; if window_start.elapsed() > MAX_WINDOW { break; } }
+                Ok(Err(_)) => {
+                    rescan = true;
+                    if window_start.elapsed() > MAX_WINDOW {
+                        break;
+                    }
+                }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
             }
@@ -863,12 +1174,15 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
         }
         // A config edit re-registers repos; a ref move under a narrow git path
         // needs the full sweep (git revs); a plain file edit reconciles paths.
-        let touches_cfg = cfg_path.as_ref().is_some_and(|c|
-            paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
+        let touches_cfg = cfg_path.as_ref().is_some_and(|c| {
+            paths
+                .iter()
+                .any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c)
+        });
         let touches_git = gate.touches_git(&paths);
         let paths = gate.filter(paths);
         if paths.is_empty() && !touches_git && !touches_cfg {
-            continue;  // noise only (build output, objects churn): no tick
+            continue; // noise only (build output, objects churn): no tick
         }
         if touches_cfg {
             eng.set_repos(load_repos());
@@ -898,28 +1212,45 @@ pub fn run_watch(programs: &[String], db_path: Option<&str>, root: PathBuf) -> R
 /// `"all"` = every configured repo. Each target repo is processed in isolation
 /// (its own engine scanning its own root), so the use-path resolver and located
 /// spans are self-correct for that repo and never cross-contaminate.
-pub fn run_move(db_path: Option<&str>, root: PathBuf, repo: Option<String>, mv: Vec<String>, fix: bool) -> Result<()> {
+pub fn run_move(
+    db_path: Option<&str>,
+    root: PathBuf,
+    repo: Option<String>,
+    mv: Vec<String>,
+    fix: bool,
+) -> Result<()> {
     // Parse OLD=NEW file-move specs.
-    let moves: Vec<(String, String)> = mv.iter().map(|s| {
-        let (old, new) = s.split_once('=')
-            .ok_or_else(|| anyhow::anyhow!("--move expects OLD=NEW, got {s:?}"))?;
-        Ok((old.trim().to_string(), new.trim().to_string()))
-    }).collect::<Result<_>>()?;
+    let moves: Vec<(String, String)> = mv
+        .iter()
+        .map(|s| {
+            let (old, new) = s
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("--move expects OLD=NEW, got {s:?}"))?;
+            Ok((old.trim().to_string(), new.trim().to_string()))
+        })
+        .collect::<Result<_>>()?;
 
     // Resolve the target repos to rewrite.
     let targets: Vec<(String, PathBuf)> = match repo.as_deref() {
         None | Some("") | Some(".") | Some("self") => vec![("self".to_string(), root.clone())],
         Some("*") | Some("all") => {
             let repos = load_repos();
-            if repos.is_empty() { anyhow::bail!("--repo \"*\" needs a config with [[repos]]"); }
-            repos.iter().map(|rc| {
-                engine::Engine::ensure_cloned(rc)?;
-                Ok((rc.slug.clone(), rc.root.clone()))
-            }).collect::<Result<_>>()?
+            if repos.is_empty() {
+                anyhow::bail!("--repo \"*\" needs a config with [[repos]]");
+            }
+            repos
+                .iter()
+                .map(|rc| {
+                    engine::Engine::ensure_cloned(rc)?;
+                    Ok((rc.slug.clone(), rc.root.clone()))
+                })
+                .collect::<Result<_>>()?
         }
         Some(slug) => {
             let repos = load_repos();
-            let rc = repos.iter().find(|r| r.slug == slug)
+            let rc = repos
+                .iter()
+                .find(|r| r.slug == slug)
                 .ok_or_else(|| anyhow::anyhow!("--repo {slug:?} is not a configured repo slug"))?;
             engine::Engine::ensure_cloned(rc)?;
             vec![(rc.slug.clone(), rc.root.clone())]
@@ -957,7 +1288,8 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // Moves split by language: Rust rewrites are module-path math against
     // discovered crate roots; Kotlin rewrites are package math against the
     // moved file's own `package` declaration.
-    let (kt_specs, rs_moves): (Vec<_>, Vec<_>) = moves.iter()
+    let (kt_specs, rs_moves): (Vec<_>, Vec<_>) = moves
+        .iter()
         .partition(|(old, _)| old.ends_with(".kt") || old.ends_with(".kts"));
     let mut kt_moves: Vec<(String, String, ktpath::KotlinMove)> = Vec::new();
     for (old, new) in &kt_specs {
@@ -983,7 +1315,10 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // `rs_mods` carries the derived module paths for the moves that can rewrite.
     let mut rs_mods: Vec<(String, String, String, String)> = Vec::new();
     for (old, new) in &rs_moves {
-        match (rspath::file_to_mod_path_rooted(old, &roots), rspath::file_to_mod_path_rooted(new, &roots)) {
+        match (
+            rspath::file_to_mod_path_rooted(old, &roots),
+            rspath::file_to_mod_path_rooted(new, &roots),
+        ) {
             (Some(om), Some(nm)) => rs_mods.push((old.clone(), new.clone(), om, nm)),
             _ => {
                 let old_path = old;
@@ -1003,20 +1338,39 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         let new_text = match own {
             Some((_, _, old_mod, new_mod)) => {
                 let mut t = text.clone();
-                if let Some(nt) = rspath::rewrite_moved_file_use(&t, old_mod, new_mod) { t = nt; }
+                if let Some(nt) = rspath::rewrite_moved_file_use(&t, old_mod, new_mod) {
+                    t = nt;
+                }
                 for (other_old, _, o_old_mod, o_new_mod) in &rs_mods {
-                    if other_old == &path { continue; }
-                    if let Some(nt) = rspath::rewrite_use_path(&t, o_old_mod, o_new_mod, new_mod) { t = nt; }
+                    if other_old == &path {
+                        continue;
+                    }
+                    if let Some(nt) = rspath::rewrite_use_path(&t, o_old_mod, o_new_mod, new_mod) {
+                        t = nt;
+                    }
                 }
                 (t != text).then_some(t)
             }
-            None => rs_mods.iter()
-                .find_map(|(old, new, _, _)| rspath::rewrite_import_rooted(&path, old, new, &text, &roots))
-                .or_else(|| kt_moves.iter().find_map(|(_, _, mv)| mv.rewrite_import(&text)))
+            None => rs_mods
+                .iter()
+                .find_map(|(old, new, _, _)| {
+                    rspath::rewrite_import_rooted(&path, old, new, &text, &roots)
+                })
+                .or_else(|| {
+                    kt_moves
+                        .iter()
+                        .find_map(|(_, _, mv)| mv.rewrite_import(&text))
+                })
                 .filter(|nt| *nt != text),
         };
         if let Some(new_text) = new_text {
-            edits.push(refactor::Edit { path, lo, hi, old_text: text, new_text });
+            edits.push(refactor::Edit {
+                path,
+                lo,
+                hi,
+                old_text: text,
+                new_text,
+            });
         }
     }
 
@@ -1034,19 +1388,30 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         edits.iter().map(|e| (e.path.clone(), e.lo, e.hi)).collect();
     let imports = eng.module_imports()?;
     if !rs_mods.is_empty() {
-        let leaf_files: std::collections::BTreeSet<&String> = imports.iter()
-            .filter(|(file, spec)| file.ends_with(".rs") && rs_mods.iter().any(|(old, new, _, _)| {
-                rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
-            }))
+        let leaf_files: std::collections::BTreeSet<&String> = imports
+            .iter()
+            .filter(|(file, spec)| {
+                file.ends_with(".rs")
+                    && rs_mods.iter().any(|(old, new, _, _)| {
+                        rspath::rewrite_import_rooted(file, old, new, spec, &roots)
+                            .is_some_and(|n| &n != spec)
+                    })
+            })
             .map(|(file, _)| file)
             .collect();
         let mut regen_edits: Vec<refactor::Edit> = Vec::new();
         let mut regen_spans: Vec<(String, u32, u32)> = Vec::new();
         for file in leaf_files {
             // moved files re-anchor in pass 1; their brace leaves stay counted
-            if rs_mods.iter().any(|(old, _, _, _)| old == file) { continue; }
-            let Some(from_mod) = rspath::file_to_mod_path_rooted(file, &roots) else { continue };
-            let Ok(content) = std::fs::read_to_string(root.join(file)) else { continue };
+            if rs_mods.iter().any(|(old, _, _, _)| old == file) {
+                continue;
+            }
+            let Some(from_mod) = rspath::file_to_mod_path_rooted(file, &roots) else {
+                continue;
+            };
+            let Ok(content) = std::fs::read_to_string(root.join(file)) else {
+                continue;
+            };
             // group leaves per use statement (shared body span)
             let mut stmts: std::collections::BTreeMap<(u32, u32), Vec<modgraph::UseLeaf>> =
                 std::collections::BTreeMap::new();
@@ -1059,57 +1424,82 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
                 let fold = |path: &str| {
                     let mut folded_path = path.to_string();
                     for (_, _, old_mod, new_mod) in &rs_mods {
-                        if let Some(next) = rspath::rewrite_use_path(&folded_path, old_mod, new_mod, &from_mod) {
+                        if let Some(next) =
+                            rspath::rewrite_use_path(&folded_path, old_mod, new_mod, &from_mod)
+                        {
                             folded_path = next;
                         }
                     }
                     folded_path
                 };
-                let folded: Vec<(String, bool)> = stmt_leaves.iter()
+                let folded: Vec<(String, bool)> = stmt_leaves
+                    .iter()
                     .map(|leaf| {
                         let new_full = fold(&leaf.full);
                         let changed = new_full != leaf.full;
                         (new_full, changed)
-                    }).collect();
-                if !folded.iter().any(|(_, changed)| *changed) { continue; }
+                    })
+                    .collect();
+                if !folded.iter().any(|(_, changed)| *changed) {
+                    continue;
+                }
                 // The statement's leaves share one outermost head span; pass 1
                 // rewrites that head text. A changed leaf stays expressible in
                 // place iff its new path decomposes as (rewritten head) +
                 // (unchanged middle segments) + (new leaf text) — otherwise the
                 // leaf EXITS the brace and the whole statement regroups.
-                let head_text = stmt_leaves[0].head
+                let head_text = stmt_leaves[0]
+                    .head
                     .and_then(|(lo, hi)| content.get(lo as usize..hi as usize));
                 let new_head = head_text.map(&fold);
-                let head_rewritten_by_pass1 = stmt_leaves[0].head
+                let head_rewritten_by_pass1 = stmt_leaves[0]
+                    .head
                     .is_some_and(|(lo, hi)| spanned.contains(&(file.clone(), lo, hi)));
-                let in_place_leaf = |leaf: &modgraph::UseLeaf, new_full: &str| -> Option<Option<String>> {
-                    // Some(None) = expressible, no leaf edit; Some(Some(t)) =
-                    // expressible via leaf edit t; None = exits the brace.
-                    let (Some(head), Some(new_head)) = (head_text, new_head.as_deref()) else {
-                        return Some(Some(new_full.to_string())); // bare use: whole span is the leaf
+                let in_place_leaf =
+                    |leaf: &modgraph::UseLeaf, new_full: &str| -> Option<Option<String>> {
+                        // Some(None) = expressible, no leaf edit; Some(Some(t)) =
+                        // expressible via leaf edit t; None = exits the brace.
+                        let (Some(head), Some(new_head)) = (head_text, new_head.as_deref()) else {
+                            return Some(Some(new_full.to_string())); // bare use: whole span is the leaf
+                        };
+                        if new_head != head && !head_rewritten_by_pass1 {
+                            return None; // head change pass 1 didn't express (multi-move chain)
+                        }
+                        let middle = leaf.prefix.strip_prefix(head).unwrap_or("");
+                        let new_leaf = new_full.strip_prefix(&format!("{new_head}{middle}::"))?;
+                        let (lo, hi) = leaf.leaf;
+                        let old_leaf = content.get(lo as usize..hi as usize)?;
+                        Some((new_leaf != old_leaf).then(|| new_leaf.to_string()))
                     };
-                    if new_head != head && !head_rewritten_by_pass1 {
-                        return None; // head change pass 1 didn't express (multi-move chain)
-                    }
-                    let middle = leaf.prefix.strip_prefix(head).unwrap_or("");
-                    let new_leaf = new_full.strip_prefix(&format!("{new_head}{middle}::"))?;
-                    let (lo, hi) = leaf.leaf;
-                    let old_leaf = content.get(lo as usize..hi as usize)?;
-                    Some((new_leaf != old_leaf).then(|| new_leaf.to_string()))
-                };
-                let exits = stmt_leaves.iter().zip(&folded).any(|(leaf, (new_full, changed))| {
-                    *changed && !leaf.collapsed && in_place_leaf(leaf, new_full).is_none()
-                });
+                let exits = stmt_leaves
+                    .iter()
+                    .zip(&folded)
+                    .any(|(leaf, (new_full, changed))| {
+                        *changed && !leaf.collapsed && in_place_leaf(leaf, new_full).is_none()
+                    });
                 if !exits {
                     for (leaf, (new_full, changed)) in stmt_leaves.iter().zip(&folded) {
-                        if !changed || leaf.collapsed { continue; }
+                        if !changed || leaf.collapsed {
+                            continue;
+                        }
                         let (lo, hi) = leaf.leaf;
-                        if spanned.contains(&(file.clone(), lo, hi)) { continue; }
-                        let Some(old_text) = content.get(lo as usize..hi as usize) else { continue };
-                        let Some(Some(new_text)) = in_place_leaf(leaf, new_full) else { continue };
+                        if spanned.contains(&(file.clone(), lo, hi)) {
+                            continue;
+                        }
+                        let Some(old_text) = content.get(lo as usize..hi as usize) else {
+                            continue;
+                        };
+                        let Some(Some(new_text)) = in_place_leaf(leaf, new_full) else {
+                            continue;
+                        };
                         if new_text != old_text {
-                            edits.push(refactor::Edit { path: file.clone(), lo, hi,
-                                old_text: old_text.to_string(), new_text });
+                            edits.push(refactor::Edit {
+                                path: file.clone(),
+                                lo,
+                                hi,
+                                old_text: old_text.to_string(),
+                                new_text,
+                            });
                         }
                     }
                 } else if stmt_leaves.iter().any(|leaf| leaf.collapsed) {
@@ -1117,23 +1507,35 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
                     // what the self/glob binds — stays a loud skip
                     continue;
                 } else {
-                    let items: Vec<(String, Option<String>)> = stmt_leaves.iter().zip(&folded)
+                    let items: Vec<(String, Option<String>)> = stmt_leaves
+                        .iter()
+                        .zip(&folded)
                         .map(|(leaf, (new_full, _))| (new_full.clone(), leaf.alias.clone()))
                         .collect();
                     let new_text = rspath::regroup_use_items(&items);
-                    let Some(old_text) = content.get(body_lo as usize..body_hi as usize) else { continue };
+                    let Some(old_text) = content.get(body_lo as usize..body_hi as usize) else {
+                        continue;
+                    };
                     if new_text != old_text {
                         regen_spans.push((file.clone(), body_lo, body_hi));
-                        regen_edits.push(refactor::Edit { path: file.clone(), lo: body_lo, hi: body_hi,
-                            old_text: old_text.to_string(), new_text });
+                        regen_edits.push(refactor::Edit {
+                            path: file.clone(),
+                            lo: body_lo,
+                            hi: body_hi,
+                            old_text: old_text.to_string(),
+                            new_text,
+                        });
                     }
                 }
             }
         }
         // a regenerated statement carries its whole body: drop the pass-1 head
         // (or leaf) edits inside it in favor of the one body-span edit
-        edits.retain(|edit| !regen_spans.iter().any(|(path, lo, hi)|
-            edit.path == *path && edit.lo >= *lo && edit.hi <= *hi));
+        edits.retain(|edit| {
+            !regen_spans
+                .iter()
+                .any(|(path, lo, hi)| edit.path == *path && edit.lo >= *lo && edit.hi <= *hi)
+        });
         edits.append(&mut regen_edits);
     }
 
@@ -1141,8 +1543,13 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     for (old, _, mv) in &kt_moves {
         if let Ok(content) = std::fs::read_to_string(root.join(old)) {
             if let Some((lo, hi)) = ktpath::package_decl_span(&content) {
-                edits.push(refactor::Edit { path: old.clone(), lo, hi,
-                    old_text: mv.old_pkg.clone(), new_text: mv.new_pkg.clone() });
+                edits.push(refactor::Edit {
+                    path: old.clone(),
+                    lo,
+                    hi,
+                    old_text: mv.old_pkg.clone(),
+                    new_text: mv.new_pkg.clone(),
+                });
             }
         }
     }
@@ -1154,13 +1561,18 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // produced NO edit is a genuine miss — a `self`/`*` group pass 2 refuses to
     // regroup, or a moved file's own brace-inner leaves.
     let edited: std::collections::HashSet<&String> = by_file.keys().collect();
-    let skipped = imports.iter().filter(|(file, spec)| {
-        !edited.contains(file) && (
-            rs_moves.iter().any(|(old, new)| {
-                rspath::rewrite_import_rooted(file, old, new, spec, &roots).is_some_and(|n| &n != spec)
-            }) || kt_moves.iter().any(|(_, _, mv)| mv.rewrite_import(spec).is_some_and(|n| &n != spec))
-        )
-    }).count();
+    let skipped = imports
+        .iter()
+        .filter(|(file, spec)| {
+            !edited.contains(file)
+                && (rs_moves.iter().any(|(old, new)| {
+                    rspath::rewrite_import_rooted(file, old, new, spec, &roots)
+                        .is_some_and(|n| &n != spec)
+                }) || kt_moves
+                    .iter()
+                    .any(|(_, _, mv)| mv.rewrite_import(spec).is_some_and(|n| &n != spec)))
+        })
+        .count();
     if skipped > 0 {
         let skipped_count = skipped;
         tracing::warn!(skipped_count, "[move] {skipped_count} move-relevant import(s) left alone (a `self`/`*` brace group, or a moved file's own brace leaves, has no sound text rewrite)");
@@ -1169,15 +1581,21 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
     // not still cover the moved decls, and a same-package bare use breaks when
     // the file leaves the package — neither is an import-text rewrite.
     for (_, _, mv) in &kt_moves {
-        let wild = imports.iter().filter(|(_, spec)| *spec == mv.old_wildcard()).count();
+        let wild = imports
+            .iter()
+            .filter(|(_, spec)| *spec == mv.old_wildcard())
+            .count();
         if wild > 0 {
             let wild_count = wild;
             let old_pkg = &mv.old_pkg;
             let new_pkg = &mv.new_pkg;
             tracing::warn!(wild_count, old_pkg = %old_pkg, new_pkg = %new_pkg, "[move] {wild_count} wildcard import(s) of {old_pkg} left alone (moved decls may need explicit imports of {new_pkg})");
         }
-        let bare = eng.same_package_uses()?.into_iter()
-            .filter(|(_, spec)| mv.decls.iter().any(|d| d == spec)).count();
+        let bare = eng
+            .same_package_uses()?
+            .into_iter()
+            .filter(|(_, spec)| mv.decls.iter().any(|d| d == spec))
+            .count();
         if bare > 0 {
             let bare_count = bare;
             let old_pkg = &mv.old_pkg;
@@ -1204,7 +1622,11 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         // @eprintln-ok: --move no-op report is the command's stderr output contract
         eprintln!("[move] no use-path references to rewrite");
     } else {
-        let status = if fix { ", applied" } else { " (dry run; pass --fix to apply)" };
+        let status = if fix {
+            ", applied"
+        } else {
+            " (dry run; pass --fix to apply)"
+        };
         let edit_count = total;
         // @eprintln-ok: --move edit summary is the command's stderr output contract
         eprintln!("[move] {edit_count} edit(s) across {files} file(s){status}");
@@ -1233,7 +1655,9 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
         }
         println!("{old} -> {new} (rename)");
         if fix {
-            if let Some(parent) = root.join(new).parent() { std::fs::create_dir_all(parent)?; }
+            if let Some(parent) = root.join(new).parent() {
+                std::fs::create_dir_all(parent)?;
+            }
             std::fs::rename(root.join(old), root.join(new))?;
         }
         if old.ends_with(".rs") {
@@ -1250,9 +1674,17 @@ fn move_one_repo(conn: db::Db, root: PathBuf, moves: &[(String, String)], fix: b
 /// decl leaving the crate root is promoted to `pub(crate)` so existing
 /// `crate::`-path references stay visible.
 fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> {
-    let stem = |p: &str| Path::new(p).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+    let stem = |p: &str| {
+        Path::new(p)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    };
     let (old_stem, new_stem) = (stem(old), stem(new));
-    if matches!(old_stem.as_str(), "mod" | "lib" | "main") || matches!(new_stem.as_str(), "mod" | "lib" | "main") {
+    if matches!(old_stem.as_str(), "mod" | "lib" | "main")
+        || matches!(new_stem.as_str(), "mod" | "lib" | "main")
+    {
         let old_path = old;
         let new_path = new;
         tracing::warn!(old_path = %old_path, new_path = %new_path, "[move] {old_path} or {new_path} is a directory-defining file (mod.rs/lib.rs/main.rs) — mod-decl surgery skipped; adjust declarations manually");
@@ -1264,11 +1696,15 @@ fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> 
     let mut removed = false;
     for cand in rspath::mod_parent_candidates(old) {
         let abs = root.join(&cand);
-        if !abs.is_file() { continue; }
+        if !abs.is_file() {
+            continue;
+        }
         let content = std::fs::read_to_string(&abs)?;
         if let Some((without, v)) = refactor::remove_mod_decl(&content, &old_stem) {
             println!("{cand}: - {v}mod {old_stem};");
-            if fix { std::fs::write(&abs, without)?; }
+            if fix {
+                std::fs::write(&abs, without)?;
+            }
             vis = v;
             removed = true;
             break;
@@ -1289,30 +1725,50 @@ fn rust_mod_surgery(root: &Path, old: &str, new: &str, fix: bool) -> Result<()> 
         let mut declared = false;
         for cand in rspath::mod_parent_candidates(&at) {
             let abs = root.join(&cand);
-            if !abs.is_file() { continue; }
-            let v = if vis.is_empty() && !is_root_file(&cand) { "pub(crate) " } else { vis.as_str() };
+            if !abs.is_file() {
+                continue;
+            }
+            let v = if vis.is_empty() && !is_root_file(&cand) {
+                "pub(crate) "
+            } else {
+                vis.as_str()
+            };
             let content = std::fs::read_to_string(&abs)?;
             let with = refactor::add_mod_decl(&content, &name, v);
             if with != content {
                 println!("{cand}: + {v}mod {name};");
-                if fix { std::fs::write(&abs, with)?; }
+                if fix {
+                    std::fs::write(&abs, with)?;
+                }
             }
             declared = true;
             break;
         }
-        if declared { return Ok(()); }
+        if declared {
+            return Ok(());
+        }
         // no parent module file exists: create the directory's sibling file
         // (`a/b.rs` for files in `a/b/`) and register IT in its own parent
-        let Some(dir) = Path::new(&at).parent().and_then(|d| d.to_str()).filter(|d| !d.is_empty()) else {
+        let Some(dir) = Path::new(&at)
+            .parent()
+            .and_then(|d| d.to_str())
+            .filter(|d| !d.is_empty())
+        else {
             let new_path = new;
             let module_name = &name;
             tracing::warn!(new_path = %new_path, module_name = %module_name, "[move] no parent module file found for {new_path} and none creatable — declare `mod {module_name};` manually");
             return Ok(());
         };
         let parent_file = format!("{dir}.rs");
-        let v = if vis.is_empty() { "pub(crate) " } else { vis.as_str() };
+        let v = if vis.is_empty() {
+            "pub(crate) "
+        } else {
+            vis.as_str()
+        };
         println!("create {parent_file} with `{v}mod {name};`");
-        if fix { std::fs::write(root.join(&parent_file), format!("{v}mod {name};\n"))?; }
+        if fix {
+            std::fs::write(root.join(&parent_file), format!("{v}mod {name};\n"))?;
+        }
         name = stem(&parent_file);
         at = parent_file;
     }

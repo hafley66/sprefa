@@ -110,8 +110,10 @@ pub fn session_summary(diags: &[DiagRow], top_n: usize) -> (Vec<(String, usize)>
     for d in diags {
         *counts.entry(d.code.as_str()).or_default() += 1;
     }
-    let mut counts: Vec<(String, usize)> =
-        counts.into_iter().map(|(c, n)| (c.to_string(), n)).collect();
+    let mut counts: Vec<(String, usize)> = counts
+        .into_iter()
+        .map(|(c, n)| (c.to_string(), n))
+        .collect();
     counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     let sample = diags.iter().take(top_n).collect();
     (counts, sample)
@@ -139,7 +141,10 @@ mod tests {
     fn error_routes_to_every_stage_by_default() {
         let routes = HashMap::new();
         for stage in STAGES {
-            assert!(routed_to("any", "error", stage, &routes), "error must reach {stage}");
+            assert!(
+                routed_to("any", "error", stage, &routes),
+                "error must reach {stage}"
+            );
         }
     }
 
@@ -162,7 +167,12 @@ mod tests {
         ];
         let routes = routes_from_rows(&rows);
         assert!(routed_to("storm-syntax", "warning", "agent-turn", &routes));
-        assert!(routed_to("storm-syntax", "warning", "agent-session", &routes));
+        assert!(routed_to(
+            "storm-syntax",
+            "warning",
+            "agent-session",
+            &routes
+        ));
         assert!(!routed_to("storm-syntax", "warning", "commit", &routes));
         assert!(!routed_to("storm-syntax", "warning", "live", &routes));
     }
@@ -212,7 +222,10 @@ mod tests {
             diag("c.rs", "warning", "fixme", "z"),
         ];
         let (counts, sample) = session_summary(&diags, 2);
-        assert_eq!(counts, vec![("todo".to_string(), 2), ("fixme".to_string(), 1)]);
+        assert_eq!(
+            counts,
+            vec![("todo".to_string(), 2), ("fixme".to_string(), 1)]
+        );
         assert_eq!(sample.len(), 2);
     }
 

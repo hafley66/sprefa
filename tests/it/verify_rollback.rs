@@ -28,26 +28,47 @@ fn sandbox(tag: &str) -> PathBuf {
 fn run_verify(dir: &std::path::Path, checker: &str) -> std::process::Output {
     Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--db", dir.join("db").to_str().unwrap(),
-               "--no-daemon", "--verify", checker])
+        .args([
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--no-daemon",
+            "--verify",
+            checker,
+        ])
         .current_dir(dir)
-        .output().expect("run dl")
+        .output()
+        .expect("run dl")
 }
 
 #[test]
 fn checker_fail_rolls_back_and_exits_1() {
     let d = sandbox("fail");
     let out = run_verify(&d, "false");
-    assert_eq!(out.status.code(), Some(1), "rollback exits 1: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(fs::read_to_string(d.join("src/a.rs")).unwrap(), "let a = foo.unwrap();\n",
-        "file restored to pre-run bytes on checker failure");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "rollback exits 1: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("src/a.rs")).unwrap(),
+        "let a = foo.unwrap();\n",
+        "file restored to pre-run bytes on checker failure"
+    );
 }
 
 #[test]
 fn checker_pass_keeps_and_exits_0() {
     let d = sandbox("pass");
     let out = run_verify(&d, "true");
-    assert!(out.status.success(), "keep exits 0: {}", String::from_utf8_lossy(&out.stderr));
-    assert_eq!(fs::read_to_string(d.join("src/a.rs")).unwrap(), "let a = foo.expect(\"checked\");\n",
-        "edit kept on checker success");
+    assert!(
+        out.status.success(),
+        "keep exits 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("src/a.rs")).unwrap(),
+        "let a = foo.expect(\"checked\");\n",
+        "edit kept on checker success"
+    );
 }

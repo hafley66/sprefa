@@ -37,12 +37,18 @@ fn budget_debug_line_reports_the_applied_cap() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("[budget] qos="), "budget line printed:\n{err}");
     assert!(err.contains("nice="), "nice reported:\n{err}");
-    assert!(err.contains("threads="), "rayon thread count reported:\n{err}");
+    assert!(
+        err.contains("threads="),
+        "rayon thread count reported:\n{err}"
+    );
     #[cfg(target_os = "macos")]
     {
         assert!(err.contains("qos=utility"), "macos qos utility:\n{err}");
         assert!(err.contains("nice=10"), "macos nice 10:\n{err}");
-        assert!(err.contains("iopol=throttle"), "macos iopol throttle:\n{err}");
+        assert!(
+            err.contains("iopol=throttle"),
+            "macos iopol throttle:\n{err}"
+        );
     }
     let _ = fs::remove_dir_all(&dir);
 }
@@ -65,6 +71,9 @@ fn no_budget_env_prints_nothing() {
         .output()
         .expect("run dl --parse-only under DL_NO_BUDGET");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!err.contains("[budget]"), "escape hatch prints nothing:\n{err}");
+    assert!(
+        !err.contains("[budget]"),
+        "escape hatch prints nothing:\n{err}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }

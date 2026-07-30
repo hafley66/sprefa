@@ -27,10 +27,14 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 fn find_scip_java() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("SPREFA_SCIP_JAVA") {
         let p = std::path::PathBuf::from(p);
-        if p.is_file() { return Some(p); }
+        if p.is_file() {
+            return Some(p);
+        }
     }
     let out = Command::new("which").arg("scip-java").output().ok()?;
-    if !out.status.success() { return None; }
+    if !out.status.success() {
+        return None;
+    }
     let p = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     p.is_file().then_some(p)
 }
@@ -59,9 +63,13 @@ fn kotlin_call_resolution_parity_vs_scip() {
     let run = Command::new(&scip_java)
         .args(["index", "--output", scip_out.to_str().unwrap()])
         .current_dir(&index_dir)
-        .output().expect("run scip-java index");
-    assert!(scip_out.is_file(), "scip-java produced no index: {}",
-        String::from_utf8_lossy(&run.stderr));
+        .output()
+        .expect("run scip-java index");
+    assert!(
+        scip_out.is_file(),
+        "scip-java produced no index: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     let dl_dir = std::env::temp_dir().join("sprefa_oracle_kt_parity_dl");
@@ -70,7 +78,8 @@ fn kotlin_call_resolution_parity_vs_scip() {
 
     let prog = format!(
         "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"**/*.kt\", path, rev).\n{}",
-        oracle_parity::SITE_PICK_TAIL);
+        oracle_parity::SITE_PICK_TAIL
+    );
     std::fs::write(dl_dir.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(dl_dir.join("parity.dl"))
@@ -78,21 +87,35 @@ fn kotlin_call_resolution_parity_vs_scip() {
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .env_remove("SPREFA_SCIP_INDEX")
         .current_dir(&dl_dir)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     // only .kt sources have a ground truth; the index also covers stdlib jars.
     let stats = oracle_parity::score_parity(&index, &dl_dir, "src/", &stdout);
     assert!(stats.total_sites > 0, "no call sites extracted:\n{stdout}");
-    assert!(stats.denom() > 0, "no scip-confirmable call sites; oracle can't score");
+    assert!(
+        stats.denom() > 0,
+        "no scip-confirmable call sites; oracle can't score"
+    );
 
-    eprintln!("[oracle:kotlin-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
-        stats.confirmed, stats.wrong, stats.bare, stats.multi);
-    eprintln!("[oracle:kotlin-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
-        stats.parity() * 100.0, stats.precision());
-    for ex in &stats.wrong_examples { eprintln!("[oracle:kotlin-parity] wrong: {ex}"); }
+    eprintln!(
+        "[oracle:kotlin-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
+        stats.confirmed, stats.wrong, stats.bare, stats.multi
+    );
+    eprintln!(
+        "[oracle:kotlin-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
+        stats.parity() * 100.0,
+        stats.precision()
+    );
+    for ex in &stats.wrong_examples {
+        eprintln!("[oracle:kotlin-parity] wrong: {ex}");
+    }
     assert!(stats.confirmed > 0, "zero confirmed resolutions");
-    assert!(stats.precision() >= 0.95,
+    assert!(
+        stats.precision() >= 0.95,
         "resolver is buying coverage with wrong joins: precision {:.3} < 0.95; {:?}",
-        stats.precision(), stats.wrong_examples);
+        stats.precision(),
+        stats.wrong_examples
+    );
 }

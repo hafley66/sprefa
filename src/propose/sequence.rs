@@ -36,7 +36,9 @@ pub fn symbol_shape_proposals(content: &str, occ_spans: &[(i32, i32, &str)]) -> 
         let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
         let params = free_vars(root, content, lo_byte, hi_byte);
         out.push(Proposal {
-            lo: lo_line, hi: hi_line, occurrences: occ,
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
             gain: n * occ.saturating_sub(1),
             params,
         });
@@ -248,8 +250,7 @@ fn similarity_runs(
                 continue;
             }
             let mut n = seed;
-            while i + n < len && j + n < len && jaccard(&items[i + n], &items[j + n]) >= threshold
-            {
+            while i + n < len && j + n < len && jaccard(&items[i + n], &items[j + n]) >= threshold {
                 n += 1;
             }
             let mut occ = 1usize;
@@ -274,7 +275,9 @@ fn similarity_runs(
     blocks.sort_by(|x, y| y.1.cmp(&x.1));
     let mut kept: Vec<(usize, usize, usize)> = Vec::new();
     for (a, n, occ) in blocks {
-        let subsumed = kept.iter().any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
+        let subsumed = kept
+            .iter()
+            .any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
         if !subsumed {
             kept.push((a, n, occ));
         }

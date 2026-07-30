@@ -63,13 +63,16 @@ impl Brands {
         let brands = Brands { parent, variants };
         // Every parent must terminate at a base type without cycling.
         for name in brands.parent.keys() {
-            brands.base_type(name)
-                .ok_or_else(|| format!("brand `{name}` has no base type (unknown parent or cycle)"))?;
+            brands.base_type(name).ok_or_else(|| {
+                format!("brand `{name}` has no base type (unknown parent or cycle)")
+            })?;
         }
         Ok(brands)
     }
 
-    pub fn is_brand(&self, name: &str) -> bool { self.parent.contains_key(name) }
+    pub fn is_brand(&self, name: &str) -> bool {
+        self.parent.contains_key(name)
+    }
 
     /// The closed variant set of an enum brand, or of the nearest enum brand up
     /// the parent chain (so `type x <: sev` inherits `sev`'s literals). `None`
@@ -77,7 +80,9 @@ impl Brands {
     pub fn enum_variants(&self, name: &str) -> Option<&[String]> {
         let mut cur = name.to_string();
         for _ in 0..self.parent.len() + 1 {
-            if let Some(vs) = self.variants.get(&cur) { return Some(vs); }
+            if let Some(vs) = self.variants.get(&cur) {
+                return Some(vs);
+            }
             cur = self.parent.get(&cur)?.clone();
         }
         None
@@ -87,7 +92,9 @@ impl Brands {
     pub fn base_type(&self, name: &str) -> Option<Type> {
         let mut cur = name.to_string();
         for _ in 0..self.parent.len() + 1 {
-            if let Some(t) = Type::parse(&cur) { return Some(t); }
+            if let Some(t) = Type::parse(&cur) {
+                return Some(t);
+            }
             cur = self.parent.get(&cur)?.clone();
         }
         None
@@ -95,11 +102,17 @@ impl Brands {
 
     /// Is `anc` an ancestor of (or equal to) `desc` in the brand chain?
     pub fn is_ancestor(&self, anc: &str, desc: &str) -> bool {
-        if anc == desc { return true; }
+        if anc == desc {
+            return true;
+        }
         let mut cur = desc.to_string();
         for _ in 0..self.parent.len() + 1 {
-            let Some(p) = self.parent.get(&cur) else { return false; };
-            if p == anc { return true; }
+            let Some(p) = self.parent.get(&cur) else {
+                return false;
+            };
+            if p == anc {
+                return true;
+            }
             cur = p.clone();
         }
         false
@@ -117,12 +130,22 @@ struct ColTy {
 
 fn col_ty(col: &Col, brands: &Brands) -> ColTy {
     match &col.brand {
-        Some(b) => ColTy { base: brands.base_type(b).unwrap_or(Type::Text), brand: Some(b.clone()), interned: col.interned() },
-        None => ColTy { base: col.ty, brand: None, interned: col.interned() },
+        Some(b) => ColTy {
+            base: brands.base_type(b).unwrap_or(Type::Text),
+            brand: Some(b.clone()),
+            interned: col.interned(),
+        },
+        None => ColTy {
+            base: col.ty,
+            brand: None,
+            interned: col.interned(),
+        },
     }
 }
 
-fn is_path_base(t: Type) -> bool { matches!(t, Type::Path | Type::File | Type::Dir) }
+fn is_path_base(t: Type) -> bool {
+    matches!(t, Type::Path | Type::File | Type::Dir)
+}
 
 /// Resolve the brand parent (or base) chain so the chains are validated; returns
 /// the effective base storage type of every column. The engine calls this to
@@ -136,7 +159,8 @@ pub fn validate_brands(prog: &Program) -> Result<Brands, String> {
                     if !brands.is_brand(b) {
                         return Err(format!(
                             "relation `{}` column `{}` references unknown type/brand `{b}`",
-                            d.name, c.name));
+                            d.name, c.name
+                        ));
                     }
                 }
             }
@@ -173,15 +197,17 @@ impl Anchors {
     /// The raw `fs:` body declared for a named anchor, if any. v1 does not yet
     /// reference these in literal bodies (deferred with `rs:`); this accessor
     /// keeps the table live for T3+ and the validation tests.
-    pub fn body(&self, name: &str) -> Option<&str> { self.named.get(name).map(|s| s.as_str()) }
+    pub fn body(&self, name: &str) -> Option<&str> {
+        self.named.get(name).map(|s| s.as_str())
+    }
 }
 
 /// Resolve one path literal body to canonical text. `~/x` and `~` use the default
 /// scan-root anchor; any other `name/` anchor prefix is rejected in v1 (named
 /// anchor refs are deferred). Returns the canonical text, or the descriptor error.
 fn resolve_literal(scheme: &str, body: &str) -> Result<Resolved, desc::DescError> {
-    let spec = desc::scheme_spec(scheme)
-        .expect("lexer only emits a Scheme token for a registered scheme");
+    let spec =
+        desc::scheme_spec(scheme).expect("lexer only emits a Scheme token for a registered scheme");
     let (anchored, rest) = desc::strip_anchor(body);
     // A non-`~` leading anchor (`name/...`) is not a path component in v1; reject
     // it as an unknown anchor so a typo never silently becomes a literal dir.
@@ -204,21 +230,29 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
         match item {
             Item::Rule(r) => {
                 normalize_atom(&mut r.head, dl_path, &mut diags);
-                for b in &mut r.body { normalize_body_item(b, dl_path, &mut diags); }
+                for b in &mut r.body {
+                    normalize_body_item(b, dl_path, &mut diags);
+                }
             }
             Item::Query(q) => normalize_atom(&mut q.head, dl_path, &mut diags),
             Item::Gen(g) => {
                 match &mut g.target {
                     GenTarget::Splice { path, l0, l1 } => {
-                        for t in [path, l0, l1] { normalize_term(t, dl_path, &mut diags); }
+                        for t in [path, l0, l1] {
+                            normalize_term(t, dl_path, &mut diags);
+                        }
                     }
                     GenTarget::Cursor { path, lo, hi, .. } => {
-                        for t in [path, lo, hi] { normalize_term(t, dl_path, &mut diags); }
+                        for t in [path, lo, hi] {
+                            normalize_term(t, dl_path, &mut diags);
+                        }
                     }
                     GenTarget::Zone { .. } => {}
                     GenTarget::File { .. } => {}
                 }
-                for b in &mut g.body { normalize_body_item(b, dl_path, &mut diags); }
+                for b in &mut g.body {
+                    normalize_body_item(b, dl_path, &mut diags);
+                }
             }
             Item::Rel(_) | Item::Anchor(_) | Item::Brand(_) | Item::Shape(_) | Item::Shell(_) => {}
         }
@@ -229,10 +263,27 @@ pub fn normalize_program(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
 fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag>) {
     match b {
         BodyItem::Pos(a) | BodyItem::Neg(a) => normalize_atom(a, dl_path, diags),
-        BodyItem::Scan { repo, rev, glob, path, rev_out } => {
-            for t in [repo, rev, glob, path, rev_out] { normalize_term(t, dl_path, diags); }
+        BodyItem::Scan {
+            repo,
+            rev,
+            glob,
+            path,
+            rev_out,
+        } => {
+            for t in [repo, rev, glob, path, rev_out] {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::Match { path, rev, line, id, col, end_col, legacy_name, .. } => {
+        BodyItem::Match {
+            path,
+            rev,
+            line,
+            id,
+            col,
+            end_col,
+            legacy_name,
+            ..
+        } => {
             if *legacy_name {
                 diags.push(TypeDiag {
                     path: dl_path.to_string(), span: (0, 0),
@@ -243,67 +294,148 @@ fn normalize_body_item(b: &mut BodyItem, dl_path: &str, diags: &mut Vec<TypeDiag
                           (ast-grep structural matching) instead.".into(),
                 });
             }
-            for t in [path, rev, line] { normalize_term(t, dl_path, diags); }
-            for t in [id, col, end_col].into_iter().flatten() { normalize_term(t, dl_path, diags); }
+            for t in [path, rev, line] {
+                normalize_term(t, dl_path, diags);
+            }
+            for t in [id, col, end_col].into_iter().flatten() {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::Ast { path, rev, line, end, id, .. } => {
-            for t in [path, rev, line] { normalize_term(t, dl_path, diags); }
-            if let Some(e) = end { normalize_term(e, dl_path, diags); }
-            if let Some(t) = id { normalize_term(t, dl_path, diags); }
+        BodyItem::Ast {
+            path,
+            rev,
+            line,
+            end,
+            id,
+            ..
+        } => {
+            for t in [path, rev, line] {
+                normalize_term(t, dl_path, diags);
+            }
+            if let Some(e) = end {
+                normalize_term(e, dl_path, diags);
+            }
+            if let Some(t) = id {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::Sg { src, rev, line, col, end_line, end_col, id, legacy_name, .. } => {
+        BodyItem::Sg {
+            src,
+            rev,
+            line,
+            col,
+            end_line,
+            end_col,
+            id,
+            legacy_name,
+            ..
+        } => {
             if *legacy_name {
                 diags.push(TypeDiag {
-                    path: dl_path.to_string(), span: (0, 0),
-                    severity: Severity::Warn, code: "deprecated-op-name".into(),
+                    path: dl_path.to_string(),
+                    span: (0, 0),
+                    severity: Severity::Warn,
+                    code: "deprecated-op-name".into(),
                     msg: "`sg(...)` is deprecated; use `match_ast(...)` instead. \
                           match_ast is ast-grep structural matching — the correct tool for \
                           source code (it sees multi-line and AST-shaped constructs that a \
-                          line regex like `match_line` cannot).".into(),
+                          line regex like `match_line` cannot)."
+                        .into(),
                 });
             }
-            for t in [src, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
-            if let Some(t) = rev { normalize_term(t, dl_path, diags); }
-            if let Some(t) = id { normalize_term(t, dl_path, diags); }
+            for t in [src, line, col, end_line, end_col] {
+                normalize_term(t, dl_path, diags);
+            }
+            if let Some(t) = rev {
+                normalize_term(t, dl_path, diags);
+            }
+            if let Some(t) = id {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
-            for t in [path, rev, line, col, end_line, end_col] { normalize_term(t, dl_path, diags); }
+        BodyItem::AstYaml {
+            path,
+            rev,
+            line,
+            col,
+            end_line,
+            end_col,
+            ..
+        } => {
+            for t in [path, rev, line, col, end_line, end_col] {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::JsonP { src, rev, out, id, .. } => {
-            for t in [src, out] { normalize_term(t, dl_path, diags); }
-            if let Some(t) = rev { normalize_term(t, dl_path, diags); }
-            if let Some(t) = id { normalize_term(t, dl_path, diags); }
+        BodyItem::JsonP {
+            src, rev, out, id, ..
+        } => {
+            for t in [src, out] {
+                normalize_term(t, dl_path, diags);
+            }
+            if let Some(t) = rev {
+                normalize_term(t, dl_path, diags);
+            }
+            if let Some(t) = id {
+                normalize_term(t, dl_path, diags);
+            }
         }
         BodyItem::Json { src, rev, .. } => {
             normalize_term(src, dl_path, diags);
-            if let Some(t) = rev { normalize_term(t, dl_path, diags); }
+            if let Some(t) = rev {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::Cmd { path, rev, line, out, .. } => {
-            for t in [path, rev, line, out] { normalize_term(t, dl_path, diags); }
+        BodyItem::Cmd {
+            path,
+            rev,
+            line,
+            out,
+            ..
+        } => {
+            for t in [path, rev, line, out] {
+                normalize_term(t, dl_path, diags);
+            }
         }
-        BodyItem::Comment { path, rev, l0, l1, label, .. } => {
-            for t in [path, rev, l0, l1, label] { normalize_term(t, dl_path, diags); }
+        BodyItem::Comment {
+            path,
+            rev,
+            l0,
+            l1,
+            label,
+            ..
+        } => {
+            for t in [path, rev, l0, l1, label] {
+                normalize_term(t, dl_path, diags);
+            }
         }
         BodyItem::Cmp(c) => {
             normalize_term(&mut c.lhs, dl_path, diags);
             normalize_term(&mut c.rhs, dl_path, diags);
         }
         BodyItem::Effect { args, outs, .. } => {
-            for t in args.iter_mut().chain(outs.iter_mut()) { normalize_term(t, dl_path, diags); }
+            for t in args.iter_mut().chain(outs.iter_mut()) {
+                normalize_term(t, dl_path, diags);
+            }
         }
         BodyItem::Closure { .. } | BodyItem::Scc { .. } | BodyItem::Node2vec { .. } => {}
     }
 }
 
 fn normalize_atom(a: &mut Atom, dl_path: &str, diags: &mut Vec<TypeDiag>) {
-    for t in &mut a.terms { normalize_term(t, dl_path, diags); }
+    for t in &mut a.terms {
+        normalize_term(t, dl_path, diags);
+    }
 }
 
 fn normalize_term(t: &mut Term, dl_path: &str, diags: &mut Vec<TypeDiag>) {
-    let Term::PathLit { scheme, body, span } = t else { return; };
+    let Term::PathLit { scheme, body, span } = t else {
+        return;
+    };
     let span = *span;
     match resolve_literal(scheme, body) {
-        Ok(resolved) => { *t = Term::Str(resolved.text().to_string()); }
+        Ok(resolved) => {
+            *t = Term::Str(resolved.text().to_string());
+        }
         Err(e) => {
             diags.push(TypeDiag {
                 path: dl_path.to_string(),
@@ -341,17 +473,28 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
     // json aggregate or json constructor in a source-rule head loudly and derived-only,
     // the same style as the body-bind source-rule refusal (`val_of`'s head-inline note).
     if rule.is_source() {
-        let is_json_fn = |t: &Term| matches!(t, Term::Call { name, .. }
-            if matches!(name.as_str(), "json" | "json_object" | "json_array"));
-        let json_agg = rule.aggs.iter().any(|a| matches!(a,
-            Some(AggFn::JsonGroupArray) | Some(AggFn::JsonGroupObject)));
+        let is_json_fn = |t: &Term| {
+            matches!(t, Term::Call { name, .. }
+            if matches!(name.as_str(), "json" | "json_object" | "json_array"))
+        };
+        let json_agg = rule.aggs.iter().any(|a| {
+            matches!(
+                a,
+                Some(AggFn::JsonGroupArray) | Some(AggFn::JsonGroupObject)
+            )
+        });
         if json_agg || rule.head.terms.iter().any(is_json_fn) {
             diags.push(TypeDiag {
-                path: dl_path.to_string(), span: (0, 0),
-                severity: Severity::Error, code: "json-in-source".into(),
-                msg: format!("relation `{}` is a source rule (scan/match/ast/...); json aggregates \
+                path: dl_path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "json-in-source".into(),
+                msg: format!(
+                    "relation `{}` is a source rule (scan/match/ast/...); json aggregates \
                     and json constructors are derived-only — split the extraction into its own \
-                    relation and build the json in a derived rule that reads it", rule.head.rel),
+                    relation and build the json in a derived rule that reads it",
+                    rule.head.rel
+                ),
             });
         }
         // S6: a source-extract rule's body atom is legitimate ONLY when it
@@ -368,34 +511,57 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
         // source+derived co-heading bail (`tick.rs`): split the join into its
         // own relation and union/join it in a third derived rule.
         let source_inputs = crate::engine::desugar::source_input_vars(rule);
-        let extra_atoms: Vec<&str> = rule.body.iter().filter_map(|b| match b {
-            BodyItem::Pos(a) | BodyItem::Neg(a) => {
-                let supplies_input = a.terms.iter()
-                    .any(|t| crate::engine::desugar::term_vars(t, &source_inputs));
-                if supplies_input { None } else { Some(a.rel.as_str()) }
-            }
-            _ => None,
-        }).collect();
+        let extra_atoms: Vec<&str> = rule
+            .body
+            .iter()
+            .filter_map(|b| match b {
+                BodyItem::Pos(a) | BodyItem::Neg(a) => {
+                    let supplies_input = a
+                        .terms
+                        .iter()
+                        .any(|t| crate::engine::desugar::term_vars(t, &source_inputs));
+                    if supplies_input {
+                        None
+                    } else {
+                        Some(a.rel.as_str())
+                    }
+                }
+                _ => None,
+            })
+            .collect();
         if !extra_atoms.is_empty() {
-            let atom_list = extra_atoms.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ");
+            let atom_list = extra_atoms
+                .iter()
+                .map(|r| format!("`{r}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
             let pronoun = if extra_atoms.len() == 1 { "it" } else { "them" };
             diags.push(TypeDiag {
-                path: dl_path.to_string(), span: (0, 0),
-                severity: Severity::Error, code: "source-rule-extra-atom".into(),
-                msg: format!("relation `{}` is a source-extract rule (scan/match/ast/sg/json/\
+                path: dl_path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "source-rule-extra-atom".into(),
+                msg: format!(
+                    "relation `{}` is a source-extract rule (scan/match/ast/sg/json/\
                     comment) whose body also joins {atom_list}; that atom supplies no input to \
                     the source op (not the data-driven scan/rev coordinate pattern), so no \
                     extraction code path ever evaluates it against the scanned rows — it is \
                     silently dropped and does nothing. Put the source-extract rule and the join \
                     to {pronoun} in two separate relations and combine them in a third derived \
-                    rule.", rule.head.rel),
+                    rule.",
+                    rule.head.rel
+                ),
             });
         }
     }
 
     let visit_atom = |a: &Atom, diags: &mut Vec<TypeDiag>, seen: &mut HashMap<String, ColTy>| {
-        let Some(meta) = rels.get(&a.rel) else { return; };
-        if a.terms.len() != meta.cols.len() { return; }
+        let Some(meta) = rels.get(&a.rel) else {
+            return;
+        };
+        if a.terms.len() != meta.cols.len() {
+            return;
+        }
         for (i, term) in a.terms.iter().enumerate() {
             let cty = col_ty(&meta.cols[i], brands);
             match term {
@@ -403,17 +569,27 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     // A path literal in an int column is a type error.
                     if cty.base == Type::Int {
                         diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: *span,
-                            severity: Severity::Error, code: "brand-mismatch".into(),
-                            msg: format!("`{scheme}:` path literal cannot fill int column `{}`", meta.cols[i].name),
+                            path: dl_path.to_string(),
+                            span: *span,
+                            severity: Severity::Error,
+                            code: "brand-mismatch".into(),
+                            msg: format!(
+                                "`{scheme}:` path literal cannot fill int column `{}`",
+                                meta.cols[i].name
+                            ),
                         });
                     } else if cty.base == Type::Text && cty.brand.is_none() {
                         // A typed literal flowing into a plain text column: grandfather
                         // with a coerce warning.
                         diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: *span,
-                            severity: Severity::Warn, code: "coerce-text-path".into(),
-                            msg: format!("`{scheme}:` path literal coerced into plain text column `{}`", meta.cols[i].name),
+                            path: dl_path.to_string(),
+                            span: *span,
+                            severity: Severity::Warn,
+                            code: "coerce-text-path".into(),
+                            msg: format!(
+                                "`{scheme}:` path literal coerced into plain text column `{}`",
+                                meta.cols[i].name
+                            ),
                         });
                     }
                 }
@@ -424,9 +600,14 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 // diagnostic lands at line 1 (span 0,0).
                 Term::Str(_) if cty.base == Type::Int => {
                     diags.push(TypeDiag {
-                        path: dl_path.to_string(), span: (0, 0),
-                        severity: Severity::Error, code: "brand-mismatch".into(),
-                        msg: format!("string literal cannot fill int column `{}`", meta.cols[i].name),
+                        path: dl_path.to_string(),
+                        span: (0, 0),
+                        severity: Severity::Error,
+                        code: "brand-mismatch".into(),
+                        msg: format!(
+                            "string literal cannot fill int column `{}`",
+                            meta.cols[i].name
+                        ),
                     });
                 }
                 // A string literal filling an enum-branded column must be one of
@@ -437,16 +618,26 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     }
                 }
                 Term::Int(_) if is_path_base(cty.base) || cty.brand.is_some() => {
-                    let what = match &cty.brand { Some(b) => format!("brand `{b}`"), None => "a path".into() };
+                    let what = match &cty.brand {
+                        Some(b) => format!("brand `{b}`"),
+                        None => "a path".into(),
+                    };
                     diags.push(TypeDiag {
-                        path: dl_path.to_string(), span: (0, 0),
-                        severity: Severity::Error, code: "brand-mismatch".into(),
-                        msg: format!("int literal cannot fill {what} column `{}`", meta.cols[i].name),
+                        path: dl_path.to_string(),
+                        span: (0, 0),
+                        severity: Severity::Error,
+                        code: "brand-mismatch".into(),
+                        msg: format!(
+                            "int literal cannot fill {what} column `{}`",
+                            meta.cols[i].name
+                        ),
                     });
                 }
                 Term::Var(v) if v != "_" => {
                     match seen.get(v).cloned() {
-                        None => { seen.insert(v.clone(), cty); }
+                        None => {
+                            seen.insert(v.clone(), cty);
+                        }
                         Some(prev) => {
                             unify(v, &prev, &cty, brands, dl_path, diags);
                             // Narrow toward the more specific (branded/path) type so a
@@ -454,7 +645,9 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                             // path var; keep the branded/path one when present.
                             let more_specific = (prev.brand.is_none() && cty.brand.is_some())
                                 || (!is_path_base(prev.base) && is_path_base(cty.base));
-                            if more_specific { seen.insert(v.clone(), cty); }
+                            if more_specific {
+                                seen.insert(v.clone(), cty);
+                            }
                         }
                     }
                 }
@@ -464,20 +657,34 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                 // typing (incl. the mixed int/text `+` error) lives in `arith_ty`.
                 Term::Arith { .. } => {
                     match arith_ty(term, seen, dl_path, diags) {
-                        Some(Type::Int) => if cty.base != Type::Int {
-                            diags.push(TypeDiag {
-                                path: dl_path.to_string(), span: (0, 0),
-                                severity: Severity::Error, code: "brand-mismatch".into(),
-                                msg: format!("arithmetic expression cannot fill non-int column `{}`", meta.cols[i].name),
-                            });
-                        },
-                        Some(_) => if cty.base == Type::Int {
-                            diags.push(TypeDiag {
-                                path: dl_path.to_string(), span: (0, 0),
-                                severity: Severity::Error, code: "brand-mismatch".into(),
-                                msg: format!("text `+` concatenation cannot fill int column `{}`", meta.cols[i].name),
-                            });
-                        },
+                        Some(Type::Int) => {
+                            if cty.base != Type::Int {
+                                diags.push(TypeDiag {
+                                    path: dl_path.to_string(),
+                                    span: (0, 0),
+                                    severity: Severity::Error,
+                                    code: "brand-mismatch".into(),
+                                    msg: format!(
+                                        "arithmetic expression cannot fill non-int column `{}`",
+                                        meta.cols[i].name
+                                    ),
+                                });
+                            }
+                        }
+                        Some(_) => {
+                            if cty.base == Type::Int {
+                                diags.push(TypeDiag {
+                                    path: dl_path.to_string(),
+                                    span: (0, 0),
+                                    severity: Severity::Error,
+                                    code: "brand-mismatch".into(),
+                                    msg: format!(
+                                        "text `+` concatenation cannot fill int column `{}`",
+                                        meta.cols[i].name
+                                    ),
+                                });
+                            }
+                        }
                         // None = already diagnosed (mixed `+`) — don't cascade.
                         None => {}
                     }
@@ -492,19 +699,31 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                     // column). The json constructors produce text too (a JSON
                     // string) but are VARIADIC. All take text args.
                     let is_int = matches!(name.as_str(), "int" | "len" | "lines");
-                    let str_fn = crate::lower::STR_FNS.iter().find(|(n, _, _)| *n == name.as_str());
+                    let str_fn = crate::lower::STR_FNS
+                        .iter()
+                        .find(|(n, _, _)| *n == name.as_str());
                     let is_json = matches!(name.as_str(), "json_object" | "json_array" | "json");
                     let is_sym_identity = name == "sym";
-                    let known = is_int || matches!(name.as_str(), "split" | "replace")
-                        || str_fn.is_some() || is_json || is_sym_identity;
+                    let known = is_int
+                        || matches!(name.as_str(), "split" | "replace")
+                        || str_fn.is_some()
+                        || is_json
+                        || is_sym_identity;
                     if !known {
-                        let extra = crate::lower::STR_FNS.iter()
-                            .map(|(n, _, _)| *n).collect::<Vec<_>>().join(", ");
+                        let extra = crate::lower::STR_FNS
+                            .iter()
+                            .map(|(n, _, _)| *n)
+                            .collect::<Vec<_>>()
+                            .join(", ");
                         diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "unknown-function".into(),
-                            msg: format!("unknown function `{name}` (known: split, replace, sym, int, \
-                                json_object, json_array, json, {extra})"),
+                            path: dl_path.to_string(),
+                            span: (0, 0),
+                            severity: Severity::Error,
+                            code: "unknown-function".into(),
+                            msg: format!(
+                                "unknown function `{name}` (known: split, replace, sym, int, \
+                                json_object, json_array, json, {extra})"
+                            ),
                         });
                     }
                     // Fixed-arity fns check an exact count; the json constructors
@@ -523,9 +742,14 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                                 _ => "exactly 1 arg",
                             };
                             diags.push(TypeDiag {
-                                path: dl_path.to_string(), span: (0, 0),
-                                severity: Severity::Error, code: "arity".into(),
-                                msg: format!("function `{name}` expects {want}, got {}", args.len()),
+                                path: dl_path.to_string(),
+                                span: (0, 0),
+                                severity: Severity::Error,
+                                code: "arity".into(),
+                                msg: format!(
+                                    "function `{name}` expects {want}, got {}",
+                                    args.len()
+                                ),
                             });
                         }
                     } else {
@@ -537,38 +761,63 @@ pub fn check_rule_types(rule: &Rule, rels: &Rels, brands: &Brands, dl_path: &str
                         };
                         if args.len() != want {
                             diags.push(TypeDiag {
-                                path: dl_path.to_string(), span: (0, 0),
-                                severity: Severity::Error, code: "arity".into(),
-                                msg: format!("function `{name}` expects {want} args, got {}", args.len()),
+                                path: dl_path.to_string(),
+                                span: (0, 0),
+                                severity: Severity::Error,
+                                code: "arity".into(),
+                                msg: format!(
+                                    "function `{name}` expects {want} args, got {}",
+                                    args.len()
+                                ),
                             });
                         }
                     }
                     if is_int {
                         if cty.base != Type::Int {
                             diags.push(TypeDiag {
-                                path: dl_path.to_string(), span: (0, 0),
-                                severity: Severity::Error, code: "brand-mismatch".into(),
-                                msg: format!("`int(..)` cannot fill non-int column `{}`", meta.cols[i].name),
+                                path: dl_path.to_string(),
+                                span: (0, 0),
+                                severity: Severity::Error,
+                                code: "brand-mismatch".into(),
+                                msg: format!(
+                                    "`int(..)` cannot fill non-int column `{}`",
+                                    meta.cols[i].name
+                                ),
                             });
                         }
                     } else if !is_path_base(cty.base) && cty.base != Type::Text {
                         diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "brand-mismatch".into(),
-                            msg: format!("string function `{name}` cannot fill non-text column `{}`", meta.cols[i].name),
+                            path: dl_path.to_string(),
+                            span: (0, 0),
+                            severity: Severity::Error,
+                            code: "brand-mismatch".into(),
+                            msg: format!(
+                                "string function `{name}` cannot fill non-text column `{}`",
+                                meta.cols[i].name
+                            ),
                         });
                     }
                     // The json constructors accept mixed-type values (an int column
                     // becomes a JSON number, text a JSON string), so their args do
                     // NOT unify as text — only split/replace/STR_FNS take text operands.
                     if !is_json {
-                        let text_ty = ColTy { base: Type::Text, brand: None, interned: false };
+                        let text_ty = ColTy {
+                            base: Type::Text,
+                            brand: None,
+                            interned: false,
+                        };
                         for a in args {
                             if let Term::Var(v) = a {
-                                if v != "_" { match seen.get(v).cloned() {
-                                    None => { seen.insert(v.clone(), text_ty.clone()); }
-                                    Some(prev) => unify(v, &prev, &text_ty, brands, dl_path, diags),
-                                }}
+                                if v != "_" {
+                                    match seen.get(v).cloned() {
+                                        None => {
+                                            seen.insert(v.clone(), text_ty.clone());
+                                        }
+                                        Some(prev) => {
+                                            unify(v, &prev, &text_ty, brands, dl_path, diags)
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -606,8 +855,15 @@ fn is_computation(t: &Term) -> bool {
 fn term_vars(t: &Term, out: &mut Vec<String>) {
     match t {
         Term::Var(v) if v != "_" => out.push(v.clone()),
-        Term::Call { args, .. } => for a in args { term_vars(a, out); },
-        Term::Arith { lhs, rhs, .. } => { term_vars(lhs, out); term_vars(rhs, out); }
+        Term::Call { args, .. } => {
+            for a in args {
+                term_vars(a, out);
+            }
+        }
+        Term::Arith { lhs, rhs, .. } => {
+            term_vars(lhs, out);
+            term_vars(rhs, out);
+        }
         _ => {}
     }
 }
@@ -620,16 +876,28 @@ fn term_vars(t: &Term, out: &mut Vec<String>) {
 /// a var bound by an EARLIER bind; a later-bind or nowhere-bound var errors
 /// naming the fix. Also records each bind var's type (so a text bind can feed
 /// text `+` later) and runs `arith_ty` over filters for the mixed-`+` check.
-fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
-    let derived_shape = !rule.body.is_empty() && rule.body.iter()
-        .all(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)));
-    if !derived_shape { return; }
+fn check_body_binds(
+    rule: &Rule,
+    seen: &mut HashMap<String, ColTy>,
+    dl_path: &str,
+    diags: &mut Vec<TypeDiag>,
+) {
+    let derived_shape = !rule.body.is_empty()
+        && rule
+            .body
+            .iter()
+            .all(|b| matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)));
+    if !derived_shape {
+        return;
+    }
     let mut atom_vars: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in &rule.body {
         if let BodyItem::Pos(a) = item {
             for t in &a.terms {
                 if let Term::Var(v) = t {
-                    if v != "_" { atom_vars.insert(v.clone()); }
+                    if v != "_" {
+                        atom_vars.insert(v.clone());
+                    }
                 }
             }
         }
@@ -639,13 +907,27 @@ fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &st
         let BodyItem::Cmp(c) = item else { continue };
         let bind = if c.op == CmpOp::Eq {
             match (&c.lhs, &c.rhs) {
-                (Term::Var(v), rhs) if v != "_" && !atom_vars.contains(v)
-                    && !bind_vars.contains(v) && is_computation(rhs) => Some((v, rhs)),
-                (lhs, Term::Var(v)) if v != "_" && !atom_vars.contains(v)
-                    && !bind_vars.contains(v) && is_computation(lhs) => Some((v, lhs)),
+                (Term::Var(v), rhs)
+                    if v != "_"
+                        && !atom_vars.contains(v)
+                        && !bind_vars.contains(v)
+                        && is_computation(rhs) =>
+                {
+                    Some((v, rhs))
+                }
+                (lhs, Term::Var(v))
+                    if v != "_"
+                        && !atom_vars.contains(v)
+                        && !bind_vars.contains(v)
+                        && is_computation(lhs) =>
+                {
+                    Some((v, lhs))
+                }
                 _ => None,
             }
-        } else { None };
+        } else {
+            None
+        };
         match bind {
             Some((target, expr)) => {
                 let mut consumed = Vec::new();
@@ -662,11 +944,17 @@ fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &st
                 }
                 let ety = match expr {
                     Term::Arith { .. } => arith_ty(expr, seen, dl_path, diags),
-                    Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
+                    Term::Call { name, .. } => {
+                        Some(if name == "int" { Type::Int } else { Type::Text })
+                    }
                     _ => None,
                 };
                 if let Some(base) = ety {
-                    seen.entry(target.clone()).or_insert(ColTy { base, brand: None, interned: false });
+                    seen.entry(target.clone()).or_insert(ColTy {
+                        base,
+                        brand: None,
+                        interned: false,
+                    });
                 }
                 bind_vars.insert(target.clone());
             }
@@ -689,13 +977,22 @@ fn check_body_binds(rule: &Rule, seen: &mut HashMap<String, ColTy>, dl_path: &st
 /// cascade). An unknown side (a var with no type yet) adopts the other side's
 /// type; both-unknown keeps the historical int default. `-`/`*`/`/`/`%` stay
 /// int-only, unifying var operands as int exactly like the pre-overload walk.
-fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &mut Vec<TypeDiag>) -> Option<Type> {
+fn arith_ty(
+    t: &Term,
+    seen: &mut HashMap<String, ColTy>,
+    dl_path: &str,
+    diags: &mut Vec<TypeDiag>,
+) -> Option<Type> {
     match t {
         Term::Int(_) => Some(Type::Int),
         Term::Str(_) | Term::Interp(_) => Some(Type::Text),
         Term::Call { name, .. } => Some(if name == "int" { Type::Int } else { Type::Text }),
         Term::Var(v) if v != "_" => seen.get(v).map(|c| c.base),
-        Term::Arith { op: ArithOp::Add, lhs, rhs } => {
+        Term::Arith {
+            op: ArithOp::Add,
+            lhs,
+            rhs,
+        } => {
             let lt = arith_ty(lhs, seen, dl_path, diags);
             let rt = arith_ty(rhs, seen, dl_path, diags);
             let is_text = |x: Type| x != Type::Int;
@@ -715,7 +1012,11 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                     let unknown = if lt.is_none() { lhs } else { rhs };
                     if let Term::Var(v) = unknown.as_ref() {
                         if v != "_" {
-                            seen.entry(v.clone()).or_insert(ColTy { base: a, brand: None, interned: false });
+                            seen.entry(v.clone()).or_insert(ColTy {
+                                base: a,
+                                brand: None,
+                                interned: false,
+                            });
                         }
                     }
                     Some(a)
@@ -725,7 +1026,11 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                     for side in [lhs, rhs] {
                         if let Term::Var(v) = side.as_ref() {
                             if v != "_" {
-                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None, interned: false });
+                                seen.entry(v.clone()).or_insert(ColTy {
+                                    base: Type::Int,
+                                    brand: None,
+                                    interned: false,
+                                });
                             }
                         }
                     }
@@ -738,16 +1043,25 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
                 match arith_ty(side, seen, dl_path, diags) {
                     Some(x) if x != Type::Int => {
                         diags.push(TypeDiag {
-                            path: dl_path.to_string(), span: (0, 0),
-                            severity: Severity::Error, code: "plus-mismatch".into(),
-                            msg: format!("`{}` needs int operands — only `+` concatenates text", op.sql()),
+                            path: dl_path.to_string(),
+                            span: (0, 0),
+                            severity: Severity::Error,
+                            code: "plus-mismatch".into(),
+                            msg: format!(
+                                "`{}` needs int operands — only `+` concatenates text",
+                                op.sql()
+                            ),
                         });
                     }
                     Some(_) => {}
                     None => {
                         if let Term::Var(v) = side.as_ref() {
                             if v != "_" {
-                                seen.entry(v.clone()).or_insert(ColTy { base: Type::Int, brand: None, interned: false });
+                                seen.entry(v.clone()).or_insert(ColTy {
+                                    base: Type::Int,
+                                    brand: None,
+                                    interned: false,
+                                });
                             }
                         }
                     }
@@ -764,7 +1078,14 @@ fn arith_ty(t: &Term, seen: &mut HashMap<String, ColTy>, dl_path: &str, diags: &
 /// column is a coerce warning. The diagnostic has no per-occurrence span (a var
 /// is not a literal), so it points at the whole program file (span 0,0) which the
 /// renderer surfaces at line 1.
-fn unify(var: &str, a: &ColTy, b: &ColTy, brands: &Brands, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+fn unify(
+    var: &str,
+    a: &ColTy,
+    b: &ColTy,
+    brands: &Brands,
+    dl_path: &str,
+    diags: &mut Vec<TypeDiag>,
+) {
     match (&a.brand, &b.brand) {
         (Some(x), Some(y)) => {
             if x != y && !brands.is_ancestor(x, y) && !brands.is_ancestor(y, x) {
@@ -780,10 +1101,14 @@ fn unify(var: &str, a: &ColTy, b: &ColTy, brands: &Brands, dl_path: &str, diags:
         // vocabulary gate on literals, not a path-like refinement), so joining
         // e.g. df_node.kind into a user text column is silent by design.
         (Some(x), None) if b.base == Type::Text => {
-            if brands.enum_variants(x).is_none() { coerce(var, x, dl_path, diags); }
+            if brands.enum_variants(x).is_none() {
+                coerce(var, x, dl_path, diags);
+            }
         }
         (None, Some(y)) if a.base == Type::Text => {
-            if brands.enum_variants(y).is_none() { coerce(var, y, dl_path, diags); }
+            if brands.enum_variants(y).is_none() {
+                coerce(var, y, dl_path, diags);
+            }
         }
         // A path-shaped base type meeting a plain text column also warns.
         (None, None) => {
@@ -799,8 +1124,10 @@ fn unify(var: &str, a: &ColTy, b: &ColTy, brands: &Brands, dl_path: &str, diags:
 
 fn coerce(var: &str, brand: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
     diags.push(TypeDiag {
-        path: dl_path.to_string(), span: (0, 0),
-        severity: Severity::Warn, code: "coerce-text-path".into(),
+        path: dl_path.to_string(),
+        span: (0, 0),
+        severity: Severity::Warn,
+        code: "coerce-text-path".into(),
         msg: format!("variable `{var}` (brand `{brand}`) flows into a plain text column"),
     });
 }
@@ -809,10 +1136,25 @@ fn coerce(var: &str, brand: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
 /// silent; a non-member emits `enum-variant-unknown` with the allowed set and a
 /// nearest-variant suggestion. A non-enum brand (the `<:` form) is a no-op.
 /// Literals carry no per-occurrence span, so the diagnostic lands at line 1.
-fn enum_lit_check(brand: &str, val: &str, brands: &Brands, col_name: &str, dl_path: &str, diags: &mut Vec<TypeDiag>) {
-    let Some(variants) = brands.enum_variants(brand) else { return; };
-    if variants.iter().any(|v| v == val) { return; }
-    let allowed = variants.iter().map(|v| format!("\"{v}\"")).collect::<Vec<_>>().join(" | ");
+fn enum_lit_check(
+    brand: &str,
+    val: &str,
+    brands: &Brands,
+    col_name: &str,
+    dl_path: &str,
+    diags: &mut Vec<TypeDiag>,
+) {
+    let Some(variants) = brands.enum_variants(brand) else {
+        return;
+    };
+    if variants.iter().any(|v| v == val) {
+        return;
+    }
+    let allowed = variants
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(" | ");
     let hint = nearest_variant(val, variants)
         .map(|s| format!(" — did you mean \"{s}\"?"))
         .unwrap_or_default();
@@ -827,7 +1169,8 @@ fn enum_lit_check(brand: &str, val: &str, brands: &Brands, col_name: &str, dl_pa
 /// order. `None` when the set is empty. No distance cutoff — a suggestion always
 /// helps against a closed set this small.
 fn nearest_variant<'a>(val: &str, variants: &'a [String]) -> Option<&'a str> {
-    variants.iter()
+    variants
+        .iter()
         .min_by_key(|v| edit_distance(val, v))
         .map(|s| s.as_str())
 }
@@ -862,8 +1205,10 @@ pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeD
         if let Item::Shape(s) = item {
             if shapes.insert(s.name.clone(), s.cols.clone()).is_some() {
                 diags.push(TypeDiag {
-                    path: dl_path.to_string(), span: (0, 0),
-                    severity: Severity::Error, code: "duplicate-shape".into(),
+                    path: dl_path.to_string(),
+                    span: (0, 0),
+                    severity: Severity::Error,
+                    code: "duplicate-shape".into(),
                     msg: format!("duplicate shape `{}`", s.name),
                 });
             }
@@ -874,13 +1219,20 @@ pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeD
     // `_shapes` at the next tick's declare, or reports shape-pending), not a load
     // error. Without a type_decl_row head, an unresolved ref is the existing crisp
     // unknown-shape error.
-    let derives_shapes = items.iter().any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"));
+    let derives_shapes = items
+        .iter()
+        .any(|it| matches!(it, Item::Rule(r) if r.head.rel == "type_decl_row"));
     for item in items.iter_mut() {
         if let Item::Rel(d) = item {
-            let Some(sname) = d.shape_ref.clone() else { continue; };
+            let Some(sname) = d.shape_ref.clone() else {
+                continue;
+            };
             match shapes.get(&sname) {
                 // Syntax `type` shape wins: fill columns and clear the ref.
-                Some(cols) => { d.cols = cols.clone(); d.shape_ref = None; }
+                Some(cols) => {
+                    d.cols = cols.clone();
+                    d.shape_ref = None;
+                }
                 // No syntax shape. Defer (leave shape_ref set) when the program
                 // derives shapes; else the unknown-shape error.
                 None if derives_shapes => {}
@@ -904,10 +1256,17 @@ pub fn expand_shapes(items: &mut Vec<Item>, dl_path: &str, diags: &mut Vec<TypeD
 }
 
 fn coerce_base(var: &str, base: Type, dl_path: &str, diags: &mut Vec<TypeDiag>) {
-    let name = match base { Type::Path => "path", Type::File => "file", Type::Dir => "dir", _ => "path" };
+    let name = match base {
+        Type::Path => "path",
+        Type::File => "file",
+        Type::Dir => "dir",
+        _ => "path",
+    };
     diags.push(TypeDiag {
-        path: dl_path.to_string(), span: (0, 0),
-        severity: Severity::Warn, code: "coerce-text-path".into(),
+        path: dl_path.to_string(),
+        span: (0, 0),
+        severity: Severity::Warn,
+        code: "coerce-text-path".into(),
         msg: format!("variable `{var}` ({name}) flows into a plain text column"),
     });
 }
@@ -934,55 +1293,100 @@ fn param_referenced(body: &str, param: &str) -> bool {
     let mut from = 0;
     while let Some(i) = body[from..].find(&needle) {
         let end = from + i + needle.len();
-        let next_ok = body[end..].chars().next()
+        let next_ok = body[end..]
+            .chars()
+            .next()
             .map(|c| !c.is_ascii_alphanumeric() && c != '_')
             .unwrap_or(true);
-        if next_ok { return true; }
+        if next_ok {
+            return true;
+        }
         from = end;
     }
     false
 }
 
-fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags: &mut Vec<TypeDiag>) {
+fn check_effect(
+    rule: &Rule,
+    fns: &HashMap<&str, &ShellFn>,
+    dl_path: &str,
+    diags: &mut Vec<TypeDiag>,
+) {
     let err = |code: &str, msg: String, diags: &mut Vec<TypeDiag>| {
         diags.push(TypeDiag {
-            path: dl_path.to_string(), span: (0, 0),
-            severity: Severity::Error, code: code.into(), msg,
+            path: dl_path.to_string(),
+            span: (0, 0),
+            severity: Severity::Error,
+            code: code.into(),
+            msg,
         });
     };
-    let n_eff = rule.body.iter().filter(|b| matches!(b, BodyItem::Effect { .. })).count();
-    if n_eff == 0 { return; }
+    let n_eff = rule
+        .body
+        .iter()
+        .filter(|b| matches!(b, BodyItem::Effect { .. }))
+        .count();
+    if n_eff == 0 {
+        return;
+    }
     if n_eff > 1 {
         err("multiple-effects",
             format!("rule `{}` has {n_eff} effect calls; at most one effect per rule (split into separate @async rules)", rule.head.rel),
             diags);
     }
-    if !matches!(rule.temporal, Some(Temporal::Async) | Some(Temporal::Stream)) {
-        err("effect-needs-async",
-            format!("effect call in rule `{}` requires `@async` or `@stream`; effects fire off-tick", rule.head.rel),
-            diags);
+    if !matches!(
+        rule.temporal,
+        Some(Temporal::Async) | Some(Temporal::Stream)
+    ) {
+        err(
+            "effect-needs-async",
+            format!(
+                "effect call in rule `{}` requires `@async` or `@stream`; effects fire off-tick",
+                rule.head.rel
+            ),
+            diags,
+        );
     }
-    let Some((name, args, outs)) = rule.effect() else { return; };
+    let Some((name, args, outs)) = rule.effect() else {
+        return;
+    };
     let Some(f) = fns.get(name) else {
         // No declared `sh`. Legal only as the head-response/legacy form, where the
         // synthesized effect is named for the head rel; an explicit call to an
         // undeclared `sh` is a typo.
         if name != rule.head.rel {
-            err("unknown-sh",
-                format!("effect call `{name}(..)` in rule `{}` resolves to no `sh` decl", rule.head.rel),
-                diags);
+            err(
+                "unknown-sh",
+                format!(
+                    "effect call `{name}(..)` in rule `{}` resolves to no `sh` decl",
+                    rule.head.rel
+                ),
+                diags,
+            );
         }
         return;
     };
     if args.len() != f.params.len() {
-        err("effect-arity",
-            format!("`sh {name}` takes {} arg(s), called with {}", f.params.len(), args.len()),
-            diags);
+        err(
+            "effect-arity",
+            format!(
+                "`sh {name}` takes {} arg(s), called with {}",
+                f.params.len(),
+                args.len()
+            ),
+            diags,
+        );
     }
     if outs.len() != f.outs.len() {
-        err("effect-arity",
-            format!("`sh {name}` returns {} value(s), bound to {}", f.outs.len(), outs.len()),
-            diags);
+        err(
+            "effect-arity",
+            format!(
+                "`sh {name}` returns {} value(s), bound to {}",
+                f.outs.len(),
+                outs.len()
+            ),
+            diags,
+        );
     }
     for p in &f.params {
         // A param is "used" if it appears as the raw hole `{p}` OR the env-var
@@ -991,9 +1395,13 @@ fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags
         // opaque value (an etag `W/"..."`, a JSON blob) without re-parsing its
         // quotes. A template that only needs the safe form should still pass.
         if !param_referenced(&f.body, p) {
-            err("unused-hole",
-                format!("`sh {name}` param `{p}` never appears as `{{{p}}}` or `${p}` in the template"),
-                diags);
+            err(
+                "unused-hole",
+                format!(
+                    "`sh {name}` param `{p}` never appears as `{{{p}}}` or `${p}` in the template"
+                ),
+                diags,
+            );
         }
     }
     let crossed = match (rule.temporal, f.kind) {
@@ -1002,21 +1410,36 @@ fn check_effect(rule: &Rule, fns: &HashMap<&str, &ShellFn>, dl_path: &str, diags
         _ => true,
     };
     if crossed {
-        let want = match f.kind { ShellKind::Stream => "@stream", _ => "@async" };
-        err("temporal-kind-mismatch",
-            format!("`sh {name}` is `{}`; call it from {want}, not {}",
+        let want = match f.kind {
+            ShellKind::Stream => "@stream",
+            _ => "@async",
+        };
+        err(
+            "temporal-kind-mismatch",
+            format!(
+                "`sh {name}` is `{}`; call it from {want}, not {}",
                 shell_kind_word(f.kind),
-                rule.temporal.map(temporal_word).unwrap_or("a bare rule")),
-            diags);
+                rule.temporal.map(temporal_word).unwrap_or("a bare rule")
+            ),
+            diags,
+        );
     }
 }
 
 fn shell_kind_word(k: ShellKind) -> &'static str {
-    match k { ShellKind::Read => "sh", ShellKind::Mutate => "sh!", ShellKind::Stream => "sh*" }
+    match k {
+        ShellKind::Read => "sh",
+        ShellKind::Mutate => "sh!",
+        ShellKind::Stream => "sh*",
+    }
 }
 
 fn temporal_word(t: Temporal) -> &'static str {
-    match t { Temporal::Next => "@next", Temporal::Async => "@async", Temporal::Stream => "@stream" }
+    match t {
+        Temporal::Next => "@next",
+        Temporal::Async => "@async",
+        Temporal::Stream => "@stream",
+    }
 }
 
 /// Run both passes for a program: validate brands/anchors, check every rule, then
@@ -1033,21 +1456,35 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
         Ok(b) => b,
         Err(e) => {
             diags.push(TypeDiag {
-                path: dl_path.to_string(), span: (0, 0),
-                severity: Severity::Error, code: "brand-mismatch".into(), msg: e,
+                path: dl_path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "brand-mismatch".into(),
+                msg: e,
             });
             Brands::default()
         }
     };
     if let Err(e) = Anchors::from_program(prog) {
         diags.push(TypeDiag {
-            path: dl_path.to_string(), span: (0, 0),
-            severity: Severity::Error, code: "unknown-anchor".into(), msg: e,
+            path: dl_path.to_string(),
+            span: (0, 0),
+            severity: Severity::Error,
+            code: "unknown-anchor".into(),
+            msg: e,
         });
     }
     let rels = prog_rels(prog);
-    let shell_fns: HashMap<&str, &ShellFn> = prog.items.iter()
-        .filter_map(|it| if let Item::Shell(f) = it { Some((f.name.as_str(), f)) } else { None })
+    let shell_fns: HashMap<&str, &ShellFn> = prog
+        .items
+        .iter()
+        .filter_map(|it| {
+            if let Item::Shell(f) = it {
+                Some((f.name.as_str(), f))
+            } else {
+                None
+            }
+        })
         .collect();
     for item in &prog.items {
         if let Item::Rule(r) = item {
@@ -1063,7 +1500,14 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
                         if let Term::Str(s) = term {
                             let cty = col_ty(&meta.cols[i], &brands);
                             if let Some(brand) = &cty.brand {
-                                enum_lit_check(brand, s, &brands, &meta.cols[i].name, dl_path, &mut diags);
+                                enum_lit_check(
+                                    brand,
+                                    s,
+                                    &brands,
+                                    &meta.cols[i].name,
+                                    dl_path,
+                                    &mut diags,
+                                );
                             }
                         }
                     }
@@ -1083,12 +1527,22 @@ pub fn check_and_normalize(prog: &mut Program, dl_path: &str) -> Vec<TypeDiag> {
             Item::Query(q) => (&q.head.rel, true),
             _ => continue,
         };
-        if rels.contains_key(head) || builtins.contains(head) { continue; }
-        if !reported.insert(head.as_str()) { continue; }
-        let role = if is_query { "queried" } else { "used as a rule head" };
+        if rels.contains_key(head) || builtins.contains(head) {
+            continue;
+        }
+        if !reported.insert(head.as_str()) {
+            continue;
+        }
+        let role = if is_query {
+            "queried"
+        } else {
+            "used as a rule head"
+        };
         diags.push(TypeDiag {
-            path: dl_path.to_string(), span: (0, 0),
-            severity: Severity::Error, code: "unknown-relation".into(),
+            path: dl_path.to_string(),
+            span: (0, 0),
+            severity: Severity::Error,
+            code: "unknown-relation".into(),
             msg: format!("relation `{head}` is {role} but never declared — add `rel {head}(...)`"),
         });
     }
@@ -1114,7 +1568,9 @@ pub fn metavar_case_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for c in re.captures_iter(pat) {
             let name = c.get(1).unwrap().as_str();
-            if !seen.insert(name) { continue; }
+            if !seen.insert(name) {
+                continue;
+            }
             diags.push(TypeDiag {
                 path: dl_path.to_string(), span: (0, 0),
                 severity: Severity::Warn, code: "lowercase-metavar".into(),
@@ -1160,13 +1616,20 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     let mut id: HashMap<String, u32> = HashMap::new();
     let mut names: Vec<String> = Vec::new();
     let intern = |s: &str, id: &mut HashMap<String, u32>, names: &mut Vec<String>| -> u32 {
-        if let Some(&i) = id.get(s) { return i; }
-        let i = names.len() as u32; id.insert(s.to_string(), i); names.push(s.to_string()); i
+        if let Some(&i) = id.get(s) {
+            return i;
+        }
+        let i = names.len() as u32;
+        id.insert(s.to_string(), i);
+        names.push(s.to_string());
+        i
     };
     // (head, body, forcing) where forcing = the edge is a negation or aggregation.
     let mut edges: Vec<(u32, u32, bool)> = Vec::new();
     for item in &prog.items {
-        let Item::Rule(r) = item else { continue; };
+        let Item::Rule(r) = item else {
+            continue;
+        };
         // A temporal rule (`@next`/`@async`/`@stream`) crosses a tick boundary: its
         // head lands in a LATER tick (the next seed, or an async response), so its
         // body->head dependency does NOT hold within this tick's fixpoint. The
@@ -1175,7 +1638,9 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
         // legitimate carry like `etag <- @next etag_next` with a negation elsewhere
         // in the loop false-flags as not-stratified. The tick boundary IS the
         // stratification for across-tick cycles.
-        if r.temporal.is_some() { continue; }
+        if r.temporal.is_some() {
+            continue;
+        }
         let h = intern(&r.head.rel, &mut id, &mut names);
         let agg = r.has_agg();
         for b in &r.body {
@@ -1190,16 +1655,22 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     }
     let n = names.len();
     let mut adj = vec![Vec::new(); n];
-    for &(h, b, _) in &edges { adj[h as usize].push(b); }
+    for &(h, b, _) in &edges {
+        adj[h as usize].push(b);
+    }
     let (comp, ncomp) = scc::tarjan(&adj);
     let mut reported: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
     for &(h, b, force) in &edges {
         if force && comp[h as usize] == comp[b as usize] && reported.insert((h, b)) {
             diags.push(TypeDiag {
-                path: dl_path.to_string(), span: (0, 0),
-                severity: Severity::Error, code: "not-stratified".into(),
-                msg: format!("relation `{}` is aggregated or negated inside a recursive cycle with `{}`",
-                    names[b as usize], names[h as usize]),
+                path: dl_path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "not-stratified".into(),
+                msg: format!(
+                    "relation `{}` is aggregated or negated inside a recursive cycle with `{}`",
+                    names[b as usize], names[h as usize]
+                ),
             });
         }
     }
@@ -1211,23 +1682,39 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     // Sink use (a non-recursive head like `diag`) is fine. `rebuild_derived`
     // carries the runtime defense for programs that skip the check path.
     let mut comp_size = vec![0usize; ncomp as usize];
-    for &c in &comp { comp_size[c as usize] += 1; }
+    for &c in &comp {
+        comp_size[c as usize] += 1;
+    }
     let mut self_loop = vec![false; n];
-    for &(h, b, _) in &edges { if h == b { self_loop[h as usize] = true; } }
+    for &(h, b, _) in &edges {
+        if h == b {
+            self_loop[h as usize] = true;
+        }
+    }
     let mut null_reported: std::collections::HashSet<String> = std::collections::HashSet::new();
     for item in &prog.items {
-        let Item::Rule(r) = item else { continue; };
-        if r.temporal.is_some() || !r.head_null_pads() { continue; }
-        let Some(&h) = id.get(&r.head.rel) else { continue; };
+        let Item::Rule(r) = item else {
+            continue;
+        };
+        if r.temporal.is_some() || !r.head_null_pads() {
+            continue;
+        }
+        let Some(&h) = id.get(&r.head.rel) else {
+            continue;
+        };
         let recursive = comp_size[comp[h as usize] as usize] > 1 || self_loop[h as usize];
         if recursive && null_reported.insert(r.head.rel.clone()) {
             diags.push(TypeDiag {
-                path: dl_path.to_string(), span: (0, 0),
-                severity: Severity::Error, code: "recursive-null-pad".into(),
-                msg: format!("rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
+                path: dl_path.to_string(),
+                span: (0, 0),
+                severity: Severity::Error,
+                code: "recursive-null-pad".into(),
+                msg: format!(
+                    "rule head for `{}` leaves column(s) NULL (`_` or named-arg padding) \
                     inside a recursive cycle — a NULL row never dedups in the fixpoint, so \
                     evaluation would not converge; bind every head column or break the cycle",
-                    r.head.rel),
+                    r.head.rel
+                ),
             });
         }
     }
@@ -1236,12 +1723,22 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
     // the json aggregates land a Text json string (int col = mismatch). Min/Max
     // carry the arg's type (fixed_out None) and stay with per-var unification.
     for item in &prog.items {
-        let Item::Rule(r) = item else { continue; };
-        if !r.has_agg() { continue; }
-        let Some(meta) = rels.get(&r.head.rel) else { continue; };
-        if r.head.terms.len() != meta.cols.len() { continue; }
+        let Item::Rule(r) = item else {
+            continue;
+        };
+        if !r.has_agg() {
+            continue;
+        }
+        let Some(meta) = rels.get(&r.head.rel) else {
+            continue;
+        };
+        if r.head.terms.len() != meta.cols.len() {
+            continue;
+        }
         for (i, f) in r.aggs.iter().enumerate() {
-            let Some(f) = f else { continue; };
+            let Some(f) = f else {
+                continue;
+            };
             let mismatch = match f.fixed_out() {
                 // Count/Sum produce int: any non-int, non-branded column conflicts.
                 Some(Type::Int) => meta.cols[i].ty != Type::Int && meta.cols[i].brand.is_none(),
@@ -1253,10 +1750,18 @@ pub fn stratify_diags(prog: &Program, dl_path: &str) -> Vec<TypeDiag> {
             if mismatch {
                 let out = f.fixed_out().map(|t| t.name()).unwrap_or("value");
                 diags.push(TypeDiag {
-                    path: dl_path.to_string(), span: (0, 0),
-                    severity: Severity::Error, code: "brand-mismatch".into(),
-                    msg: format!("`{}(...)` produces {} but head column `{}` of `{}` is `{}`",
-                        f.sql().to_lowercase(), out, meta.cols[i].name, r.head.rel, meta.cols[i].ty.name()),
+                    path: dl_path.to_string(),
+                    span: (0, 0),
+                    severity: Severity::Error,
+                    code: "brand-mismatch".into(),
+                    msg: format!(
+                        "`{}(...)` produces {} but head column `{}` of `{}` is `{}`",
+                        f.sql().to_lowercase(),
+                        out,
+                        meta.cols[i].name,
+                        r.head.rel,
+                        meta.cols[i].ty.name()
+                    ),
                 });
             }
         }
@@ -1277,12 +1782,24 @@ fn prog_rels(prog: &Program) -> Rels {
     // radius: only the closed-vocabulary rels opt in).
     for d in crate::engine::all_builtin_decls() {
         if d.cols.iter().any(|col| col.brand.is_some()) {
-            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
+            rels.insert(
+                d.name.clone(),
+                RelMeta {
+                    cols: d.cols.clone(),
+                    ..Default::default()
+                },
+            );
         }
     }
     for item in &prog.items {
         if let Item::Rel(d) = item {
-            rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() });
+            rels.insert(
+                d.name.clone(),
+                RelMeta {
+                    cols: d.cols.clone(),
+                    ..Default::default()
+                },
+            );
         }
     }
     rels
@@ -1300,14 +1817,21 @@ mod shape_enum_tests {
         check_and_normalize(&mut prog, "t.dl")
     }
     fn err_codes(src: &str) -> Vec<String> {
-        diags(src).into_iter().filter(|d| d.severity == Severity::Error).map(|d| d.code).collect()
+        diags(src)
+            .into_iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.code)
+            .collect()
     }
 
     #[test]
     fn enum_variants_walk_inherits() {
         let prog = program(r#"type severity = "error" | "warn"."#);
         let brands = Brands::from_program(&prog).unwrap();
-        assert_eq!(brands.enum_variants("severity"), Some(&["error".to_string(), "warn".to_string()][..]));
+        assert_eq!(
+            brands.enum_variants("severity"),
+            Some(&["error".to_string(), "warn".to_string()][..])
+        );
         // A sub-brand inherits the parent enum's set.
         let prog = program(r#"type severity = "error" | "warn". type sev2 <: severity."#);
         let brands = Brands::from_program(&prog).unwrap();
@@ -1333,7 +1857,11 @@ mod shape_enum_tests {
 rel finding(path: text, sev: severity).
 finding("a.rs", "error").
 ? finding(path, "warn")."#;
-        assert!(err_codes(ok).is_empty(), "valid enum literals must pass: {:?}", diags(ok));
+        assert!(
+            err_codes(ok).is_empty(),
+            "valid enum literals must pass: {:?}",
+            diags(ok)
+        );
 
         let bad_head = r#"type severity = "error" | "warn".
 rel finding(path: text, sev: severity).
@@ -1359,7 +1887,11 @@ finding_rel("a.rs", 1, "x")."#;
         // The rel now has the shape's 3 columns and its ref is cleared. (Item::Shape
         // is retained for the engine's shadow check — Phase 5 — so it is not
         // asserted absent anymore.)
-        let rel = prog.items.iter().find_map(|i| if let Item::Rel(d) = i { Some(d) } else { None }).unwrap();
+        let rel = prog
+            .items
+            .iter()
+            .find_map(|i| if let Item::Rel(d) = i { Some(d) } else { None })
+            .unwrap();
         assert_eq!(rel.cols.len(), 3);
         assert!(rel.shape_ref.is_none());
 
@@ -1380,9 +1912,19 @@ rel point_rel: point."#;
         let mut prog = program(src);
         let ds = check_and_normalize(&mut prog, "t.dl");
         assert!(ds.iter().all(|d| d.severity != Severity::Error), "{ds:?}");
-        let rel = prog.items.iter().find_map(|i| match i {
-            Item::Rel(d) if d.name == "point_rel" => Some(d), _ => None }).unwrap();
-        assert_eq!(rel.shape_ref.as_deref(), Some("point"), "the ref survives for the engine");
+        let rel = prog
+            .items
+            .iter()
+            .find_map(|i| match i {
+                Item::Rel(d) if d.name == "point_rel" => Some(d),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            rel.shape_ref.as_deref(),
+            Some("point"),
+            "the ref survives for the engine"
+        );
         assert!(rel.cols.is_empty(), "no columns invented at load");
     }
 
@@ -1390,7 +1932,9 @@ rel point_rel: point."#;
     fn ambient_builtin_brands_present_and_guarded() {
         // The builtin enum brands are present with NO user `type` decl.
         let brands = Brands::from_program(&program("rel unrelated(name: text).")).unwrap();
-        let kinds = brands.enum_variants("type_edge_kind").expect("ambient brand");
+        let kinds = brands
+            .enum_variants("type_edge_kind")
+            .expect("ambient brand");
         assert!(kinds.iter().any(|k| k == "field") && kinds.iter().any(|k| k == "uses"));
         assert!(brands.enum_variants("checkout_action").is_some());
         // A user decl reusing the name is an error naming the conflict.
@@ -1420,8 +1964,16 @@ rel hit(from_type: text)."#;
 rel out_edge(callee: text).
 out_edge(callee) <- raw_edge(caller), callee = replace(callee_q, ".", "::")."#;
         let ds = diags(bad);
-        let hit = ds.iter().find(|d| d.code == "unbound-bind").expect("unbound-bind diag");
-        assert!(hit.msg.contains("bind `callee_q` before computing `callee`"), "{}", hit.msg);
+        let hit = ds
+            .iter()
+            .find(|d| d.code == "unbound-bind")
+            .expect("unbound-bind diag");
+        assert!(
+            hit.msg
+                .contains("bind `callee_q` before computing `callee`"),
+            "{}",
+            hit.msg
+        );
 
         // A LATER bind does not satisfy an earlier bind's RHS (bind chains are
         // ordered; only atom vars are order-free).
@@ -1430,7 +1982,11 @@ rel out_edge(callee: text).
 out_edge(callee) <- raw_edge(caller),
   callee = replace(stripped, ".", "::"),
   stripped = replace(caller, "()", "")."#;
-        assert!(err_codes(late).contains(&"unbound-bind".to_string()), "{:?}", diags(late));
+        assert!(
+            err_codes(late).contains(&"unbound-bind".to_string()),
+            "{:?}",
+            diags(late)
+        );
 
         // In-order chain is clean.
         let ok = r#"rel raw_edge(caller: text).
@@ -1448,8 +2004,15 @@ out_edge(callee) <- raw_edge(caller),
 rel label(text_out: text).
 label(name + count) <- item(name, count)."#;
         let ds = diags(mixed);
-        let hit = ds.iter().find(|d| d.code == "plus-mismatch").expect("plus-mismatch diag");
-        assert!(hit.msg.contains("interpolation") || hit.msg.contains("int(.."), "{}", hit.msg);
+        let hit = ds
+            .iter()
+            .find(|d| d.code == "plus-mismatch")
+            .expect("plus-mismatch diag");
+        assert!(
+            hit.msg.contains("interpolation") || hit.msg.contains("int(.."),
+            "{}",
+            hit.msg
+        );
 
         // text + text is fine into a text column, an error into an int column.
         let ok = r#"rel base_url(host: text).
@@ -1459,7 +2022,13 @@ endpoint("https://" + host) <- base_url(host)."#;
         let bad_col = r#"rel base_url(host: text).
 rel endpoint(url: int).
 endpoint("https://" + host) <- base_url(host)."#;
-        assert!(diags(bad_col).iter().any(|d| d.msg.contains("cannot fill int column")), "{:?}", diags(bad_col));
+        assert!(
+            diags(bad_col)
+                .iter()
+                .any(|d| d.msg.contains("cannot fill int column")),
+            "{:?}",
+            diags(bad_col)
+        );
 
         // int + int into an int column stays clean (regression).
         let int_ok = r#"rel hit(line: int).
@@ -1471,7 +2040,12 @@ next_line(line + 1) <- hit(line)."#;
         let sub_text = r#"rel base_url(host: text).
 rel weird(value: int).
 weird(host - 1) <- base_url(host)."#;
-        assert!(diags(sub_text).iter().any(|d| d.code == "plus-mismatch" && d.msg.contains("needs int operands")),
-            "{:?}", diags(sub_text));
+        assert!(
+            diags(sub_text)
+                .iter()
+                .any(|d| d.code == "plus-mismatch" && d.msg.contains("needs int operands")),
+            "{:?}",
+            diags(sub_text)
+        );
     }
 }

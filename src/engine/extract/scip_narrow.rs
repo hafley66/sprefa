@@ -46,7 +46,9 @@ pub(crate) fn narrow_ambiguous<'a>(
     let mut survivor: Option<(&'a str, bool)> = None;
     let mut survivor_count = 0u32;
     for sym in candidates {
-        let Some(def_file) = sym_file.get(&(repo, rev, *sym)) else { continue };
+        let Some(def_file) = sym_file.get(&(repo, rev, *sym)) else {
+            continue;
+        };
         let is_self = *def_file == referencing_file;
         let is_imported = imported.map(|set| set.contains(*def_file)).unwrap_or(false);
         let is_same_dir = path_dir(def_file) == referencing_dir;
@@ -130,7 +132,10 @@ impl ScipOccIndex {
     /// to SCIP's 0-based occurrence line happens right here.
     pub(crate) fn resolve(&self, repo: &str, file: &str, callee: &str, line1: u32) -> OccPick {
         let line0 = line1 as i64 - 1; // 1-based call site -> 0-based scip occurrence.
-        let Some(syms) = self.occ_at.get(&(repo.to_string(), file.to_string(), line0)) else {
+        let Some(syms) = self
+            .occ_at
+            .get(&(repo.to_string(), file.to_string(), line0))
+        else {
             return OccPick::Fallthrough;
         };
         let mut matched: HashSet<&str> = HashSet::new();

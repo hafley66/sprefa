@@ -46,10 +46,14 @@ impl RelKind for FileLinesKind {
             "_file",
             "SELECT repo, path, rev, lines FROM _file WHERE lines >= 0 ORDER BY repo, path, rev",
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
         )?;
         rows.sort();
         let existing: Vec<(String, String, String, i64)> = eng.db.query_rows(
@@ -64,11 +68,20 @@ impl RelKind for FileLinesKind {
                 r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
             )),
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(repo, path, rev, n)| vec![
-                Value::Text(repo), Value::Text(path), Value::Text(rev), Value::Int(n),
-            ]).collect();
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(repo, path, rev, n)| {
+                vec![
+                    Value::Text(repo),
+                    Value::Text(path),
+                    Value::Text(rev),
+                    Value::Int(n),
+                ]
+            })
+            .collect();
         eng.refresh_rel("file_lines", &["repo", "path", "rev", "line_count"], &out)?;
         Ok(true)
     }

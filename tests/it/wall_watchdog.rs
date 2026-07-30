@@ -35,11 +35,24 @@ fn overrun_exits_124_and_names_the_phase() {
         .output()
         .expect("run dl with a tripped wall watchdog");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(124), "hard-exit 124 on overrun:\n{err}");
+    assert_eq!(
+        out.status.code(),
+        Some(124),
+        "hard-exit 124 on overrun:\n{err}"
+    );
     assert!(err.contains("WALL TIMEOUT"), "loud timeout banner:\n{err}");
-    assert!(err.contains("phase=extract"), "message names the phase:\n{err}");
-    assert!(err.contains("test-hang"), "message carries the phase detail:\n{err}");
-    assert!(err.contains("DL_MAX_WALL_SECS"), "message names the raise/disable knob:\n{err}");
+    assert!(
+        err.contains("phase=extract"),
+        "message names the phase:\n{err}"
+    );
+    assert!(
+        err.contains("test-hang"),
+        "message carries the phase detail:\n{err}"
+    );
+    assert!(
+        err.contains("DL_MAX_WALL_SECS"),
+        "message names the raise/disable knob:\n{err}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

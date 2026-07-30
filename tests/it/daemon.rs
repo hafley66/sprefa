@@ -41,14 +41,19 @@ impl Sandbox {
     fn spawn(&self, program: Option<&Path>, envs: &[(&str, &str)]) -> DaemonGuard {
         let mut cmd = Command::new(DL);
         cmd.args(["daemon", "start", "--foreground"]);
-        if let Some(p) = program { cmd.arg(p); }
+        if let Some(p) = program {
+            cmd.arg(p);
+        }
         cmd.current_dir(&self.root)
             .env("DL_DAEMON_ROOT", &self.root)
             .env("XDG_STATE_HOME", &self.home)
             // Hermetic: never pick up the developer's ~/.config/sprefa repos.
             .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-            .stdout(Stdio::null()).stderr(Stdio::null());
-        for (k, v) in envs { cmd.env(k, v); }
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        for (k, v) in envs {
+            cmd.env(k, v);
+        }
         DaemonGuard(cmd.spawn().expect("spawn singleton daemon"))
     }
 
@@ -77,12 +82,18 @@ impl Sandbox {
     fn query_rows(&self) -> usize {
         let v = rpc_root(&self.sock(), 99, "query", &self.root, serde_json::json!({}))
             .expect("query response");
-        v["result"]["results"][0]["rows"].as_array().map(|a| a.len()).unwrap_or(0)
+        v["result"]["results"][0]["rows"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0)
     }
 
     fn shutdown(&self) {
         // Process-level: no root envelope.
-        let _ = rpc(&self.sock(), r#"{"jsonrpc":"2.0","id":9000,"method":"shutdown","params":{}}"#);
+        let _ = rpc(
+            &self.sock(),
+            r#"{"jsonrpc":"2.0","id":9000,"method":"shutdown","params":{}}"#,
+        );
     }
 }
 
@@ -93,11 +104,16 @@ fn rpc(sock: &Path, body: &str) -> Option<String> {
 }
 
 /// RPC with the `root` envelope injected into params. Returns parsed JSON.
-fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_json::Value)
-    -> Option<serde_json::Value>
-{
+fn rpc_root(
+    sock: &Path,
+    id: u64,
+    method: &str,
+    root: &Path,
+    mut params: serde_json::Value,
+) -> Option<serde_json::Value> {
     params["root"] = serde_json::json!(root.to_string_lossy());
-    let body = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
+    let body =
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
     let resp = rpc(sock, &body)?;
     serde_json::from_str(&resp).ok()
 }
@@ -105,28 +121,38 @@ fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_j
 #[test]
 fn ping_query_diag_shutdown_round_trip() {
     let sb = Sandbox::new("roundtrip");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "rel edge(a: text, b: text).\n\
          edge(\"a\", \"b\").\n\
          edge(\"b\", \"c\").\n\
          rel reach(a: text, b: text).\n\
          reach(x, y) <- edge(x, y).\n\
          reach(x, z) <- edge(x, y), reach(y, z).\n\
-         ? reach(x, y).\n").unwrap();
+         ? reach(x, y).\n",
+    )
+    .unwrap();
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "singleton not ready");
 
     let q = rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({})).expect("query");
     let qs = q.to_string();
-    assert!(qs.contains("reach"), "query response should mention reach: {qs}");
+    assert!(
+        qs.contains("reach"),
+        "query response should mention reach: {qs}"
+    );
     assert!(qs.contains("columns"), "response should have columns: {qs}");
 
     let d = rpc_root(&sb.sock(), 3, "diag", &sb.root, serde_json::json!({})).expect("diag");
-    assert!(d["result"]["rows"].is_array(), "diag response should have rows: {d}");
+    assert!(
+        d["result"]["rows"].is_array(),
+        "diag response should have rows: {d}"
+    );
 
     sb.shutdown();
-    let status = child.wait_timeout(std::time::Duration::from_secs(5))
+    let status = child
+        .wait_timeout(std::time::Duration::from_secs(5))
         .expect("daemon did not exit after shutdown");
     assert!(status.success(), "daemon should exit 0 after shutdown");
 }
@@ -144,36 +170,75 @@ fn singleton_serves_two_roots_isolated() {
     fs::create_dir_all(a.join(".dl")).unwrap();
     fs::create_dir_all(b.join(".dl")).unwrap();
     // The daemon serves each root's discovered `.dl/*.dl` set (not a positional).
-    fs::write(a.join(".dl").join("p.dl"), "rel a_only(x: text).\na_only(\"aaa\").\n? a_only(x).\n").unwrap();
-    fs::write(b.join(".dl").join("p.dl"), "rel b_only(x: text).\nb_only(\"bbb\").\n? b_only(x).\n").unwrap();
+    fs::write(
+        a.join(".dl").join("p.dl"),
+        "rel a_only(x: text).\na_only(\"aaa\").\n? a_only(x).\n",
+    )
+    .unwrap();
+    fs::write(
+        b.join(".dl").join("p.dl"),
+        "rel b_only(x: text).\nb_only(\"bbb\").\n? b_only(x).\n",
+    )
+    .unwrap();
 
     // Start the singleton rooted at A (discovery).
-    let mut child = DaemonGuard(Command::new(DL)
-        .args(["daemon", "start", "--foreground"])
-        .current_dir(&a).env("DL_DAEMON_ROOT", &a).env("XDG_STATE_HOME", &home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn"));
+    let mut child = DaemonGuard(
+        Command::new(DL)
+            .args(["daemon", "start", "--foreground"])
+            .current_dir(&a)
+            .env("DL_DAEMON_ROOT", &a)
+            .env("XDG_STATE_HOME", &home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn"),
+    );
     let sock = sprefa_v5::daemon::socket_path_for(&home.join("sprefa"));
     let mut up = false;
     for _ in 0..200 {
-        if sock.exists() && rpc_root(&sock, 1, "ping", &a, serde_json::json!({})).is_some() { up = true; break; }
+        if sock.exists() && rpc_root(&sock, 1, "ping", &a, serde_json::json!({})).is_some() {
+            up = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(up, "singleton not ready");
 
     // Register B by naming it in a query (attach IS registration).
-    let qa = rpc_root(&sock, 2, "query", &a, serde_json::json!({})).expect("query a").to_string();
-    let qb = rpc_root(&sock, 3, "query", &b, serde_json::json!({})).expect("query b").to_string();
-    assert!(qa.contains("aaa") && !qa.contains("bbb"), "root A sees only a_only: {qa}");
-    assert!(qb.contains("bbb") && !qb.contains("aaa"), "root B sees only b_only: {qb}");
+    let qa = rpc_root(&sock, 2, "query", &a, serde_json::json!({}))
+        .expect("query a")
+        .to_string();
+    let qb = rpc_root(&sock, 3, "query", &b, serde_json::json!({}))
+        .expect("query b")
+        .to_string();
+    assert!(
+        qa.contains("aaa") && !qa.contains("bbb"),
+        "root A sees only a_only: {qa}"
+    );
+    assert!(
+        qb.contains("bbb") && !qb.contains("aaa"),
+        "root B sees only b_only: {qb}"
+    );
 
     // Both dbs live under the singleton home, distinct dirs.
     let roots_dir = home.join("sprefa").join("roots");
-    let dbs: Vec<_> = fs::read_dir(&roots_dir).unwrap().flatten()
-        .filter(|e| e.path().join("db.sqlite").exists()).collect();
-    assert!(dbs.len() >= 2, "each root has its own db dir under {}; found {}", roots_dir.display(), dbs.len());
+    let dbs: Vec<_> = fs::read_dir(&roots_dir)
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().join("db.sqlite").exists())
+        .collect();
+    assert!(
+        dbs.len() >= 2,
+        "each root has its own db dir under {}; found {}",
+        roots_dir.display(),
+        dbs.len()
+    );
 
-    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#,
+    );
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
 
@@ -182,20 +247,34 @@ fn singleton_serves_two_roots_isolated() {
 #[test]
 fn add_root_is_idempotent() {
     let sb = Sandbox::new("idem");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
-    let first = rpc_root(&sb.sock(), 2, "add_root", &sb.root, serde_json::json!({})).expect("add_root");
+    let first =
+        rpc_root(&sb.sock(), 2, "add_root", &sb.root, serde_json::json!({})).expect("add_root");
     let key1 = first["result"]["key"].as_str().unwrap_or("").to_string();
-    let second = rpc_root(&sb.sock(), 3, "add_root", &sb.root, serde_json::json!({})).expect("add_root2");
+    let second =
+        rpc_root(&sb.sock(), 3, "add_root", &sb.root, serde_json::json!({})).expect("add_root2");
     let key2 = second["result"]["key"].as_str().unwrap_or("").to_string();
     assert_eq!(key1, key2, "same root -> same key");
 
     // The process summary lists exactly one registered root.
-    let summary = rpc(&sb.sock(), r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{}}"#).expect("summary");
+    let summary = rpc(
+        &sb.sock(),
+        r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{}}"#,
+    )
+    .expect("summary");
     let v: serde_json::Value = serde_json::from_str(&summary).unwrap();
-    assert_eq!(v["result"]["root_count"].as_u64(), Some(1), "one registered root: {v}");
+    assert_eq!(
+        v["result"]["root_count"].as_u64(),
+        Some(1),
+        "one registered root: {v}"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -206,7 +285,11 @@ fn add_root_is_idempotent() {
 #[test]
 fn nested_root_registration_refused() {
     let sb = Sandbox::new("nested");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let inner = sb.root.join("sub");
     fs::create_dir_all(inner.join(".dl")).unwrap();
     fs::write(inner.join("q.dl"), "rel u(a: text).\nu(\"y\").\n? u(a).\n").unwrap();
@@ -214,10 +297,13 @@ fn nested_root_registration_refused() {
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
-    let resp = rpc_root(&sb.sock(), 2, "add_root", &inner, serde_json::json!({})).expect("add_root inner");
+    let resp =
+        rpc_root(&sb.sock(), 2, "add_root", &inner, serde_json::json!({})).expect("add_root inner");
     let msg = resp["error"]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("nested inside") && msg.contains(&sb.root.to_string_lossy().to_string()),
-        "nested registration must be refused naming both paths: {resp}");
+    assert!(
+        msg.contains("nested inside") && msg.contains(&sb.root.to_string_lossy().to_string()),
+        "nested registration must be refused naming both paths: {resp}"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -227,27 +313,48 @@ fn nested_root_registration_refused() {
 #[test]
 fn drop_purge_removes_root_db() {
     let sb = Sandbox::new("drop");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
     // The initial root is registered; its db dir exists.
     let roots_dir = sb.home.join("sprefa").join("roots");
-    let key = fs::read_to_string(sb.home.join("sprefa").join("roots.json")).ok()
+    let key = fs::read_to_string(sb.home.join("sprefa").join("roots.json"))
+        .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
         .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
         .and_then(|r| r.get("key").and_then(|k| k.as_str()).map(String::from))
         .expect("registered root key in roots.json");
-    assert!(roots_dir.join(&key).join("db.sqlite").exists(), "db exists before drop");
+    assert!(
+        roots_dir.join(&key).join("db.sqlite").exists(),
+        "db exists before drop"
+    );
 
     // Drop via the CLI (targets DL_DAEMON_ROOT + XDG home).
     let out = Command::new(DL)
-        .args(["daemon", "drop"]).arg(&sb.root).arg("--purge")
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("drop");
-    assert!(out.status.success(), "drop failed: {}", String::from_utf8_lossy(&out.stderr));
+        .args(["daemon", "drop"])
+        .arg(&sb.root)
+        .arg("--purge")
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("drop");
+    assert!(
+        out.status.success(),
+        "drop failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
-    assert!(!roots_dir.join(&key).exists(), "--purge should remove roots/<key>/");
+    assert!(
+        !roots_dir.join(&key).exists(),
+        "--purge should remove roots/<key>/"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -268,17 +375,31 @@ fn boot_replay_evicts_root_with_deleted_directory() {
     fs::create_dir_all(&home).unwrap();
     fs::create_dir_all(gone.join(".dl")).unwrap();
     fs::create_dir_all(stays.join(".dl")).unwrap();
-    fs::write(gone.join(".dl").join("p.dl"), "rel g(x: text).\ng(\"g\").\n? g(x).\n").unwrap();
-    fs::write(stays.join(".dl").join("p.dl"), "rel s(x: text).\ns(\"s\").\n? s(x).\n").unwrap();
+    fs::write(
+        gone.join(".dl").join("p.dl"),
+        "rel g(x: text).\ng(\"g\").\n? g(x).\n",
+    )
+    .unwrap();
+    fs::write(
+        stays.join(".dl").join("p.dl"),
+        "rel s(x: text).\ns(\"s\").\n? s(x).\n",
+    )
+    .unwrap();
 
     let sock = sprefa_v5::daemon::socket_path_for(&home.join("sprefa"));
     let spawn_at = |cwd: &Path| {
-        DaemonGuard(Command::new(DL)
-            .args(["daemon", "start", "--foreground"])
-            .current_dir(cwd).env("DL_DAEMON_ROOT", cwd).env("XDG_STATE_HOME", &home)
-            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-            .stdout(Stdio::null()).stderr(Stdio::null())
-            .spawn().expect("spawn"))
+        DaemonGuard(
+            Command::new(DL)
+                .args(["daemon", "start", "--foreground"])
+                .current_dir(cwd)
+                .env("DL_DAEMON_ROOT", cwd)
+                .env("XDG_STATE_HOME", &home)
+                .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn"),
+        )
     };
     let wait_up = |root: &Path| -> bool {
         for _ in 0..200 {
@@ -295,15 +416,26 @@ fn boot_replay_evicts_root_with_deleted_directory() {
     // registration, same as `singleton_serves_two_roots_isolated`).
     let mut child = spawn_at(&gone);
     assert!(wait_up(&gone), "first boot not ready");
-    let qs = rpc_root(&sock, 2, "query", &stays, serde_json::json!({})).expect("query stays").to_string();
+    let qs = rpc_root(&sock, 2, "query", &stays, serde_json::json!({}))
+        .expect("query stays")
+        .to_string();
     assert!(qs.contains('s'), "stays root registered+queried: {qs}");
-    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#,
+    );
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 
     let roots_json_path = home.join("sprefa").join("roots.json");
     let before: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&roots_json_path).expect("roots.json after first boot")).unwrap();
-    assert_eq!(before.as_array().map(|a| a.len()), Some(2), "both roots persisted: {before}");
+        &fs::read_to_string(&roots_json_path).expect("roots.json after first boot"),
+    )
+    .unwrap();
+    assert_eq!(
+        before.as_array().map(|a| a.len()),
+        Some(2),
+        "both roots persisted: {before}"
+    );
 
     // Delete `gone`'s entire directory, then restart the daemon rooted at
     // the surviving `stays` root (so the process cwd stays valid).
@@ -312,24 +444,52 @@ fn boot_replay_evicts_root_with_deleted_directory() {
     assert!(wait_up(&stays), "second boot not ready");
 
     // `stays` replayed normally.
-    let qs2 = rpc_root(&sock, 3, "query", &stays, serde_json::json!({})).expect("query stays 2").to_string();
-    assert!(qs2.contains('s'), "stays root still served after replay: {qs2}");
+    let qs2 = rpc_root(&sock, 3, "query", &stays, serde_json::json!({}))
+        .expect("query stays 2")
+        .to_string();
+    assert!(
+        qs2.contains('s'),
+        "stays root still served after replay: {qs2}"
+    );
 
     // `gone` was evicted: roots.json now lists only `stays`, and the
     // process-level summary counts one registered root, not two.
     let after: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(&roots_json_path).expect("roots.json after second boot")).unwrap();
-    let after_roots: Vec<String> = after.as_array().unwrap().iter()
-        .filter_map(|r| r.get("root").and_then(|x| x.as_str()).map(String::from)).collect();
-    assert_eq!(after_roots.len(), 1, "gone's entry evicted from roots.json: {after}");
-    assert!(after_roots[0].contains("stays"), "surviving entry is `stays`: {after}");
+        &fs::read_to_string(&roots_json_path).expect("roots.json after second boot"),
+    )
+    .unwrap();
+    let after_roots: Vec<String> = after
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r.get("root").and_then(|x| x.as_str()).map(String::from))
+        .collect();
+    assert_eq!(
+        after_roots.len(),
+        1,
+        "gone's entry evicted from roots.json: {after}"
+    );
+    assert!(
+        after_roots[0].contains("stays"),
+        "surviving entry is `stays`: {after}"
+    );
 
-    let summary = rpc(&sock, r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{}}"#).expect("summary");
+    let summary = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":4,"method":"ping","params":{}}"#,
+    )
+    .expect("summary");
     let v: serde_json::Value = serde_json::from_str(&summary).unwrap();
-    assert_eq!(v["result"]["root_count"].as_u64(), Some(1),
-        "only the surviving root is registered after replay: {v}");
+    assert_eq!(
+        v["result"]["root_count"].as_u64(),
+        Some(1),
+        "only the surviving root is registered after replay: {v}"
+    );
 
-    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#,
+    );
     let _ = child2.wait_timeout(std::time::Duration::from_secs(5));
 }
 
@@ -340,16 +500,26 @@ fn boot_replay_evicts_root_with_deleted_directory() {
 #[test]
 fn sandboxed_daemon_never_binds_default_home() {
     let sb = Sandbox::new("disc2");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
     // The ONLY socket is under the sandbox home.
-    assert!(sb.sock().starts_with(&sb.home), "socket must live under the sandbox XDG home: {}", sb.sock().display());
+    assert!(
+        sb.sock().starts_with(&sb.home),
+        "socket must live under the sandbox XDG home: {}",
+        sb.sock().display()
+    );
     assert!(sb.sock().exists(), "sandbox socket bound");
     // No per-root socket exists anymore (the leaked-socket mechanism is gone).
-    assert!(!sb.root.join(".dl").join("daemon.sock").exists(),
-        "the singleton must NOT create a per-root socket under the repo");
+    assert!(
+        !sb.root.join(".dl").join("daemon.sock").exists(),
+        "the singleton must NOT create a per-root socket under the repo"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -360,33 +530,58 @@ fn sandboxed_daemon_never_binds_default_home() {
 #[test]
 fn detached_start_and_status_lists_root() {
     let sb = Sandbox::new("detached");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
 
     // Detached start returns immediately; the background daemon keeps running.
     let out = Command::new(DL)
-        .args(["daemon", "start"]).arg(sb.root.join("p.dl"))
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("detached start");
-    assert!(out.status.success(), "detached start failed: {}", String::from_utf8_lossy(&out.stderr));
+        .args(["daemon", "start"])
+        .arg(sb.root.join("p.dl"))
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("detached start");
+    assert!(
+        out.status.success(),
+        "detached start failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // status lists the root.
     let mut listed = false;
     for _ in 0..100 {
         let st = Command::new(DL)
             .args(["daemon", "status"])
-            .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-            .output().expect("status");
+            .current_dir(&sb.root)
+            .env("DL_DAEMON_ROOT", &sb.root)
+            .env("XDG_STATE_HOME", &sb.home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .output()
+            .expect("status");
         let s = String::from_utf8_lossy(&st.stdout);
-        if st.status.success() && s.contains(&sb.root.to_string_lossy().to_string()) && s.contains("roots") {
-            listed = true; break;
+        if st.status.success()
+            && s.contains(&sb.root.to_string_lossy().to_string())
+            && s.contains("roots")
+        {
+            listed = true;
+            break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(listed, "status should list the registered root");
 
     // Clean up the detached daemon.
-    let _ = Command::new(DL).args(["daemon", "stop"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+    let _ = Command::new(DL)
+        .args(["daemon", "stop"])
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .output();
 }
 
@@ -395,25 +590,42 @@ fn detached_start_and_status_lists_root() {
 #[test]
 fn bad_load_rolls_back_and_daemon_keeps_loading() {
     let sb = Sandbox::new("badload");
-    fs::write(sb.root.join("p.dl"),
-        "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n? edge(a, b).\n").unwrap();
-    fs::write(sb.root.join("bad.dl"),
-        "rel bad(a: text).\nbad(a) <- undeclared_rel(a).\n").unwrap();
-    fs::write(sb.root.join("good.dl"),
-        "rel good(a: text).\ngood(\"hi\").\n? good(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n? edge(a, b).\n",
+    )
+    .unwrap();
+    fs::write(
+        sb.root.join("bad.dl"),
+        "rel bad(a: text).\nbad(a) <- undeclared_rel(a).\n",
+    )
+    .unwrap();
+    fs::write(
+        sb.root.join("good.dl"),
+        "rel good(a: text).\ngood(\"hi\").\n? good(a).\n",
+    )
+    .unwrap();
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
     let load = |id: u64, path: &Path| -> serde_json::Value {
-        rpc_root(&sb.sock(), id, "load", &sb.root,
-            serde_json::json!({"path": path.to_string_lossy(), "mode": "watched"})).expect("load resp")
+        rpc_root(
+            &sb.sock(),
+            id,
+            "load",
+            &sb.root,
+            serde_json::json!({"path": path.to_string_lossy(), "mode": "watched"}),
+        )
+        .expect("load resp")
     };
     let bad = load(1, &sb.root.join("bad.dl")).to_string();
     assert!(bad.contains("error"), "bad load must error: {bad}");
     let good = load(2, &sb.root.join("good.dl")).to_string();
-    assert!(good.contains("result") && good.contains("loaded"),
-        "a good load after a bad one must still succeed: {good}");
+    assert!(
+        good.contains("result") && good.contains("loaded"),
+        "a good load after a bad one must still succeed: {good}"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -423,34 +635,60 @@ fn bad_load_rolls_back_and_daemon_keeps_loading() {
 #[test]
 fn restart_replaces_the_running_daemon() {
     let sb = Sandbox::new("restart");
-    fs::write(sb.root.join("p.dl"), "rel e(a: text).\ne(\"x\").\n? e(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel e(a: text).\ne(\"x\").\n? e(a).\n",
+    )
+    .unwrap();
     let _child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
     let pidfile = sb.home.join("sprefa").join("daemon.pid");
-    let pid_before = fs::read_to_string(&pidfile).ok()
-        .and_then(|t| t.lines().next().map(String::from)).unwrap_or_default();
+    let pid_before = fs::read_to_string(&pidfile)
+        .ok()
+        .and_then(|t| t.lines().next().map(String::from))
+        .unwrap_or_default();
     assert!(!pid_before.is_empty(), "pid file present before restart");
 
     let out = Command::new(DL)
         .args(["daemon", "restart"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("restart");
-    assert!(out.status.success(), "restart failed: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("restart");
+    assert!(
+        out.status.success(),
+        "restart failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let sock = sb.sock();
     let mut pid_after = String::new();
     for _ in 0..100 {
         if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
-            pid_after = fs::read_to_string(&pidfile).ok()
-                .and_then(|t| t.lines().next().map(String::from)).unwrap_or_default();
-            if !pid_after.is_empty() && pid_after != pid_before { break; }
+            pid_after = fs::read_to_string(&pidfile)
+                .ok()
+                .and_then(|t| t.lines().next().map(String::from))
+                .unwrap_or_default();
+            if !pid_after.is_empty() && pid_after != pid_before {
+                break;
+            }
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert_ne!(pid_after, pid_before, "restart spawned a new daemon process");
+    assert_ne!(
+        pid_after, pid_before,
+        "restart spawned a new daemon process"
+    );
 
-    let _ = Command::new(DL).args(["daemon", "stop"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml").output();
+    let _ = Command::new(DL)
+        .args(["daemon", "stop"])
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output();
 }
 
 /// `dl daemon rows REL` dumps a relation's live rows from the singleton (routed
@@ -458,8 +696,11 @@ fn restart_replaces_the_running_daemon() {
 #[test]
 fn rows_verb_dumps_a_rel_from_the_daemon() {
     let sb = Sandbox::new("rowsflag");
-    fs::write(sb.root.join("p.dl"),
-        "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\nedge(\"b\", \"c\").\n? edge(a, b).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\nedge(\"b\", \"c\").\n? edge(a, b).\n",
+    )
+    .unwrap();
     let _child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
@@ -467,14 +708,23 @@ fn rows_verb_dumps_a_rel_from_the_daemon() {
     for _ in 0..100 {
         let out = Command::new(DL)
             .args(["daemon", "rows", "edge"])
-            .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-            .output().expect("rows");
+            .current_dir(&sb.root)
+            .env("DL_DAEMON_ROOT", &sb.root)
+            .env("XDG_STATE_HOME", &sb.home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .output()
+            .expect("rows");
         stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-        if out.status.success() && stdout.contains("(2 rows)") { break; }
+        if out.status.success() && stdout.contains("(2 rows)") {
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(stdout.contains("a\tb"), "column header present: {stdout}");
-    assert!(stdout.contains("(2 rows)"), "two edge rows dumped: {stdout}");
+    assert!(
+        stdout.contains("(2 rows)"),
+        "two edge rows dumped: {stdout}"
+    );
     sb.shutdown();
 }
 
@@ -483,21 +733,33 @@ fn rows_verb_dumps_a_rel_from_the_daemon() {
 #[test]
 fn ping_reports_build_id_and_idle_is_quiet() {
     let sb = Sandbox::new("buildid");
-    fs::write(sb.root.join(".dl").join("prog.dl"),
-        "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join(".dl").join("prog.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(None, &[]); // discovery mode
     assert!(sb.wait_ready(), "not ready");
 
     let first = rpc_root(&sb.sock(), 1, "ping", &sb.root, serde_json::json!({})).expect("ping");
     let build_id = first["result"]["build_id"].as_str();
-    assert!(build_id.is_some_and(|s| !s.is_empty()), "ping must report build_id: {first}");
+    assert!(
+        build_id.is_some_and(|s| !s.is_empty()),
+        "ping must report build_id: {first}"
+    );
     let t0 = sb.tick(2);
     std::thread::sleep(std::time::Duration::from_millis(2000));
     let t1 = sb.tick(3);
-    assert!(t1 - t0 <= 1, "idle root self-ticked {} times in 2s (expected 0-1)", t1 - t0);
+    assert!(
+        t1 - t0 <= 1,
+        "idle root self-ticked {} times in 2s (expected 0-1)",
+        t1 - t0
+    );
 
     sb.shutdown();
-    let status = child.wait_timeout(std::time::Duration::from_secs(5)).expect("exit");
+    let status = child
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .expect("exit");
     assert!(status.success());
 }
 
@@ -513,48 +775,108 @@ fn deep_home_uses_short_socket() {
     ));
     let sprefa_home = deep_home.join("sprefa");
     let natural = sprefa_home.join("daemon.sock");
-    assert!(natural.as_os_str().len() >= 100, "fixture home not deep enough: {}", natural.display());
+    assert!(
+        natural.as_os_str().len() >= 100,
+        "fixture home not deep enough: {}",
+        natural.display()
+    );
     let sock = socket_path_for(&sprefa_home);
-    assert!(sock.as_os_str().len() < 100, "relocated socket still too long: {}", sock.display());
-    assert!(sock.starts_with(std::env::temp_dir().join("dl-sock")),
-        "relocated socket lives under the short base dir: {}", sock.display());
-    assert_ne!(sock, natural, "deep home must not use the natural socket path");
-    assert_eq!(sock, socket_path_for(&sprefa_home), "short socket path must be stable");
+    assert!(
+        sock.as_os_str().len() < 100,
+        "relocated socket still too long: {}",
+        sock.display()
+    );
+    assert!(
+        sock.starts_with(std::env::temp_dir().join("dl-sock")),
+        "relocated socket lives under the short base dir: {}",
+        sock.display()
+    );
+    assert_ne!(
+        sock, natural,
+        "deep home must not use the natural socket path"
+    );
+    assert_eq!(
+        sock,
+        socket_path_for(&sprefa_home),
+        "short socket path must be stable"
+    );
 
     let _ = fs::remove_file(&sock);
     let root = deep_home.join("repo");
     fs::create_dir_all(root.join(".dl")).unwrap();
-    fs::write(root.join("p.dl"), "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n").unwrap();
-    let mut child = DaemonGuard(Command::new(DL)
-        .args(["daemon", "start", "--foreground"]).arg(root.join("p.dl"))
-        .current_dir(&root).env("DL_DAEMON_ROOT", &root).env("XDG_STATE_HOME", &deep_home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn deep-home daemon"));
+    fs::write(
+        root.join("p.dl"),
+        "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n",
+    )
+    .unwrap();
+    let mut child = DaemonGuard(
+        Command::new(DL)
+            .args(["daemon", "start", "--foreground"])
+            .arg(root.join("p.dl"))
+            .current_dir(&root)
+            .env("DL_DAEMON_ROOT", &root)
+            .env("XDG_STATE_HOME", &deep_home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn deep-home daemon"),
+    );
     let mut ready = false;
     for _ in 0..200 {
-        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() { ready = true; break; }
+        if sock.exists() && std::os::unix::net::UnixStream::connect(&sock).is_ok() {
+            ready = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(ready, "deep-home daemon never bound the short socket {}", sock.display());
-    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":1,"method":"shutdown","params":{}}"#);
+    assert!(
+        ready,
+        "deep-home daemon never bound the short socket {}",
+        sock.display()
+    );
+    let _ = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":1,"method":"shutdown","params":{}}"#,
+    );
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
-    let _ = fs::remove_dir_all(std::env::temp_dir().join(format!("dl_deephome_{}", std::process::id())));
+    let _ = fs::remove_dir_all(
+        std::env::temp_dir().join(format!("dl_deephome_{}", std::process::id())),
+    );
 }
 
 /// `DL_NO_DAEMON=1` keeps the in-process path; no socket created.
 #[test]
 fn no_daemon_env_opts_out() {
     let sb = Sandbox::new("no_daemon");
-    fs::write(sb.root.join("p.dl"), "rel t(a: text).\nt(\"x\").\n? t(a).\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel t(a: text).\nt(\"x\").\n? t(a).\n",
+    )
+    .unwrap();
     let out = Command::new(DL)
         .arg(sb.root.join("p.dl"))
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .env("DL_NO_DAEMON", "1")
-        .output().expect("run dl");
-    assert!(out.status.success(), "dl should succeed; stderr={}", String::from_utf8_lossy(&out.stderr));
-    assert!(!sb.sock().exists(), "no-daemon path must not create a socket");
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "dl should succeed; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !sb.sock().exists(),
+        "no-daemon path must not create a socket"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("t =>"), "stdout should print query: {stdout}");
+    assert!(
+        stdout.contains("t =>"),
+        "stdout should print query: {stdout}"
+    );
     assert!(stdout.contains("x"));
 }
 
@@ -564,11 +886,15 @@ fn gitignored_writes_do_not_tick() {
     let sb = Sandbox::new("noise");
     fs::create_dir_all(sb.root.join("junk")).unwrap();
     fs::write(sb.root.join(".gitignore"), "junk/\n").unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::create_dir_all(sb.root.join("src")).unwrap();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
 
@@ -578,16 +904,28 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     // before sampling the baseline, or it reads as a phantom tick here.
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
-    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let t0 = sb.tick(1);
     for i in 0..50 {
         fs::write(sb.root.join(format!("junk/f{i}.o")), "build output").unwrap();
     }
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let t1 = sb.tick(2);
-    assert_eq!(t0, t1, "gitignored writes advanced the tick count ({t0} -> {t1})");
+    assert_eq!(
+        t0, t1,
+        "gitignored writes advanced the tick count ({t0} -> {t1})"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -597,11 +935,15 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 fn source_burst_coalesces_into_one_tick() {
     let sb = Sandbox::new("debounce");
     fs::create_dir_all(sb.root.join("src")).unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
@@ -609,13 +951,20 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let t0 = sb.tick(1);
     for i in 0..5 {
-        fs::write(sb.root.join(format!("src/b{i}.rs")), format!("fn b{i}() {{}}\n")).unwrap();
+        fs::write(
+            sb.root.join(format!("src/b{i}.rs")),
+            format!("fn b{i}() {{}}\n"),
+        )
+        .unwrap();
     }
     std::thread::sleep(std::time::Duration::from_millis(2000));
     let t1 = sb.tick(2);
     let delta = t1 - t0;
     assert!(delta >= 1, "burst produced no tick ({t0} -> {t1})");
-    assert!(delta <= 2, "burst of 5 edits produced {delta} ticks; debounce should coalesce to ~1");
+    assert!(
+        delta <= 2,
+        "burst of 5 edits produced {delta} ticks; debounce should coalesce to ~1"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -625,35 +974,58 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 #[test]
 fn discovery_mode_content_edit_hot_reloads() {
     let sb = Sandbox::new("dischot");
-    fs::write(sb.root.join(".dl").join("panel.dl"),
-        "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n").unwrap();
+    fs::write(
+        sb.root.join(".dl").join("panel.dl"),
+        "rel mark(t: text).\nmark(\"a\").\n? mark(t).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(None, &[]); // discovery
     assert!(sb.wait_ready(), "not ready");
 
     let mut baseline_ok = false;
     for _ in 0..60 {
-        if sb.query_rows() == 1 { baseline_ok = true; break; }
+        if sb.query_rows() == 1 {
+            baseline_ok = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(baseline_ok, "baseline should see 1 mark row; got {}", sb.query_rows());
+    assert!(
+        baseline_ok,
+        "baseline should see 1 mark row; got {}",
+        sb.query_rows()
+    );
 
     std::thread::sleep(std::time::Duration::from_millis(1500));
     {
         use std::io::Write as _;
-        let mut f = std::fs::OpenOptions::new().append(true)
-            .open(sb.root.join(".dl").join("panel.dl")).unwrap();
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(sb.root.join(".dl").join("panel.dl"))
+            .unwrap();
         writeln!(f, "mark(\"b\").").unwrap();
     }
     let mut reloaded = false;
     for _ in 0..100 {
-        if sb.query_rows() == 2 { reloaded = true; break; }
+        if sb.query_rows() == 2 {
+            reloaded = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(reloaded, "content edit should hot-reload; got {} row(s)", sb.query_rows());
-    assert!(child.try_wait().expect("try_wait").is_none(),
-        "daemon should still be running after a discovered-program content edit");
+    assert!(
+        reloaded,
+        "content edit should hot-reload; got {} row(s)",
+        sb.query_rows()
+    );
+    assert!(
+        child.try_wait().expect("try_wait").is_none(),
+        "daemon should still be running after a discovered-program content edit"
+    );
     sb.shutdown();
-    let status = child.wait_timeout(std::time::Duration::from_secs(5)).expect("exit");
+    let status = child
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .expect("exit");
     assert!(status.success());
 }
 
@@ -661,7 +1033,8 @@ fn discovery_mode_content_edit_hot_reloads() {
 #[test]
 fn await_settle_blocks_until_effect_drains() {
     let sb = Sandbox::new("aws");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "sh greet(name) -> (line: text) = `echo hi-{name}`.\n\
          rel want(name: text).\n\
          want(\"bob\").\n\
@@ -669,20 +1042,36 @@ fn await_settle_blocks_until_effect_drains() {
          greet(name, line) <- @async want(name).\n\
          rel done(line: text).\n\
          done(line) <- greet(_, line).\n\
-         ? done(line).\n").unwrap();
+         ? done(line).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
     assert!(sb.wait_ready(), "not ready");
 
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "await-settle should exit 0: {stdout} {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle should exit 0: {stdout} {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("settled=true"), "reports settled: {stdout}");
 
-    let q = rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({})).expect("query").to_string();
-    assert!(q.contains("hi-bob"), "the sh response drained into done: {q}");
+    let q = rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({}))
+        .expect("query")
+        .to_string();
+    assert!(
+        q.contains("hi-bob"),
+        "the sh response drained into done: {q}"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -697,23 +1086,33 @@ fn await_settle_blocks_until_effect_drains() {
 #[test]
 fn effect_free_root_settles_after_boot() {
     let sb = Sandbox::new("nofx");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "rel mark(name: text).\n\
          mark(\"a\").\n\
          rel out(name: text).\n\
          out(name) <- mark(name).\n\
-         ? out(name).\n").unwrap();
+         ? out(name).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
     assert!(sb.wait_ready(), "not ready");
 
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "15000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0),
+    assert_eq!(
+        out.status.code(),
+        Some(0),
         "await-settle should exit 0 for an effect-free root: {stdout} {}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(stdout.contains("settled=true"), "reports settled: {stdout}");
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -727,25 +1126,39 @@ fn effect_free_root_settles_after_boot() {
 #[test]
 fn clock_root_does_not_tick_inside_a_bucket() {
     let sb = Sandbox::new("clockgate");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "rel beat(bucket: int).\n\
          beat(bucket) <- clock(100000, bucket).\n\
          sh greet() -> (line: text) = `echo hi`.\n\
          rel resp(bucket: int, line: text).\n\
          resp(bucket, line) <- @async beat(bucket), greet() -> (line).\n\
-         ? resp(bucket, line).\n").unwrap();
+         ? resp(bucket, line).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
     assert!(sb.wait_ready(), "not ready");
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
-    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let t0 = sb.tick(1);
     std::thread::sleep(std::time::Duration::from_millis(3500));
     let t1 = sb.tick(2);
-    assert_eq!(t0, t1,
-        "in-bucket poll cycles full-ticked a clock root ({t0} -> {t1})");
+    assert_eq!(
+        t0, t1,
+        "in-bucket poll cycles full-ticked a clock root ({t0} -> {t1})"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -756,27 +1169,45 @@ fn clock_root_does_not_tick_inside_a_bucket() {
 #[test]
 fn clock_root_ticks_on_bucket_flip() {
     let sb = Sandbox::new("clockflip");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "rel beat(bucket: int).\n\
          beat(bucket) <- clock(2, bucket).\n\
          sh greet() -> (line: text) = `echo hi`.\n\
          rel resp(bucket: int, line: text).\n\
          resp(bucket, line) <- @async beat(bucket), greet() -> (line).\n\
-         ? resp(bucket, line).\n").unwrap();
+         ? resp(bucket, line).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
     assert!(sb.wait_ready(), "not ready");
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
-    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let t0 = sb.tick(1);
     let mut ticked = false;
     for _ in 0..50 {
-        if sb.tick(2) > t0 { ticked = true; break; }
+        if sb.tick(2) > t0 {
+            ticked = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(ticked, "a clock(2) bucket flip never produced a full tick (gate over-dropped)");
+    assert!(
+        ticked,
+        "a clock(2) bucket flip never produced a full tick (gate over-dropped)"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -791,7 +1222,8 @@ fn clock_root_ticks_on_bucket_flip() {
 #[test]
 fn idle_root_with_effects_gets_no_further_ticks_once_settled() {
     let sb = Sandbox::new("idlepoll");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "sh greet(name) -> (line: text) = `echo hi-{name}`.\n\
          rel want(name: text).\n\
          want(\"bob\").\n\
@@ -799,7 +1231,9 @@ fn idle_root_with_effects_gets_no_further_ticks_once_settled() {
          greet(name, line) <- @async want(name).\n\
          rel done(line: text).\n\
          done(line) <- greet(_, line).\n\
-         ? done(line).\n").unwrap();
+         ? done(line).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("DL_POLL_SECS", "1")]);
     assert!(sb.wait_ready(), "not ready");
 
@@ -807,9 +1241,18 @@ fn idle_root_with_effects_gets_no_further_ticks_once_settled() {
     // mechanism `await_settle_blocks_until_effect_drains` exercises).
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
-    assert_eq!(out.status.code(), Some(0), "await-settle should exit 0: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle should exit 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // Settled means the queue is drained; give the poll loop one more cycle
     // to observe that quiet state, then sample `tick_count` as the baseline.
@@ -822,9 +1265,11 @@ fn idle_root_with_effects_gets_no_further_ticks_once_settled() {
     std::thread::sleep(std::time::Duration::from_millis(4000));
     let after = sb.tick(11);
 
-    assert_eq!(baseline, after,
+    assert_eq!(
+        baseline, after,
         "an idle settled root must receive zero further full ticks from the poll loop \
-         (tick_count {baseline} -> {after} over ~4 idle poll cycles)");
+         (tick_count {baseline} -> {after} over ~4 idle poll cycles)"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -849,24 +1294,37 @@ fn orphan_effect_kind_warns_once_and_does_not_abort_poll() {
     // `effect_cmd(...)` fact overlay — its executor template can never
     // resolve, so every drain that reaches it hits the missing-template case.
     let program = root.join("p.dl");
-    fs::write(&program,
+    fs::write(
+        &program,
         "rel want(name: text).\n\
          want(\"bob\").\n\
          rel orphan_kind(name: text, out: text).\n\
          orphan_kind(name, out) <- @async want(name).\n\
-         ? orphan_kind(name, out).\n").unwrap();
+         ? orphan_kind(name, out).\n",
+    )
+    .unwrap();
 
     let sock = sprefa_v5::daemon::socket_path_for(&home.join("sprefa"));
-    let mut child = DaemonGuard(Command::new(DL)
-        .args(["daemon", "start", "--foreground"]).arg(&program)
-        .current_dir(&root).env("DL_DAEMON_ROOT", &root).env("XDG_STATE_HOME", &home)
-        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .env("DL_POLL_SECS", "1")
-        .stdout(Stdio::null()).stderr(Stdio::piped())
-        .spawn().expect("spawn"));
+    let mut child = DaemonGuard(
+        Command::new(DL)
+            .args(["daemon", "start", "--foreground"])
+            .arg(&program)
+            .current_dir(&root)
+            .env("DL_DAEMON_ROOT", &root)
+            .env("XDG_STATE_HOME", &home)
+            .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+            .env("DL_POLL_SECS", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn"),
+    );
     let mut up = false;
     for _ in 0..200 {
-        if sock.exists() && rpc_root(&sock, 1, "ping", &root, serde_json::json!({})).is_some() { up = true; break; }
+        if sock.exists() && rpc_root(&sock, 1, "ping", &root, serde_json::json!({})).is_some() {
+            up = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
     assert!(up, "daemon not ready");
@@ -875,9 +1333,15 @@ fn orphan_effect_kind_warns_once_and_does_not_abort_poll() {
     // would clearly repeat the warning/error many times over this window.
     std::thread::sleep(std::time::Duration::from_millis(4500));
 
-    let _ = rpc(&sock, r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#);
+    let _ = rpc(
+        &sock,
+        r#"{"jsonrpc":"2.0","id":9,"method":"shutdown","params":{}}"#,
+    );
     let status = child.wait_timeout(std::time::Duration::from_secs(5));
-    assert!(status.is_some(), "daemon should exit cleanly, not hang, after an orphaned effect kind");
+    assert!(
+        status.is_some(),
+        "daemon should exit cleanly, not hang, after an orphaned effect kind"
+    );
 
     let mut stderr_buf = String::new();
     {
@@ -886,26 +1350,35 @@ fn orphan_effect_kind_warns_once_and_does_not_abort_poll() {
             let _ = s.read_to_string(&mut stderr_buf);
         }
     }
-    let warn_lines = stderr_buf.lines()
+    let warn_lines = stderr_buf
+        .lines()
         .filter(|l| l.contains("no effect command registered for kind `orphan_kind`"))
         .count();
     assert_eq!(warn_lines, 1,
         "orphan kind should warn exactly once across ~4 poll cycles, not once per cycle: {stderr_buf}");
-    let abort_lines = stderr_buf.lines().filter(|l| l.contains("poll error")).count();
-    assert_eq!(abort_lines, 0,
-        "an orphaned effect kind must not abort the poll drain via `?`: {stderr_buf}");
+    let abort_lines = stderr_buf
+        .lines()
+        .filter(|l| l.contains("poll error"))
+        .count();
+    assert_eq!(
+        abort_lines, 0,
+        "an orphaned effect kind must not abort the poll drain via `?`: {stderr_buf}"
+    );
 }
 
 /// `ping` (with root) reports an `activity` object with all fields.
 #[test]
 fn ping_reports_activity_object() {
     let sb = Sandbox::new("activity");
-    fs::write(sb.root.join("p.dl"),
+    fs::write(
+        sb.root.join("p.dl"),
         "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n\
          rel reach(a: text, b: text).\n\
          reach(x, y) <- edge(x, y).\n\
          reach(x, z) <- edge(x, y), reach(y, z).\n\
-         ? reach(x, y).\n").unwrap();
+         ? reach(x, y).\n",
+    )
+    .unwrap();
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
 
@@ -913,17 +1386,42 @@ fn ping_reports_activity_object() {
     for i in 0..20 {
         let v = rpc_root(&sb.sock(), i, "ping", &sb.root, serde_json::json!({})).expect("ping");
         let activity = &v["result"]["activity"];
-        assert!(activity.get("phase").and_then(|v| v.as_str()).is_some(), "phase: {activity}");
-        assert!(activity.get("detail").and_then(|v| v.as_str()).is_some(), "detail: {activity}");
-        assert!(activity.get("program").and_then(|v| v.as_str()).is_some(), "program: {activity}");
-        assert!(activity.get("tick").and_then(|v| v.as_u64()).is_some(), "tick: {activity}");
-        assert!(activity.get("elapsed_ms").and_then(|v| v.as_u64()).is_some(), "elapsed_ms: {activity}");
-        if activity.get("phase").and_then(|v| v.as_str()) == Some("idle") { saw_idle = true; }
+        assert!(
+            activity.get("phase").and_then(|v| v.as_str()).is_some(),
+            "phase: {activity}"
+        );
+        assert!(
+            activity.get("detail").and_then(|v| v.as_str()).is_some(),
+            "detail: {activity}"
+        );
+        assert!(
+            activity.get("program").and_then(|v| v.as_str()).is_some(),
+            "program: {activity}"
+        );
+        assert!(
+            activity.get("tick").and_then(|v| v.as_u64()).is_some(),
+            "tick: {activity}"
+        );
+        assert!(
+            activity
+                .get("elapsed_ms")
+                .and_then(|v| v.as_u64())
+                .is_some(),
+            "elapsed_ms: {activity}"
+        );
+        if activity.get("phase").and_then(|v| v.as_str()) == Some("idle") {
+            saw_idle = true;
+        }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    assert!(saw_idle, "activity.phase never read idle after the cold tick");
+    assert!(
+        saw_idle,
+        "activity.phase never read idle after the cold tick"
+    );
     sb.shutdown();
-    let status = child.wait_timeout(std::time::Duration::from_secs(5)).expect("exit");
+    let status = child
+        .wait_timeout(std::time::Duration::from_secs(5))
+        .expect("exit");
     assert!(status.success());
 }
 
@@ -935,14 +1433,20 @@ fn event_volume_gitignored_subtree_scale() {
     const FILES_PER_DIR: usize = 50; // 2000 gitignored files total
     let sb = Sandbox::new("scale");
     fs::write(sb.root.join(".gitignore"), "target/\n").unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::create_dir_all(sb.root.join("src")).unwrap();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
-    for d in 0..DIRS { fs::create_dir_all(sb.root.join(format!("target/build/{d}"))).unwrap(); }
+    for d in 0..DIRS {
+        fs::create_dir_all(sb.root.join(format!("target/build/{d}"))).unwrap();
+    }
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
@@ -950,31 +1454,58 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     // before sampling the baseline, or it reads as a phantom tick here.
     let out = Command::new(DL)
         .args(["daemon", "await-settle", "--ms", "20000"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home).env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("await-settle");
-    assert_eq!(out.status.code(), Some(0), "await-settle: {}", String::from_utf8_lossy(&out.stderr));
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
+        .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
+        .output()
+        .expect("await-settle");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "await-settle: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let t0 = sb.tick(1);
 
     let start = std::time::Instant::now();
     for d in 0..DIRS {
         for f in 0..FILES_PER_DIR {
-            fs::write(sb.root.join(format!("target/build/{d}/obj{f}.o")), "build output").unwrap();
+            fs::write(
+                sb.root.join(format!("target/build/{d}/obj{f}.o")),
+                "build output",
+            )
+            .unwrap();
         }
     }
     let write_ms = start.elapsed().as_millis();
     std::thread::sleep(std::time::Duration::from_millis(2500));
     let t1 = sb.tick(2);
-    eprintln!("[scale] wrote {} gitignored files in {write_ms}ms; tick delta {} (want 0)",
-        DIRS * FILES_PER_DIR, t1 - t0);
-    assert_eq!(t0, t1, "{} gitignored writes advanced the tick count ({t0} -> {t1})", DIRS * FILES_PER_DIR);
+    eprintln!(
+        "[scale] wrote {} gitignored files in {write_ms}ms; tick delta {} (want 0)",
+        DIRS * FILES_PER_DIR,
+        t1 - t0
+    );
+    assert_eq!(
+        t0,
+        t1,
+        "{} gitignored writes advanced the tick count ({t0} -> {t1})",
+        DIRS * FILES_PER_DIR
+    );
 
     fs::write(sb.root.join("src/needle.rs"), "fn needle() {}\n").unwrap();
     let mut ticked = false;
     for _ in 0..40 {
-        if sb.tick(3) > t1 { ticked = true; break; }
+        if sb.tick(3) > t1 {
+            ticked = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(ticked, "a source edit buried in gitignored churn never ticked (gate over-dropped)");
+    assert!(
+        ticked,
+        "a source edit buried in gitignored churn never ticked (gate over-dropped)"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -987,8 +1518,17 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 fn git_checkout_rewrite_triggers_tick() {
     let sb = Sandbox::new("gitco");
     let g = |args: &[&str]| {
-        let out = Command::new("git").arg("-C").arg(&sb.root).args(args).output().expect("git");
-        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&sb.root)
+            .args(args)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     };
     g(&["init", "-q"]);
     g(&["config", "user.email", "t@t"]);
@@ -996,37 +1536,69 @@ fn git_checkout_rewrite_triggers_tick() {
     g(&["config", "commit.gpgsign", "false"]);
     fs::create_dir_all(sb.root.join("src")).unwrap();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\nfn b() {}\n").unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     g(&["add", "."]);
     g(&["commit", "-q", "-m", "c2"]);
-    let c2 = String::from_utf8_lossy(&Command::new("git").arg("-C").arg(&sb.root)
-        .args(["rev-parse", "HEAD"]).output().unwrap().stdout).trim().to_string();
+    let c2 = String::from_utf8_lossy(
+        &Command::new("git")
+            .arg("-C")
+            .arg(&sb.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
     g(&["add", "."]);
     g(&["commit", "-q", "-m", "c1"]);
-    let c1 = String::from_utf8_lossy(&Command::new("git").arg("-C").arg(&sb.root)
-        .args(["rev-parse", "HEAD"]).output().unwrap().stdout).trim().to_string();
+    let c1 = String::from_utf8_lossy(
+        &Command::new("git")
+            .arg("-C")
+            .arg(&sb.root)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
     g(&["checkout", "-q", &c2]);
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
     let mut ok = false;
     for _ in 0..60 {
-        if sb.query_rows() == 2 { ok = true; break; }
+        if sb.query_rows() == 2 {
+            ok = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(ok, "baseline c2 should see 2 fns; got {}", sb.query_rows());
     g(&["checkout", "-q", &c1]);
     let mut reverted = false;
     for _ in 0..300 {
-        if sb.query_rows() == 1 { reverted = true; break; }
+        if sb.query_rows() == 1 {
+            reverted = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(reverted, "git checkout c2->c1 should drop a fn; got {}", sb.query_rows());
+    assert!(
+        reverted,
+        "git checkout c2->c1 should drop a fn; got {}",
+        sb.query_rows()
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 }
@@ -1041,17 +1613,23 @@ fn linux_inotify_watch_count_tracks_unignored() {
     const IGNORED_DIRS: usize = 2000;
     let sb = Sandbox::new("inotify_count");
     fs::write(sb.root.join(".gitignore"), "target/\n").unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     for d in 0..UNIGNORED_DIRS {
         let sub = sb.root.join(format!("src/mod{d}"));
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join("f.rs"), "fn f() {}\n").unwrap();
     }
-    for d in 0..IGNORED_DIRS { fs::create_dir_all(sb.root.join(format!("target/build/{d}"))).unwrap(); }
+    for d in 0..IGNORED_DIRS {
+        fs::create_dir_all(sb.root.join(format!("target/build/{d}"))).unwrap();
+    }
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "not ready");
@@ -1060,7 +1638,9 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     let watches = linux_inotify_watch_count(pid);
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
-    eprintln!("[inotify] {watches} watches for {UNIGNORED_DIRS} unignored + {IGNORED_DIRS} ignored dirs");
+    eprintln!(
+        "[inotify] {watches} watches for {UNIGNORED_DIRS} unignored + {IGNORED_DIRS} ignored dirs"
+    );
     assert!(watches < UNIGNORED_DIRS + 50,
         "inotify watch count {watches} scales with the ignored subtree; per-dir pruning not in effect");
 }
@@ -1069,7 +1649,10 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 fn linux_inotify_watch_count(pid: u32) -> usize {
     let fd_dir = format!("/proc/{pid}/fd");
     let mut total = 0;
-    let entries = match fs::read_dir(&fd_dir) { Ok(e) => e, Err(_) => return 0 };
+    let entries = match fs::read_dir(&fd_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
     for entry in entries.flatten() {
         let target = fs::read_link(entry.path()).unwrap_or_default();
         if target.to_string_lossy().contains("inotify") {
@@ -1096,13 +1679,21 @@ fn served_engine_hermetic_to_ambient_config_repos() {
     fs::create_dir_all(ext.join("src")).unwrap();
     fs::write(ext.join("src/lib.rs"), "fn ext() {}\n").unwrap();
     let cfg = std::env::temp_dir().join(format!("dl_ambient_cfg_{}.toml", std::process::id()));
-    fs::write(&cfg, format!("[[repos]]\nslug = \"ambient-ext\"\nroot = \"{}\"\n", ext.display())).unwrap();
+    fs::write(
+        &cfg,
+        format!(
+            "[[repos]]\nslug = \"ambient-ext\"\nroot = \"{}\"\n",
+            ext.display()
+        ),
+    )
+    .unwrap();
     let cfg_str = cfg.to_string_lossy().into_owned();
 
     // The served root's `repo` relation, stringified from its query response.
     let repo_rel = |sb: &Sandbox| -> String {
         rpc_root(&sb.sock(), 2, "query", &sb.root, serde_json::json!({}))
-            .expect("query response").to_string()
+            .expect("query response")
+            .to_string()
     };
 
     // --- Hermetic default: SPREFA_CONFIG set, no DL_AMBIENT_REPOS. ---
@@ -1111,21 +1702,31 @@ fn served_engine_hermetic_to_ambient_config_repos() {
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[("SPREFA_CONFIG", &cfg_str)]);
     assert!(sb.wait_ready(), "not ready (hermetic)");
     let hermetic = repo_rel(&sb);
-    assert!(!hermetic.contains("ambient-ext"),
-        "served engine must NOT ingest the ambient config repo: {hermetic}");
-    assert_eq!(sb.query_rows(), 1, "hermetic corpus is just the served root's own repo: {hermetic}");
+    assert!(
+        !hermetic.contains("ambient-ext"),
+        "served engine must NOT ingest the ambient config repo: {hermetic}"
+    );
+    assert_eq!(
+        sb.query_rows(),
+        1,
+        "hermetic corpus is just the served root's own repo: {hermetic}"
+    );
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
 
     // --- Escape hatch: DL_AMBIENT_REPOS=1 restores the ambient corpus. ---
     let sb2 = Sandbox::new("ambient");
     fs::write(sb2.root.join("p.dl"), "? repo(slug, root, url).\n").unwrap();
-    let mut child2 = sb2.spawn(Some(&sb2.root.join("p.dl")),
-        &[("SPREFA_CONFIG", &cfg_str), ("DL_AMBIENT_REPOS", "1")]);
+    let mut child2 = sb2.spawn(
+        Some(&sb2.root.join("p.dl")),
+        &[("SPREFA_CONFIG", &cfg_str), ("DL_AMBIENT_REPOS", "1")],
+    );
     assert!(sb2.wait_ready(), "not ready (ambient)");
     let ambient = repo_rel(&sb2);
-    assert!(ambient.contains("ambient-ext"),
-        "DL_AMBIENT_REPOS=1 restores the ambient config repo in the corpus: {ambient}");
+    assert!(
+        ambient.contains("ambient-ext"),
+        "DL_AMBIENT_REPOS=1 restores the ambient config repo in the corpus: {ambient}"
+    );
     sb2.shutdown();
     let _ = child2.wait_timeout(std::time::Duration::from_secs(5));
 
@@ -1139,11 +1740,15 @@ fn served_engine_hermetic_to_ambient_config_repos() {
 fn daemon_jobs_lists_a_completed_tick_after_a_source_edit() {
     let sb = Sandbox::new("jobs");
     fs::create_dir_all(sb.root.join("src")).unwrap();
-    fs::write(sb.root.join("p.dl"), r#"rel seen(path: file, line: int).
+    fs::write(
+        sb.root.join("p.dl"),
+        r#"rel seen(path: file, line: int).
 seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
   match(path, rev, /fn \w+/, line).
 ? seen(path, line).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     fs::write(sb.root.join("src/a.rs"), "fn a() {}\n").unwrap();
 
     let mut child = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
@@ -1156,7 +1761,10 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     // The tick job drains via a worker; wait for the tick to land.
     let mut ticked = false;
     for _ in 0..80 {
-        if sb.tick(2) > t0 { ticked = true; break; }
+        if sb.tick(2) > t0 {
+            ticked = true;
+            break;
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(ticked, "the queued tick never ran");
@@ -1167,19 +1775,29 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
     for _ in 0..40 {
         let out = Command::new(DL)
             .args(["daemon", "jobs"])
-            .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home)
+            .current_dir(&sb.root)
+            .env("DL_DAEMON_ROOT", &sb.root)
+            .env("XDG_STATE_HOME", &sb.home)
             .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-            .output().expect("jobs");
+            .output()
+            .expect("jobs");
         last = String::from_utf8_lossy(&out.stdout).into_owned();
         // Header + a tick row that has reached `done`.
-        if out.status.success() && last.contains("KEY\tKIND\tSTATE")
-            && last.lines().any(|l| l.starts_with("tick:") && l.contains("done")) {
+        if out.status.success()
+            && last.contains("KEY\tKIND\tSTATE")
+            && last
+                .lines()
+                .any(|l| l.starts_with("tick:") && l.contains("done"))
+        {
             listed = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    assert!(listed, "daemon jobs should list a completed tick job: {last}");
+    assert!(
+        listed,
+        "daemon jobs should list a completed tick job: {last}"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(std::time::Duration::from_secs(5));
@@ -1194,7 +1812,11 @@ seen(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 #[test]
 fn second_daemon_in_same_home_refused_by_fd_lock() {
     let sb = Sandbox::new("fdlock");
-    fs::write(sb.root.join("p.dl"), "rel marker(name: text).\nmarker(\"held\").\n").unwrap();
+    fs::write(
+        sb.root.join("p.dl"),
+        "rel marker(name: text).\nmarker(\"held\").\n",
+    )
+    .unwrap();
     let mut first = sb.spawn(Some(&sb.root.join("p.dl")), &[]);
     assert!(sb.wait_ready(), "first singleton not ready");
 
@@ -1202,25 +1824,43 @@ fn second_daemon_in_same_home_refused_by_fd_lock() {
     // with the fd-lock refusal instead of double-serving.
     let out = Command::new(DL)
         .args(["daemon", "start", "--foreground"])
-        .current_dir(&sb.root).env("DL_DAEMON_ROOT", &sb.root).env("XDG_STATE_HOME", &sb.home)
+        .current_dir(&sb.root)
+        .env("DL_DAEMON_ROOT", &sb.root)
+        .env("XDG_STATE_HOME", &sb.home)
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
-        .output().expect("run second daemon");
-    assert!(!out.status.success(),
+        .output()
+        .expect("run second daemon");
+    assert!(
+        !out.status.success(),
         "second daemon in the same home must be refused (stdout: {} stderr: {})",
-        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("another dl daemon instance already holds"),
-        "refusal must name the fd-lock witness: {stderr}");
+    assert!(
+        stderr.contains("another dl daemon instance already holds"),
+        "refusal must name the fd-lock witness: {stderr}"
+    );
 
     // The holder is untouched: still alive, still answering pings.
-    assert!(matches!(first.try_wait(), Ok(None)), "first daemon must still be running");
+    assert!(
+        matches!(first.try_wait(), Ok(None)),
+        "first daemon must still be running"
+    );
     let ping = rpc_root(&sb.sock(), 5, "ping", &sb.root, serde_json::json!({}));
-    assert!(ping.is_some(), "first daemon must still answer pings after the refused second start");
+    assert!(
+        ping.is_some(),
+        "first daemon must still answer pings after the refused second start"
+    );
 
     sb.shutdown();
-    let status = first.wait_timeout(std::time::Duration::from_secs(5))
+    let status = first
+        .wait_timeout(std::time::Duration::from_secs(5))
         .expect("first daemon did not exit after shutdown");
-    assert!(status.success(), "first daemon should exit 0 after shutdown");
+    assert!(
+        status.success(),
+        "first daemon should exit 0 after shutdown"
+    );
 }
 
 // ---------- helpers ----------

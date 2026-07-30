@@ -34,14 +34,23 @@ impl RelKind for ChangedKind {
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let mut paths: Vec<String> = Vec::new();
         if let Some((toplevel, root)) = git_anchors(eng) {
-            let status = Command::new("git").arg("-C").arg(&eng.root)
-                .args(["status", "--porcelain", "-uall"]).output()?;
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&eng.root)
+                .args(["status", "--porcelain", "-uall"])
+                .output()?;
             if status.status.success() {
                 for line in String::from_utf8_lossy(&status.stdout).lines() {
-                    if line.len() < 4 { continue; }
+                    if line.len() < 4 {
+                        continue;
+                    }
                     let entry = &line[3..];
                     // a rename prints "old -> new"; the worktree file is the new side
-                    let p = entry.rsplit(" -> ").next().unwrap_or(entry).trim_matches('"');
+                    let p = entry
+                        .rsplit(" -> ")
+                        .next()
+                        .unwrap_or(entry)
+                        .trim_matches('"');
                     if let Some(rel) = rekey(&toplevel, &root, p) {
                         paths.push(rel);
                     }
@@ -52,11 +61,16 @@ impl RelKind for ChangedKind {
         paths.dedup();
         let existing: Vec<String> = eng.db.query_rows(
             "changed",
-            &format!("SELECT \"path\" FROM {} ORDER BY \"path\"", txt_tbl("changed")),
+            &format!(
+                "SELECT \"path\" FROM {} ORDER BY \"path\"",
+                txt_tbl("changed")
+            ),
             &[],
             |r| Ok(r.get::<_, String>(0)?),
         )?;
-        if existing == paths { return Ok(false); }
+        if existing == paths {
+            return Ok(false);
+        }
         let rows: Vec<Vec<Value>> = paths.into_iter().map(|p| vec![Value::Text(p)]).collect();
         eng.refresh_rel("changed", &["path"], &rows)?;
         Ok(true)
@@ -90,16 +104,22 @@ impl RelKind for ChangedLineKind {
         if let Some((toplevel, root)) = git_anchors(eng) {
             let canon = |p: &str| rekey(&toplevel, &root, p);
             // (1) tracked modifications via context-free hunks.
-            let diff = Command::new("git").arg("-C").arg(&eng.root)
-                .args(["diff", "-U0", "HEAD"]).output();
+            let diff = Command::new("git")
+                .arg("-C")
+                .arg(&eng.root)
+                .args(["diff", "-U0", "HEAD"])
+                .output();
             if let Ok(d) = diff {
                 if d.status.success() {
                     let stdout = String::from_utf8_lossy(&d.stdout);
                     let mut cur: Option<String> = None;
                     for line in stdout.lines() {
                         if let Some(rest) = line.strip_prefix("+++ ") {
-                            cur = if rest == "/dev/null" { None }
-                                  else { canon(rest.strip_prefix("b/").unwrap_or(rest)) };
+                            cur = if rest == "/dev/null" {
+                                None
+                            } else {
+                                canon(rest.strip_prefix("b/").unwrap_or(rest))
+                            };
                         } else if line.starts_with("@@") {
                             if let (Some(path), Some((c, n))) = (&cur, hunk_new_range(line)) {
                                 for ln in c..c + n {
@@ -111,12 +131,20 @@ impl RelKind for ChangedLineKind {
                 }
             }
             // (2) untracked files: emit every line; git diff HEAD omits them.
-            let status = Command::new("git").arg("-C").arg(&eng.root)
-                .args(["status", "--porcelain", "-uall"]).output()?;
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&eng.root)
+                .args(["status", "--porcelain", "-uall"])
+                .output()?;
             if status.status.success() {
                 for line in String::from_utf8_lossy(&status.stdout).lines() {
-                    if line.len() < 4 || &line[..2] != "??" { continue; }
-                    let p = line[3..].rsplit(" -> ").next().unwrap_or(&line[3..])
+                    if line.len() < 4 || &line[..2] != "??" {
+                        continue;
+                    }
+                    let p = line[3..]
+                        .rsplit(" -> ")
+                        .next()
+                        .unwrap_or(&line[3..])
                         .trim_matches('"');
                     if let Some(rel) = canon(p) {
                         if let Ok(s) = std::fs::read_to_string(eng.root.join(&rel)) {
@@ -139,9 +167,13 @@ impl RelKind for ChangedLineKind {
             &[],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(p, l)| vec![Value::Text(p), Value::Int(l)]).collect();
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(p, l)| vec![Value::Text(p), Value::Int(l)])
+            .collect();
         eng.refresh_rel("changed_line", &["path", "line"], &out)?;
         Ok(true)
     }
@@ -173,12 +205,14 @@ impl RelKind for GitRefKind {
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let mut rows: Vec<(String, String, String, String)> = Vec::new();
-        let mut roots: Vec<(String, std::path::PathBuf)> =
-            eng.repo_roots().into_iter().collect();
+        let mut roots: Vec<(String, std::path::PathBuf)> = eng.repo_roots().into_iter().collect();
         roots.sort();
         for (slug, root) in roots {
-            let head = Command::new("git").arg("-C").arg(&root)
-                .args(["rev-parse", "HEAD"]).output();
+            let head = Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(["rev-parse", "HEAD"])
+                .output();
             if let Ok(h) = head {
                 if h.status.success() {
                     let sha = String::from_utf8_lossy(&h.stdout).trim().to_string();
@@ -193,17 +227,31 @@ impl RelKind for GitRefKind {
                 .args(["for-each-ref",
                        "--format=%(refname)\u{1f}%(refname:short)\u{1f}%(objectname)\u{1f}%(*objectname)"])
                 .output()?;
-            if !out.status.success() { continue; }
+            if !out.status.success() {
+                continue;
+            }
             for line in String::from_utf8_lossy(&out.stdout).lines() {
                 let f: Vec<&str> = line.split('\u{1f}').collect();
-                if f.len() < 4 { continue; }
-                let kind = if f[0].starts_with("refs/heads/") { "branch" }
-                           else if f[0].starts_with("refs/tags/") { "tag" }
-                           else if f[0].starts_with("refs/remotes/") { "remote" }
-                           else { "other" };
+                if f.len() < 4 {
+                    continue;
+                }
+                let kind = if f[0].starts_with("refs/heads/") {
+                    "branch"
+                } else if f[0].starts_with("refs/tags/") {
+                    "tag"
+                } else if f[0].starts_with("refs/remotes/") {
+                    "remote"
+                } else {
+                    "other"
+                };
                 // annotated tag: %(*objectname) is the peeled commit
                 let sha = if f[3].is_empty() { f[2] } else { f[3] };
-                rows.push((slug.clone(), f[1].to_string(), kind.to_string(), sha.to_string()));
+                rows.push((
+                    slug.clone(),
+                    f[1].to_string(),
+                    kind.to_string(),
+                    sha.to_string(),
+                ));
             }
         }
         rows.sort();
@@ -215,14 +263,28 @@ impl RelKind for GitRefKind {
                 txt_tbl("git_ref")
             ),
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, String>(3)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(r, n, k, s)| vec![Value::Text(r), Value::Text(n), Value::Text(k), Value::Text(s)])
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(r, n, k, s)| {
+                vec![
+                    Value::Text(r),
+                    Value::Text(n),
+                    Value::Text(k),
+                    Value::Text(s),
+                ]
+            })
             .collect();
         eng.refresh_rel("git_ref", &["repo", "refname", "kind", "sha"], &out)?;
         Ok(true)
@@ -266,21 +328,29 @@ impl RelKind for RevBehindKind {
             None => Vec::new(),
             Some(meta) => {
                 if meta.cols.len() < 3 {
-                    anyhow::bail!("rev_cmp_want needs 3 columns (repo, refname, upstream); \
-                                   found {}", meta.cols.len());
+                    anyhow::bail!(
+                        "rev_cmp_want needs 3 columns (repo, refname, upstream); \
+                                   found {}",
+                        meta.cols.len()
+                    );
                 }
                 eng.db.query_rows(
                     "rev_cmp_want",
                     &format!(
                         "SELECT DISTINCT \"{}\",\"{}\",\"{}\" FROM {} ORDER BY 1,2,3",
-                        meta.col_name(0), meta.col_name(1), meta.col_name(2),
+                        meta.col_name(0),
+                        meta.col_name(1),
+                        meta.col_name(2),
                         txt_tbl("rev_cmp_want")
                     ),
                     &[],
-                    |r| Ok((
-                        r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                        r.get::<_, String>(2)?,
-                    )),
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ))
+                    },
                 )?
             }
         };
@@ -305,8 +375,11 @@ impl RelKind for RevBehindKind {
             let is_shallow = match shallow.get(&key) {
                 Some(s) => *s,
                 None => {
-                    let s = Command::new("git").arg("-C").arg(root)
-                        .args(["rev-parse", "--is-shallow-repository"]).output()
+                    let s = Command::new("git")
+                        .arg("-C")
+                        .arg(root)
+                        .args(["rev-parse", "--is-shallow-repository"])
+                        .output()
                         .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
                         .unwrap_or(false);
                     if s {
@@ -318,19 +391,31 @@ impl RelKind for RevBehindKind {
                     s
                 }
             };
-            if is_shallow { continue; }
-            let out = Command::new("git").arg("-C").arg(root)
-                .args(["rev-list", "--left-right", "--count",
-                       &format!("{upstream}...{refname}")]).output()?;
+            if is_shallow {
+                continue;
+            }
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args([
+                    "rev-list",
+                    "--left-right",
+                    "--count",
+                    &format!("{upstream}...{refname}"),
+                ])
+                .output()?;
             if !out.status.success() {
                 tracing::warn!(repo = %repo, upstream = %upstream, refname = %refname, "[rev_behind] skip {repo}: {upstream}...{refname} did not resolve");
                 continue;
             }
             let text = String::from_utf8_lossy(&out.stdout);
             let mut it = text.split_whitespace();
-            let (Some(behind), Some(ahead)) =
-                (it.next().and_then(|s| s.parse::<i64>().ok()),
-                 it.next().and_then(|s| s.parse::<i64>().ok())) else { continue };
+            let (Some(behind), Some(ahead)) = (
+                it.next().and_then(|s| s.parse::<i64>().ok()),
+                it.next().and_then(|s| s.parse::<i64>().ok()),
+            ) else {
+                continue;
+            };
             rows.push((repo, refname, upstream, behind, ahead));
         }
         rows.sort();
@@ -339,21 +424,40 @@ impl RelKind for RevBehindKind {
             "rev_behind",
             &format!(
                 "SELECT \"repo\",\"refname\",\"upstream\",\"behind\",\"ahead\" \
-                 FROM {} ORDER BY 1,2,3,4,5", txt_tbl("rev_behind")
+                 FROM {} ORDER BY 1,2,3,4,5",
+                txt_tbl("rev_behind")
             ),
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?, r.get::<_, i64>(4)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)?,
+                ))
+            },
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(r, n, u, b, a)| vec![Value::Text(r), Value::Text(n), Value::Text(u),
-                                        Value::Int(b), Value::Int(a)])
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(r, n, u, b, a)| {
+                vec![
+                    Value::Text(r),
+                    Value::Text(n),
+                    Value::Text(u),
+                    Value::Int(b),
+                    Value::Int(a),
+                ]
+            })
             .collect();
-        eng.refresh_rel("rev_behind",
-            &["repo", "refname", "upstream", "behind", "ahead"], &out)?;
+        eng.refresh_rel(
+            "rev_behind",
+            &["repo", "refname", "upstream", "behind", "ahead"],
+            &out,
+        )?;
         Ok(true)
     }
 }
@@ -389,9 +493,16 @@ impl RelKind for CreatedKind {
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl {
             name: "created".into(),
-            cols: vec![col("path", Type::Path), col("name", Type::Text),
-                       col("email", Type::Text), col("ts", Type::Int)], group: "created",
-            doc: "files added since their first appearance, with author name/email/timestamp", ..Default::default() }]
+            cols: vec![
+                col("path", Type::Path),
+                col("name", Type::Text),
+                col("email", Type::Text),
+                col("ts", Type::Int),
+            ],
+            group: "created",
+            doc: "files added since their first appearance, with author name/email/timestamp",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in file-authorship relation"
@@ -400,9 +511,17 @@ impl RelKind for CreatedKind {
         let mut created: Vec<(String, String, String, i64)> = Vec::new(); // path, name, email, ts
         if let Some((toplevel, root)) = git_anchors(eng) {
             // \x01 prefixes the per-commit author line; \x1f separates fields.
-            let log = Command::new("git").arg("-C").arg(&eng.root)
-                .args(["log", "--reverse", "--diff-filter=A", "--name-only",
-                       "--format=\x01%an\x1f%ae\x1f%at"]).output()?;
+            let log = Command::new("git")
+                .arg("-C")
+                .arg(&eng.root)
+                .args([
+                    "log",
+                    "--reverse",
+                    "--diff-filter=A",
+                    "--name-only",
+                    "--format=\x01%an\x1f%ae\x1f%at",
+                ])
+                .output()?;
             if log.status.success() {
                 let mut seen: HashSet<String> = HashSet::new();
                 let (mut name, mut email, mut ts) = (String::new(), String::new(), 0i64);
@@ -430,14 +549,28 @@ impl RelKind for CreatedKind {
                 txt_tbl("created")
             ),
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?, r.get::<_, i64>(3)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            },
         )?;
-        if existing == created { return Ok(false); }
-        let rows: Vec<Vec<Value>> = created.into_iter()
-            .map(|(p, n, e, t)| vec![Value::Text(p), Value::Text(n), Value::Text(e), Value::Int(t)])
+        if existing == created {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = created
+            .into_iter()
+            .map(|(p, n, e, t)| {
+                vec![
+                    Value::Text(p),
+                    Value::Text(n),
+                    Value::Text(e),
+                    Value::Int(t),
+                ]
+            })
             .collect();
         eng.refresh_rel("created", &["path", "name", "email", "ts"], &rows)?;
         Ok(true)

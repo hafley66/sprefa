@@ -94,7 +94,8 @@ impl Engine {
                 .collect::<Result<_>>()?;
             let rev_text = rev.text();
             let (files, rehashed) = files?;
-            self.file_hash_reads.set(self.file_hash_reads.get() + rehashed);
+            self.file_hash_reads
+                .set(self.file_hash_reads.get() + rehashed);
             for (path, h, mt, sz, lines) in files {
                 current.insert(
                     (slug.clone(), path.clone(), rev_text.clone()),
@@ -232,7 +233,10 @@ impl Engine {
                     .keys()
                     .map(|(repo, path, _rev)| (repo.as_str(), path.as_str()))
                     .collect();
-                let out_of_scope = prev_paths.iter().filter(|k| !current_paths.contains(*k)).count();
+                let out_of_scope = prev_paths
+                    .iter()
+                    .filter(|k| !current_paths.contains(*k))
+                    .count();
                 let threshold: f64 = std::env::var("DL_SCAN_NARROW_THRESHOLD")
                     .ok()
                     .and_then(|s| s.parse::<f64>().ok())
@@ -242,8 +246,13 @@ impl Engine {
                 if share > threshold {
                     let after = current_paths.len();
                     self.shape_diags.push(DiagRow {
-                        path: "(scan)".into(), line: 1, col: 0, end_line: 1, end_col: 0,
-                        severity: "warn".into(), code: "scan-narrowing".into(),
+                        path: "(scan)".into(),
+                        line: 1,
+                        col: 0,
+                        end_line: 1,
+                        end_col: 0,
+                        severity: "warn".into(),
+                        code: "scan-narrowing".into(),
                         msg: format!(
                             "this tick's scan scope covers {after} of the {before} file(s) this \
                              db already knows about — {out_of_scope} ({:.0}%) fall outside it and \

@@ -35,7 +35,8 @@ impl Family for CallName {
         for (sym_sid, row) in defs {
             let name_sid = as_int(&row[0]);
             if seen.insert([sym_sid, name_sid]) {
-                out.rows.push(vec![Value::Int(sym_sid), Value::Int(name_sid)]);
+                out.rows
+                    .push(vec![Value::Int(sym_sid), Value::Int(name_sid)]);
             }
         }
         Ok(())

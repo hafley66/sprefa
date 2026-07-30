@@ -33,7 +33,9 @@ pub fn ast_shape_proposals(content: &str) -> Vec<Proposal> {
         let hi_byte = line_start.get(hi_line).copied().unwrap_or(content.len());
         let params = free_vars(root, content, lo_byte, hi_byte);
         out.push(Proposal {
-            lo: lo_line, hi: hi_line, occurrences: occ,
+            lo: lo_line,
+            hi: hi_line,
+            occurrences: occ,
             gain: n * occ.saturating_sub(1),
             params,
         });
@@ -90,7 +92,10 @@ pub fn tree_shape_proposals(content: &str) -> Vec<Proposal> {
         return Vec::new();
     };
     let stmts = statement_ranges(&tree);
-    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| subtree_hash(*n, content)).collect();
+    let hashes: Vec<u64> = stmts
+        .iter()
+        .map(|(n, _, _)| subtree_hash(*n, content))
+        .collect();
     let line_start = line_start_bytes(content);
     let root = tree.root_node();
     let mut out = Vec::new();
@@ -195,7 +200,10 @@ pub fn cfg_shape_proposals(content: &str) -> Vec<Proposal> {
         return Vec::new();
     };
     let stmts = statement_ranges(&tree);
-    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| cfg_skeleton_hash(*n)).collect();
+    let hashes: Vec<u64> = stmts
+        .iter()
+        .map(|(n, _, _)| cfg_skeleton_hash(*n))
+        .collect();
     let line_start = line_start_bytes(content);
     let root = tree.root_node();
     let mut out = Vec::new();
@@ -230,9 +238,15 @@ fn cfg_skeleton_hash(node: Node) -> u64 {
     let mut stack = vec![node];
     while let Some(n) = stack.pop() {
         match n.kind() {
-            "if_expression" | "for_expression" | "while_expression" | "loop_expression"
-            | "match_expression" | "match_arm" | "break_expression"
-            | "continue_expression" | "return_expression" => {
+            "if_expression"
+            | "for_expression"
+            | "while_expression"
+            | "loop_expression"
+            | "match_expression"
+            | "match_arm"
+            | "break_expression"
+            | "continue_expression"
+            | "return_expression" => {
                 n.kind().hash(&mut h);
             }
             _ => {}
@@ -270,7 +284,10 @@ pub fn ddg_shape_proposals(content: &str) -> Vec<Proposal> {
         return Vec::new();
     };
     let stmts = statement_ranges(&tree);
-    let hashes: Vec<u64> = stmts.iter().map(|(n, _, _)| ddg_hash(*n, content)).collect();
+    let hashes: Vec<u64> = stmts
+        .iter()
+        .map(|(n, _, _)| ddg_hash(*n, content))
+        .collect();
     let line_start = line_start_bytes(content);
     let root = tree.root_node();
     let mut out = Vec::new();

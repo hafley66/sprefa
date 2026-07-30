@@ -20,13 +20,18 @@ pub fn tarjan(adj: &[Vec<u32>]) -> (Vec<u32>, usize) {
     let mut idx = 0u32;
     let mut ncomp = 0u32;
     for start in 0..n {
-        if index[start] != u32::MAX { continue; }
+        if index[start] != u32::MAX {
+            continue;
+        }
         let mut work: Vec<(u32, usize)> = vec![(start as u32, 0)];
         while let Some(&(v, ci)) = work.last() {
             let vu = v as usize;
             if ci == 0 {
-                index[vu] = idx; low[vu] = idx; idx += 1;
-                stack.push(v); on_stack[vu] = true;
+                index[vu] = idx;
+                low[vu] = idx;
+                idx += 1;
+                stack.push(v);
+                on_stack[vu] = true;
             }
             if ci < adj[vu].len() {
                 work.last_mut().unwrap().1 += 1;
@@ -41,14 +46,18 @@ pub fn tarjan(adj: &[Vec<u32>]) -> (Vec<u32>, usize) {
                 work.pop();
                 if let Some(&(p, _)) = work.last() {
                     let pu = p as usize;
-                    if low[vu] < low[pu] { low[pu] = low[vu]; }
+                    if low[vu] < low[pu] {
+                        low[pu] = low[vu];
+                    }
                 }
                 if low[vu] == index[vu] {
                     loop {
                         let w = stack.pop().unwrap();
                         on_stack[w as usize] = false;
                         comp[w as usize] = ncomp;
-                        if w == v { break; }
+                        if w == v {
+                            break;
+                        }
                     }
                     ncomp += 1;
                 }
@@ -79,38 +88,67 @@ pub fn build_condensed(adj: &[Vec<u32>]) -> Cond {
         members[c as usize].push(node as u32);
     }
     let mut cyclic = vec![false; ncomp];
-    for c in 0..ncomp { if size[c] > 1 { cyclic[c] = true; } }
+    for c in 0..ncomp {
+        if size[c] > 1 {
+            cyclic[c] = true;
+        }
+    }
     for (u, succ) in adj.iter().enumerate() {
-        for &w in succ { if w as usize == u { cyclic[comp[u] as usize] = true; } }
+        for &w in succ {
+            if w as usize == u {
+                cyclic[comp[u] as usize] = true;
+            }
+        }
     }
     let mut sets: Vec<BTreeSet<u32>> = vec![BTreeSet::new(); ncomp];
     for (u, succ) in adj.iter().enumerate() {
         let cu = comp[u];
         for &w in succ {
             let cw = comp[w as usize];
-            if cu != cw { sets[cu as usize].insert(cw); }
+            if cu != cw {
+                sets[cu as usize].insert(cw);
+            }
         }
     }
     let cadj: Vec<Vec<u32>> = sets.into_iter().map(|s| s.into_iter().collect()).collect();
     let mut cadj_rev = vec![Vec::new(); ncomp];
     for (u, succ) in cadj.iter().enumerate() {
-        for &v in succ { cadj_rev[v as usize].push(u as u32); }
+        for &v in succ {
+            cadj_rev[v as usize].push(u as u32);
+        }
     }
-    Cond { comp, ncomp, size, cyclic, cadj, cadj_rev, members }
+    Cond {
+        comp,
+        ncomp,
+        size,
+        cyclic,
+        cadj,
+        cadj_rev,
+        members,
+    }
 }
 
 /// Total reaches pairs (incl cyclic self-reach), counted from the condensation.
 pub fn count_pairs(c: &Cond) -> u128 {
     let ncomp = c.ncomp;
     let mut indeg = vec![0u32; ncomp];
-    for cc in 0..ncomp { for &s in &c.cadj[cc] { indeg[s as usize] += 1; } }
-    let mut topo: Vec<u32> = (0..ncomp as u32).filter(|&x| indeg[x as usize] == 0).collect();
+    for cc in 0..ncomp {
+        for &s in &c.cadj[cc] {
+            indeg[s as usize] += 1;
+        }
+    }
+    let mut topo: Vec<u32> = (0..ncomp as u32)
+        .filter(|&x| indeg[x as usize] == 0)
+        .collect();
     let mut qi = 0;
     while qi < topo.len() {
-        let x = topo[qi]; qi += 1;
+        let x = topo[qi];
+        qi += 1;
         for &s in &c.cadj[x as usize] {
             indeg[s as usize] -= 1;
-            if indeg[s as usize] == 0 { topo.push(s); }
+            if indeg[s as usize] == 0 {
+                topo.push(s);
+            }
         }
     }
     let words = (ncomp + 63) / 64;
@@ -120,12 +158,16 @@ pub fn count_pairs(c: &Cond) -> u128 {
         for s in c.cadj[cu].clone() {
             let su = s as usize;
             reach[cu * words + su / 64] |= 1u64 << (su % 64);
-            for w in 0..words { reach[cu * words + w] |= reach[su * words + w]; }
+            for w in 0..words {
+                reach[cu * words + w] |= reach[su * words + w];
+            }
         }
     }
     let mut total: u128 = 0;
     for cc in 0..ncomp {
-        if c.cyclic[cc] { total += (c.size[cc] as u128) * (c.size[cc] as u128); }
+        if c.cyclic[cc] {
+            total += (c.size[cc] as u128) * (c.size[cc] as u128);
+        }
         let mut wsum: u128 = 0;
         for w in 0..words {
             let mut bits = reach[cc * words + w];
@@ -148,14 +190,24 @@ pub fn reaches_from(c: &Cond, start: u32) -> Vec<u32> {
     let mut seen_comp = vec![false; c.ncomp];
     let mut q: VecDeque<u32> = c.cadj[c0 as usize].iter().copied().collect();
     while let Some(cc) = q.pop_front() {
-        if seen_comp[cc as usize] { continue; }
+        if seen_comp[cc as usize] {
+            continue;
+        }
         seen_comp[cc as usize] = true;
-        for &s in &c.cadj[cc as usize] { if !seen_comp[s as usize] { q.push_back(s); } }
+        for &s in &c.cadj[cc as usize] {
+            if !seen_comp[s as usize] {
+                q.push_back(s);
+            }
+        }
     }
-    if c.cyclic[c0 as usize] { seen_comp[c0 as usize] = true; } // self-reach via the cycle
+    if c.cyclic[c0 as usize] {
+        seen_comp[c0 as usize] = true;
+    } // self-reach via the cycle
     let mut out = Vec::new();
     for cc in 0..c.ncomp {
-        if seen_comp[cc] { out.extend_from_slice(&c.members[cc]); }
+        if seen_comp[cc] {
+            out.extend_from_slice(&c.members[cc]);
+        }
     }
     out
 }
@@ -167,14 +219,24 @@ pub fn reached_by(c: &Cond, target: u32) -> Vec<u32> {
     let mut seen_comp = vec![false; c.ncomp];
     let mut q: VecDeque<u32> = c.cadj_rev[c0 as usize].iter().copied().collect();
     while let Some(cc) = q.pop_front() {
-        if seen_comp[cc as usize] { continue; }
+        if seen_comp[cc as usize] {
+            continue;
+        }
         seen_comp[cc as usize] = true;
-        for &s in &c.cadj_rev[cc as usize] { if !seen_comp[s as usize] { q.push_back(s); } }
+        for &s in &c.cadj_rev[cc as usize] {
+            if !seen_comp[s as usize] {
+                q.push_back(s);
+            }
+        }
     }
-    if c.cyclic[c0 as usize] { seen_comp[c0 as usize] = true; }
+    if c.cyclic[c0 as usize] {
+        seen_comp[c0 as usize] = true;
+    }
     let mut out = Vec::new();
     for cc in 0..c.ncomp {
-        if seen_comp[cc] { out.extend_from_slice(&c.members[cc]); }
+        if seen_comp[cc] {
+            out.extend_from_slice(&c.members[cc]);
+        }
     }
     out
 }

@@ -6,9 +6,9 @@
 //! turn touched.
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::io::Write;
 
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
@@ -25,7 +25,12 @@ fn check(dir: &Path, prog: &str, stage: Option<&str>) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut cmd = Command::new(DL);
     cmd.arg(dir.join("p.dl"))
-        .args(["--db", dir.join("db").to_str().unwrap(), "--check", "--no-daemon"])
+        .args([
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--check",
+            "--no-daemon",
+        ])
         .env("SPREFA_CONFIG", dir.join("no.toml"))
         .current_dir(dir);
     if let Some(s) = stage {
@@ -63,12 +68,21 @@ diag(path: path, line: 2, severity: "warning", code: "meh", msg: "a warning") <-
     let (code, _out, err) = check(&d, prog, Some("live"));
     assert_eq!(code, 2, "error still present at live:\n{err}");
     assert!(err.contains("[boom]"), "live surfaces the error:\n{err}");
-    assert!(!err.contains("[meh]"), "live must NOT surface the unrouted warning:\n{err}");
+    assert!(
+        !err.contains("[meh]"),
+        "live must NOT surface the unrouted warning:\n{err}"
+    );
 
     // agent-turn: same — warning dropped, error kept.
     let (_code, _out, err) = check(&d, prog, Some("agent-turn"));
-    assert!(err.contains("[boom]"), "agent-turn surfaces the error:\n{err}");
-    assert!(!err.contains("[meh]"), "agent-turn drops the unrouted warning:\n{err}");
+    assert!(
+        err.contains("[boom]"),
+        "agent-turn surfaces the error:\n{err}"
+    );
+    assert!(
+        !err.contains("[meh]"),
+        "agent-turn drops the unrouted warning:\n{err}"
+    );
 }
 
 /// A colocated `diag_stage` row overrides the severity default: a warning routed
@@ -87,11 +101,17 @@ diag_stage("turnwarn", "agent-turn") <- src_file(_).
     // commit: the warning is routed away from commit -> not shown; exit 0.
     let (code, _out, err) = check(&d, prog, None);
     assert_eq!(code, 0, "no error -> exit 0:\n{err}");
-    assert!(!err.contains("[turnwarn]"), "commit must not show an agent-turn-only warning:\n{err}");
+    assert!(
+        !err.contains("[turnwarn]"),
+        "commit must not show an agent-turn-only warning:\n{err}"
+    );
 
     // agent-turn: now it surfaces.
     let (_code, _out, err) = check(&d, prog, Some("agent-turn"));
-    assert!(err.contains("[turnwarn]"), "agent-turn surfaces its routed warning:\n{err}");
+    assert!(
+        err.contains("[turnwarn]"),
+        "agent-turn surfaces its routed warning:\n{err}"
+    );
 }
 
 /// The `--stage` flag rejects an unknown name loudly (never silently surfaces
@@ -102,7 +122,10 @@ fn stage_flag_rejects_unknown_name() {
     fs::write(d.join("src/a.rs"), "// a\n").unwrap();
     let (code, _out, err) = check(&d, "rel r(x: int).\nr(1).\n", Some("bogus"));
     assert_ne!(code, 0, "unknown stage must fail:\n{err}");
-    assert!(err.contains("unknown --stage"), "names the bad flag:\n{err}");
+    assert!(
+        err.contains("unknown --stage"),
+        "names the bad flag:\n{err}"
+    );
 }
 
 /// The hook's agent-turn surface is gated to the files the latest agent turn
@@ -117,14 +140,18 @@ fn hook_agent_turn_intersects_touched_files() {
 
     // Fake Claude Code transcript store: the latest turn edited src/touched.rs.
     let projects = d.join("cc_projects");
-    let slug: String = root.to_string_lossy().chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let slug: String = root
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
     let slug_dir = projects.join(&slug);
     fs::create_dir_all(&slug_dir).unwrap();
     let edited = root.join("src/touched.rs");
     let transcript = format!(
         r#"{{"type":"assistant","message":{{"role":"assistant","content":[{{"type":"tool_use","name":"Edit","input":{{"file_path":"{}"}}}}]}}}}"#,
-        edited.to_string_lossy());
+        edited.to_string_lossy()
+    );
     fs::write(slug_dir.join("sess1.jsonl"), format!("{transcript}\n")).unwrap();
 
     // Program: a warning on every src file, routed to agent-turn; a `touched`
@@ -143,7 +170,12 @@ touched(path) <- agent_touch(_, _, path).
     let event = r#"{"hook_event_name":"PostToolUse","session_id":"sess1"}"#;
     let mut child = Command::new(DL)
         .arg(d.join("p.dl"))
-        .args(["--db", d.join("db").to_str().unwrap(), "--hook", "--no-daemon"])
+        .args([
+            "--db",
+            d.join("db").to_str().unwrap(),
+            "--hook",
+            "--no-daemon",
+        ])
         // Test-harness escape: blank db each run; the deadlined hook path
         // deliberately cold-skips those.
         .env("DL_HOOK_DEADLINE_MS", "0")
@@ -156,14 +188,23 @@ touched(path) <- agent_touch(_, _, path).
         .stderr(Stdio::piped())
         .spawn()
         .expect("spawn dl --hook");
-    child.stdin.take().unwrap().write_all(event.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().expect("wait dl --hook");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 
     // additionalContext lists the touched file's diag, not the untouched one.
-    assert!(stdout.contains("src/touched.rs"),
-        "agent-turn context must include the touched file:\nstdout={stdout}\nstderr={stderr}");
-    assert!(!stdout.contains("src/other.rs"),
-        "agent-turn context must exclude the untouched file:\nstdout={stdout}");
+    assert!(
+        stdout.contains("src/touched.rs"),
+        "agent-turn context must include the touched file:\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        !stdout.contains("src/other.rs"),
+        "agent-turn context must exclude the untouched file:\nstdout={stdout}"
+    );
 }

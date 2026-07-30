@@ -97,7 +97,8 @@ pub(super) fn prepare_source_batch(
         crate::engine::pipeline::FullSourceStageBuilder::new(&engine.db, generation, base)?;
     let mut dropped = 0usize;
     let mut drop_diags = Vec::new();
-    let (sender, receiver) = sync_channel::<(String, Result<Vec<ParsedWorkRule>>)>(READY_FILE_SLOTS);
+    let (sender, receiver) =
+        sync_channel::<(String, Result<Vec<ParsedWorkRule>>)>(READY_FILE_SLOTS);
     let cancel = Arc::new(AtomicBool::new(false));
     let rels = &engine.rels;
     // Owner ordinals stay per-(file, rule) — the stage ordering key — laid out
@@ -452,14 +453,18 @@ fn parse_work_path(
     // the file on disk has not been touched, and is the shape to suspect when
     // a root reports the same changed-path count tick after tick while the
     // filesystem shows no mtime movement (2026-07-19 incident).
-    crate::eventlog::emit("path_change_verdict", None, serde_json::json!({
-        "repo": job.repo,
-        "path": job.path,
-        "rev": job.rev,
-        "reason": if prior.is_some() { "hash_differs" } else { "no_prior_row" },
-        "old_hash": prior,
-        "new_hash": hash,
-    }));
+    crate::eventlog::emit(
+        "path_change_verdict",
+        None,
+        serde_json::json!({
+            "repo": job.repo,
+            "path": job.path,
+            "rev": job.rev,
+            "reason": if prior.is_some() { "hash_differs" } else { "no_prior_row" },
+            "old_hash": prior,
+            "new_hash": hash,
+        }),
+    );
     let mtime = std::fs::metadata(&abs)
         .ok()
         .map(|meta| mtime_secs(&meta))
@@ -765,9 +770,12 @@ mod tests {
         ] {
             let count: i64 = engine
                 .db
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| {
-                    Ok(row.get(0)?)
-                })
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, expected, "{table} rows from the shared root");
         }
@@ -817,12 +825,19 @@ mod tests {
             .unwrap();
         // @rusqlite-ok: test asserts staged rows through the raw conn
         facts.discard(&engine.db).unwrap();
-        for (table, expected) in [("rel_fn_item", 2i64), ("rel_use_item", 1), ("rel_todo_note", 1)]
-        {
+        for (table, expected) in [
+            ("rel_fn_item", 2i64),
+            ("rel_use_item", 1),
+            ("rel_todo_note", 1),
+        ] {
             let count: i64 = engine
                 .db
-
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, expected, "{table} rows from the shared tree");
         }
@@ -850,7 +865,9 @@ mod tests {
                 repo: "repo".into(),
                 path: path.into(),
                 rev: "WORK".into(),
-                hash: blake3::hash(AST_FIXTURE_CONTENT.as_bytes()).to_hex().to_string(),
+                hash: blake3::hash(AST_FIXTURE_CONTENT.as_bytes())
+                    .to_hex()
+                    .to_string(),
                 rules: (0..3)
                     .map(|rule_idx| SourceExtractRule {
                         rule_idx,
@@ -883,12 +900,19 @@ mod tests {
             .unwrap();
         // @rusqlite-ok: test asserts staged rows through the raw conn
         facts.discard(&engine.db).unwrap();
-        for (table, expected) in [("rel_fn_item", 6i64), ("rel_use_item", 3), ("rel_todo_note", 3)]
-        {
+        for (table, expected) in [
+            ("rel_fn_item", 6i64),
+            ("rel_use_item", 3),
+            ("rel_todo_note", 3),
+        ] {
             let count: i64 = engine
                 .db
-
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, expected, "{table} rows across the batch");
         }
@@ -1006,7 +1030,12 @@ mod tests {
         for table in ["rel_left", "rel_right"] {
             let count: i64 = engine
                 .db
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, 1, "both matching rules parse the shared snapshot");
         }
@@ -1025,7 +1054,12 @@ mod tests {
             .map(|table| {
                 engine
                     .db
-                    .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                    .query_one(
+                        table,
+                        &format!("SELECT count(*) FROM {table}"),
+                        &[],
+                        |row| Ok(row.get(0)?),
+                    )
                     .unwrap()
             })
             .collect();
@@ -1047,7 +1081,12 @@ mod tests {
         for (table, before_count) in tables.into_iter().zip(before_counts) {
             let count: i64 = engine
                 .db
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, before_count, "read failure must not mutate {table}");
         }
@@ -1058,7 +1097,12 @@ mod tests {
         ] {
             let count: i64 = engine
                 .db
-                .query_one(table, &format!("SELECT count(*) FROM {table}"), &[], |row| Ok(row.get(0)?))
+                .query_one(
+                    table,
+                    &format!("SELECT count(*) FROM {table}"),
+                    &[],
+                    |row| Ok(row.get(0)?),
+                )
                 .unwrap();
             assert_eq!(count, 0, "failed stage must clean up {table}");
         }
@@ -1120,7 +1164,9 @@ mod tests {
         facts.discard(&engine.db).unwrap();
         let count: i64 = engine
             .db
-            .query_one("rel_left", "SELECT count(*) FROM rel_left", &[], |row| Ok(row.get(0)?))
+            .query_one("rel_left", "SELECT count(*) FROM rel_left", &[], |row| {
+                Ok(row.get(0)?)
+            })
             .unwrap();
         assert_eq!(count, 2);
     }

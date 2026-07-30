@@ -66,12 +66,12 @@ use querylog::QueryLogKind;
 use scip::ScipKind;
 use write_ledger::WriteLedgerKind;
 
+pub(crate) use extract_family::CallPathRefreshOutcome;
 pub use extract_family::{
     extract_families, extract_families_paths_pre_node, extract_families_post_node,
     extract_families_pre_node, CallFamily, ExtractFamily, ModuleFamily, PathRefreshContext,
     RefreshOutcome, TypeFamily,
 };
-pub(crate) use extract_family::CallPathRefreshOutcome;
 
 /// Refresh the `query_log` projection right now, outside the normal tick
 /// cadence. The daemon `query`/`query_sql` RPC handlers and the LSP `dl/query`
@@ -141,17 +141,37 @@ pub trait RelKind: Sync {
 
 /// Whether `rel` belongs to a bookkeeping family (see `RelKind::bookkeeping`).
 pub fn is_bookkeeping_rel(rel: &str) -> bool {
-    rel_kinds().iter().any(|k| k.bookkeeping() && k.rels().contains(&rel))
+    rel_kinds()
+        .iter()
+        .any(|k| k.bookkeeping() && k.rels().contains(&rel))
 }
 
 /// Every git-derived built-in family, in declaration order. `tick`,
 /// `tick_paths`, `declare_builtins`, `all_builtin_decls`, and the reserved-name
 /// guard iterate THIS instead of repeating the family list.
 pub fn rel_kinds() -> &'static [&'static dyn RelKind] {
-    &[&ChangedKind, &ChangedLineKind, &CreatedKind, &GitRefKind, &RevBehindKind,
-      &AgentKind, &DlDiagKind, &TypeShapeKind, &TypeLggKind, &CatalogKind, &VerbCatalogKind,
-      &ScipKind, &ProposeExtractKind, &ProposeCloneKind, &EmbedKind, &PerfKind,
-      &QueryLogKind, &EnvKind, &FileLinesKind, &WriteLedgerKind]
+    &[
+        &ChangedKind,
+        &ChangedLineKind,
+        &CreatedKind,
+        &GitRefKind,
+        &RevBehindKind,
+        &AgentKind,
+        &DlDiagKind,
+        &TypeShapeKind,
+        &TypeLggKind,
+        &CatalogKind,
+        &VerbCatalogKind,
+        &ScipKind,
+        &ProposeExtractKind,
+        &ProposeCloneKind,
+        &EmbedKind,
+        &PerfKind,
+        &QueryLogKind,
+        &EnvKind,
+        &FileLinesKind,
+        &WriteLedgerKind,
+    ]
 }
 
 /// Flattened column decls across the registry, for `all_builtin_decls` /
@@ -171,9 +191,15 @@ pub(super) fn col(n: &str, t: Type) -> Col {
 /// onto `toplevel` then stripped of `root`. `None` when the root isn't a git
 /// repo — every caller then yields an empty relation, not an error.
 pub(super) fn git_anchors(eng: &Engine) -> Option<(PathBuf, PathBuf)> {
-    let out = Command::new("git").arg("-C").arg(&eng.root)
-        .args(["rev-parse", "--show-toplevel"]).output().ok()?;
-    if !out.status.success() { return None; }
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(&eng.root)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
     let toplevel = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
     let root = std::fs::canonicalize(&eng.root).unwrap_or_else(|_| eng.root.clone());
     Some((toplevel, root))
@@ -182,6 +208,9 @@ pub(super) fn git_anchors(eng: &Engine) -> Option<(PathBuf, PathBuf)> {
 /// Re-key one git-printed path to repo-relative: join onto `toplevel`, strip
 /// `root`, normalize separators. `None` drops a path outside the root.
 pub(super) fn rekey(toplevel: &Path, root: &Path, p: &str) -> Option<String> {
-    toplevel.join(p).strip_prefix(root).ok()
+    toplevel
+        .join(p)
+        .strip_prefix(root)
+        .ok()
         .map(|r| r.to_string_lossy().replace('\\', "/"))
 }

@@ -10,9 +10,9 @@
 //! Surrogate integer ids (get_repo_id) do not map — dl is content-addressed by
 //! design.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
 
 use anyhow::Result;
 use serde_json::{Map, Value as Json};
@@ -98,12 +98,17 @@ fn parity_poll_state_roundtrip_and_304_preserves_fields() {
         ps(ep, t, iv) <- @next ps_next(ep, t, iv).\n";
     let mut eng = run(&d, src);
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let exec = CondGet { out200: vec!["200".into(), "\"abc\"".into(), "60".into()] };
+    let exec = CondGet {
+        out200: vec!["200".into(), "\"abc\"".into(), "60".into()],
+    };
     drive(&mut eng, &prog, &exec, 5);
 
     let ps = rows(&dbp, "rel_ps_txt", "SELECT tag, interval FROM rel_ps_txt");
-    assert_eq!(ps, vec![vec!["\"abc\"".to_string(), "60".to_string()]],
-        "etag and interval roundtrip, and the 304 preserved both");
+    assert_eq!(
+        ps,
+        vec![vec!["\"abc\"".to_string(), "60".to_string()]],
+        "etag and interval roundtrip, and the 304 preserved both"
+    );
 }
 
 /// ghcacher db.rs `change_log_insert` + the `upsert_*_idempotent` family: distinct
@@ -139,17 +144,28 @@ fn parity_change_log_append_is_idempotent() {
     let mut eng = run(&d, src);
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     let exec = CondGet {
-        out200: vec!["200".into(), "etagA".into(),
-            r#"{"stargazers_count": 42, "full_name": "o/n"}"#.into()],
+        out200: vec![
+            "200".into(),
+            "etagA".into(),
+            r#"{"stargazers_count": 42, "full_name": "o/n"}"#.into(),
+        ],
     };
     drive(&mut eng, &prog, &exec, 12);
 
-    let mut log = rows(&dbp, "rel_change_log_txt", "SELECT kind, val FROM rel_change_log_txt");
+    let mut log = rows(
+        &dbp,
+        "rel_change_log_txt",
+        "SELECT kind, val FROM rel_change_log_txt",
+    );
     log.sort();
-    assert_eq!(log, vec![
-        vec!["full_name".to_string(), "o/n".to_string()],
-        vec!["stars".to_string(), "42".to_string()],
-    ], "two distinct entities, each once, stable across 12 cycles");
+    assert_eq!(
+        log,
+        vec![
+            vec!["full_name".to_string(), "o/n".to_string()],
+            vec!["stars".to_string(), "42".to_string()],
+        ],
+        "two distinct entities, each once, stable across 12 cycles"
+    );
 }
 
 /// ghcacher db.rs `change_log_with_payload`: a change carries a JSON payload and a
@@ -169,14 +185,24 @@ fn parity_change_log_with_payload() {
         rel change_log_next(ep: text, kind: text, val: text).\n\
         change_log_next(ep, kind, val) <- change_log(ep, kind, val).\n\
         change_log_next(ep, \"pull_request\", n) <- pr_number(ep, n).\n\
-        change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).\n");
+        change_log(ep, kind, val) <- @next change_log_next(ep, kind, val).\n"
+    );
     let mut eng = run(&d, &src);
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
 
-    let log = rows(&dbp, "rel_change_log_txt", "SELECT kind, val FROM rel_change_log_txt");
-    assert_eq!(log, vec![vec!["pull_request".to_string(), "42".to_string()]],
-        "the change row carries the payload's number field");
+    let log = rows(
+        &dbp,
+        "rel_change_log_txt",
+        "SELECT kind, val FROM rel_change_log_txt",
+    );
+    assert_eq!(
+        log,
+        vec![vec!["pull_request".to_string(), "42".to_string()]],
+        "the change row carries the payload's number field"
+    );
 }
 
 /// ghcacher sync/events.rs `status_event_triggers_pr_resync_via_sha`: an observed
@@ -198,8 +224,11 @@ fn parity_event_triggers_resync() {
     eng.tick(&prog, true).unwrap();
 
     let got = rows(&dbp, "rel_resync_txt", "SELECT repo FROM rel_resync_txt");
-    assert_eq!(got, vec![vec!["o/n".to_string()]],
-        "an event row triggers a single resync of its repo (deduped)");
+    assert_eq!(
+        got,
+        vec![vec!["o/n".to_string()]],
+        "an event row triggers a single resync of its repo (deduped)"
+    );
 }
 
 /// ghcacher output.rs `json_format_produces_ndjson`: the cache emits newline-
@@ -218,13 +247,20 @@ fn parity_query_json_is_ndjson() {
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(d)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let line = stdout.lines().find(|l| l.trim_start().starts_with('{'))
+    let line = stdout
+        .lines()
+        .find(|l| l.trim_start().starts_with('{'))
         .expect("a JSON line");
     let v: Json = serde_json::from_str(line).expect("ndjson line parses");
     assert_eq!(v["count"], Json::from(2), "two pr rows: {line}");
-    assert_eq!(v["query"].as_str().unwrap_or(""), "pr", "query name echoed: {line}");
+    assert_eq!(
+        v["query"].as_str().unwrap_or(""),
+        "pr",
+        "query name echoed: {line}"
+    );
 }
 
 /// ghcacher sync/prs.rs `upsert_pr_insert_and_update`: insert PR#1 "First", then a
@@ -252,12 +288,20 @@ fn parity_upsert_pr_update_latest_wins() {
     let (prog, _d, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     eng.tick(&prog, true).unwrap();
 
-    let mut pr = rows(&dbp, "rel_pull_request_txt", "SELECT num, title FROM rel_pull_request_txt");
+    let mut pr = rows(
+        &dbp,
+        "rel_pull_request_txt",
+        "SELECT num, title FROM rel_pull_request_txt",
+    );
     pr.sort();
-    assert_eq!(pr, vec![
-        vec!["1".to_string(), "Updated".to_string()],
-        vec!["2".to_string(), "Solo".to_string()],
-    ], "latest-wins: one row per number, the newest title (argmax via max+join)");
+    assert_eq!(
+        pr,
+        vec![
+            vec!["1".to_string(), "Updated".to_string()],
+            vec!["2".to_string(), "Solo".to_string()],
+        ],
+        "latest-wins: one row per number, the newest title (argmax via max+join)"
+    );
 }
 
 /// A two-kind mock for the FULL port (examples/gh-cache-full.dl). The effect kind
@@ -274,17 +318,29 @@ impl EffectExec for FullMock {
                 let prev = args.get("prev").and_then(|v| v.as_str()).unwrap_or("");
                 Ok(if prev.is_empty() {
                     // 200: status, etag, x-ratelimit-remaining, -reset, body.
-                    vec!["200".into(), "etagA".into(), "4998".into(), "1700000000".into(),
-                         r#"{"stargazers_count": 42, "full_name": "cli/cli"}"#.into()]
+                    vec![
+                        "200".into(),
+                        "etagA".into(),
+                        "4998".into(),
+                        "1700000000".into(),
+                        r#"{"stargazers_count": 42, "full_name": "cli/cli"}"#.into(),
+                    ]
                 } else {
                     // 304: no body, but the rate headers still arrive (remaining ticks down).
-                    vec!["304".into(), "".into(), "4997".into(), "1700000000".into(), "".into()]
+                    vec![
+                        "304".into(),
+                        "".into(),
+                        "4997".into(),
+                        "1700000000".into(),
+                        "".into(),
+                    ]
                 })
             }
             // The merged multi-page array (what `gh api --paginate | jq -s add` yields).
             "list_fetch" => Ok(vec![
                 r#"[{"number":1,"title":"fix","state":"open","user":{"login":"alice"}},
-                    {"number":2,"title":"feat","state":"closed","user":{"login":"bob"}}]"#.into(),
+                    {"number":2,"title":"feat","state":"closed","user":{"login":"bob"}}]"#
+                    .into(),
             ]),
             _ => Ok(Vec::new()),
         }
@@ -306,19 +362,55 @@ fn parity_full_port_end_to_end() {
     drive(&mut eng, &prog, &FullMock, 4);
 
     let stars = rows(&dbp, "rel_stars_txt", "SELECT n FROM rel_stars_txt");
-    assert_eq!(stars, vec![vec!["42".to_string()]], "stars normalized from the 200 body");
+    assert_eq!(
+        stars,
+        vec![vec!["42".to_string()]],
+        "stars normalized from the 200 body"
+    );
 
-    let reading = rows(&dbp, "rel_reading_txt", "SELECT remaining FROM rel_reading_txt");
-    assert!(!reading.is_empty(), "the rate reading was captured + carried: {reading:?}");
+    let reading = rows(
+        &dbp,
+        "rel_reading_txt",
+        "SELECT remaining FROM rel_reading_txt",
+    );
+    assert!(
+        !reading.is_empty(),
+        "the rate reading was captured + carried: {reading:?}"
+    );
 
-    let mut prs = rows(&dbp, "rel_pull_request_txt", "SELECT num, title, state, author FROM rel_pull_request_txt");
+    let mut prs = rows(
+        &dbp,
+        "rel_pull_request_txt",
+        "SELECT num, title, state, author FROM rel_pull_request_txt",
+    );
     prs.sort();
-    assert_eq!(prs, vec![
-        vec!["1".to_string(), "fix".to_string(), "open".to_string(), "alice".to_string()],
-        vec!["2".to_string(), "feat".to_string(), "closed".to_string(), "bob".to_string()],
-    ], "both PRs normalized from the paginated array (latest-wins): {prs:?}");
+    assert_eq!(
+        prs,
+        vec![
+            vec![
+                "1".to_string(),
+                "fix".to_string(),
+                "open".to_string(),
+                "alice".to_string()
+            ],
+            vec![
+                "2".to_string(),
+                "feat".to_string(),
+                "closed".to_string(),
+                "bob".to_string()
+            ],
+        ],
+        "both PRs normalized from the paginated array (latest-wins): {prs:?}"
+    );
 
-    let log = rows(&dbp, "rel_change_log_txt", "SELECT DISTINCT kind FROM rel_change_log_txt ORDER BY kind");
-    assert_eq!(log, vec![vec!["pull_request".to_string()], vec!["stars".to_string()]],
-        "the change feed accumulated both entity kinds: {log:?}");
+    let log = rows(
+        &dbp,
+        "rel_change_log_txt",
+        "SELECT DISTINCT kind FROM rel_change_log_txt ORDER BY kind",
+    );
+    assert_eq!(
+        log,
+        vec![vec!["pull_request".to_string()], vec!["stars".to_string()]],
+        "the change feed accumulated both entity kinds: {log:?}"
+    );
 }

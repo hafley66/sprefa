@@ -126,7 +126,10 @@ impl DaemonClient {
                 .header(hyper::header::HOST, "dl-daemon")
                 .body(Full::new(Bytes::new()))
                 .context("build /watch request")?;
-            let resp = sender.send_request(req).await.context("send /watch request")?;
+            let resp = sender
+                .send_request(req)
+                .await
+                .context("send /watch request")?;
             if resp.status() != hyper::StatusCode::OK {
                 bail!("GET /watch: status {}", resp.status());
             }
@@ -137,7 +140,9 @@ impl DaemonClient {
                     return Ok(()); // clean end of stream (daemon shut down)
                 };
                 let frame = frame.context("read /watch stream")?;
-                let Some(chunk) = frame.data_ref() else { continue };
+                let Some(chunk) = frame.data_ref() else {
+                    continue;
+                };
                 buffer.push_str(&String::from_utf8_lossy(chunk));
                 // SSE events are blank-line separated; each carries `data:`
                 // lines (axum writes one per event) and possibly `:` keep-alive
@@ -146,7 +151,9 @@ impl DaemonClient {
                     let event_text: String = buffer[..boundary].to_string();
                     buffer.drain(..boundary + 2);
                     for line in event_text.lines() {
-                        let Some(data) = line.strip_prefix("data:") else { continue };
+                        let Some(data) = line.strip_prefix("data:") else {
+                            continue;
+                        };
                         let Ok(note) = serde_json::from_str::<serde_json::Value>(data.trim())
                         else {
                             continue;

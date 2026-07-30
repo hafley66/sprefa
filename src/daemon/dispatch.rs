@@ -21,7 +21,14 @@ pub(crate) fn log_access(
     bytes_out: usize,
 ) {
     tracing::info!(
-        req_id, surface, method, root = root.unwrap_or(""), ms, ok, bytes_in, bytes_out,
+        req_id,
+        surface,
+        method,
+        root = root.unwrap_or(""),
+        ms,
+        ok,
+        bytes_in,
+        bytes_out,
         "[access]"
     );
 }
@@ -36,7 +43,10 @@ pub(crate) fn parse_request(v: Value) -> Option<Request> {
 /// The `root` envelope key: an absolute path in the request's params. Absent =
 /// the config view.
 fn req_root(req: &Request) -> Option<String> {
-    req.params.get("root").and_then(|v| v.as_str()).map(String::from)
+    req.params
+        .get("root")
+        .and_then(|v| v.as_str())
+        .map(String::from)
 }
 
 /// Dispatch one request. Transport-agnostic and synchronous — both the UDS
@@ -60,11 +70,14 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, req_id: &str) -> Re
                 return Response::err(req.id, INVALID_PARAMS, "add_root needs root");
             };
             return match d.add_root(Path::new(&path)) {
-                Ok(sr) => Response::ok(req.id, json!({
-                    "root": sr.root.to_string_lossy(),
-                    "key": sr.key,
-                    "tick_count": sr.tick_count.load(Ordering::Relaxed),
-                })),
+                Ok(sr) => Response::ok(
+                    req.id,
+                    json!({
+                        "root": sr.root.to_string_lossy(),
+                        "key": sr.key,
+                        "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                    }),
+                ),
                 Err(e) => Response::err(req.id, INVALID_PARAMS, format!("{e}")),
             };
         }
@@ -72,7 +85,11 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, req_id: &str) -> Re
             let Some(path) = req_root(req) else {
                 return Response::err(req.id, INVALID_PARAMS, "drop_root needs root");
             };
-            let purge = req.params.get("purge").and_then(|v| v.as_bool()).unwrap_or(false);
+            let purge = req
+                .params
+                .get("purge")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             return match d.drop_root(Path::new(&path), purge) {
                 Ok(()) => Response::ok(req.id, json!({"ok": true})),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
@@ -86,8 +103,10 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, req_id: &str) -> Re
         // WITHOUT the engine lock: a read-only connection straight on the job db.
         "jobs" => {
             return match d.jobs.list() {
-                Ok(rows) => Response::ok(req.id,
-                    json!({"jobs": rows.iter().map(job_row_json).collect::<Vec<_>>()})),
+                Ok(rows) => Response::ok(
+                    req.id,
+                    json!({"jobs": rows.iter().map(job_row_json).collect::<Vec<_>>()}),
+                ),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             };
         }
@@ -108,36 +127,40 @@ pub(crate) fn handle_request(d: &Arc<Daemon>, req: &Request, req_id: &str) -> Re
 /// served root with its tick count.
 fn daemon_summary(d: &Arc<Daemon>, req: &Request) -> Response {
     let act = crate::activity::snapshot();
-    let roots: Vec<Value> = lock(&d.roots).values().map(|sr| {
-        let (fx_failed, fx_orphaned) = lock(&sr.eng)
-            .effect_status_counts()
-            .unwrap_or((0, 0));
-        json!({
-            "root": sr.root.to_string_lossy(),
-            "key": sr.key,
-            "tick_count": sr.tick_count.load(Ordering::Relaxed),
-            "program": sr.program_display,
-            "settled": sr.settled.load(Ordering::Relaxed),
-            "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
-            "effects_failed": fx_failed,
-            "effects_orphaned": fx_orphaned,
+    let roots: Vec<Value> = lock(&d.roots)
+        .values()
+        .map(|sr| {
+            let (fx_failed, fx_orphaned) = lock(&sr.eng).effect_status_counts().unwrap_or((0, 0));
+            json!({
+                "root": sr.root.to_string_lossy(),
+                "key": sr.key,
+                "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                "program": sr.program_display,
+                "settled": sr.settled.load(Ordering::Relaxed),
+                "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
+                "effects_failed": fx_failed,
+                "effects_orphaned": fx_orphaned,
+            })
         })
-    }).collect();
-    Response::ok(req.id, json!({
-        "ok": true,
-        "build_id": &*d.build_id,
-        "home": d.home.to_string_lossy(),
-        "config_tick_count": d.config.tick_count.load(Ordering::Relaxed),
-        "root_count": roots.len(),
-        "roots": roots,
-        "activity": {
-            "phase": act.phase.as_str(),
-            "detail": act.detail,
-            "program": act.program,
-            "tick": act.tick,
-            "elapsed_ms": act.elapsed_ms,
-        },
-    }))
+        .collect();
+    Response::ok(
+        req.id,
+        json!({
+            "ok": true,
+            "build_id": &*d.build_id,
+            "home": d.home.to_string_lossy(),
+            "config_tick_count": d.config.tick_count.load(Ordering::Relaxed),
+            "root_count": roots.len(),
+            "roots": roots,
+            "activity": {
+                "phase": act.phase.as_str(),
+                "detail": act.detail,
+                "program": act.program,
+                "tick": act.tick,
+                "elapsed_ms": act.elapsed_ms,
+            },
+        }),
+    )
 }
 
 /// Dispatch a root-scoped method against the resolved served root.
@@ -145,41 +168,54 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
     match req.method.as_str() {
         "ping" => {
             let act = crate::activity::snapshot();
-            Response::ok(req.id, json!({
-                "ok": true,
-                "build_id": &*sr.shared.build_id,
-                "root": sr.root.to_string_lossy(),
-                "key": sr.key,
-                "tick_count": sr.tick_count.load(Ordering::Relaxed),
-                "settled": sr.settled.load(Ordering::Relaxed),
-                "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
-                "program": sr.program_display,
-                "program_files": lock(&sr.program_files).iter()
-                    .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
-                "activity": {
-                    "phase": act.phase.as_str(),
-                    "detail": act.detail,
-                    "program": act.program,
-                    "tick": act.tick,
-                    "elapsed_ms": act.elapsed_ms,
-                },
-            }))
+            Response::ok(
+                req.id,
+                json!({
+                    "ok": true,
+                    "build_id": &*sr.shared.build_id,
+                    "root": sr.root.to_string_lossy(),
+                    "key": sr.key,
+                    "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                    "settled": sr.settled.load(Ordering::Relaxed),
+                    "cold_start_pending": sr.cold_pending.load(Ordering::Relaxed),
+                    "program": sr.program_display,
+                    "program_files": lock(&sr.program_files).iter()
+                        .map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                    "activity": {
+                        "phase": act.phase.as_str(),
+                        "detail": act.detail,
+                        "program": act.program,
+                        "tick": act.tick,
+                        "elapsed_ms": act.elapsed_ms,
+                    },
+                }),
+            )
         }
         "await_quiescent" => {
-            let timeout_ms = req.params.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(30_000);
+            let timeout_ms = req
+                .params
+                .get("timeout_ms")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30_000);
             let deadline = Instant::now() + Duration::from_millis(timeout_ms);
             loop {
                 if sr.settled.load(Ordering::Relaxed) {
-                    return Response::ok(req.id, json!({
-                        "settled": true,
-                        "tick_count": sr.tick_count.load(Ordering::Relaxed),
-                    }));
+                    return Response::ok(
+                        req.id,
+                        json!({
+                            "settled": true,
+                            "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                        }),
+                    );
                 }
                 if Instant::now() >= deadline {
-                    return Response::ok(req.id, json!({
-                        "settled": false,
-                        "tick_count": sr.tick_count.load(Ordering::Relaxed),
-                    }));
+                    return Response::ok(
+                        req.id,
+                        json!({
+                            "settled": false,
+                            "tick_count": sr.tick_count.load(Ordering::Relaxed),
+                        }),
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
@@ -197,9 +233,12 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                     _ = eng.log_query("daemon", "query", "", "[]");
                     _ = crate::rels::refresh_query_log(&eng);
                     match eng.run_queries_capture(&prog) {
-                        Ok(results) => Response::ok(req.id, json!({"results": results.iter().map(|r| json!({
+                        Ok(results) => Response::ok(
+                            req.id,
+                            json!({"results": results.iter().map(|r| json!({
                             "rel": r.rel, "columns": r.columns, "rows": r.rows,
-                        })).collect::<Vec<_>>()})),
+                        })).collect::<Vec<_>>()}),
+                        ),
                         Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
                     }
                 }
@@ -215,13 +254,19 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 // agent-turn surface, by touched path) in one round trip.
                 Ok(rows) => {
                     let stages = eng.rel_rows("diag_stage", 2);
-                    let touch: Vec<String> = eng.rel_rows("agent_touch", 3)
-                        .into_iter().filter_map(|r| r.into_iter().nth(2)).collect();
-                    Response::ok(req.id, json!({
-                        "rows": rows.iter().map(diag_to_json).collect::<Vec<_>>(),
-                        "stages": stages,
-                        "touch": touch,
-                    }))
+                    let touch: Vec<String> = eng
+                        .rel_rows("agent_touch", 3)
+                        .into_iter()
+                        .filter_map(|r| r.into_iter().nth(2))
+                        .collect();
+                    Response::ok(
+                        req.id,
+                        json!({
+                            "rows": rows.iter().map(diag_to_json).collect::<Vec<_>>(),
+                            "stages": stages,
+                            "touch": touch,
+                        }),
+                    )
                 }
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
@@ -237,13 +282,20 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             };
             let eng = lock_eng(sr, &req.method);
             match eng.definition_targets(file, text) {
-                Ok(targets) => Response::ok(req.id, json!({"targets": targets.iter()
-                    .map(|(f, l)| json!([f, l])).collect::<Vec<_>>()})),
+                Ok(targets) => Response::ok(
+                    req.id,
+                    json!({"targets": targets.iter()
+                    .map(|(f, l)| json!([f, l])).collect::<Vec<_>>()}),
+                ),
                 Err(e) => Response::err(req.id, INTERNAL_ERROR, format!("{e}")),
             }
         }
         "hover" => {
-            let file = req.params.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            let file = req
+                .params
+                .get("file")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let text = match req.params.get("text").and_then(|v| v.as_str()) {
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing text"),
@@ -270,8 +322,11 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 None => {
                     let eng = lock_eng(sr, &req.method);
                     let Some(meta) = eng.rels.get(rel) else {
-                        return Response::err(req.id, INVALID_PARAMS,
-                            format!("unknown relation {rel:?}"));
+                        return Response::err(
+                            req.id,
+                            INVALID_PARAMS,
+                            format!("unknown relation {rel:?}"),
+                        );
                     };
                     let cols: Vec<String> = meta.cols.iter().map(|c| c.name.clone()).collect();
                     let rows = eng.rel_rows(rel, cols.len());
@@ -284,14 +339,25 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing anchor"),
             };
-            let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
-            let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let limit = req
+                .params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            let offset = req
+                .params
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
             let eng = lock_eng(sr, &req.method);
             let out = crate::anchor::what(&eng, anchor, limit, offset);
-            Response::ok(req.id, json!({
-                "columns": out.columns, "rows": out.rows,
-                "total": out.total, "notes": out.notes,
-            }))
+            Response::ok(
+                req.id,
+                json!({
+                    "columns": out.columns, "rows": out.rows,
+                    "total": out.total, "notes": out.notes,
+                }),
+            )
         }
         "summary" => {
             let path = match req.params.get("path").and_then(|v| v.as_str()) {
@@ -300,10 +366,13 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             };
             let eng = lock_eng(sr, &req.method);
             let out = crate::anchor::summary(&eng, path);
-            Response::ok(req.id, json!({
-                "columns": out.columns, "rows": out.rows,
-                "total": out.total, "notes": out.notes,
-            }))
+            Response::ok(
+                req.id,
+                json!({
+                    "columns": out.columns, "rows": out.rows,
+                    "total": out.total, "notes": out.notes,
+                }),
+            )
         }
         "q" => {
             let verb = match req.params.get("verb").and_then(|v| v.as_str()) {
@@ -314,8 +383,16 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing target"),
             };
-            let limit = req.params.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize);
-            let offset = req.params.get("offset").and_then(|v| v.as_u64()).map(|n| n as usize);
+            let limit = req
+                .params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
+            let offset = req
+                .params
+                .get("offset")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize);
             match run_q_eval(sr, verb, arg, limit, offset) {
                 Ok(v) => Response::ok(req.id, v),
                 Err((code, msg)) => Response::err(req.id, code, msg),
@@ -326,14 +403,19 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s,
                 None => return Response::err(req.id, INVALID_PARAMS, "missing sql"),
             };
-            let params: Vec<Value> = req.params.get("params")
-                .and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let params: Vec<Value> = req
+                .params
+                .get("params")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
             match crate::daemon_read::query_sql(&sr.read_view(), sql_raw, &params) {
                 Some(Ok(v)) => Response::ok(req.id, v),
                 Some(Err((code, msg))) => Response::err(req.id, code, msg),
                 None => {
                     let eng = lock_eng(sr, &req.method);
-                    let params_json = serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
+                    let params_json =
+                        serde_json::to_string(&params).unwrap_or_else(|_| "[]".into());
                     _ = eng.log_query("daemon", "query_sql", sql_raw, &params_json);
                     _ = crate::rels::refresh_query_log(&eng);
                     match eng.query_sql(sql_raw, &params) {
@@ -351,17 +433,34 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 p.get("id").and_then(|v| v.as_str()),
                 p.get("method").and_then(|v| v.as_str()),
             ) else {
-                return Response::err(req.id, INVALID_PARAMS,
-                    "mcp_request needs in_rel, out_rel, id, method");
+                return Response::err(
+                    req.id,
+                    INVALID_PARAMS,
+                    "mcp_request needs in_rel, out_rel, id, method",
+                );
             };
             let args = p.get("params").and_then(|v| v.as_str()).unwrap_or("null");
             let prog = lock(&sr.prog);
-            for (rel, dir) in [(in_rel, crate::ast::PortDir::In), (out_rel, crate::ast::PortDir::Out)] {
+            for (rel, dir) in [
+                (in_rel, crate::ast::PortDir::In),
+                (out_rel, crate::ast::PortDir::Out),
+            ] {
                 match crate::mcp::port_decl(&prog, rel) {
                     Some(port) if port.dir == dir && port.class == "rpc" => {}
-                    _ => return Response::err(req.id, INVALID_PARAMS, format!(
-                        "rel {rel} is not an @{}(rpc) port in the daemon's loaded program",
-                        if dir == crate::ast::PortDir::In { "in" } else { "out" })),
+                    _ => {
+                        return Response::err(
+                            req.id,
+                            INVALID_PARAMS,
+                            format!(
+                                "rel {rel} is not an @{}(rpc) port in the daemon's loaded program",
+                                if dir == crate::ast::PortDir::In {
+                                    "in"
+                                } else {
+                                    "out"
+                                }
+                            ),
+                        )
+                    }
                 }
             }
             let mut eng = lock_eng(sr, &req.method);
@@ -380,15 +479,28 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
             let Some(in_rel) = req.params.get("in_rel").and_then(|v| v.as_str()) else {
                 return Response::err(req.id, INVALID_PARAMS, "mcp_retire needs in_rel");
             };
-            let ids: Vec<String> = req.params.get("ids").and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            let ids: Vec<String> = req
+                .params
+                .get("ids")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             {
                 let prog = lock(&sr.prog);
                 match crate::mcp::port_decl(&prog, in_rel) {
                     Some(port) if port.dir == crate::ast::PortDir::In && port.class == "rpc" => {}
-                    _ => return Response::err(req.id, INVALID_PARAMS, format!(
-                        "rel {in_rel} is not an @in(rpc) port in the daemon's loaded program")),
+                    _ => {
+                        return Response::err(
+                            req.id,
+                            INVALID_PARAMS,
+                            format!(
+                        "rel {in_rel} is not an @in(rpc) port in the daemon's loaded program"),
+                        )
+                    }
                 }
             }
             let mut eng = lock_eng(sr, &req.method);
@@ -404,11 +516,17 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 p.get("session").and_then(|v| v.as_str()),
                 p.get("json").and_then(|v| v.as_str()),
             ) else {
-                return Response::err(req.id, INVALID_PARAMS, "hook_event needs kind, session, json");
+                return Response::err(
+                    req.id,
+                    INVALID_PARAMS,
+                    "hook_event needs kind, session, json",
+                );
             };
             let seq = p.get("seq").and_then(|v| v.as_i64()).unwrap_or_else(|| {
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64).unwrap_or(0)
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0)
             });
             let prog = lock(&sr.prog);
             let mut eng = lock_eng(sr, &req.method);
@@ -437,12 +555,22 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 Some(s) => s.to_string(),
                 None => return Response::err(req.id, INVALID_PARAMS, "missing path"),
             };
-            let mode = req.params.get("mode").and_then(|v| v.as_str()).unwrap_or("watched");
+            let mode = req
+                .params
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .unwrap_or("watched");
             match mode {
                 "once" => {
                     let text = match std::fs::read_to_string(&path) {
                         Ok(t) => t,
-                        Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("read {path}: {e}")),
+                        Err(e) => {
+                            return Response::err(
+                                req.id,
+                                INVALID_PARAMS,
+                                format!("read {path}: {e}"),
+                            )
+                        }
                     };
                     match run_eval(sr, &text) {
                         Ok(v) => Response::ok(req.id, v),
@@ -452,27 +580,41 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                 "watched" => {
                     let canon = match std::fs::canonicalize(&path) {
                         Ok(c) => c,
-                        Err(e) => return Response::err(req.id, INVALID_PARAMS, format!("canonicalize {path}: {e}")),
+                        Err(e) => {
+                            return Response::err(
+                                req.id,
+                                INVALID_PARAMS,
+                                format!("canonicalize {path}: {e}"),
+                            )
+                        }
                     };
                     let already = {
                         let mut pf = lock(&sr.program_files);
                         let dup = pf.iter().any(|f| f == &canon);
-                        if !dup { pf.push(canon.clone()); }
+                        if !dup {
+                            pf.push(canon.clone());
+                        }
                         dup
                     };
                     match sr.reload_program() {
                         Ok(()) => {
                             if let Err(e) = lock_eng(sr, &req.method)
-                                .save_program_meta(&lock(&sr.program_files).clone()) {
+                                .save_program_meta(&lock(&sr.program_files).clone())
+                            {
                                 tracing::warn!("[{}] save_program_meta: {e}", sr.root_label());
                             }
-                            let files: Vec<String> = lock(&sr.program_files).iter()
-                                .map(|f| f.to_string_lossy().into_owned()).collect();
-                            Response::ok(req.id, json!({
-                                "loaded": canon.to_string_lossy(),
-                                "already_loaded": already,
-                                "program_files": files,
-                            }))
+                            let files: Vec<String> = lock(&sr.program_files)
+                                .iter()
+                                .map(|f| f.to_string_lossy().into_owned())
+                                .collect();
+                            Response::ok(
+                                req.id,
+                                json!({
+                                    "loaded": canon.to_string_lossy(),
+                                    "already_loaded": already,
+                                    "program_files": files,
+                                }),
+                            )
                         }
                         Err(e) => {
                             if !already {
@@ -482,8 +624,11 @@ fn dispatch_root(sr: &Arc<ServedRoot>, _d: &Arc<Daemon>, req: &Request) -> Respo
                         }
                     }
                 }
-                other => Response::err(req.id, INVALID_PARAMS,
-                    format!("mode must be watched|once, got {other}")),
+                other => Response::err(
+                    req.id,
+                    INVALID_PARAMS,
+                    format!("mode must be watched|once, got {other}"),
+                ),
             }
         }
         other => Response::err(req.id, METHOD_NOT_FOUND, format!("unknown method: {other}")),
@@ -508,9 +653,7 @@ fn run_eval(sr: &Arc<ServedRoot>, text: &str) -> Result<Value, (i64, String)> {
         }
     };
     let diags = crate::typecheck::check_and_normalize(&mut merged, "<scratch>");
-    let diag_json = |x: &crate::ast::TypeDiag| {
-        json!({"severity": x.severity.as_str(), "code": x.code, "message": x.msg})
-    };
+    let diag_json = |x: &crate::ast::TypeDiag| json!({"severity": x.severity.as_str(), "code": x.code, "message": x.msg});
     let type_errs: Vec<Value> = diags
         .iter()
         .filter(|x| x.severity == crate::ast::Severity::Error)
@@ -526,7 +669,9 @@ fn run_eval(sr: &Arc<ServedRoot>, text: &str) -> Result<Value, (i64, String)> {
     eng.tick(&merged, true)
         .map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
 
-    let qprog = Program { items: snippet_queries };
+    let qprog = Program {
+        items: snippet_queries,
+    };
     let results = eng
         .run_queries_capture(&qprog)
         .map_err(|e| (INTERNAL_ERROR, format!("query: {e}")))?;
@@ -559,8 +704,13 @@ fn run_q_eval(
     offset: Option<usize>,
 ) -> Result<Value, (i64, String)> {
     let Some(spec) = crate::verbs::find(verb) else {
-        return Err((INVALID_PARAMS,
-            format!("unknown verb {verb:?}; available verbs: {}", crate::verbs::verb_list())));
+        return Err((
+            INVALID_PARAMS,
+            format!(
+                "unknown verb {verb:?}; available verbs: {}",
+                crate::verbs::verb_list()
+            ),
+        ));
     };
     let snippet = crate::verbs::verb_program(spec, arg)
         .map_err(|e| (INVALID_PARAMS, format!("verb program: {e}")))?;
@@ -572,21 +722,35 @@ fn run_q_eval(
         .collect();
     let mut merged = {
         let base = lock(&sr.prog);
-        Program { items: base.items.iter().cloned().chain(snippet.items).collect() }
+        Program {
+            items: base.items.iter().cloned().chain(snippet.items).collect(),
+        }
     };
     let diags = crate::typecheck::check_and_normalize(&mut merged, "<verb>");
-    if diags.iter().any(|d| d.severity == crate::ast::Severity::Error) {
-        let msgs: Vec<String> = diags.iter()
+    if diags
+        .iter()
+        .any(|d| d.severity == crate::ast::Severity::Error)
+    {
+        let msgs: Vec<String> = diags
+            .iter()
             .filter(|d| d.severity == crate::ast::Severity::Error)
-            .map(|d| d.msg.clone()).collect();
-        return Err((INTERNAL_ERROR, format!("verb typecheck: {}", msgs.join("; "))));
+            .map(|d| d.msg.clone())
+            .collect();
+        return Err((
+            INTERNAL_ERROR,
+            format!("verb typecheck: {}", msgs.join("; ")),
+        ));
     }
     let conn = db::open(None).map_err(|e| (INTERNAL_ERROR, format!("db: {e}")))?;
     let mut eng = Engine::new(conn, sr.root.clone());
     eng.set_repos(served_repos(sr.key.is_none()));
-    eng.tick(&merged, true).map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
-    let qprog = Program { items: snippet_queries };
-    let results = eng.run_queries_capture(&qprog)
+    eng.tick(&merged, true)
+        .map_err(|e| (INTERNAL_ERROR, format!("tick: {e}")))?;
+    let qprog = Program {
+        items: snippet_queries,
+    };
+    let results = eng
+        .run_queries_capture(&qprog)
         .map_err(|e| (INTERNAL_ERROR, format!("query: {e}")))?;
     let (columns, rows) = crate::verbs::shape(results);
     let total = rows.len();

@@ -191,9 +191,19 @@ impl BooleanDeltaFixture {
         let src_del_rows = triples(&src_del);
         let stable_add_rows = doubles(&stable_add);
         let stable_del_rows = doubles(&stable_del);
-        self.batch_insert("src", "INSERT OR IGNORE INTO src(repo,sym,kind)", 3, &src_add_rows)?;
+        self.batch_insert(
+            "src",
+            "INSERT OR IGNORE INTO src(repo,sym,kind)",
+            3,
+            &src_add_rows,
+        )?;
         self.batch_delete("src", &["repo", "sym", "kind"], &src_del_rows)?;
-        self.batch_insert("stable", "INSERT OR IGNORE INTO stable(sym,payload)", 2, &stable_add_rows)?;
+        self.batch_insert(
+            "stable",
+            "INSERT OR IGNORE INTO stable(sym,payload)",
+            2,
+            &stable_add_rows,
+        )?;
         self.batch_delete("stable", &["sym", "payload"], &stable_del_rows)?;
 
         // --- projected (source-driven presence) -----------------------------
@@ -235,7 +245,12 @@ impl BooleanDeltaFixture {
                 }
             }
         }
-        self.batch_insert("projected", "INSERT INTO projected(sym)", 1, &projected_insert)?;
+        self.batch_insert(
+            "projected",
+            "INSERT INTO projected(sym)",
+            1,
+            &projected_insert,
+        )?;
         if !projected_delete.is_empty() {
             self.executed_mutations.push(DELETE_PROJECTED_SCOPED);
         }
@@ -303,7 +318,12 @@ impl BooleanDeltaFixture {
                 }
             }
         }
-        self.batch_insert("joined", "INSERT INTO joined(sym,payload)", 2, &joined_insert)?;
+        self.batch_insert(
+            "joined",
+            "INSERT INTO joined(sym,payload)",
+            2,
+            &joined_insert,
+        )?;
         if !joined_delete.is_empty() {
             self.executed_mutations.push(DELETE_JOINED_SCOPED);
         }
@@ -443,7 +463,11 @@ impl BooleanDeltaFixture {
             "src",
             "SELECT DISTINCT sym FROM src WHERE kind='keep' ORDER BY sym",
         )?;
-        let actual_projected = strings(&self.db, "projected", "SELECT sym FROM projected ORDER BY sym")?;
+        let actual_projected = strings(
+            &self.db,
+            "projected",
+            "SELECT sym FROM projected ORDER BY sym",
+        )?;
         assert_eq!(
             actual_projected, expected_projected,
             "projected differs from clean rebuild"
@@ -467,8 +491,10 @@ impl BooleanDeltaFixture {
     }
 
     fn seed_clean_unrelated(&mut self, count: usize) -> Result<()> {
-        self.db.execute_batch_on("src", &format!(
-            "
+        self.db.execute_batch_on(
+            "src",
+            &format!(
+                "
             WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<{count})
               INSERT INTO src SELECT 'bulk',printf('u%05d',i),'keep' FROM n;
             WITH RECURSIVE n(i) AS (VALUES(1) UNION ALL SELECT i+1 FROM n WHERE i<{count})
@@ -477,7 +503,8 @@ impl BooleanDeltaFixture {
             INSERT INTO joined SELECT p.sym,s.payload FROM projected p JOIN stable s USING(sym);
             INSERT INTO out SELECT DISTINCT sym FROM joined WHERE payload LIKE 'emit:%';
         "
-        ))?;
+            ),
+        )?;
         Ok(())
     }
 }
@@ -614,7 +641,11 @@ mod tests {
         let metrics = f.apply_generation(&changes)?;
 
         // Every symbol reached a public row in projected, joined, and out.
-        assert_eq!(metrics.public_plus, 3 * K, "expected a full cascade per symbol");
+        assert_eq!(
+            metrics.public_plus,
+            3 * K,
+            "expected a full cascade per symbol"
+        );
         assert_eq!(metrics.delta_input_rows, 2 * K);
         assert!(
             changes.len() > 64,

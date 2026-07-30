@@ -115,15 +115,18 @@ export function compute(values: number[]): number {
 }
 
 fn snapshot_rows_digests(eng: &Engine) -> BTreeMap<String, String> {
-    eng.query_sql("SELECT rel, digest FROM _reldigest WHERE rel LIKE 'rows:%'", &[])
-        .unwrap()
-        .into_iter()
-        .map(|row| {
-            let rel = row[0].as_str().unwrap().to_string();
-            let digest = row[1].as_str().unwrap().to_string();
-            (rel, digest)
-        })
-        .collect()
+    eng.query_sql(
+        "SELECT rel, digest FROM _reldigest WHERE rel LIKE 'rows:%'",
+        &[],
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| {
+        let rel = row[0].as_str().unwrap().to_string();
+        let digest = row[1].as_str().unwrap().to_string();
+        (rel, digest)
+    })
+    .collect()
 }
 
 fn extract_rels_present(digests: &BTreeMap<String, String>) -> Vec<String> {
@@ -157,7 +160,10 @@ fn extraction_is_deterministic_across_identical_rebuilds() {
     eng.tick(&prog, true).unwrap();
     let first = snapshot_rows_digests(&eng);
     let rels = extract_rels_present(&first);
-    assert!(!rels.is_empty(), "at least one extract-family rel must land in _reldigest");
+    assert!(
+        !rels.is_empty(),
+        "at least one extract-family rel must land in _reldigest"
+    );
     assert!(
         rels.iter().any(|r| r == "rows:df_node"),
         "the digested rel set must contain df_node, got: {rels:?}"

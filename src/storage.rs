@@ -99,7 +99,12 @@ impl Db {
     /// [`take_write_ns`], the corpus-scaling profiling harness's render-write
     /// attribution) can wrap ONE call instead of threading `Instant::now()`
     /// through every early return.
-    fn retract_rows_uncounted(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+    fn retract_rows_uncounted(
+        &self,
+        table: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+    ) -> Result<usize> {
         if rows.is_empty() {
             return Ok(0);
         }
@@ -216,26 +221,32 @@ mod tests {
             &db,
             "CREATE TABLE rel_storage_trait (id INTEGER PRIMARY KEY, value TEXT); \
              CREATE INDEX rel_storage_trait_value ON rel_storage_trait(value);",
-        ).unwrap();
+        )
+        .unwrap();
 
         let initial = vec![
             vec![Value::Int(1), Value::Text("one".into())],
             vec![Value::Int(2), Value::Text("two".into())],
         ];
-        assert_eq!(Storage::insert_rows(
-            &db, "rel_storage_trait", &["id", "value"], &initial,
-        ).unwrap(), 2);
+        assert_eq!(
+            Storage::insert_rows(&db, "rel_storage_trait", &["id", "value"], &initial,).unwrap(),
+            2
+        );
 
         let initial_stats = Storage::rel_stats(&db, "storage_trait").unwrap();
         assert_eq!(initial_stats["rows"], 2);
 
         let replacement = vec![vec![Value::Int(3), Value::Text("three".into())]];
-        assert_eq!(Storage::reload_rel(
-            &db, "rel_storage_trait", &["id", "value"], &replacement,
-        ).unwrap(), 1);
+        assert_eq!(
+            Storage::reload_rel(&db, "rel_storage_trait", &["id", "value"], &replacement,).unwrap(),
+            1
+        );
         let stats = Storage::rel_stats(&db, "storage_trait").unwrap();
         assert_eq!(stats["rows"], 1);
-        assert_eq!(stats["indexes"], serde_json::json!(["rel_storage_trait_value"]));
+        assert_eq!(
+            stats["indexes"],
+            serde_json::json!(["rel_storage_trait_value"])
+        );
     }
 
     #[test]
@@ -272,12 +283,15 @@ mod tests {
             33_000
         );
 
-        let deleted = Storage::retract_rows(&db, "retract_chunk_budget", &["a", "b"], &rows).unwrap();
+        let deleted =
+            Storage::retract_rows(&db, "retract_chunk_budget", &["a", "b"], &rows).unwrap();
         assert_eq!(deleted, 33_000);
 
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_chunk_budget", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_chunk_budget", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -286,7 +300,10 @@ mod tests {
     fn retract_rows_empty_input_is_a_no_op() {
         let db = db::open(None).unwrap();
         Storage::execute(&db, "CREATE TABLE retract_empty_noop (a INTEGER)").unwrap();
-        assert_eq!(Storage::retract_rows(&db, "retract_empty_noop", &["a"], &[]).unwrap(), 0);
+        assert_eq!(
+            Storage::retract_rows(&db, "retract_empty_noop", &["a"], &[]).unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -300,7 +317,9 @@ mod tests {
         assert_eq!(deleted, 1);
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_single_row", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_single_row", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -320,11 +339,17 @@ mod tests {
             .collect();
         Storage::insert_rows(&db, "retract_exact_budget", &["a", "b"], &rows).unwrap();
 
-        let deleted = Storage::retract_rows(&db, "retract_exact_budget", &["a", "b"], &rows).unwrap();
-        assert_eq!(deleted, chunk_rows, "exactly-budget rows must all delete in the single chunk");
+        let deleted =
+            Storage::retract_rows(&db, "retract_exact_budget", &["a", "b"], &rows).unwrap();
+        assert_eq!(
+            deleted, chunk_rows,
+            "exactly-budget rows must all delete in the single chunk"
+        );
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_exact_budget", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_exact_budget", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -334,7 +359,11 @@ mod tests {
     #[test]
     fn retract_rows_budget_plus_one_spans_two_chunks() {
         let db = db::open(None).unwrap();
-        Storage::execute(&db, "CREATE TABLE retract_budget_plus_one (a INTEGER, b TEXT)").unwrap();
+        Storage::execute(
+            &db,
+            "CREATE TABLE retract_budget_plus_one (a INTEGER, b TEXT)",
+        )
+        .unwrap();
 
         let ncol = 2;
         let chunk_rows = crate::db::PARAM_BUDGET / ncol;
@@ -343,11 +372,18 @@ mod tests {
             .collect();
         Storage::insert_rows(&db, "retract_budget_plus_one", &["a", "b"], &rows).unwrap();
 
-        let deleted = Storage::retract_rows(&db, "retract_budget_plus_one", &["a", "b"], &rows).unwrap();
-        assert_eq!(deleted, chunk_rows + 1, "budget+1 rows must fully delete across two chunks");
+        let deleted =
+            Storage::retract_rows(&db, "retract_budget_plus_one", &["a", "b"], &rows).unwrap();
+        assert_eq!(
+            deleted,
+            chunk_rows + 1,
+            "budget+1 rows must fully delete across two chunks"
+        );
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_budget_plus_one", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_budget_plus_one", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -365,21 +401,31 @@ mod tests {
             "CREATE TABLE retract_wide_tuple (\
                 c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, \
                 c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER)",
-        ).unwrap();
+        )
+        .unwrap();
         let cols = ["c0", "c1", "c2", "c3", "c4", "c5", "c6", "c7"];
         let ncol = cols.len();
         let chunk_rows = crate::db::PARAM_BUDGET / ncol;
         let row_count = 2 * chunk_rows - 1;
         let rows: Vec<Vec<Value>> = (0..row_count as i64)
-            .map(|row_index| (0..ncol as i64).map(|col_index| Value::Int(row_index * 10 + col_index)).collect())
+            .map(|row_index| {
+                (0..ncol as i64)
+                    .map(|col_index| Value::Int(row_index * 10 + col_index))
+                    .collect()
+            })
             .collect();
         Storage::insert_rows(&db, "retract_wide_tuple", &cols, &rows).unwrap();
 
         let deleted = Storage::retract_rows(&db, "retract_wide_tuple", &cols, &rows).unwrap();
-        assert_eq!(deleted, row_count, "2*chunk_rows-1 wide-tuple rows must all delete across 2 chunks");
+        assert_eq!(
+            deleted, row_count,
+            "2*chunk_rows-1 wide-tuple rows must all delete across 2 chunks"
+        );
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_wide_tuple", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_wide_tuple", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -395,18 +441,25 @@ mod tests {
 
         let duplicated_row = vec![Value::Int(1), Value::Text("dup".into())];
         let other_row = vec![Value::Int(2), Value::Text("other".into())];
-        let seed_rows = vec![duplicated_row.clone(), duplicated_row.clone(), other_row.clone()];
+        let seed_rows = vec![
+            duplicated_row.clone(),
+            duplicated_row.clone(),
+            other_row.clone(),
+        ];
         Storage::insert_rows(&db, "retract_dup_in_table", &["a", "b"], &seed_rows).unwrap();
 
         let deleted =
-            Storage::retract_rows(&db, "retract_dup_in_table", &["a", "b"], &[duplicated_row]).unwrap();
+            Storage::retract_rows(&db, "retract_dup_in_table", &["a", "b"], &[duplicated_row])
+                .unwrap();
         assert_eq!(
             deleted, 2,
             "pinned: a full-tuple DELETE removes every physical copy sharing that tuple, not just one"
         );
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_dup_in_table", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_dup_in_table", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1, "the untouched other_row must survive");
     }
@@ -416,15 +469,26 @@ mod tests {
         let db = db::open(None).unwrap();
         Storage::execute(&db, "CREATE TABLE retract_absent_row (a INTEGER, b TEXT)").unwrap();
         let present_row = vec![Value::Int(1), Value::Text("present".into())];
-        Storage::insert_rows(&db, "retract_absent_row", &["a", "b"], &vec![present_row.clone()]).unwrap();
+        Storage::insert_rows(
+            &db,
+            "retract_absent_row",
+            &["a", "b"],
+            &vec![present_row.clone()],
+        )
+        .unwrap();
 
         let absent_row = vec![Value::Int(99), Value::Text("never-inserted".into())];
         let deleted =
             Storage::retract_rows(&db, "retract_absent_row", &["a", "b"], &[absent_row]).unwrap();
-        assert_eq!(deleted, 0, "retracting a row that was never present must be a silent no-op");
+        assert_eq!(
+            deleted, 0,
+            "retracting a row that was never present must be a silent no-op"
+        );
         let count: i64 = db
             .conn()
-            .query_row("SELECT COUNT(*) FROM retract_absent_row", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM retract_absent_row", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1, "the unrelated present_row must survive untouched");
     }
@@ -435,7 +499,8 @@ mod tests {
         Storage::execute(
             &db,
             "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL)",
-        ).unwrap();
+        )
+        .unwrap();
         let mut sink = SymSink::new();
         sink.sym("StorageTraitSymbol");
         sink.sym("StorageTraitSymbol");

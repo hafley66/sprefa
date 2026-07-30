@@ -61,7 +61,12 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
     // no tab filter: a single-column section (`? service_op`) has none.
     sec.lines()
         .filter(|l| !l.is_empty() && !l.starts_with("? ") && !l.trim_start().starts_with('('))
-        .map(|l| l.trim_start().split('\t').map(|s| s.trim_end().to_string()).collect())
+        .map(|l| {
+            l.trim_start()
+                .split('\t')
+                .map(|s| s.trim_end().to_string())
+                .collect()
+        })
         .collect()
 }
 
@@ -70,12 +75,18 @@ fn node_id(nodes: &[Vec<String>], kind: &str, var: &str, fn_frag: &str, out: &st
         .iter()
         .filter(|r| r.len() >= 4 && r[1] == kind && r[2] == var && r[3].contains(fn_frag))
         .collect();
-    assert_eq!(hits.len(), 1, "expected one {kind}/{var} in {fn_frag}, got {}:\n{out}", hits.len());
+    assert_eq!(
+        hits.len(),
+        1,
+        "expected one {kind}/{var} in {fn_frag}, got {}:\n{out}",
+        hits.len()
+    );
     hits[0][0].clone()
 }
 
 // NB: single literal — a `\n\` continuation would eat the YAML indentation.
-const SPEC: &str = "openapi: 3.0.0\npaths:\n  /orders:\n    post:\n      operationId: createOrder\n";
+const SPEC: &str =
+    "openapi: 3.0.0\npaths:\n  /orders:\n    post:\n      operationId: createOrder\n";
 
 const CLIENT: &str = "// GENERATED from openapi\n\
 export function createOrder(payload: string): string { return payload; }\n\
@@ -153,7 +164,10 @@ fn no_spec_no_wire() {
 
     let secs = sections(&out);
     assert!(secs.len() >= 5, "expected 5 query sections:\n{out}");
-    assert!(rows(&secs[0]).is_empty(), "no spec -> no service_op rows:\n{out}");
+    assert!(
+        rows(&secs[0]).is_empty(),
+        "no spec -> no service_op rows:\n{out}"
+    );
 
     let mut reach: HashSet<(String, String)> = HashSet::new();
     for r in rows(&secs[3]) {

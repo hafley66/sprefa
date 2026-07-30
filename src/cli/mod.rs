@@ -5,8 +5,8 @@
 //! Layout: [`root`] resolves the working root, [`daemon_cmd`] owns the daemon
 //! subcommand + shared output helpers, and this module wires the two together.
 
-mod daemon_cmd;
 mod check_deadline;
+mod daemon_cmd;
 mod health;
 mod inputs;
 mod query;
@@ -109,7 +109,12 @@ struct Cli {
     /// transport either way). Self-override lets `--lsp --stdio` coexist: a
     /// client that passes the flag AND a client library that appends the alias
     /// must not kill the server with clap's duplicate-arg error.
-    #[arg(long, alias = "stdio", overrides_with = "lsp", help_heading = "Run modes")]
+    #[arg(
+        long,
+        alias = "stdio",
+        overrides_with = "lsp",
+        help_heading = "Run modes"
+    )]
     lsp: bool,
     /// M5.3: additive `--lsp` source mode. Instead of booting the dl engine,
     /// poll this sqlite file's `diag_v5` view (path, line, col, end_line,
@@ -257,7 +262,9 @@ fn is_daemon_foreground(raw: &[String]) -> bool {
     }
     match raw.get(1).map(String::as_str) {
         Some("serve") => true,
-        Some("start") => raw[2..].iter().any(|a| a == "--foreground" || a == "--tray"),
+        Some("start") => raw[2..]
+            .iter()
+            .any(|a| a == "--foreground" || a == "--tray"),
         _ => false,
     }
 }
@@ -517,9 +524,15 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
         // code; stderr feeds the agent), 1 broken program (user-facing).
         // R7: resolve the routing stage (default the pre-commit surface); reject
         // an unknown name loudly rather than silently surfacing nothing.
-        let stage = cli.stage.as_deref().unwrap_or(crate::stage::DEFAULT_STAGE).to_string();
+        let stage = cli
+            .stage
+            .as_deref()
+            .unwrap_or(crate::stage::DEFAULT_STAGE)
+            .to_string();
         if !crate::stage::is_stage(&stage) {
-            anyhow::bail!("unknown --stage `{stage}` (expected live, commit, agent-turn, or agent-session)");
+            anyhow::bail!(
+                "unknown --stage `{stage}` (expected live, commit, agent-turn, or agent-session)"
+            );
         }
         // `--max-wall` marks the hook surface: its no-daemon fallback reads the
         // shared root db read-only (storage-endgame L2) — a hook never
@@ -531,13 +544,32 @@ fn dispatch_mode(cli: Cli) -> Result<()> {
                 let root = root.clone();
                 let json = cli.diag_json;
                 let stage = stage.clone();
-                move || crate::run_check(&programs, db.as_deref(), db_defaulted, root, json, &stage, true)
-            })? else {
+                move || {
+                    crate::run_check(
+                        &programs,
+                        db.as_deref(),
+                        db_defaulted,
+                        root,
+                        json,
+                        &stage,
+                        true,
+                    )
+                }
+            })?
+            else {
                 return Ok(());
             };
             errors
         } else {
-            crate::run_check(programs, db.as_deref(), db_defaulted, root, cli.diag_json, &stage, false)?
+            crate::run_check(
+                programs,
+                db.as_deref(),
+                db_defaulted,
+                root,
+                cli.diag_json,
+                &stage,
+                false,
+            )?
         };
         if errors > 0 {
             eprintln!("{errors} error-severity diagnostic(s) found"); // @eprintln-ok: final user-facing error count before exit 2
@@ -589,8 +621,8 @@ mod tests {
             vec!["dl", "--lsp", "--stdio"],
             vec!["dl", "--stdio", "--lsp"],
         ] {
-            let cli = Cli::try_parse_from(&argv)
-                .unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
+            let cli =
+                Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?} must parse: {e}"));
             assert!(cli.lsp, "{argv:?} must set lsp");
         }
     }

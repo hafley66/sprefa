@@ -19,10 +19,7 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
         .current_dir(dir)
         .output()
@@ -95,11 +92,7 @@ impl<T: Identity> Store for User<T> {}
 fn type_edges_carry_rev() {
     let d = sandbox("rev");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(
-        d.join("src/lib.rs"),
-        "struct Id;\nstruct User { id: Id }\n",
-    )
-    .unwrap();
+    fs::write(d.join("src/lib.rs"), "struct Id;\nstruct User { id: Id }\n").unwrap();
 
     // A fresh (non-git) root has no HEAD, so `WORK` resolves to the zero
     // sentinel and the rev-aware table tags edges with it. `WORK` is an ALIAS
@@ -170,7 +163,11 @@ fn type_edge_distinguishes_repos() {
         .output()
         .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let rows: Vec<&str> = stdout
         .split("? type_edge")
@@ -179,9 +176,19 @@ fn type_edge_distinguishes_repos() {
         .lines()
         .filter(|l| l.contains("Auth\tId\tfield"))
         .collect();
-    assert_eq!(rows.len(), 2, "one Auth->Id edge per repo, not collapsed to one: {stdout}");
-    assert!(rows.iter().any(|l| l.trim().ends_with("\tra")), "ra-tagged row: {rows:?}");
-    assert!(rows.iter().any(|l| l.trim().ends_with("\trb")), "rb-tagged row: {rows:?}");
+    assert_eq!(
+        rows.len(),
+        2,
+        "one Auth->Id edge per repo, not collapsed to one: {stdout}"
+    );
+    assert!(
+        rows.iter().any(|l| l.trim().ends_with("\tra")),
+        "ra-tagged row: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|l| l.trim().ends_with("\trb")),
+        "rb-tagged row: {rows:?}"
+    );
 }
 
 #[test]
@@ -192,7 +199,8 @@ fn declaring_type_edge_errors() {
         let (code, _, err) = run(&d, &prog, &[]);
         assert_ne!(code, 0, "redeclaring `{name}` must fail");
         assert!(
-            err.contains("reserved-name") && err.contains(&format!("relation `{name}`"))
+            err.contains("reserved-name")
+                && err.contains(&format!("relation `{name}`"))
                 && err.contains("pick another name"),
             "expected parse-tier type-edge reservation/fix for {name}, got: {err}"
         );

@@ -29,7 +29,12 @@ fn check(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--db", dir.join("db").to_str().unwrap(), "--check", "--no-daemon"])
+        .args([
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--check",
+            "--no-daemon",
+        ])
         .env("SPREFA_CONFIG", dir.join("no.toml"))
         .current_dir(dir)
         .output()
@@ -47,7 +52,11 @@ fn check(dir: &Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn extra_atom_in_literal_scan_source_rule_is_refused() {
     let sandbox_dir = sandbox("literal");
-    fs::write(sandbox_dir.join("src/marked.rs"), "fn important_work() {}\n").unwrap();
+    fs::write(
+        sandbox_dir.join("src/marked.rs"),
+        "fn important_work() {}\n",
+    )
+    .unwrap();
     let prog = r#"
 rel tagged_path(marked_path: text).
 tagged_path("src/marked.rs").
@@ -63,11 +72,18 @@ important_function(function_path, function_name) <-
     // type error skips the tick entirely, same bucket as brand-mismatch/
     // not-stratified/json-in-source), 2 a runtime rail violation. This is a
     // typecheck-time TypeDiag, so it is a "broken program" (1), not a rail (2).
-    assert_eq!(code, 1, "an extra body atom on a literal-coord source rule must block --check:\n{stderr}");
-    assert!(stderr.contains("source-rule-extra-atom"),
-        "expected the source-rule-extra-atom code:\n{stderr}");
-    assert!(stderr.contains("important_function") && stderr.contains("tagged_path"),
-        "message must name the rel and the dropped join:\n{stderr}");
+    assert_eq!(
+        code, 1,
+        "an extra body atom on a literal-coord source rule must block --check:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("source-rule-extra-atom"),
+        "expected the source-rule-extra-atom code:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("important_function") && stderr.contains("tagged_path"),
+        "message must name the rel and the dropped join:\n{stderr}"
+    );
 }
 
 /// (2) Negative control: the SAME rule shape minus the extra atom typechecks
@@ -76,7 +92,11 @@ important_function(function_path, function_name) <-
 #[test]
 fn source_rule_without_extra_atom_is_clean() {
     let sandbox_dir = sandbox("clean");
-    fs::write(sandbox_dir.join("src/marked.rs"), "fn important_work() {}\n").unwrap();
+    fs::write(
+        sandbox_dir.join("src/marked.rs"),
+        "fn important_work() {}\n",
+    )
+    .unwrap();
     let prog = r#"
 rel important_function(function_path: text, function_name: text).
 important_function(function_path, function_name) <-
@@ -84,8 +104,14 @@ important_function(function_path, function_name) <-
     match(function_path, rev, /fn (?P<function_name>\w+)/, matched_line).
 "#;
     let (code, _stdout, stderr) = check(&sandbox_dir, prog);
-    assert_eq!(code, 0, "a plain scan+match source rule must typecheck clean:\n{stderr}");
-    assert!(!stderr.contains("source-rule-extra-atom"), "false positive:\n{stderr}");
+    assert_eq!(
+        code, 0,
+        "a plain scan+match source rule must typecheck clean:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("source-rule-extra-atom"),
+        "false positive:\n{stderr}"
+    );
 }
 
 /// (3) Negative control: a DATA-DRIVEN scan (`repo`/`rev` bound by a
@@ -95,7 +121,11 @@ important_function(function_path, function_name) <-
 #[test]
 fn data_driven_scan_coordinate_atom_is_not_flagged() {
     let sandbox_dir = sandbox("data_driven");
-    fs::write(sandbox_dir.join("src/marked.rs"), "fn important_work() {}\n").unwrap();
+    fs::write(
+        sandbox_dir.join("src/marked.rs"),
+        "fn important_work() {}\n",
+    )
+    .unwrap();
     let prog = r#"
 rel scan_pin(pinned_repo: text, pinned_rev: text).
 scan_pin(".", "WORK").
@@ -106,6 +136,12 @@ scanned_path(pinned_rev, scanned_path) <-
     scan(pinned_repo, pinned_rev, "src/*.rs", scanned_path, rev_out).
 "#;
     let (code, _stdout, stderr) = check(&sandbox_dir, prog);
-    assert_eq!(code, 0, "a data-driven scan coordinate atom must typecheck clean:\n{stderr}");
-    assert!(!stderr.contains("source-rule-extra-atom"), "false positive on data-driven scan:\n{stderr}");
+    assert_eq!(
+        code, 0,
+        "a data-driven scan coordinate atom must typecheck clean:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("source-rule-extra-atom"),
+        "false positive on data-driven scan:\n{stderr}"
+    );
 }

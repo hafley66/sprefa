@@ -45,15 +45,24 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn failed_query_does_not_abort_the_chain() {
     let d = sandbox("chain");
-    let (code, out, err) = run(&d, concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(z).\n",          // wrong arity (z is not a column, so no shorthand): fails at eval, not typecheck
-        "? hit(p, l).\n",
-    ));
-    assert!(err.contains("query `hit` failed"), "first query reports its failure:\n{err}");
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
+            "? hit(z).\n", // wrong arity (z is not a column, so no shorthand): fails at eval, not typecheck
+            "? hit(p, l).\n",
+        ),
+    );
+    assert!(
+        err.contains("query `hit` failed"),
+        "first query reports its failure:\n{err}"
+    );
     assert!(out.contains("? hit =>"), "second query still runs:\n{out}");
-    assert!(out.contains("src/x.rs"), "second query prints its row:\n{out}");
+    assert!(
+        out.contains("src/x.rs"),
+        "second query prints its row:\n{out}"
+    );
     assert_eq!(code, 0, "a failed query is not a fatal error:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }
@@ -63,14 +72,19 @@ fn failed_query_does_not_abort_the_chain() {
 #[test]
 fn undeclared_relation_is_a_clear_error() {
     let d = sandbox("undecl");
-    let (code, _out, err) = run(&d, concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? missingrel(x).\n",
-    ));
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
+            "? missingrel(x).\n",
+        ),
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("relation `missingrel`") && err.contains("never declared"),
-        "names the undeclared rel:\n{err}");
+    assert!(
+        err.contains("relation `missingrel`") && err.contains("never declared"),
+        "names the undeclared rel:\n{err}"
+    );
     assert!(!err.contains("no such table"), "no raw SQLite leak:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }
@@ -80,13 +94,22 @@ fn undeclared_relation_is_a_clear_error() {
 #[test]
 fn scan_matching_no_files_warns() {
     let d = sandbox("zero");
-    let (_code, _out, err) = run(&d, concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"nope/**/*.zzz\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p, l).\n",
-    ));
-    assert!(err.contains("source `hit` matched 0 files"), "zero-match warning names the rule:\n{err}");
-    assert!(err.contains("nope/**/*.zzz"), "warning names the glob:\n{err}");
+    let (_code, _out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"nope/**/*.zzz\", p, rev), match(p, rev, /alpha/, l).\n",
+            "? hit(p, l).\n",
+        ),
+    );
+    assert!(
+        err.contains("source `hit` matched 0 files"),
+        "zero-match warning names the rule:\n{err}"
+    );
+    assert!(
+        err.contains("nope/**/*.zzz"),
+        "warning names the glob:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -96,14 +119,19 @@ fn scan_matching_no_files_warns() {
 #[test]
 fn polyglot_sibling_zero_match_is_silent() {
     let d = sandbox("sibling");
-    let (_code, _out, err) = run(&d, concat!(
-        "rel hit(p: file).\n",
-        "hit(p) <- scan(\"src/**/*.rs\", p, rev).\n",
-        "hit(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
-        "? hit(p).\n",
-    ));
-    assert!(!err.contains("matched 0 files"),
-        "a sibling glob matched, so the empty polyglot glob stays silent:\n{err}");
+    let (_code, _out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file).\n",
+            "hit(p) <- scan(\"src/**/*.rs\", p, rev).\n",
+            "hit(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
+            "? hit(p).\n",
+        ),
+    );
+    assert!(
+        !err.contains("matched 0 files"),
+        "a sibling glob matched, so the empty polyglot glob stays silent:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -113,15 +141,24 @@ fn polyglot_sibling_zero_match_is_silent() {
 #[test]
 fn consumed_zero_match_scan_is_quiet_not_loud() {
     let d = sandbox("consumed");
-    let (_code, _out, err) = run(&d, concat!(
-        "rel helper(p: file).\n",
-        "helper(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
-        "rel uses(p: file).\n",
-        "uses(p) <- helper(p).\n",
-        "? uses(p).\n",
-    ));
-    assert!(err.contains("matched 0 files this tick"), "consumed helper warns quietly:\n{err}");
-    assert!(!err.contains("working root"), "the quiet form drops the fix-it note:\n{err}");
+    let (_code, _out, err) = run(
+        &d,
+        concat!(
+            "rel helper(p: file).\n",
+            "helper(p) <- scan(\"nope/**/*.zzz\", p, rev).\n",
+            "rel uses(p: file).\n",
+            "uses(p) <- helper(p).\n",
+            "? uses(p).\n",
+        ),
+    );
+    assert!(
+        err.contains("matched 0 files this tick"),
+        "consumed helper warns quietly:\n{err}"
+    );
+    assert!(
+        !err.contains("working root"),
+        "the quiet form drops the fix-it note:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -129,12 +166,18 @@ fn consumed_zero_match_scan_is_quiet_not_loud() {
 #[test]
 fn scan_with_matches_does_not_warn() {
     let d = sandbox("nowarn");
-    let (_code, _out, err) = run(&d, concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p, l).\n",
-    ));
-    assert!(!err.contains("matched 0 files"), "no zero-match warning when files matched:\n{err}");
+    let (_code, _out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
+            "? hit(p, l).\n",
+        ),
+    );
+    assert!(
+        !err.contains("matched 0 files"),
+        "no zero-match warning when files matched:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -142,14 +185,23 @@ fn scan_with_matches_does_not_warn() {
 #[test]
 fn double_slash_is_a_clear_error() {
     let d = sandbox("slash");
-    let (code, _out, err) = run(&d, concat!(
-        "rel x(a: int).\n",
-        "// C-style comment habit\n",
-        "x(1).\n",
-        "? x(a).\n",
-    ));
-    assert!(err.contains("dl comments start with `#`"), "clear comment hint:\n{err}");
-    assert!(!err.contains("Regex(\"\")"), "no baffling Regex(\"\") in the message:\n{err}");
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel x(a: int).\n",
+            "// C-style comment habit\n",
+            "x(1).\n",
+            "? x(a).\n",
+        ),
+    );
+    assert!(
+        err.contains("dl comments start with `#`"),
+        "clear comment hint:\n{err}"
+    );
+    assert!(
+        !err.contains("Regex(\"\")"),
+        "no baffling Regex(\"\") in the message:\n{err}"
+    );
     assert_ne!(code, 0, "a broken program is a non-zero exit:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }

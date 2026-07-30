@@ -61,14 +61,23 @@ pub fn load_program(entry: &Path) -> Result<(Vec<Item>, Vec<ast::TypeDiag>)> {
 fn desugar_effects(items: &mut [Item]) {
     for item in items.iter_mut() {
         let Item::Rule(r) = item else { continue };
-        if !(r.is_async() || r.is_stream()) { continue; }
-        if r.effect().is_some() { continue; }
+        if !(r.is_async() || r.is_stream()) {
+            continue;
+        }
+        if r.effect().is_some() {
+            continue;
+        }
         let bound = pos_bound_vars(&r.body);
         let args: Vec<Term> = bound.iter().cloned().map(Term::Var).collect();
-        let outs: Vec<Term> = r.head.terms.iter().filter_map(|t| match t {
-            Term::Var(v) if !bound.contains(v) => Some(Term::Var(v.clone())),
-            _ => None,
-        }).collect();
+        let outs: Vec<Term> = r
+            .head
+            .terms
+            .iter()
+            .filter_map(|t| match t {
+                Term::Var(v) if !bound.contains(v) => Some(Term::Var(v.clone())),
+                _ => None,
+            })
+            .collect();
         let name = r.head.rel.clone();
         r.body.push(BodyItem::Effect { name, args, outs });
     }
@@ -82,7 +91,9 @@ fn pos_bound_vars(body: &[BodyItem]) -> Vec<String> {
         if let BodyItem::Pos(a) = b {
             for t in &a.terms {
                 if let Term::Var(v) = t {
-                    if !seen.contains(v) { seen.push(v.clone()); }
+                    if !seen.contains(v) {
+                        seen.push(v.clone());
+                    }
                 }
             }
         }
@@ -94,7 +105,9 @@ fn pos_bound_vars(body: &[BodyItem]) -> Vec<String> {
 /// file's surface is loaded with a shared loader so a `use` cached by file A is
 /// a hit from file B. The merged items splice in file (lexicographic) order.
 pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<(Vec<Item>, Vec<ast::TypeDiag>)> {
-    if entry_paths.is_empty() { bail!("no program files to load"); }
+    if entry_paths.is_empty() {
+        bail!("no program files to load");
+    }
     let mut loader = ModuleLoader::new(&entry_paths[0]);
     let mut items = Vec::new();
     let mut diags = Vec::new();
@@ -102,7 +115,13 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<(Vec<Item>, Vec<ast::
     for p in entry_paths {
         let surface = loader.load_entry(p)?;
         let origin = p.canonicalize().unwrap_or_else(|_| p.clone());
-        items.extend(expand_with(surface, &mut loader, &mut templates, origin, &mut diags)?);
+        items.extend(expand_with(
+            surface,
+            &mut loader,
+            &mut templates,
+            origin,
+            &mut diags,
+        )?);
     }
     cycle_check(&templates)?;
     let mut counter = 0u32;
@@ -111,7 +130,13 @@ pub fn load_program_set(entry_paths: &[PathBuf]) -> Result<(Vec<Item>, Vec<ast::
             inline_template_calls(&mut r.body, &templates, &mut counter)?;
         }
     }
-    let set_path = format!("{}/*.dl", entry_paths[0].parent().unwrap_or(Path::new(".dl")).display());
+    let set_path = format!(
+        "{}/*.dl",
+        entry_paths[0]
+            .parent()
+            .unwrap_or(Path::new(".dl"))
+            .display()
+    );
     crate::typecheck::expand_shapes(&mut items, &set_path, &mut diags);
     resolve_named_args(&mut items)?;
     desugar_effects(&mut items);
@@ -135,7 +160,10 @@ fn resolve_named_args(items: &mut [Item]) -> Result<()> {
     }
     for it in items.iter() {
         if let Item::Rel(d) = it {
-            schema.insert(d.name.clone(), d.cols.iter().map(|c| c.name.clone()).collect());
+            schema.insert(
+                d.name.clone(),
+                d.cols.iter().map(|c| c.name.clone()).collect(),
+            );
         }
     }
     for it in items.iter_mut() {
@@ -184,16 +212,26 @@ fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Res
         // Positional atom. Leave it exactly positional unless it is a bare
         // shorthand that would otherwise fail the arity check.
         let is_shorthand = match schema.get(&a.rel) {
-            Some(cols) => a.terms.len() != cols.len()
-                && !a.terms.is_empty()
-                && a.terms.iter().all(|t| matches!(t, Term::Var(v) if cols.contains(v))),
+            Some(cols) => {
+                a.terms.len() != cols.len()
+                    && !a.terms.is_empty()
+                    && a.terms
+                        .iter()
+                        .all(|t| matches!(t, Term::Var(v) if cols.contains(v)))
+            }
             None => false,
         };
-        if !is_shorthand { return Ok(()); }
+        if !is_shorthand {
+            return Ok(());
+        }
     }
-    let cols = schema.get(&a.rel).ok_or_else(|| anyhow::anyhow!(
-        "named args on `{0}` need a `rel {0}(...)` declaration (or a built-in schema) \
-         to map column names to positions", a.rel))?;
+    let cols = schema.get(&a.rel).ok_or_else(|| {
+        anyhow::anyhow!(
+            "named args on `{0}` need a `rel {0}(...)` declaration (or a built-in schema) \
+         to map column names to positions",
+            a.rel
+        )
+    })?;
     let pos = std::mem::take(&mut a.terms);
     let named = std::mem::take(&mut a.named);
     let mut slots: Vec<Option<Term>> = vec![None; cols.len()];
@@ -203,8 +241,13 @@ fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Res
     let mut positional: Vec<Term> = Vec::new();
     {
         let mut set = |name: &str, t: Term| -> Result<()> {
-            let i = cols.iter().position(|c| c == name).ok_or_else(|| anyhow::anyhow!(
-                "unknown column `{name}` on `{}` (columns: {})", a.rel, cols.join(", ")))?;
+            let i = cols.iter().position(|c| c == name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown column `{name}` on `{}` (columns: {})",
+                    a.rel,
+                    cols.join(", ")
+                )
+            })?;
             if slots[i].is_some() {
                 bail!("column `{name}` on `{}` is set twice", a.rel);
             }
@@ -217,15 +260,23 @@ fn resolve_atom(a: &mut ast::Atom, schema: &HashMap<String, Vec<String>>) -> Res
                 other => positional.push(other),
             }
         }
-        for (name, t) in named { set(&name, t)?; }
+        for (name, t) in named {
+            set(&name, t)?;
+        }
     }
     // Positional literals fill the columns left open, in declaration order.
     let mut next = 0usize;
     for t in positional {
-        while next < slots.len() && slots[next].is_some() { next += 1; }
+        while next < slots.len() && slots[next].is_some() {
+            next += 1;
+        }
         if next >= slots.len() {
-            bail!("too many positional args on `{}`: all {} columns are already \
-                   claimed by name", a.rel, cols.len());
+            bail!(
+                "too many positional args on `{}`: all {} columns are already \
+                   claimed by name",
+                a.rel,
+                cols.len()
+            );
         }
         slots[next] = Some(t);
         next += 1;
@@ -287,7 +338,9 @@ fn expand_with(
             SurfaceItem::Core(mut core) => {
                 // Stamp the rule's source file so a self-form scan can resolve
                 // to this file's `.git` ancestor (loaded-script portability).
-                if let Item::Rule(r) = &mut core { r.origin = Some(origin.clone()); }
+                if let Item::Rule(r) = &mut core {
+                    r.origin = Some(origin.clone());
+                }
                 out.push(core);
             }
             SurfaceItem::Use(imp) => {
@@ -335,7 +388,8 @@ fn expand_with(
                         // tick). Std libs have no `?` items so this is a no-op for
                         // them; examples keep their rules/rel/gen/sh/defs. Same
                         // shape as the strip in mcp.rs/lsp.rs/hook.rs/lib.rs.
-                        let surface: Vec<SurfaceItem> = surface.into_iter()
+                        let surface: Vec<SurfaceItem> = surface
+                            .into_iter()
                             .filter(|it| !matches!(it, SurfaceItem::Core(Item::Query(_))))
                             .collect();
                         let key = PathBuf::from(format!("<embedded>/{}", imp.path));
@@ -366,7 +420,9 @@ fn cycle_check(templates: &HashMap<String, ast::RuleTemplate>) -> Result<()> {
             if !seen.insert(cur.clone()) {
                 bail!("def cycle through {name}: recursion is not supported (inline-only)");
             }
-            let Some(t) = templates.get(&cur) else { continue };
+            let Some(t) = templates.get(&cur) else {
+                continue;
+            };
             for b in &t.body {
                 if let BodyItem::Pos(a) = b {
                     if templates.contains_key(&a.rel) {
@@ -392,12 +448,20 @@ fn inline_template_calls(
     while i < body.len() {
         // Only a Pos atom can be a template call. Negation, closure, and the
         // source ops (`scan`, `match`, ...) are not call sites.
-        let BodyItem::Pos(atom) = &body[i] else { i += 1; continue };
-        let Some(tpl) = templates.get(&atom.rel) else { i += 1; continue };
+        let BodyItem::Pos(atom) = &body[i] else {
+            i += 1;
+            continue;
+        };
+        let Some(tpl) = templates.get(&atom.rel) else {
+            i += 1;
+            continue;
+        };
         if atom.terms.len() != tpl.params.len() {
             bail!(
                 "def {} expects {} args, got {}",
-                tpl.name, tpl.params.len(), atom.terms.len(),
+                tpl.name,
+                tpl.params.len(),
+                atom.terms.len(),
             );
         }
         // Build the substitution: param name -> arg term (cloned, so the
@@ -413,11 +477,15 @@ fn inline_template_calls(
         // bumps the counter so siblings stay disjoint.
         let stamp = format!("__{}_{}_", tpl.name, *counter);
         *counter += 1;
-        let mut inlined: Vec<BodyItem> = tpl.body.iter().map(|b| {
-            let mut cloned = b.clone();
-            rewrite_terms(&mut cloned, &sub, &tpl.params, &stamp);
-            cloned
-        }).collect();
+        let mut inlined: Vec<BodyItem> = tpl
+            .body
+            .iter()
+            .map(|b| {
+                let mut cloned = b.clone();
+                rewrite_terms(&mut cloned, &sub, &tpl.params, &stamp);
+                cloned
+            })
+            .collect();
         // Recurse: the inlined body may itself contain template calls.
         inline_template_calls(&mut inlined, templates, counter)?;
         // Splice the inlined items where the call site was. The recursive call
@@ -435,59 +503,146 @@ fn inline_template_calls(
 fn rewrite_terms(b: &mut BodyItem, sub: &HashMap<String, Term>, params: &[String], stamp: &str) {
     let rewrite_term = |t: &mut Term| match t {
         Term::Var(v) if params.iter().any(|p| p == v) => {
-            if let Some(arg) = sub.get(v) { *t = arg.clone(); }
+            if let Some(arg) = sub.get(v) {
+                *t = arg.clone();
+            }
         }
         Term::Var(v) => {
             v.insert_str(0, stamp);
         }
         _ => {}
     };
-    let rewrite_opt = |t: &mut Option<Term>| { if let Some(t) = t { rewrite_term(t); } };
+    let rewrite_opt = |t: &mut Option<Term>| {
+        if let Some(t) = t {
+            rewrite_term(t);
+        }
+    };
     match b {
         BodyItem::Pos(a) | BodyItem::Neg(a) => {
-            for t in &mut a.terms { rewrite_term(t); }
+            for t in &mut a.terms {
+                rewrite_term(t);
+            }
         }
-        BodyItem::Scan { repo, rev, glob, path, rev_out } => {
-            for t in [repo, rev, glob, path, rev_out] { rewrite_term(t); }
+        BodyItem::Scan {
+            repo,
+            rev,
+            glob,
+            path,
+            rev_out,
+        } => {
+            for t in [repo, rev, glob, path, rev_out] {
+                rewrite_term(t);
+            }
         }
-        BodyItem::Match { path, rev, line, id, col, end_col, .. } => {
-            for t in [path, rev, line] { rewrite_term(t); }
-            for t in [id, col, end_col].into_iter().flatten() { rewrite_term(t); }
+        BodyItem::Match {
+            path,
+            rev,
+            line,
+            id,
+            col,
+            end_col,
+            ..
+        } => {
+            for t in [path, rev, line] {
+                rewrite_term(t);
+            }
+            for t in [id, col, end_col].into_iter().flatten() {
+                rewrite_term(t);
+            }
         }
-        BodyItem::Ast { path, rev, line, end, id, .. } => {
-            for t in [path, rev, line] { rewrite_term(t); }
+        BodyItem::Ast {
+            path,
+            rev,
+            line,
+            end,
+            id,
+            ..
+        } => {
+            for t in [path, rev, line] {
+                rewrite_term(t);
+            }
             rewrite_opt(end);
             rewrite_opt(id);
         }
-        BodyItem::Sg { src, rev, line, col, end_line, end_col, id, .. } => {
-            for t in [src, line, col, end_line, end_col] { rewrite_term(t); }
-            if let Some(r) = rev { rewrite_term(r); }
+        BodyItem::Sg {
+            src,
+            rev,
+            line,
+            col,
+            end_line,
+            end_col,
+            id,
+            ..
+        } => {
+            for t in [src, line, col, end_line, end_col] {
+                rewrite_term(t);
+            }
+            if let Some(r) = rev {
+                rewrite_term(r);
+            }
             rewrite_opt(id);
         }
-        BodyItem::AstYaml { path, rev, line, col, end_line, end_col, .. } => {
-            for t in [path, rev, line, col, end_line, end_col] { rewrite_term(t); }
+        BodyItem::AstYaml {
+            path,
+            rev,
+            line,
+            col,
+            end_line,
+            end_col,
+            ..
+        } => {
+            for t in [path, rev, line, col, end_line, end_col] {
+                rewrite_term(t);
+            }
         }
-        BodyItem::JsonP { src, rev, out, id, .. } => {
-            for t in [src, out] { rewrite_term(t); }
-            if let Some(r) = rev { rewrite_term(r); }
+        BodyItem::JsonP {
+            src, rev, out, id, ..
+        } => {
+            for t in [src, out] {
+                rewrite_term(t);
+            }
+            if let Some(r) = rev {
+                rewrite_term(r);
+            }
             rewrite_opt(id);
         }
         BodyItem::Json { src, rev, .. } => {
             rewrite_term(src);
-            if let Some(r) = rev { rewrite_term(r); }
+            if let Some(r) = rev {
+                rewrite_term(r);
+            }
         }
-        BodyItem::Cmd { path, rev, line, out, .. } => {
-            for t in [path, rev, line, out] { rewrite_term(t); }
+        BodyItem::Cmd {
+            path,
+            rev,
+            line,
+            out,
+            ..
+        } => {
+            for t in [path, rev, line, out] {
+                rewrite_term(t);
+            }
         }
-        BodyItem::Comment { path, rev, l0, l1, label, .. } => {
-            for t in [path, rev, l0, l1, label] { rewrite_term(t); }
+        BodyItem::Comment {
+            path,
+            rev,
+            l0,
+            l1,
+            label,
+            ..
+        } => {
+            for t in [path, rev, l0, l1, label] {
+                rewrite_term(t);
+            }
         }
         BodyItem::Cmp(c) => {
             rewrite_term(&mut c.lhs);
             rewrite_term(&mut c.rhs);
         }
         BodyItem::Effect { args, outs, .. } => {
-            for t in args.iter_mut().chain(outs.iter_mut()) { rewrite_term(t); }
+            for t in args.iter_mut().chain(outs.iter_mut()) {
+                rewrite_term(t);
+            }
         }
         BodyItem::Closure { .. } | BodyItem::Scc { .. } | BodyItem::Node2vec { .. } => {}
     }
@@ -520,17 +675,24 @@ impl ModuleLoader {
     fn resolve(&self, path: &str) -> Result<PathBuf> {
         let p = Path::new(path);
         if p.is_absolute() && p.exists() {
-            return p.canonicalize().with_context(|| format!("canonicalize {path}"));
+            return p
+                .canonicalize()
+                .with_context(|| format!("canonicalize {path}"));
         }
         for root in &self.roots {
             let cand = root.join(path);
             if cand.exists() {
-                return cand.canonicalize().with_context(|| format!("canonicalize {}", cand.display()));
+                return cand
+                    .canonicalize()
+                    .with_context(|| format!("canonicalize {}", cand.display()));
             }
         }
-        let tried = self.roots.iter()
+        let tried = self
+            .roots
+            .iter()
             .map(|r| r.join(path).display().to_string())
-            .collect::<Vec<_>>().join(", ");
+            .collect::<Vec<_>>()
+            .join(", ");
         bail!("module {path:?} not found (tried: {tried})");
     }
 
@@ -538,11 +700,14 @@ impl ModuleLoader {
     /// so a second `use` is a no-op at the call site (see `expand`). Per-file
     /// parse errors carry the file path via context.
     fn load_entry(&mut self, path: &Path) -> Result<Vec<SurfaceItem>> {
-        let canon = path.canonicalize().with_context(|| format!("canonicalize {}", path.display()))?;
+        let canon = path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", path.display()))?;
         if let Some(s) = self.loaded.get(&canon) {
             return Ok(s.clone());
         }
-        let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+        let src =
+            std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
         let surface = lex::lex(&src)
             .and_then(parse::parse_surface)
             .with_context(|| format!("in {}", path.display()))?;
@@ -619,7 +784,10 @@ mod tests {
         // the LSP squiggle lands on line 2, not line 1.
         let src = "# header\nuse \"dep.dl\".\nrel t(x: int).\n";
         let (lo, hi) = use_line_span(src, "dep.dl");
-        assert_eq!(lo, 9, "span starts at the `use` on line 2 (after `# header\\n`)");
+        assert_eq!(
+            lo, 9,
+            "span starts at the `use` on line 2 (after `# header\\n`)"
+        );
         assert_eq!(&src[lo as usize..hi as usize], "use \"dep.dl\".");
     }
 

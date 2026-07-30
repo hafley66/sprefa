@@ -24,49 +24,81 @@ fn run_move(dir: &Path, spec: &str, fix: bool) -> (i32, String, String) {
     let mut cmd = Command::new(DL);
     cmd.args(["--move", spec, "--db", dir.join("db").to_str().unwrap()]);
     cmd.current_dir(dir);
-    if fix { cmd.arg("--fix"); }
+    if fix {
+        cmd.arg("--fix");
+    }
     let out = cmd.output().expect("run dl --move");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
 fn move_rewrites_bare_use_and_reports_brace_skips() {
     let d = sandbox("bare");
     fs::write(d.join("src/lib.rs"), "mod utils;\nmod app;\nfn main() {}\n").unwrap();
-    fs::write(d.join("src/app.rs"),
-        "use crate::utils::Foo;\nuse crate::utils::{Bar, Baz};\nfn go() {}\n").unwrap();
-    fs::write(d.join("src/utils.rs"), "pub struct Foo;\npub struct Bar;\npub struct Baz;\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::utils::Foo;\nuse crate::utils::{Bar, Baz};\nfn go() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/utils.rs"),
+        "pub struct Foo;\npub struct Bar;\npub struct Baz;\n",
+    )
+    .unwrap();
 
     // Dry run: previews BOTH the bare use and the brace head (F1b), applies nothing.
     let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
     assert_eq!(code, 0, "dry run failed: {out}\n{err}");
-    assert!(out.contains("crate::utils::Foo -> crate::helpers::utils::Foo"),
-        "previews bare-use rewrite: {out}");
+    assert!(
+        out.contains("crate::utils::Foo -> crate::helpers::utils::Foo"),
+        "previews bare-use rewrite: {out}"
+    );
     // The brace head `crate::utils` rewrites once, covering both {Bar, Baz}.
-    assert!(out.contains("crate::utils -> crate::helpers::utils"),
-        "previews brace head rewrite (F1b): {out}");
+    assert!(
+        out.contains("crate::utils -> crate::helpers::utils"),
+        "previews brace head rewrite (F1b): {out}"
+    );
     // Dry run must not touch the file.
-    assert!(fs::read_to_string(d.join("src/app.rs")).unwrap().contains("use crate::utils::Foo;"),
-        "dry run left the file unchanged");
+    assert!(
+        fs::read_to_string(d.join("src/app.rs"))
+            .unwrap()
+            .contains("use crate::utils::Foo;"),
+        "dry run left the file unchanged"
+    );
 
     // Apply: both the bare use AND the brace import are rewritten on disk.
     let (code, _out, _err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", true);
     assert_eq!(code, 0);
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(after.contains("use crate::helpers::utils::Foo;"), "bare use rewritten: {after}");
-    assert!(after.contains("use crate::helpers::utils::{Bar, Baz};"), "brace head rewritten: {after}");
+    assert!(
+        after.contains("use crate::helpers::utils::Foo;"),
+        "bare use rewritten: {after}"
+    );
+    assert!(
+        after.contains("use crate::helpers::utils::{Bar, Baz};"),
+        "brace head rewritten: {after}"
+    );
 }
 
 #[test]
 fn move_with_no_matching_refs_is_a_noop() {
     let d = sandbox("noop");
     fs::write(d.join("src/lib.rs"), "mod app;\nfn main() {}\n").unwrap();
-    fs::write(d.join("src/app.rs"), "use std::collections::HashMap;\nfn go() {}\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use std::collections::HashMap;\nfn go() {}\n",
+    )
+    .unwrap();
     let (code, _out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
     assert_eq!(code, 0);
-    assert!(err.contains("no use-path references to rewrite"), "no-op reported: {err}");
+    assert!(
+        err.contains("no use-path references to rewrite"),
+        "no-op reported: {err}"
+    );
 }
 
 /// `--repo "*"` fans the move out over every config repo, rewriting each repo's
@@ -79,35 +111,71 @@ fn move_repo_star_fans_out_and_slug_scopes() {
         fs::create_dir_all(r.join("src")).unwrap();
         fs::write(r.join("src/lib.rs"), "pub mod clk;\npub mod cpufreq;\n").unwrap();
         fs::write(r.join("src/clk.rs"), "pub struct Clk;\n").unwrap();
-        fs::write(r.join("src/cpufreq.rs"), "use crate::clk::Clk;\npub fn f(_: Clk) {}\n").unwrap();
+        fs::write(
+            r.join("src/cpufreq.rs"),
+            "use crate::clk::Clk;\npub fn f(_: Clk) {}\n",
+        )
+        .unwrap();
     }
-    fs::write(d.join("cfg.toml"), format!("\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "\
         [[repos]]\nslug = \"ra\"\nroot = \"{a}\"\n\
         [[repos]]\nslug = \"rb\"\nroot = \"{b}\"\n",
-        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
+            a = d.join("ra").display(),
+            b = d.join("rb").display()
+        ),
+    )
+    .unwrap();
 
     let run = |args: &[&str]| {
-        let out = Command::new(DL).args(args)
+        let out = Command::new(DL)
+            .args(args)
             .env("SPREFA_CONFIG", d.join("cfg.toml"))
-            .output().expect("run dl --move");
-        (out.status.code().unwrap_or(-1),
-         String::from_utf8_lossy(&out.stderr).into_owned())
+            .output()
+            .expect("run dl --move");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     };
 
     // --repo ra --fix: only ra is rewritten, rb untouched.
-    let (code, _err) = run(&["--repo", "ra", "--move", "src/clk.rs=src/hw/clk.rs", "--fix"]);
+    let (code, _err) = run(&[
+        "--repo",
+        "ra",
+        "--move",
+        "src/clk.rs=src/hw/clk.rs",
+        "--fix",
+    ]);
     assert_eq!(code, 0);
-    assert!(fs::read_to_string(d.join("ra/src/cpufreq.rs")).unwrap().contains("crate::hw::clk::Clk"),
-        "ra rewritten");
-    assert!(fs::read_to_string(d.join("rb/src/cpufreq.rs")).unwrap().contains("crate::clk::Clk"),
-        "rb untouched by --repo ra");
+    assert!(
+        fs::read_to_string(d.join("ra/src/cpufreq.rs"))
+            .unwrap()
+            .contains("crate::hw::clk::Clk"),
+        "ra rewritten"
+    );
+    assert!(
+        fs::read_to_string(d.join("rb/src/cpufreq.rs"))
+            .unwrap()
+            .contains("crate::clk::Clk"),
+        "rb untouched by --repo ra"
+    );
 
     // --repo "*" --fix: rb now rewritten too (ra already done, idempotent).
     let (code, err) = run(&["--repo", "*", "--move", "src/clk.rs=src/hw/clk.rs", "--fix"]);
     assert_eq!(code, 0, "{err}");
-    assert!(err.contains("repo ra") && err.contains("repo rb"), "fan-out names both repos: {err}");
-    assert!(fs::read_to_string(d.join("rb/src/cpufreq.rs")).unwrap().contains("crate::hw::clk::Clk"),
-        "rb rewritten by --repo *");
+    assert!(
+        err.contains("repo ra") && err.contains("repo rb"),
+        "fan-out names both repos: {err}"
+    );
+    assert!(
+        fs::read_to_string(d.join("rb/src/cpufreq.rs"))
+            .unwrap()
+            .contains("crate::hw::clk::Clk"),
+        "rb rewritten by --repo *"
+    );
 }
 
 /// Brace-inner leaf (#17a): `use crate::{utils::Foo, app}` — the moved module
@@ -116,21 +184,33 @@ fn move_repo_star_fans_out_and_slug_scopes() {
 #[test]
 fn move_rewrites_brace_inner_leaf() {
     let d = sandbox("braceleaf");
-    fs::write(d.join("src/lib.rs"), "mod utils;\nmod app;\nmod misc;\nfn main() {}\n").unwrap();
-    fs::write(d.join("src/app.rs"),
-        "use crate::{utils::Foo, misc};\nfn go() { misc::x() }\n").unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "mod utils;\nmod app;\nmod misc;\nfn main() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::{utils::Foo, misc};\nfn go() { misc::x() }\n",
+    )
+    .unwrap();
     fs::write(d.join("src/utils.rs"), "pub struct Foo;\n").unwrap();
     fs::write(d.join("src/misc.rs"), "pub fn x() {}\n").unwrap();
 
     let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("utils::Foo -> helpers::utils::Foo"), "leaf preview: {out}");
+    assert!(
+        out.contains("utils::Foo -> helpers::utils::Foo"),
+        "leaf preview: {out}"
+    );
 
     let (code, _out, _err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", true);
     assert_eq!(code, 0);
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(after.contains("use crate::{helpers::utils::Foo, misc};"),
-        "brace-inner leaf rewritten, sibling untouched: {after}");
+    assert!(
+        after.contains("use crate::{helpers::utils::Foo, misc};"),
+        "brace-inner leaf rewritten, sibling untouched: {after}"
+    );
 }
 
 /// Brace exit (the last brace residual): `use crate::a::{b::X, c}` with `a::b`
@@ -145,29 +225,41 @@ fn move_regroups_statement_when_leaf_exits_brace_head() {
     fs::write(d.join("src/a.rs"), "pub mod b;\npub mod c;\n").unwrap();
     fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
     fs::write(d.join("src/a/c.rs"), "pub fn go() {}\n").unwrap();
-    fs::write(d.join("src/app.rs"),
-        "use crate::a::{b::X, c};\nfn use_it(_: X) { c::go() }\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::a::{b::X, c};\nfn use_it(_: X) { c::go() }\n",
+    )
+    .unwrap();
 
     // Dry run previews the whole-body regroup and reports no skips.
     let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", false);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("crate::a::{b::X, c} -> crate::{z::b::X, a::c}"),
-        "previews the statement regroup: {out}");
-    assert!(!err.contains("left alone"), "no skip for a regrouped statement: {err}");
+    assert!(
+        out.contains("crate::a::{b::X, c} -> crate::{z::b::X, a::c}"),
+        "previews the statement regroup: {out}"
+    );
+    assert!(
+        !err.contains("left alone"),
+        "no skip for a regrouped statement: {err}"
+    );
 
     let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
     assert_eq!(code, 0, "{out}\n{err}");
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(after.contains("use crate::{z::b::X, a::c};"),
-        "exiting leaf regrouped, sibling kept: {after}");
+    assert!(
+        after.contains("use crate::{z::b::X, a::c};"),
+        "exiting leaf regrouped, sibling kept: {after}"
+    );
 
     // Reverse move: the regrouped statement's `z::b::X` leaf rewrites back in
     // place (the new path stays under the `crate` head, no second regroup).
     let (code, out, err) = run_move(&d, "src/z/b.rs=src/a/b.rs", true);
     assert_eq!(code, 0, "{out}\n{err}");
     let back = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(back.contains("use crate::{a::b::X, a::c};"),
-        "reverse move rewrites the leaf in place: {back}");
+    assert!(
+        back.contains("use crate::{a::b::X, a::c};"),
+        "reverse move rewrites the leaf in place: {back}"
+    );
 }
 
 /// A sole-leaf brace group whose leaf exits collapses to a bare use.
@@ -178,12 +270,19 @@ fn move_collapses_sole_brace_leaf_that_exits_head() {
     fs::write(d.join("src/lib.rs"), "mod a;\nmod app;\n").unwrap();
     fs::write(d.join("src/a.rs"), "pub mod b;\n").unwrap();
     fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
-    fs::write(d.join("src/app.rs"), "use crate::a::{b::X};\nfn use_it(_: X) {}\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::a::{b::X};\nfn use_it(_: X) {}\n",
+    )
+    .unwrap();
 
     let (code, out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
     assert_eq!(code, 0, "{out}\n{err}");
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(after.contains("use crate::z::b::X;"), "sole leaf collapses to bare: {after}");
+    assert!(
+        after.contains("use crate::z::b::X;"),
+        "sole leaf collapses to bare: {after}"
+    );
 }
 
 /// A `self` leaf pins its statement: regrouping would change what `self`
@@ -195,14 +294,23 @@ fn move_leaves_self_group_alone_loudly() {
     fs::write(d.join("src/lib.rs"), "mod a;\nmod app;\n").unwrap();
     fs::write(d.join("src/a.rs"), "pub mod b;\npub fn on_a() {}\n").unwrap();
     fs::write(d.join("src/a/b.rs"), "pub struct X;\n").unwrap();
-    fs::write(d.join("src/app.rs"),
-        "use crate::a::{self, b::X};\nfn use_it(_: X) { a::on_a() }\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::a::{self, b::X};\nfn use_it(_: X) { a::on_a() }\n",
+    )
+    .unwrap();
 
     let (code, _out, err) = run_move(&d, "src/a/b.rs=src/z/b.rs", true);
     assert_eq!(code, 0);
-    assert!(err.contains("left alone"), "self-group counted loudly: {err}");
+    assert!(
+        err.contains("left alone"),
+        "self-group counted loudly: {err}"
+    );
     let after = fs::read_to_string(d.join("src/app.rs")).unwrap();
-    assert!(after.contains("use crate::a::{self, b::X};"), "self group untouched: {after}");
+    assert!(
+        after.contains("use crate::a::{self, b::X};"),
+        "self group untouched: {after}"
+    );
 }
 
 /// Physical move (#17b) + moved file's own content (#17c): `--fix` renames the
@@ -212,15 +320,25 @@ fn move_leaves_self_group_alone_loudly() {
 fn move_fix_renames_and_rehomes_mod_decl() {
     let d = sandbox("physical");
     fs::write(d.join("src/lib.rs"), "mod utils;\nmod config;\nmod app;\n").unwrap();
-    fs::write(d.join("src/utils.rs"),
-        "use super::config::Settings;\npub struct Foo(pub Settings);\n").unwrap();
+    fs::write(
+        d.join("src/utils.rs"),
+        "use super::config::Settings;\npub struct Foo(pub Settings);\n",
+    )
+    .unwrap();
     fs::write(d.join("src/config.rs"), "pub struct Settings;\n").unwrap();
-    fs::write(d.join("src/app.rs"), "use crate::utils::Foo;\nfn go(_: Foo) {}\n").unwrap();
+    fs::write(
+        d.join("src/app.rs"),
+        "use crate::utils::Foo;\nfn go(_: Foo) {}\n",
+    )
+    .unwrap();
 
     // Dry run: plans the rename + surgery, touches nothing.
     let (code, out, err) = run_move(&d, "src/utils.rs=src/helpers/utils.rs", false);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("src/utils.rs -> src/helpers/utils.rs (rename)"), "{out}");
+    assert!(
+        out.contains("src/utils.rs -> src/helpers/utils.rs (rename)"),
+        "{out}"
+    );
     assert!(out.contains("src/lib.rs: - mod utils;"), "{out}");
     assert!(out.contains("create src/helpers.rs"), "{out}");
     assert!(d.join("src/utils.rs").is_file(), "dry run must not rename");
@@ -231,7 +349,10 @@ fn move_fix_renames_and_rehomes_mod_decl() {
     assert!(!d.join("src/utils.rs").exists(), "old path gone");
     let moved = fs::read_to_string(d.join("src/helpers/utils.rs")).unwrap();
     // the moved file's own super:: re-anchored (crate::config no longer super::)
-    assert!(moved.contains("use crate::config::Settings;"), "re-anchored: {moved}");
+    assert!(
+        moved.contains("use crate::config::Settings;"),
+        "re-anchored: {moved}"
+    );
     // mod decl re-homed: lib.rs lost `mod utils;`, gained `mod helpers;`; the
     // created helpers.rs declares utils promoted to pub(crate)
     let lib = fs::read_to_string(d.join("src/lib.rs")).unwrap();
@@ -251,15 +372,25 @@ fn move_fix_kotlin_renames_and_rewrites_package_decl() {
     let d = sandbox("ktphysical");
     fs::create_dir_all(d.join("src/com/lib")).unwrap();
     fs::create_dir_all(d.join("src/com/app")).unwrap();
-    fs::write(d.join("src/com/lib/Util.kt"), "package com.lib\n\nclass Util\n").unwrap();
-    fs::write(d.join("src/com/app/Main.kt"),
-        "package com.app\n\nimport com.lib.Util\nfun main() { Util() }\n").unwrap();
+    fs::write(
+        d.join("src/com/lib/Util.kt"),
+        "package com.lib\n\nclass Util\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/com/app/Main.kt"),
+        "package com.app\n\nimport com.lib.Util\nfun main() { Util() }\n",
+    )
+    .unwrap();
 
     let (code, out, err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", true);
     assert_eq!(code, 0, "{out}\n{err}");
     assert!(!d.join("src/com/lib/Util.kt").exists(), "old path gone");
     let moved = fs::read_to_string(d.join("src/com/core/Util.kt")).unwrap();
-    assert!(moved.contains("package com.core\n"), "package decl follows: {moved}");
+    assert!(
+        moved.contains("package com.core\n"),
+        "package decl follows: {moved}"
+    );
     let main = fs::read_to_string(d.join("src/com/app/Main.kt")).unwrap();
     assert!(main.contains("import com.core.Util"), "{main}");
 }
@@ -273,24 +404,47 @@ fn move_rewrites_kotlin_imports() {
     let d = sandbox("kotlin");
     fs::create_dir_all(d.join("src/com/lib")).unwrap();
     fs::create_dir_all(d.join("src/com/app")).unwrap();
-    fs::write(d.join("src/com/lib/Util.kt"),
-        "package com.lib\n\nclass Util\nfun helper() = 1\n").unwrap();
-    fs::write(d.join("src/com/lib/Peer.kt"),
-        "package com.lib\n\nclass Peer {\n    val u = Util()\n}\n").unwrap();
-    fs::write(d.join("src/com/app/Main.kt"), concat!(
-        "package com.app\n\n",
-        "import com.lib.Util\n",
-        "import com.lib.helper\n",
-        "import com.lib.*\n",
-        "fun main() { Util(); helper() }\n")).unwrap();
+    fs::write(
+        d.join("src/com/lib/Util.kt"),
+        "package com.lib\n\nclass Util\nfun helper() = 1\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/com/lib/Peer.kt"),
+        "package com.lib\n\nclass Peer {\n    val u = Util()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/com/app/Main.kt"),
+        concat!(
+            "package com.app\n\n",
+            "import com.lib.Util\n",
+            "import com.lib.helper\n",
+            "import com.lib.*\n",
+            "fun main() { Util(); helper() }\n"
+        ),
+    )
+    .unwrap();
 
     // Dry run previews the rewrites and counts the wildcard + same-package uses.
     let (code, out, err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", false);
     assert_eq!(code, 0, "dry run failed: {out}\n{err}");
-    assert!(out.contains("com.lib.Util -> com.core.Util"), "previews class import: {out}");
-    assert!(out.contains("com.lib.helper -> com.core.helper"), "previews fn import: {out}");
-    assert!(err.contains("wildcard import(s) of com.lib"), "wildcard counted: {err}");
-    assert!(err.contains("same-package bare use(s)"), "Peer.kt's bare Util counted: {err}");
+    assert!(
+        out.contains("com.lib.Util -> com.core.Util"),
+        "previews class import: {out}"
+    );
+    assert!(
+        out.contains("com.lib.helper -> com.core.helper"),
+        "previews fn import: {out}"
+    );
+    assert!(
+        err.contains("wildcard import(s) of com.lib"),
+        "wildcard counted: {err}"
+    );
+    assert!(
+        err.contains("same-package bare use(s)"),
+        "Peer.kt's bare Util counted: {err}"
+    );
 
     // Apply: import lines rewritten on disk; wildcard left alone.
     let (code, _out, _err) = run_move(&d, "src/com/lib/Util.kt=src/com/core/Util.kt", true);
@@ -298,7 +452,10 @@ fn move_rewrites_kotlin_imports() {
     let after = fs::read_to_string(d.join("src/com/app/Main.kt")).unwrap();
     assert!(after.contains("import com.core.Util\n"), "{after}");
     assert!(after.contains("import com.core.helper\n"), "{after}");
-    assert!(after.contains("import com.lib.*\n"), "wildcard untouched: {after}");
+    assert!(
+        after.contains("import com.lib.*\n"),
+        "wildcard untouched: {after}"
+    );
 }
 
 /// A Kotlin file whose directory disagrees with its package declaration is a
@@ -316,11 +473,16 @@ fn move_kotlin_layout_mismatch_is_loud() {
 #[test]
 fn move_unknown_repo_slug_errors() {
     let d = sandbox("badrepo");
-    fs::write(d.join("cfg.toml"), "[[repos]]\nslug = \"ra\"\nroot = \"/tmp/ra\"\n").unwrap();
+    fs::write(
+        d.join("cfg.toml"),
+        "[[repos]]\nslug = \"ra\"\nroot = \"/tmp/ra\"\n",
+    )
+    .unwrap();
     let out = Command::new(DL)
         .args(["--repo", "nope", "--move", "a=b"])
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl --move");
+        .output()
+        .expect("run dl --move");
     assert!(!out.status.success(), "unknown slug fails");
     assert!(String::from_utf8_lossy(&out.stderr).contains("not a configured repo slug"));
 }

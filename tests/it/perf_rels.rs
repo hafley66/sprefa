@@ -36,10 +36,13 @@ fn run(dir: &Path) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Second run over the same db: rel_count carries the previous tick's derived
@@ -56,8 +59,10 @@ fn telemetry_populates_on_the_second_run() {
     assert!(o2.contains("d\t2"), "derived rel d counted (2 rows):\n{o2}");
     assert!(o2.contains("s\t2"), "fact rel s counted (2 rows):\n{o2}");
     let stmt_sec = o2.split("? stmt_ms").nth(1).expect("stmt_ms section");
-    assert!(stmt_sec.lines().any(|l| l.trim_start().starts_with("d\t")),
-        "stmt_ms has d's rebuild cost:\n{o2}");
+    assert!(
+        stmt_sec.lines().any(|l| l.trim_start().starts_with("d\t")),
+        "stmt_ms has d's rebuild cost:\n{o2}"
+    );
     // The family must not report itself: a rel_count row for rel_count would
     // oscillate the self-diff every refresh.
     assert!(!o2.contains("rel_count\t"), "own family excluded:\n{o2}");
@@ -72,11 +77,16 @@ fn perf_rel_names_are_reserved() {
         .arg(d.join("p.dl"))
         .current_dir(&d)
         .args(["--db", d.join("db").to_str().unwrap()])
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let err = String::from_utf8_lossy(&out.stderr);
     assert_ne!(out.status.code().unwrap_or(-1), 0, "declaration refused");
-    assert!(err.contains("reserved-name") && err.contains("relation `rel_count`")
-        && err.contains("write to the built-in directly"), "parse-tier reservation/fix:\n{err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `rel_count`")
+            && err.contains("write to the built-in directly"),
+        "parse-tier reservation/fix:\n{err}"
+    );
 }
 
 /// `query_log` shares the perf projection shape (`_query_log` -> queryable rel).
@@ -86,14 +96,23 @@ fn perf_rel_names_are_reserved() {
 #[test]
 fn query_log_queryable_on_fresh_db() {
     let d = sandbox("query_log_fresh");
-    fs::write(d.join("p.dl"), "rel probe(name: text).\nprobe(\"x\").\n? query_log(ts, source, method).\n").unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "rel probe(name: text).\nprobe(\"x\").\n? query_log(ts, source, method).\n",
+    )
+    .unwrap();
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .current_dir(&d)
         .args(["--no-daemon", "--db", d.join("db").to_str().unwrap()])
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let err = String::from_utf8_lossy(&out.stderr);
     let o = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code().unwrap_or(-1), 0, "query_log query crashed:\n{err}");
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "query_log query crashed:\n{err}"
+    );
     assert!(o.contains("? query_log"), "query_log section printed:\n{o}");
 }

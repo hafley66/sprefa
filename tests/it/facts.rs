@@ -21,51 +21,75 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
 fn ground_facts_insert_and_join() {
     let d = sandbox("basic");
-    let (code, out, err) = run(&d, concat!(
-        "rel slide(n: int, title: text).\n",
-        "rel cue(n: int).\n",
-        "slide(1, \"intro\").\n",
-        "slide(2, \"the tick\").\n",
-        "cue(2).\n",
-        "rel current(t: text).\n",
-        "current(t) <- slide(n, t), cue(n).\n",
-        "? current(t).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel slide(n: int, title: text).\n",
+            "rel cue(n: int).\n",
+            "slide(1, \"intro\").\n",
+            "slide(2, \"the tick\").\n",
+            "cue(2).\n",
+            "rel current(t: text).\n",
+            "current(t) <- slide(n, t), cue(n).\n",
+            "? current(t).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("the tick"), "fact join must select slide 2:\n{out}");
-    assert!(!out.contains("intro"), "uncued slide must not appear:\n{out}");
+    assert!(
+        out.contains("the tick"),
+        "fact join must select slide 2:\n{out}"
+    );
+    assert!(
+        !out.contains("intro"),
+        "uncued slide must not appear:\n{out}"
+    );
 }
 
 #[test]
 fn edited_fact_follows_program_on_warm_db() {
     let d = sandbox("edit");
-    let prog = |title: &str| format!(
-        "rel slide(n: int, title: text).\nslide(1, \"{title}\").\n? slide(n, t).\n");
+    let prog = |title: &str| {
+        format!("rel slide(n: int, title: text).\nslide(1, \"{title}\").\n? slide(n, t).\n")
+    };
     let (code, out, err) = run(&d, &prog("v1"));
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("v1"));
 
     let (code, out, err) = run(&d, &prog("v2"));
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("v2"), "edited fact must replace the row:\n{out}");
-    assert!(!out.contains("v1"), "stale fact row survived the edit:\n{out}");
+    assert!(
+        out.contains("v2"),
+        "edited fact must replace the row:\n{out}"
+    );
+    assert!(
+        !out.contains("v1"),
+        "stale fact row survived the edit:\n{out}"
+    );
 }
 
 #[test]
 fn fact_head_rejects_unbound_vars() {
     let d = sandbox("unbound");
-    let (code, _, err) = run(&d, concat!(
-        "rel slide(n: int, title: text).\n",
-        "slide(1, t).\n",
-        "? slide(n, t).\n"));
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel slide(n: int, title: text).\n",
+            "slide(1, t).\n",
+            "? slide(n, t).\n"
+        ),
+    );
     assert_eq!(code, 1, "unbound fact var is a program error:\n{err}");
     assert!(err.contains("unbound"), "{err}");
 }

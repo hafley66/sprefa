@@ -54,7 +54,9 @@ pub fn ingest_langs() -> &'static [&'static dyn IngestLang] {
 struct MarkdownDoc;
 
 impl IngestLang for MarkdownDoc {
-    fn name(&self) -> &'static str { "markdown" }
+    fn name(&self) -> &'static str {
+        "markdown"
+    }
 
     fn matches(&self, p: &str) -> bool {
         p.ends_with(".md") || p.ends_with(".markdown")
@@ -62,10 +64,15 @@ impl IngestLang for MarkdownDoc {
 
     fn extract_docs(&self, file: &str, content: &str) -> DocFacts {
         let mut parser = Parser::new();
-        if parser.set_language(&tree_sitter_md::LANGUAGE.into()).is_err() {
+        if parser
+            .set_language(&tree_sitter_md::LANGUAGE.into())
+            .is_err()
+        {
             return DocFacts::default();
         }
-        let Some(tree) = parser.parse(content, None) else { return DocFacts::default(); };
+        let Some(tree) = parser.parse(content, None) else {
+            return DocFacts::default();
+        };
 
         let mut nodes: Vec<DocNode> = Vec::new();
         // Heading stack of (level, title). A new heading at level L pops any
@@ -90,7 +97,9 @@ impl IngestLang for MarkdownDoc {
             match n.kind() {
                 "atx_heading" | "setext_heading" => {
                     if let Some((level, title)) = heading_text(n, content) {
-                        while stack.last().map_or(false, |(l, _)| *l >= level) { stack.pop(); }
+                        while stack.last().map_or(false, |(l, _)| *l >= level) {
+                            stack.pop();
+                        }
                         let parent = stack.last().map(|(_, t)| t.clone()).unwrap_or_default();
                         nodes.push(DocNode {
                             file: file.to_string(),
@@ -159,7 +168,8 @@ fn heading_text(n: Node, src: &str) -> Option<(u32, String)> {
     })?;
     // ATX headings carry their title in an `inline` child; setext headings use a
     // `paragraph` child (the heading_content field differs by kind).
-    let title = children.iter()
+    let title = children
+        .iter()
         .find(|c| c.kind() == "inline" || c.kind() == "paragraph")
         .map(|c| text_of(*c, src))
         .unwrap_or_default()
@@ -203,7 +213,11 @@ fn fenced_code_block_parts(n: Node, src: &str) -> (String, String) {
 fn text_of(n: Node, src: &str) -> String {
     let s = n.start_byte();
     let e = n.end_byte();
-    if s <= e && e <= src.len() { src[s..e].to_string() } else { String::new() }
+    if s <= e && e <= src.len() {
+        src[s..e].to_string()
+    } else {
+        String::new()
+    }
 }
 
 #[cfg(test)]
@@ -222,7 +236,10 @@ mod tests {
         assert_eq!(f.nodes[1].parent, "Title");
         assert_eq!(f.nodes[2].name, "rs");
         assert_eq!(f.nodes[2].parent, "Sub");
-        assert_eq!(f.nodes[2].text, "fn x() {}", "code-block body must land in .text");
+        assert_eq!(
+            f.nodes[2].text, "fn x() {}",
+            "code-block body must land in .text"
+        );
         assert_eq!(f.nodes[3].name, "Deep");
         assert_eq!(f.nodes[3].parent, "Sub");
     }
@@ -270,11 +287,22 @@ mod tests {
         // Four-space indent is an indented code block (no info string).
         let md = "para\n\n    fn indented() {}\n    let x = 2;\n";
         let f = MarkdownDoc.extract_docs("a.md", md);
-        let cb = f.nodes.iter().find(|n| n.kind == "code_block")
+        let cb = f
+            .nodes
+            .iter()
+            .find(|n| n.kind == "code_block")
             .expect("indented code block");
         assert_eq!(cb.name, "", "indented code block has no language");
-        assert!(cb.text.contains("fn indented()"), "body missing: {}", cb.text);
-        assert!(cb.text.contains("let x = 2"), "second line missing: {}", cb.text);
+        assert!(
+            cb.text.contains("fn indented()"),
+            "body missing: {}",
+            cb.text
+        );
+        assert!(
+            cb.text.contains("let x = 2"),
+            "second line missing: {}",
+            cb.text
+        );
     }
 
     #[test]
@@ -285,7 +313,15 @@ mod tests {
         let md = "> # Quoted\n> body\n## After\n";
         let f = MarkdownDoc.extract_docs("a.md", md);
         let names: Vec<&str> = f.nodes.iter().map(|n| n.name.as_str()).collect();
-        assert!(names.contains(&"Quoted"), "quoted heading missing: {:?}", names);
-        assert!(names.contains(&"After"), "post-quote heading missing: {:?}", names);
+        assert!(
+            names.contains(&"Quoted"),
+            "quoted heading missing: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"After"),
+            "post-quote heading missing: {:?}",
+            names
+        );
     }
 }

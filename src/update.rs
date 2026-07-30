@@ -72,7 +72,10 @@ pub fn run(args: &[String]) -> Result<i32> {
                     Ok(0)
                 }
                 None => {
-                    tracing::warn!(repo = REPO, "[dl update] could not reach the release API ({REPO}); check your network.");
+                    tracing::warn!(
+                        repo = REPO,
+                        "[dl update] could not reach the release API ({REPO}); check your network."
+                    );
                     Ok(1)
                 }
             }
@@ -107,7 +110,8 @@ pub fn run(args: &[String]) -> Result<i32> {
 fn print_help() {
     eprintln!("usage: dl update [--check]"); // @eprintln-ok: usage/help text
     eprintln!("  (no args)   download + install the latest prebuilt release"); // @eprintln-ok: usage/help text
-    eprintln!("  --check     report current vs latest version; install nothing"); // @eprintln-ok: usage/help text
+    eprintln!("  --check     report current vs latest version; install nothing");
+    // @eprintln-ok: usage/help text
 }
 
 /// The latest release tag from the GitHub API (`tag_name`), or None on any
@@ -167,14 +171,8 @@ mod tests {
         // first unrecognized arg. Regression for the never_loop bug where
         // `dl update --bogus --check` reported "unknown arg --bogus" and
         // never reached the valid `--check`.
-        assert_eq!(
-            parse(&["--bogus".into(), "--check".into()]),
-            Action::Check
-        );
-        assert_eq!(
-            parse(&["--bogus".into(), "--help".into()]),
-            Action::Help
-        );
+        assert_eq!(parse(&["--bogus".into(), "--check".into()]), Action::Check);
+        assert_eq!(parse(&["--bogus".into(), "--help".into()]), Action::Help);
     }
 
     #[test]

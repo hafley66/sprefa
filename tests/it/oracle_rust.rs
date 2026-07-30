@@ -23,7 +23,9 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 fn find_ra() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SPREFA_RUST_ANALYZER") {
         let p = PathBuf::from(p);
-        if p.is_file() { return Some(p); }
+        if p.is_file() {
+            return Some(p);
+        }
     }
     let home = std::env::var("HOME").ok()?;
     let ext = Path::new(&home).join(".vscode/extensions");
@@ -33,7 +35,9 @@ fn find_ra() -> Option<PathBuf> {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.starts_with("rust-lang.rust-analyzer-") {
                 let bin = e.path().join("server/rust-analyzer");
-                if bin.is_file() { found = Some(bin); }
+                if bin.is_file() {
+                    found = Some(bin);
+                }
             }
         }
     }
@@ -45,7 +49,11 @@ fn copy_dir(src: &Path, dst: &Path) {
     for e in std::fs::read_dir(src).unwrap().flatten() {
         let p = e.path();
         let d = dst.join(e.file_name());
-        if p.is_dir() { copy_dir(&p, &d); } else { std::fs::copy(&p, &d).unwrap(); }
+        if p.is_dir() {
+            copy_dir(&p, &d);
+        } else {
+            std::fs::copy(&p, &d).unwrap();
+        }
     }
 }
 
@@ -56,15 +64,21 @@ fn ra_edges(index: &Index) -> HashSet<(String, String)> {
     let mut def_file: HashMap<String, String> = HashMap::new();
     for doc in &index.documents {
         for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 && !occ.symbol.starts_with("local ") {
-                def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0
+                && !occ.symbol.starts_with("local ")
+            {
+                def_file
+                    .entry(occ.symbol.clone())
+                    .or_insert_with(|| doc.relative_path.clone());
             }
         }
     }
     let mut edges = HashSet::new();
     for doc in &index.documents {
         for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 { continue; }
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 {
+                continue;
+            }
             if let Some(def) = def_file.get(&occ.symbol) {
                 if *def != doc.relative_path {
                     edges.insert((doc.relative_path.clone(), def.clone()));
@@ -86,13 +100,20 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
         .arg(dir.join("mg.dl"))
         .args(["--db", dir.join("mg.db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut edges = HashSet::new();
     let mut in_edge = false;
     for line in stdout.lines() {
-        if line.starts_with("? module_edge") { in_edge = true; continue; }
-        if line.starts_with('?') { in_edge = false; continue; }
+        if line.starts_with("? module_edge") {
+            in_edge = true;
+            continue;
+        }
+        if line.starts_with('?') {
+            in_edge = false;
+            continue;
+        }
         if in_edge {
             if let Some((s, d)) = line.trim().split_once('\t') {
                 edges.insert((s.to_string(), d.to_string()));
@@ -115,19 +136,32 @@ struct OracleStats {
 fn run_ra_edges(ra: &Path, root: &Path, name: &str) -> HashSet<(String, String)> {
     let scip_out = std::env::temp_dir().join(format!("{name}.scip"));
     let status = Command::new(ra)
-        .args(["scip", root.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
-        .output().expect("run rust-analyzer scip");
-    assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
-        String::from_utf8_lossy(&status.stderr));
+        .args([
+            "scip",
+            root.to_str().unwrap(),
+            "--output",
+            scip_out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run rust-analyzer scip");
+    assert!(
+        scip_out.is_file(),
+        "rust-analyzer scip produced no index: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
 
     let bytes = std::fs::read(&scip_out).unwrap();
     let index = Index::parse_from_bytes(&bytes).expect("parse scip");
     ra_edges(&index)
 }
 
-fn filter_prefix(edges: HashSet<(String, String)>, prefix: Option<&str>) -> HashSet<(String, String)> {
+fn filter_prefix(
+    edges: HashSet<(String, String)>,
+    prefix: Option<&str>,
+) -> HashSet<(String, String)> {
     match prefix {
-        Some(prefix) => edges.into_iter()
+        Some(prefix) => edges
+            .into_iter()
             .filter(|(src, dst)| src.starts_with(prefix) && dst.starts_with(prefix))
             .collect(),
         None => edges,
@@ -138,16 +172,38 @@ fn compare_with_ra(ra: &Path, root: &Path, name: &str, prefix: Option<&str>) -> 
     let ra_edges = filter_prefix(run_ra_edges(ra, root, name), prefix);
     let ours = filter_prefix(our_edges(root), prefix);
     let matched: HashSet<_> = ours.intersection(&ra_edges).cloned().collect();
-    let precision = if ours.is_empty() { 1.0 } else { matched.len() as f64 / ours.len() as f64 };
-    let recall = if ra_edges.is_empty() { 1.0 } else { matched.len() as f64 / ra_edges.len() as f64 };
+    let precision = if ours.is_empty() {
+        1.0
+    } else {
+        matched.len() as f64 / ours.len() as f64
+    };
+    let recall = if ra_edges.is_empty() {
+        1.0
+    } else {
+        matched.len() as f64 / ra_edges.len() as f64
+    };
     let extra: Vec<_> = ours.difference(&ra_edges).cloned().collect();
     let missed: Vec<_> = ra_edges.difference(&ours).cloned().collect();
-    OracleStats { ours, ra: ra_edges, matched, precision, recall, extra, missed }
+    OracleStats {
+        ours,
+        ra: ra_edges,
+        matched,
+        precision,
+        recall,
+        extra,
+        missed,
+    }
 }
 
 fn print_stats(label: &str, s: &OracleStats) {
-    eprintln!("[oracle:{label}] our edges={} ra edges={} matched={} precision={:.2} recall={:.2}",
-        s.ours.len(), s.ra.len(), s.matched.len(), s.precision, s.recall);
+    eprintln!(
+        "[oracle:{label}] our edges={} ra edges={} matched={} precision={:.2} recall={:.2}",
+        s.ours.len(),
+        s.ra.len(),
+        s.matched.len(),
+        s.precision,
+        s.recall
+    );
     eprintln!("[oracle:{label}] ours not in RA: {:?}", s.extra);
     eprintln!("[oracle:{label}] RA not in ours: {:?}", s.missed);
 }
@@ -165,7 +221,11 @@ fn module_edge_is_subset_of_rust_analyzer() {
     print_stats("fixture", &stats);
 
     assert!(!stats.ours.is_empty(), "we produced no edges");
-    assert!(stats.extra.is_empty(), "every emitted edge must be a real RA edge; extras: {:?}", stats.extra);
+    assert!(
+        stats.extra.is_empty(),
+        "every emitted edge must be a real RA edge; extras: {:?}",
+        stats.extra
+    );
 }
 
 #[test]
@@ -195,10 +255,19 @@ fn call_resolution_parity_vs_rust_analyzer() {
     // --- ground truth: rust-analyzer's SCIP index over this crate.
     let scip_out = std::env::temp_dir().join("sprefa_oracle_parity.scip");
     let status = Command::new(&ra)
-        .args(["scip", root.to_str().unwrap(), "--output", scip_out.to_str().unwrap()])
-        .output().expect("run rust-analyzer scip");
-    assert!(scip_out.is_file(), "rust-analyzer scip produced no index: {}",
-        String::from_utf8_lossy(&status.stderr));
+        .args([
+            "scip",
+            root.to_str().unwrap(),
+            "--output",
+            scip_out.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run rust-analyzer scip");
+    assert!(
+        scip_out.is_file(),
+        "rust-analyzer scip produced no index: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     // --- ours, index-free: call_site (the attempts) + site_pick (the
@@ -209,7 +278,8 @@ fn call_resolution_parity_vs_rust_analyzer() {
     std::fs::create_dir_all(&tmp).unwrap();
     let prog = format!(
         "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"src/**/*.rs\", path, rev).\n{}",
-        crate::oracle_parity::SITE_PICK_TAIL);
+        crate::oracle_parity::SITE_PICK_TAIL
+    );
     std::fs::write(tmp.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(tmp.join("parity.dl"))
@@ -217,20 +287,34 @@ fn call_resolution_parity_vs_rust_analyzer() {
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .env_remove("SPREFA_SCIP_INDEX")
         .current_dir(root)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     let stats = crate::oracle_parity::score_parity(&index, root, "src/", &stdout);
     assert!(stats.total_sites > 0, "no call sites extracted:\n{stdout}");
-    assert!(stats.denom() > 0, "no RA-confirmable call sites; oracle can't score");
+    assert!(
+        stats.denom() > 0,
+        "no RA-confirmable call sites; oracle can't score"
+    );
 
-    eprintln!("[oracle:parity] confirmed={} wrong={} bare={} multi(excluded)={}",
-        stats.confirmed, stats.wrong, stats.bare, stats.multi);
-    eprintln!("[oracle:parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
-        stats.parity() * 100.0, stats.precision());
-    for ex in &stats.wrong_examples { eprintln!("[oracle:parity] wrong: {ex}"); }
+    eprintln!(
+        "[oracle:parity] confirmed={} wrong={} bare={} multi(excluded)={}",
+        stats.confirmed, stats.wrong, stats.bare, stats.multi
+    );
+    eprintln!(
+        "[oracle:parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
+        stats.parity() * 100.0,
+        stats.precision()
+    );
+    for ex in &stats.wrong_examples {
+        eprintln!("[oracle:parity] wrong: {ex}");
+    }
     assert!(stats.confirmed > 0, "zero confirmed resolutions");
-    assert!(stats.precision() >= 0.95,
+    assert!(
+        stats.precision() >= 0.95,
         "resolver is buying coverage with wrong joins: precision {:.3} < 0.95; {:?}",
-        stats.precision(), stats.wrong_examples);
+        stats.precision(),
+        stats.wrong_examples
+    );
 }

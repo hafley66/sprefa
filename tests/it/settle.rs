@@ -51,15 +51,24 @@ fn is_settled_truth_table() {
     assert!(!moved.is_settled(), "a non-timer rel moved");
 
     // A staged @next carry is pending -> not settled.
-    let carry = TickReport { staged_next: true, ..Default::default() };
+    let carry = TickReport {
+        staged_next: true,
+        ..Default::default()
+    };
     assert!(!carry.is_settled());
 
     // An in-flight effect is owed a drain -> not settled.
-    let fx = TickReport { inflight_effects: 1, ..Default::default() };
+    let fx = TickReport {
+        inflight_effects: 1,
+        ..Default::default()
+    };
     assert!(!fx.is_settled());
 
     // derived_moved alone -> not settled.
-    let der = TickReport { derived_moved: true, ..Default::default() };
+    let der = TickReport {
+        derived_moved: true,
+        ..Default::default()
+    };
     assert!(!der.is_settled());
 }
 
@@ -82,11 +91,14 @@ impl EffectExec for MockExec {
 fn report_tracks_effect_inflight_then_settles() {
     let d = sandbox("inflight");
     let dbp = d.join("db");
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel want(key: str, url: str).\n\
          want(\"home\", \"https://api/home\").\n\
          rel resp(key: str, body: str).\n\
-         resp(key, body) <- @async want(key, url).\n").unwrap();
+         resp(key, body) <- @async want(key, url).\n",
+    )
+    .unwrap();
     let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
@@ -97,7 +109,10 @@ fn report_tracks_effect_inflight_then_settles() {
     assert!(!r1.is_settled(), "cannot settle with an undrained effect");
 
     // Off-tick drain (what the daemon / --settle loop does).
-    let exec = MockExec { body: vec!["HOME".into()], calls: Mutex::new(0) };
+    let exec = MockExec {
+        body: vec!["HOME".into()],
+        calls: Mutex::new(0),
+    };
     assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 1);
 
     // Tick 2: the request is done (zero in-flight), but the just-landed response
@@ -105,7 +120,10 @@ fn report_tracks_effect_inflight_then_settles() {
     // NOT yet settled — the settle loop ticks once more.
     let r2 = eng.tick_report(&prog, true).unwrap();
     assert_eq!(r2.inflight_effects, 0, "the drained request is done");
-    assert!(!r2.is_settled(), "the response landing counts as motion this tick");
+    assert!(
+        !r2.is_settled(),
+        "the response landing counts as motion this tick"
+    );
 
     // Tick 3: nothing moved (async digest stable), zero in-flight -> settled.
     let r3 = eng.tick_report(&prog, true).unwrap();
@@ -119,11 +137,14 @@ fn report_tracks_effect_inflight_then_settles() {
 fn report_staged_next_clears_at_carry_fixpoint() {
     let d = sandbox("carry");
     let dbp = d.join("db");
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel ping(v: int).\n\
          ping(7).\n\
          rel echo(v: int).\n\
-         echo(v) <- @next ping(v).\n").unwrap();
+         echo(v) <- @next ping(v).\n",
+    )
+    .unwrap();
     let (prog, _diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
@@ -145,25 +166,37 @@ fn run_settle(dir: &PathBuf, prog: &str, extra: &[&str]) -> (i32, String, String
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut args = vec![
         dir.join("p.dl").to_str().unwrap().to_string(),
-        "--no-daemon".into(), "--settle".into(),
+        "--no-daemon".into(),
+        "--settle".into(),
     ];
-    for e in extra { args.push((*e).into()); }
-    let out = Command::new(DL).args(&args).current_dir(dir).output().expect("run dl --settle");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    for e in extra {
+        args.push((*e).into());
+    }
+    let out = Command::new(DL)
+        .args(&args)
+        .current_dir(dir)
+        .output()
+        .expect("run dl --settle");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// CLI e2e: a plain (no-effect) program settles and prints its `?` answer.
 #[test]
 fn cli_settle_converges_and_prints() {
     let d = sandbox("plain");
-    let (code, out, err) = run_settle(&d,
+    let (code, out, err) = run_settle(
+        &d,
         "rel greeting(who: text).\n\
          greeting(\"world\").\n\
          rel loud(who: text).\n\
          loud(who) <- greeting(who).\n\
-         ? loud(who).\n", &[]);
+         ? loud(who).\n",
+        &[],
+    );
     assert_eq!(code, 0, "clean program settles: {err}");
     assert!(out.contains("world"), "prints the ? answer: {out}");
     assert!(err.contains("converged"), "reports convergence: {err}");
@@ -177,7 +210,8 @@ fn cli_settle_drives_sh_effect() {
     let d = sandbox("sh");
     // `sh who -> echoes a fixed line`; the @async response lands in greet, which
     // a derived rel reads. Deterministic: `echo` has no network.
-    let (code, out, err) = run_settle(&d,
+    let (code, out, err) = run_settle(
+        &d,
         "sh greet(name) -> (line: text) = `echo hi-{name}`.\n\
          rel want(name: text).\n\
          want(\"bob\").\n\
@@ -185,9 +219,14 @@ fn cli_settle_drives_sh_effect() {
          greet(name, line) <- @async want(name).\n\
          rel done(line: text).\n\
          done(line) <- greet(_, line).\n\
-         ? done(line).\n", &["--settle-max", "50"]);
+         ? done(line).\n",
+        &["--settle-max", "50"],
+    );
     assert_eq!(code, 0, "sh-effect program settles: {err}");
-    assert!(out.contains("hi-bob"), "the drained echo response is present: {out}\n{err}");
+    assert!(
+        out.contains("hi-bob"),
+        "the drained echo response is present: {out}\n{err}"
+    );
 }
 
 /// CLI e2e: a non-converging `@next` accumulator (the value set grows every tick)
@@ -195,7 +234,8 @@ fn cli_settle_drives_sh_effect() {
 #[test]
 fn cli_settle_bails_on_non_convergence() {
     let d = sandbox("diverge");
-    let (code, _out, err) = run_settle(&d,
+    let (code, _out, err) = run_settle(
+        &d,
         "rel base(v: int).\n\
          base(0).\n\
          rel grow(v: int).\n\
@@ -203,9 +243,14 @@ fn cli_settle_bails_on_non_convergence() {
          grow_next(v) <- base(v).\n\
          grow_next(v2) <- grow(v1), v2 = v1 + 1.\n\
          grow(v) <- @next grow_next(v).\n\
-         ? grow(v).\n", &["--settle-max", "80"]);
+         ? grow(v).\n",
+        &["--settle-max", "80"],
+    );
     assert_ne!(code, 0, "a divergent program must not exit 0");
-    assert!(err.contains("did not settle"), "bails loudly naming the failure: {err}");
+    assert!(
+        err.contains("did not settle"),
+        "bails loudly naming the failure: {err}"
+    );
 }
 
 /// Engine-level: bookkeeping motion (`rel_count`/`stmt_ms`) must never seed
@@ -241,13 +286,20 @@ fn bookkeeping_motion_never_seeds_the_scoped_rebuild() {
     eng.tick_report(&prog, true).unwrap();
 
     // Force the bookkeeping family to report moved on the next refresh.
-    eng.query_sql("UPDATE rel_rel_count SET rows = rows + 1", &[]).unwrap();
+    eng.query_sql("UPDATE rel_rel_count SET rows = rows + 1", &[])
+        .unwrap();
 
     let r3 = eng.tick_report(&prog, true).unwrap();
     assert!(
-        !r3.changed_rels.iter().any(|r| r == "rel_count" || r == "stmt_ms"),
+        !r3.changed_rels
+            .iter()
+            .any(|r| r == "rel_count" || r == "stmt_ms"),
         "bookkeeping rels must not seed the rebuild scope: {:?}",
         r3.changed_rels
     );
-    assert!(r3.is_settled(), "bookkeeping-only motion is quiescent: {:?}", r3.changed_rels);
+    assert!(
+        r3.is_settled(),
+        "bookkeeping-only motion is quiescent: {:?}",
+        r3.changed_rels
+    );
 }

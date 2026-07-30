@@ -50,13 +50,15 @@ impl Sandbox {
 
     fn spawn(&self, program: &Path) -> DaemonGuard {
         let mut cmd = Command::new(DL);
-        cmd.args(["daemon", "start", "--foreground"]).arg(program)
+        cmd.args(["daemon", "start", "--foreground"])
+            .arg(program)
             .current_dir(&self.root)
             .env("DL_DAEMON_ROOT", &self.root)
             .env("XDG_STATE_HOME", &self.home)
             .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
             .env("DL_LOG", "info")
-            .stdout(Stdio::null()).stderr(Stdio::null());
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         DaemonGuard(cmd.spawn().expect("spawn singleton daemon"))
     }
 
@@ -81,7 +83,10 @@ impl Sandbox {
     }
 
     fn shutdown(&self) {
-        let _ = rpc(&self.sock(), r#"{"jsonrpc":"2.0","id":9000,"method":"shutdown","params":{}}"#);
+        let _ = rpc(
+            &self.sock(),
+            r#"{"jsonrpc":"2.0","id":9000,"method":"shutdown","params":{}}"#,
+        );
     }
 
     /// Poll `dl.log` until `needle` appears, or give up after `timeout`.
@@ -105,11 +110,16 @@ fn rpc(sock: &Path, body: &str) -> Option<String> {
     crate::util::uds_rpc(sock, body)
 }
 
-fn rpc_root(sock: &Path, id: u64, method: &str, root: &Path, mut params: serde_json::Value)
-    -> Option<serde_json::Value>
-{
+fn rpc_root(
+    sock: &Path,
+    id: u64,
+    method: &str,
+    root: &Path,
+    mut params: serde_json::Value,
+) -> Option<serde_json::Value> {
     params["root"] = serde_json::json!(root.to_string_lossy());
-    let body = serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
+    let body =
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}).to_string();
     let resp = rpc(sock, &body)?;
     serde_json::from_str(&resp).ok()
 }
@@ -147,20 +157,28 @@ fn http_request_logs_an_access_line_with_a_request_id() {
     let body = serde_json::json!({
         "jsonrpc": "2.0", "id": 5, "method": "query",
         "params": { "root": sb.root.to_string_lossy() },
-    }).to_string();
+    })
+    .to_string();
     let (status, resp) = http_post(&sb.base_url(), "/rpc", &body).expect("http query");
     assert_eq!(status, 200, "query should succeed: {resp}");
 
-    let log = sb.wait_for_log_line("surface=\"http\"", Duration::from_secs(5))
+    let log = sb
+        .wait_for_log_line("surface=\"http\"", Duration::from_secs(5))
         .expect("dl.log should carry an http access line");
-    assert!(log.contains("[access]"), "access line marker present:\n{log}");
+    assert!(
+        log.contains("[access]"),
+        "access line marker present:\n{log}"
+    );
     assert!(log.contains("method=\"query\""), "method recorded:\n{log}");
     assert!(log.contains("req_id=\""), "req_id field present:\n{log}");
     // The req_id value itself must be non-empty: find the field and check it
     // is not immediately followed by whitespace/end-of-line.
     let after = log.split("req_id=\"").nth(1).unwrap_or("");
     let id_value = after.split('"').next().unwrap_or("");
-    assert!(!id_value.is_empty(), "req_id must carry an actual id:\n{log}");
+    assert!(
+        !id_value.is_empty(),
+        "req_id must carry an actual id:\n{log}"
+    );
 
     sb.shutdown();
     let _ = child.wait_timeout(Duration::from_secs(5));
@@ -178,11 +196,17 @@ fn socket_request_logs_an_access_line_with_a_request_id() {
     let resp = rpc_root(&sb.sock(), 42, "status", &sb.root, serde_json::json!({}));
     assert!(resp.is_some(), "status RPC should answer");
 
-    let log = sb.wait_for_log_line("surface=\"sock\"", Duration::from_secs(5))
+    let log = sb
+        .wait_for_log_line("surface=\"sock\"", Duration::from_secs(5))
         .expect("dl.log should carry a socket access line");
-    assert!(log.contains("[access]"), "access line marker present:\n{log}");
-    assert!(log.contains("method=\"status\"") || log.contains("method=\"ping\""),
-        "method recorded (status, or the readiness ping):\n{log}");
+    assert!(
+        log.contains("[access]"),
+        "access line marker present:\n{log}"
+    );
+    assert!(
+        log.contains("method=\"status\"") || log.contains("method=\"ping\""),
+        "method recorded (status, or the readiness ping):\n{log}"
+    );
     assert!(log.contains("req_id=\""), "req_id field present:\n{log}");
 
     sb.shutdown();

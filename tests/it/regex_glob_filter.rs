@@ -24,8 +24,13 @@ fn run(dir: &Path, prog: &str) -> String {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -33,7 +38,11 @@ fn run(dir: &Path, prog: &str) -> String {
 fn regex_and_glob_filter_derived_columns() {
     let d = sandbox("derived");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/a.rs"), "fn tick() {}\nfn tick_paths() {}\nfn other() {}\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "fn tick() {}\nfn tick_paths() {}\nfn other() {}\n",
+    )
+    .unwrap();
     fs::write(d.join("src/b.rs"), "fn refresh_rel() {}\n").unwrap();
 
     let prog = r#"
@@ -60,5 +69,8 @@ in_b(name, path) <- fn_def(name, path), path ~~ "*b.rs".
     // glob on the path column selects only src/b.rs (refresh_rel lives there).
     let glob_block = out.rsplit("? in_b").next().unwrap();
     assert!(glob_block.contains("b.rs"), "glob path match: {glob_block}");
-    assert!(!glob_block.contains("a.rs"), "glob must exclude a.rs: {glob_block}");
+    assert!(
+        !glob_block.contains("a.rs"),
+        "glob must exclude a.rs: {glob_block}"
+    );
 }

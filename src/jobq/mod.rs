@@ -168,7 +168,10 @@ pub(crate) struct JobRow {
 impl JobRow {
     /// A `tick:{root_id}` job carrying the changed paths.
     pub fn tick(root_id: &str, paths: &[PathBuf]) -> JobRow {
-        let arr: Vec<String> = paths.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+        let arr: Vec<String> = paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         JobRow {
             key: format!("tick:{root_id}"),
             kind: JobKind::Tick,
@@ -469,7 +472,12 @@ impl JobQueue {
                    AND json_extract(metadata, '$.dirty') IS NULL",
                 &[(now - DONE_RETAIN_SECS).into()],
             )?;
-            Ok(ReconcileReport { dirty_reruns, cold_promoted, budget_deferred, trimmed })
+            Ok(ReconcileReport {
+                dirty_reruns,
+                cold_promoted,
+                budget_deferred,
+                trimmed,
+            })
         })();
         finish_tx(&db, &body)?;
         body
@@ -479,7 +487,12 @@ impl JobQueue {
     /// by the worker's failure path BEFORE apalis acks the row `Failed` (the
     /// ack writes status/attempts/last_result, never `run_at`, so the stamp
     /// survives). Returns the delay in seconds.
-    pub(crate) fn note_failure_backoff(&self, task_id: &str, key: &str, attempts: i64) -> Result<i64> {
+    pub(crate) fn note_failure_backoff(
+        &self,
+        task_id: &str,
+        key: &str,
+        attempts: i64,
+    ) -> Result<i64> {
         let now = now_secs();
         let delay = jittered_backoff(attempts, jitter_seed(key, now));
         let db = plock(&self.db);
@@ -625,7 +638,16 @@ impl JobQueue {
                     CAST(job AS TEXT), priority, attempts, run_at \
              FROM Jobs WHERE idempotency_key=?1",
             &[key.into()],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            },
         )
         .ok()
         .flatten()
@@ -688,7 +710,11 @@ fn merge_args(prev: &Value, incoming: &Value) -> Value {
 fn paths_of(v: &Value) -> Vec<String> {
     v.get("paths")
         .and_then(|x| x.as_array())
-        .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default()
 }
 

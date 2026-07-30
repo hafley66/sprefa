@@ -26,7 +26,9 @@ async fn rig_with(
     dir: &TmpDir,
     build_runner: impl FnOnce(Arc<JobQueue>) -> Arc<dyn JobRunner>,
 ) -> (Arc<JobQueue>, ShellCtx, CancellationToken) {
-    let pool = workers::open_pool(&dir.0.join("jobs.sqlite")).await.expect("pool");
+    let pool = workers::open_pool(&dir.0.join("jobs.sqlite"))
+        .await
+        .expect("pool");
     let q = JobQueue::open_with_budget(&dir.0, None).expect("open");
     let cancel = CancellationToken::new();
     let (broadcast_tx, _) = tokio::sync::broadcast::channel::<String>(8);
@@ -63,7 +65,8 @@ struct ChainEnqueueRunner {
 impl JobRunner for ChainEnqueueRunner {
     fn run(&self, job: &JobRow) -> Result<()> {
         if job.kind == JobKind::Tick {
-            self.jobq.enqueue(JobRow::cold_extract(&job.root, "module-rels", 0, 1))?;
+            self.jobq
+                .enqueue(JobRow::cold_extract(&job.root, "module-rels", 0, 1))?;
         }
         Ok(())
     }
@@ -75,19 +78,22 @@ impl JobRunner for ChainEnqueueRunner {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn request_caused_job_threads_req_id_into_follow_up_enqueues() {
     let dir = TmpDir::new();
-    let (q, ctx, cancel) =
-        rig_with(&dir, |jobq| Arc::new(ChainEnqueueRunner { jobq })).await;
+    let (q, ctx, cancel) = rig_with(&dir, |jobq| Arc::new(ChainEnqueueRunner { jobq })).await;
 
     // The request-scoped entry half (already landed with the apalis
     // migration): an enqueue on a thread inside `reqid::scope` stamps the row.
     {
         let _scope = crate::reqid::scope("req-42");
-        q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a.rs")])).unwrap();
+        q.enqueue(JobRow::tick("r1", &[PathBuf::from("/a.rs")]))
+            .unwrap();
     }
     assert_eq!(meta_req_id(&q, "tick:r1").as_deref(), Some("req-42"));
 
     ctx.job_notify.notify_waiters();
-    assert!(wait_for_state(&q, "tick:r1", "Done", 200).await, "tick job never completed");
+    assert!(
+        wait_for_state(&q, "tick:r1", "Done", 200).await,
+        "tick job never completed"
+    );
 
     // The follow-up cold job minted DURING the run must inherit the id — both
     // in the payload and in the `$.req_id` metadata `cancel_req` matches.
@@ -107,8 +113,11 @@ async fn request_caused_job_threads_req_id_into_follow_up_enqueues() {
         Some("req-42"),
         "a follow-up job minted during a request-caused run must inherit the request's id"
     );
-    assert_eq!(meta_req_id(&q, "cold:r1:module-rels:0").as_deref(), Some("req-42"),
-        "the durable metadata mark (what cancel_req matches) must carry the id too");
+    assert_eq!(
+        meta_req_id(&q, "cold:r1:module-rels:0").as_deref(),
+        Some("req-42"),
+        "the durable metadata mark (what cancel_req matches) must carry the id too"
+    );
 }
 
 /// A runner standing in for a long tick: loops on the mid-run checkpoint until
@@ -145,13 +154,17 @@ async fn cancel_req_aborts_a_running_job_at_the_next_checkpoint() {
     let exhausted = Arc::new(AtomicBool::new(false));
     let (started_r, exhausted_r) = (started.clone(), exhausted.clone());
     let (q, ctx, cancel) = rig_with(&dir, move |_jobq| {
-        Arc::new(CheckpointLoopRunner { started: started_r, exhausted: exhausted_r })
+        Arc::new(CheckpointLoopRunner {
+            started: started_r,
+            exhausted: exhausted_r,
+        })
     })
     .await;
 
     {
         let _scope = crate::reqid::scope("req-9");
-        q.enqueue(JobRow::tick("slow", &[PathBuf::from("/a.rs")])).unwrap();
+        q.enqueue(JobRow::tick("slow", &[PathBuf::from("/a.rs")]))
+            .unwrap();
     }
     ctx.job_notify.notify_waiters();
 

@@ -27,10 +27,13 @@ fn run(dir: &std::path::Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// The simplest shape: one template, one call site. The template body is
@@ -39,14 +42,17 @@ fn run(dir: &std::path::Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn def_inlines_at_call_site() {
     let d = sandbox("basic");
-    let (code, out, err) = run(&d, "\
+    let (code, out, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         rel two_hop(a: int, b: int).\n\
         edge(1, 2).\n\
         edge(2, 3).\n\
         def via(x, z) <- edge(x, m), edge(m, z).\n\
         two_hop(a, b) <- via(a, b).\n\
-        ? two_hop(a, b).\n");
+        ? two_hop(a, b).\n",
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("1\t3"), "1->2->3 path via template: {out}");
 }
@@ -57,18 +63,24 @@ fn def_inlines_at_call_site() {
 #[test]
 fn two_calls_to_same_template_dont_share_internal_vars() {
     let d = sandbox("disjoint");
-    let (code, out, err) = run(&d, "\
+    let (code, out, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         rel four_hop(a: int, b: int).\n\
         edge(1, 2). edge(2, 3). edge(3, 4). edge(4, 5).\n\
         def via(x, z) <- edge(x, m), edge(m, z).\n\
         four_hop(a, b) <- via(a, mid), via(mid, b).\n\
-        ? four_hop(a, b).\n");
+        ? four_hop(a, b).\n",
+    );
     assert_eq!(code, 0, "{err}");
     // 1->2->3->4->5 is the only 4-edge chain. If the two `via` calls shared
     // their internal `m`, this would collapse to a 2-edge chain (1->3) and
     // there would be no 4-hop result.
-    assert!(out.contains("1\t5"), "alpha-rename keeps siblings disjoint: {out}");
+    assert!(
+        out.contains("1\t5"),
+        "alpha-rename keeps siblings disjoint: {out}"
+    );
     assert!(out.contains("(1 rows)"), "exactly one 4-edge chain: {out}");
 }
 
@@ -83,12 +95,18 @@ fn qualified_call_graph_join_factored_into_def() {
     // A tiny corpus: fn `outer` spans lines 1-3, a call to `inner` at line 2.
     // Without the range containment, every fn would call every other fn in
     // the same file.
-    fs::write(d.join("src.rs"), "\
+    fs::write(
+        d.join("src.rs"),
+        "\
 fn outer() {\n\
     inner();\n\
 }\n\
-fn inner() {}\n").unwrap();
-    let (code, out, err) = run(&d, "\
+fn inner() {}\n",
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        &d,
+        "\
         rel fndef(name: text, path: file, s: int, e: int).\n\
         rel callsite(callee: text, path: file, line: int).\n\
         rel calls(caller: text, callee: text).\n\
@@ -107,14 +125,21 @@ fn inner() {}\n").unwrap();
           s <= l, l <= e.\n\
         \n\
         calls(caller, callee) <- qcall(caller, callee).\n\
-        ? calls(caller, callee).\n");
+        ? calls(caller, callee).\n",
+    );
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("outer\tinner"), "range containment resolved: {out}");
+    assert!(
+        out.contains("outer\tinner"),
+        "range containment resolved: {out}"
+    );
     // The reverse direction (`inner calls outer`) must NOT appear: the call to
     // `inner` is inside `outer`'s body, not the other way around. A naive
     // file-scoped heuristic (no def) would surface both.
     let block = out.split("? calls").nth(1).unwrap_or("");
-    assert!(!block.contains("inner\touter"), "containment is one-directional: {out}");
+    assert!(
+        !block.contains("inner\touter"),
+        "containment is one-directional: {out}"
+    );
 }
 
 /// A template is not itself a rule: declaring `def foo(x) <- ...` with no call
@@ -123,13 +148,22 @@ fn inner() {}\n").unwrap();
 #[test]
 fn def_without_call_site_emits_nothing() {
     let d = sandbox("orphan");
-    let (code, out, err) = run(&d, "\
+    let (code, out, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         edge(1, 2).\n\
         def via(x, z) <- edge(x, m), edge(m, z).\n\
-        ? edge(a, b).\n");
-    assert_eq!(code, 0, "no call site, but the program is still valid: {err}");
-    assert!(out.contains("1\t2"), "non-template query still works: {out}");
+        ? edge(a, b).\n",
+    );
+    assert_eq!(
+        code, 0,
+        "no call site, but the program is still valid: {err}"
+    );
+    assert!(
+        out.contains("1\t2"),
+        "non-template query still works: {out}"
+    );
 }
 
 /// A template call with the wrong arity hard-errors at expand time. The error
@@ -137,15 +171,21 @@ fn def_without_call_site_emits_nothing() {
 #[test]
 fn wrong_arity_at_call_site_errors() {
     let d = sandbox("arity");
-    let (code, _, err) = run(&d, "\
+    let (code, _, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         edge(1, 2).\n\
         def via(x, z) <- edge(x, m), edge(m, z).\n\
         rel r(a: int).\n\
         r(a) <- via(a).\n\
-        ? r(a).\n");
+        ? r(a).\n",
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("expects 2 args"), "arity error names the template: {err}");
+    assert!(
+        err.contains("expects 2 args"),
+        "arity error names the template: {err}"
+    );
 }
 
 /// Recursion is rejected: a template that transitively calls itself would
@@ -153,16 +193,22 @@ fn wrong_arity_at_call_site_errors() {
 #[test]
 fn recursion_is_rejected() {
     let d = sandbox("cycle");
-    let (code, _, err) = run(&d, "\
+    let (code, _, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         edge(1, 2).\n\
         def reach(x, z) <- edge(x, z).\n\
         def reach(x, z) <- edge(x, m), reach(m, z).\n\
         rel r(a: int, b: int).\n\
         r(a, b) <- reach(a, b).\n\
-        ? r(a, b).\n");
+        ? r(a, b).\n",
+    );
     assert_ne!(code, 0, "recursive def must be rejected: {err}");
-    assert!(err.contains("declared twice"), "same-name second def is a conflict: {err}");
+    assert!(
+        err.contains("declared twice"),
+        "same-name second def is a conflict: {err}"
+    );
 }
 
 /// Same-name second `def` is a conflict (mirrors rel-decl conflicts). The
@@ -170,16 +216,22 @@ fn recursion_is_rejected() {
 #[test]
 fn same_name_def_twice_is_conflict() {
     let d = sandbox("dupe");
-    let (code, _, err) = run(&d, "\
+    let (code, _, err) = run(
+        &d,
+        "\
         rel edge(a: int, b: int).\n\
         edge(1, 2).\n\
         def via(x, z) <- edge(x, m), edge(m, z).\n\
         def via(x, z) <- edge(x, z).\n\
         rel r(a: int, b: int).\n\
         r(a, b) <- via(a, b).\n\
-        ? r(a, b).\n");
+        ? r(a, b).\n",
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("declared twice"), "second def of same name is conflict: {err}");
+    assert!(
+        err.contains("declared twice"),
+        "second def of same name is conflict: {err}"
+    );
 }
 
 /// A `def` from an imported file is callable from the importer. The template
@@ -189,16 +241,23 @@ fn same_name_def_twice_is_conflict() {
 #[test]
 fn def_crosses_use_boundary() {
     let d = sandbox("lib");
-    fs::write(d.join("lib.dl"), "\
+    fs::write(
+        d.join("lib.dl"),
+        "\
         rel edge(a: int, b: int).\n\
-        def via(x, z) <- edge(x, m), edge(m, z).\n").unwrap();
-    let (code, out, err) = run(&d, "\
+        def via(x, z) <- edge(x, m), edge(m, z).\n",
+    )
+    .unwrap();
+    let (code, out, err) = run(
+        &d,
+        "\
         use \"lib.dl\".\n\
         edge(1, 2).\n\
         edge(2, 3).\n\
         rel two_hop(a: int, b: int).\n\
         two_hop(a, b) <- via(a, b).\n\
-        ? two_hop(a, b).\n");
+        ? two_hop(a, b).\n",
+    );
     assert_eq!(code, 0, "imported def is callable: {err}");
     assert!(out.contains("1\t3"), "imported def resolves: {out}");
 }
@@ -210,11 +269,17 @@ fn def_crosses_use_boundary() {
 #[test]
 fn def_as_rel_name_still_parses() {
     let d = sandbox("rel_named_def");
-    let (code, out, err) = run(&d, "\
+    let (code, out, err) = run(
+        &d,
+        "\
         rel def(x: int).\n\
         def(1).\n\
         def(2).\n\
-        ? def(x).\n");
+        ? def(x).\n",
+    );
     assert_eq!(code, 0, "`def` as a rel name must parse: {err}");
-    assert!(out.contains("1") && out.contains("2"), "facts present: {out}");
+    assert!(
+        out.contains("1") && out.contains("2"),
+        "facts present: {out}"
+    );
 }

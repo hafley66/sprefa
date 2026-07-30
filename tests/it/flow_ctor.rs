@@ -96,12 +96,17 @@ fn ctor_fields_flow_field_sensitively_per_language() {
         assert_eq!(code, 0, "[{lang}] must not error:\n{err}");
 
         let secs = sections(&out);
-        assert!(secs.len() >= 4, "[{lang}] expected 4 query sections:\n{out}");
+        assert!(
+            secs.len() >= 4,
+            "[{lang}] expected 4 query sections:\n{out}"
+        );
 
         // ctor inventory: one instantiation of the expected type, inside go.
         let ctors = rows(&secs[0]);
         assert!(
-            ctors.iter().any(|r| r.len() >= 3 && r[1] == ty && r[2].contains("::go")),
+            ctors
+                .iter()
+                .any(|r| r.len() >= 3 && r[1] == ty && r[2].contains("::go")),
             "[{lang}] expected a ctor row of type {ty:?} in go:\n{out}"
         );
 
@@ -112,8 +117,14 @@ fn ctor_fields_flow_field_sensitively_per_language() {
             .filter(|r| r.len() >= 2)
             .map(|r| (r[0].as_str(), r[1].as_str()))
             .collect();
-        assert!(filled.contains(&(ty, "host")), "[{lang}] expected field_fill host:\n{out}");
-        assert!(filled.contains(&(ty, "port")), "[{lang}] expected field_fill port:\n{out}");
+        assert!(
+            filled.contains(&(ty, "host")),
+            "[{lang}] expected field_fill host:\n{out}"
+        );
+        assert!(
+            filled.contains(&(ty, "port")),
+            "[{lang}] expected field_fill port:\n{out}"
+        );
 
         // DECISIVE: field-sensitive flow fires for host (stored AND read) ...
         let flows = rows(&secs[3]);
@@ -167,7 +178,9 @@ fn arg_slots_cover_calls_receivers_and_ctors() {
         "expected slot-0 arg rows:\n{out}"
     );
     assert!(
-        slots.iter().any(|r| r.len() >= 4 && r[1] == "-1" && r[3] == "var_read"),
+        slots
+            .iter()
+            .any(|r| r.len() >= 4 && r[1] == "-1" && r[3] == "var_read"),
         "expected the method receiver at slot -1:\n{out}"
     );
 
@@ -189,7 +202,9 @@ fn arg_slots_cover_calls_receivers_and_ctors() {
     );
     let slots = rows(&secs[2]);
     assert!(
-        slots.iter().any(|r| r.len() >= 4 && r[1] == "0" && r[3] == "var_read"),
+        slots
+            .iter()
+            .any(|r| r.len() >= 4 && r[1] == "0" && r[3] == "var_read"),
         "expected Widget's ctor arg at slot 0:\n{out}"
     );
 }

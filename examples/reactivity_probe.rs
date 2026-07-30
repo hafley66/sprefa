@@ -47,7 +47,10 @@ fn run() -> Result<()> {
     if !before_edit.contains("helper_a(value)") {
         bail!("edit target does not contain the expected helper_a call");
     }
-    fs::write(&changed, before_edit.replacen("helper_a(value)", "helper_b(value)", 1))?;
+    fs::write(
+        &changed,
+        before_edit.replacen("helper_a(value)", "helper_b(value)", 1),
+    )?;
 
     let before_parses = engine.extract_files_parsed.get();
     let started = Instant::now();
@@ -62,7 +65,10 @@ fn run() -> Result<()> {
     }
     let edit = phase(
         started,
-        engine.extract_files_parsed.get().saturating_sub(before_parses),
+        engine
+            .extract_files_parsed
+            .get()
+            .saturating_sub(before_parses),
         &engine,
         "incremental",
     )?;
@@ -73,9 +79,7 @@ fn run() -> Result<()> {
     let connection = db::open(Some(path_text(&clean_database)?))?;
     let mut clean_engine = Engine::new(connection, root);
     let rebuild = full_tick(&mut clean_engine, &program)?;
-    if edit["semantic_digest"] != rebuild["semantic_digest"]
-        || edit["rows"] != rebuild["rows"]
-    {
+    if edit["semantic_digest"] != rebuild["semantic_digest"] || edit["rows"] != rebuild["rows"] {
         bail!("incremental call graph differs from a clean rebuild");
     }
 
@@ -97,9 +101,15 @@ fn run() -> Result<()> {
 
 fn args() -> Result<(PathBuf, PathBuf, PathBuf)> {
     let mut args = env::args_os().skip(1).map(PathBuf::from);
-    let root = args.next().context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
-    let database = args.next().context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
-    let changed = args.next().context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
+    let root = args
+        .next()
+        .context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
+    let database = args
+        .next()
+        .context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
+    let changed = args
+        .next()
+        .context("usage: reactivity_probe ROOT DB CHANGED_FILE")?;
     if args.next().is_some() {
         bail!("usage: reactivity_probe ROOT DB CHANGED_FILE");
     }
@@ -121,7 +131,10 @@ fn full_tick(engine: &mut Engine, program: &sprefa_v5::ast::Program) -> Result<V
     engine.tick(program, true)?;
     phase(
         started,
-        engine.extract_files_parsed.get().saturating_sub(before_parses),
+        engine
+            .extract_files_parsed
+            .get()
+            .saturating_sub(before_parses),
         engine,
         "full",
     )
@@ -151,7 +164,9 @@ fn call_graph_rows(engine: &Engine) -> Result<Vec<String>> {
 }
 
 fn fixture_file_count(changed: &Path) -> Result<usize> {
-    let corpus = changed.parent().context("changed file has no corpus directory")?;
+    let corpus = changed
+        .parent()
+        .context("changed file has no corpus directory")?;
     Ok(fs::read_dir(corpus)?
         .filter_map(std::result::Result::ok)
         .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("rs"))
@@ -162,7 +177,10 @@ fn absolute_new_path(path: &Path) -> Result<PathBuf> {
     if path.exists() {
         bail!("database already exists: {}", path.display());
     }
-    let parent = path.parent().context("database has no parent")?.canonicalize()?;
+    let parent = path
+        .parent()
+        .context("database has no parent")?
+        .canonicalize()?;
     Ok(parent.join(path.file_name().context("database has no filename")?))
 }
 

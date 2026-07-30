@@ -7,7 +7,10 @@ mod desugar;
 mod ops;
 pub(crate) use desugar::desugar_regex_holes;
 
-pub struct Parser { toks: Vec<Tok>, i: usize }
+pub struct Parser {
+    toks: Vec<Tok>,
+    i: usize,
+}
 
 // ARCH {"url":"20-parse","role":"frontend"}
 pub fn parse(toks: Vec<Tok>) -> Result<Program> {
@@ -35,8 +38,12 @@ pub fn parse_surface(toks: Vec<Tok>) -> Result<Vec<SurfaceItem>> {
 }
 
 impl Parser {
-    fn peek(&self) -> Option<&Tok> { self.toks.get(self.i) }
-    fn peek2(&self) -> Option<&Tok> { self.toks.get(self.i + 1) }
+    fn peek(&self) -> Option<&Tok> {
+        self.toks.get(self.i)
+    }
+    fn peek2(&self) -> Option<&Tok> {
+        self.toks.get(self.i + 1)
+    }
     fn next(&mut self) -> Result<Tok> {
         let t = self.toks.get(self.i).cloned();
         self.i += 1;
@@ -44,7 +51,9 @@ impl Parser {
     }
     fn expect(&mut self, want: Tok) -> Result<()> {
         let got = self.next()?;
-        if got != want { bail!("expected {:?}, got {:?}", want, got); }
+        if got != want {
+            bail!("expected {:?}, got {:?}", want, got);
+        }
         Ok(())
     }
     fn ident(&mut self) -> Result<String> {
@@ -133,9 +142,12 @@ impl Parser {
             // `sh`/`sh!`/`sh*` heading an ident (the fn name) is a shell-fn decl;
             // a rule/rel literally named `sh` (`sh(...)`) still parses as such
             // because its second token is `(`, not an ident/bang/star.
-            Some(Tok::Ident(s)) if s == "sh"
-                && matches!(self.peek2(), Some(Tok::Ident(_) | Tok::Bang | Tok::Star)) =>
-                Ok(Item::Shell(self.shell_fn()?)),
+            Some(Tok::Ident(s))
+                if s == "sh"
+                    && matches!(self.peek2(), Some(Tok::Ident(_) | Tok::Bang | Tok::Star)) =>
+            {
+                Ok(Item::Shell(self.shell_fn()?))
+            }
             Some(Tok::Question) => Ok(Item::Query(self.query()?)),
             _ => Ok(Item::Rule(self.rule()?)),
         }
@@ -154,7 +166,9 @@ impl Parser {
         self.expect(Tok::Eq)?;
         let (body, span) = match self.next()? {
             Tok::Scheme { scheme, body, span } => {
-                if scheme != "fs" { bail!("anchor must be an `fs:` literal, got `{scheme}:`"); }
+                if scheme != "fs" {
+                    bail!("anchor must be an `fs:` literal, got `{scheme}:`");
+                }
                 (body, span)
             }
             other => bail!("anchor must be assigned an `fs:` literal, got {other:?}"),
@@ -177,7 +191,11 @@ impl Parser {
                 self.next()?;
                 let parent = self.ident()?;
                 self.expect(Tok::Dot)?;
-                Ok(Item::Brand(BrandDecl { name, parent, variants: None }))
+                Ok(Item::Brand(BrandDecl {
+                    name,
+                    parent,
+                    variants: None,
+                }))
             }
             Some(Tok::Eq) => {
                 self.next()?;
@@ -187,7 +205,11 @@ impl Parser {
                     variants.push(self.str_lit()?);
                 }
                 self.expect(Tok::Dot)?;
-                Ok(Item::Brand(BrandDecl { name, parent: "text".into(), variants: Some(variants) }))
+                Ok(Item::Brand(BrandDecl {
+                    name,
+                    parent: "text".into(),
+                    variants: Some(variants),
+                }))
             }
             Some(Tok::LParen) => {
                 self.next()?; // `(`
@@ -207,7 +229,10 @@ impl Parser {
                 self.expect(Tok::Dot)?;
                 Ok(Item::Shape(ShapeDecl { name, cols }))
             }
-            other => bail!("type `{name}`: expected `<:` (brand), `=` (enum), or `(` (shape), got {:?}", other),
+            other => bail!(
+                "type `{name}`: expected `<:` (brand), `=` (enum), or `(` (shape), got {:?}",
+                other
+            ),
         }
     }
 
@@ -216,7 +241,10 @@ impl Parser {
     fn str_lit(&mut self) -> Result<String> {
         match self.next()? {
             Tok::Str(s) => Ok(s),
-            other => bail!("enum brand variants must be string literals like \"warn\", got {:?}", other),
+            other => bail!(
+                "enum brand variants must be string literals like \"warn\", got {:?}",
+                other
+            ),
         }
     }
 
@@ -230,7 +258,11 @@ impl Parser {
             self.next()?; // `:`
             let shape = self.ident()?;
             self.expect(Tok::Dot)?;
-            return Ok(RelDecl { name, shape_ref: Some(shape), ..Default::default() });
+            return Ok(RelDecl {
+                name,
+                shape_ref: Some(shape),
+                ..Default::default()
+            });
         }
         self.expect(Tok::LParen)?;
         let mut cols = Vec::new();
@@ -284,14 +316,19 @@ impl Parser {
                             let arg = self.ident()?;
                             self.expect(Tok::RParen)?;
                             self.expect(Tok::RParen)?;
-                            merge = Some(crate::ast::MergeFn::parse(&fname, &arg)
-                                .ok_or_else(|| anyhow::anyhow!("unknown merge function {fname}"))?);
+                            merge = Some(crate::ast::MergeFn::parse(&fname, &arg).ok_or_else(
+                                || anyhow::anyhow!("unknown merge function {fname}"),
+                            )?);
                         }
                         _ => bail!("expected `.` or rel qualifier (key/merge/@in/@out), got {q:?}"),
                     }
                 }
                 Some(Tok::At(w)) if w == "in" || w == "out" => {
-                    let dir = if w == "in" { crate::ast::PortDir::In } else { crate::ast::PortDir::Out };
+                    let dir = if w == "in" {
+                        crate::ast::PortDir::In
+                    } else {
+                        crate::ast::PortDir::Out
+                    };
                     self.next()?;
                     self.expect(Tok::LParen)?;
                     let class = self.ident()?;
@@ -305,7 +342,14 @@ impl Parser {
             }
         }
         self.expect(Tok::Dot)?;
-        Ok(RelDecl { name, cols, key, merge, port, ..Default::default() })
+        Ok(RelDecl {
+            name,
+            cols,
+            key,
+            merge,
+            port,
+            ..Default::default()
+        })
     }
 
     /// `sh[!|*] name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a shell-fn
@@ -316,8 +360,14 @@ impl Parser {
     fn shell_fn(&mut self) -> Result<ShellFn> {
         self.ident()?; // "sh"
         let kind = match self.peek() {
-            Some(Tok::Bang) => { self.next()?; ShellKind::Mutate }
-            Some(Tok::Star) => { self.next()?; ShellKind::Stream }
+            Some(Tok::Bang) => {
+                self.next()?;
+                ShellKind::Mutate
+            }
+            Some(Tok::Star) => {
+                self.next()?;
+                ShellKind::Stream
+            }
             _ => ShellKind::Read,
         };
         let name = self.ident()?;
@@ -353,10 +403,20 @@ impl Parser {
         self.expect(Tok::Eq)?;
         let body = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("sh `{}`: expected a `backtick` body after =, got {:?}", name, other),
+            other => bail!(
+                "sh `{}`: expected a `backtick` body after =, got {:?}",
+                name,
+                other
+            ),
         };
         self.expect(Tok::Dot)?;
-        Ok(ShellFn { name, params, outs, body, kind })
+        Ok(ShellFn {
+            name,
+            params,
+            outs,
+            body,
+            kind,
+        })
     }
 
     fn rule(&mut self) -> Result<Rule> {
@@ -368,7 +428,14 @@ impl Parser {
                 if aggs.iter().any(|a| a.is_some()) {
                     bail!("aggregate not allowed in a fact head");
                 }
-                return Ok(Rule { head, body: Vec::new(), aggs, agg_args2, origin: None, temporal: None });
+                return Ok(Rule {
+                    head,
+                    body: Vec::new(),
+                    aggs,
+                    agg_args2,
+                    origin: None,
+                    temporal: None,
+                });
             }
             Tok::Arrow => {}
             other => bail!("expected <- or . after rule head, got {:?}", other),
@@ -377,10 +444,12 @@ impl Parser {
         let temporal = if matches!(self.peek(), Some(Tok::At(_))) {
             match self.next()? {
                 Tok::At(w) => Some(match w.as_str() {
-                    "next"   => Temporal::Next,
-                    "async"  => Temporal::Async,
+                    "next" => Temporal::Next,
+                    "async" => Temporal::Async,
                     "stream" => Temporal::Stream,
-                    other => bail!("unknown rule modifier `@{other}` (known: @next, @async, @stream)"),
+                    other => {
+                        bail!("unknown rule modifier `@{other}` (known: @next, @async, @stream)")
+                    }
                 }),
                 _ => unreachable!(),
             }
@@ -396,7 +465,14 @@ impl Parser {
                 other => bail!("expected , or . in rule body, got {:?}", other),
             }
         }
-        Ok(Rule { head, body, aggs, agg_args2, origin: None, temporal })
+        Ok(Rule {
+            head,
+            body,
+            aggs,
+            agg_args2,
+            origin: None,
+            temporal,
+        })
     }
 
     /// Parse a rule head, allowing aggregate calls in term positions:
@@ -423,7 +499,10 @@ impl Parser {
                 // aggregate — `aggs` stays parallel to the POSITIONAL terms only,
                 // and resolve pads its length out, so mixing named args with an
                 // aggregate head is rejected below.
-                if matches!((self.peek(), self.peek2()), (Some(Tok::Ident(_)), Some(Tok::Colon))) {
+                if matches!(
+                    (self.peek(), self.peek2()),
+                    (Some(Tok::Ident(_)), Some(Tok::Colon))
+                ) {
                     let col = self.ident()?;
                     self.expect(Tok::Colon)?;
                     named.push((col, self.expr()?));
@@ -471,7 +550,10 @@ impl Parser {
         if !named.is_empty() && aggs.iter().any(|a| a.is_some()) {
             bail!("a rule head can't mix named args with an aggregate; write the aggregate head fully positional");
         }
-        if !aggs.iter().any(|a| a.is_some()) { aggs.clear(); agg_args2.clear(); }
+        if !aggs.iter().any(|a| a.is_some()) {
+            aggs.clear();
+            agg_args2.clear();
+        }
         Ok((Atom { rel, terms, named }, aggs, agg_args2))
     }
 
@@ -479,9 +561,11 @@ impl Parser {
         self.expect(Tok::Question)?;
         let head = self.atom()?;
         if matches!(self.peek(), Some(Tok::Ident(s)) if s == "where") {
-            bail!("`where` was removed. Filter by nesting: pin a column with a \
+            bail!(
+                "`where` was removed. Filter by nesting: pin a column with a \
                    literal head term (`? rel(\"X\", y).`), or derive a filtered \
-                   relation and query it (`r(...) <- rel(...), col =~ \"...\". ? r(...).`).");
+                   relation and query it (`r(...) <- rel(...), col =~ \"...\". ? r(...).`)."
+            );
         }
         self.expect(Tok::Dot)?;
         Ok(Query { head })
@@ -509,20 +593,48 @@ impl Parser {
         // aliases (`legacy_name: true`) so existing programs never hard-break;
         // `typecheck::normalize_body_item` warns on them, naming the new spelling.
         if let Some(Tok::Ident(s)) = self.peek() {
-            if s == "scan" { return self.scan(); }
-            if s == "match_line" { return self.match_(false); }
-            if s == "match" { return self.match_(true); }
-            if s == "ast" { return self.ast(); }
-            if s == "match_ast" { return self.sg(false); }
-            if s == "sg" { return self.sg(true); }
-            if s == "ast_yaml" { return self.ast_yaml(); }
-            if s == "jsonp" { return self.jsonp(); }
-            if s == "json" { return self.json(); }
-            if s == "cmd" { return self.cmd(); }
-            if s == "comment" { return self.comment(); }
-            if s == "closure" { return self.closure(); }
-            if s == "scc" { return self.scc(); }
-            if s == "node2vec" { return self.node2vec(); }
+            if s == "scan" {
+                return self.scan();
+            }
+            if s == "match_line" {
+                return self.match_(false);
+            }
+            if s == "match" {
+                return self.match_(true);
+            }
+            if s == "ast" {
+                return self.ast();
+            }
+            if s == "match_ast" {
+                return self.sg(false);
+            }
+            if s == "sg" {
+                return self.sg(true);
+            }
+            if s == "ast_yaml" {
+                return self.ast_yaml();
+            }
+            if s == "jsonp" {
+                return self.jsonp();
+            }
+            if s == "json" {
+                return self.json();
+            }
+            if s == "cmd" {
+                return self.cmd();
+            }
+            if s == "comment" {
+                return self.comment();
+            }
+            if s == "closure" {
+                return self.closure();
+            }
+            if s == "scc" {
+                return self.scc();
+            }
+            if s == "node2vec" {
+                return self.node2vec();
+            }
             // An aggregate call in body position is a parse error: aggregation is
             // head-only (`fan_out(F, count(T)) <- type_edge(F, T, _).`).
             if AggFn::parse(s).is_some() && matches!(self.peek2(), Some(Tok::LParen)) {
@@ -538,7 +650,11 @@ impl Parser {
                 if matches!(self.peek(), Some(Tok::ThinArrow)) {
                     self.next()?; // ->
                     let outs = self.paren_terms()?;
-                    return Ok(BodyItem::Effect { name: atom.rel, args: atom.terms, outs });
+                    return Ok(BodyItem::Effect {
+                        name: atom.rel,
+                        args: atom.terms,
+                        outs,
+                    });
                 }
                 return Ok(BodyItem::Pos(atom));
             }
@@ -573,7 +689,10 @@ impl Parser {
                 }
                 self.expect(Tok::RParen)?;
                 if args.len() != 3 {
-                    bail!("gen(:zone, ...) expects p, name, \"tmpl\" (got {} args after the mode)", args.len());
+                    bail!(
+                        "gen(:zone, ...) expects p, name, \"tmpl\" (got {} args after the mode)",
+                        args.len()
+                    );
                 }
                 let tmpl_of = |t: Term| -> Result<String> {
                     match t {
@@ -588,14 +707,22 @@ impl Parser {
                 // Path + name are `{var}`-hole templates (literal when no holes),
                 // same shape as a `File` path_tmpl — a rule can fan over many
                 // files / zones via body bindings.
-                let (path_tmpl, name_tmpl) = match (path, name) {
-                    (Term::Str(p), Term::Str(n)) => (p, n),
-                    (other_p, other_n) => bail!(
+                let (path_tmpl, name_tmpl) =
+                    match (path, name) {
+                        (Term::Str(p), Term::Str(n)) => (p, n),
+                        (other_p, other_n) => bail!(
                         "gen(:zone, ...) path and name must be string literals (got {:?}, {:?}); \
                          use a `{{var}}` hole inside the literal to fan over body bindings",
                         other_p, other_n),
-                };
-                return Ok(GenRule { target: GenTarget::Zone { path_tmpl, name_tmpl }, row_tmpl, body });
+                    };
+                return Ok(GenRule {
+                    target: GenTarget::Zone {
+                        path_tmpl,
+                        name_tmpl,
+                    },
+                    row_tmpl,
+                    body,
+                });
             }
             let (mode, is_delete) = match mode_ident.as_str() {
                 "replace" => (SpliceMode::Replace, false),
@@ -628,7 +755,13 @@ impl Parser {
             if args.len() == 2 && mode == SpliceMode::Append {
                 let mut it = args.into_iter();
                 let path_tmpl = tmpl_of(it.next().unwrap())?;
-                (GenTarget::File { path_tmpl, append: true }, tmpl_of(it.next().unwrap())?)
+                (
+                    GenTarget::File {
+                        path_tmpl,
+                        append: true,
+                    },
+                    tmpl_of(it.next().unwrap())?,
+                )
             } else {
                 if args.len() != if is_delete { 3 } else { 4 } {
                     bail!("gen(:{mode_ident}, ...) expects p, lo, hi{} (got {} args after the mode); \
@@ -637,7 +770,11 @@ impl Parser {
                 }
                 let mut it = args.into_iter();
                 let (path, lo, hi) = (it.next().unwrap(), it.next().unwrap(), it.next().unwrap());
-                let row_tmpl = if is_delete { String::new() } else { tmpl_of(it.next().unwrap())? };
+                let row_tmpl = if is_delete {
+                    String::new()
+                } else {
+                    tmpl_of(it.next().unwrap())?
+                };
                 (GenTarget::Cursor { mode, path, lo, hi }, row_tmpl)
             }
         } else {
@@ -668,7 +805,11 @@ impl Parser {
             }
         };
         let body = self.collect_gen_body()?;
-        Ok(GenRule { target, row_tmpl, body })
+        Ok(GenRule {
+            target,
+            row_tmpl,
+            body,
+        })
     }
 
     /// Shared body collector for every `gen` target form: `<- body [, body]*.`.
@@ -696,10 +837,13 @@ impl Parser {
     fn parse_kwarg_terms(&mut self) -> Result<(Vec<Term>, Vec<(String, Term)>)> {
         let mut pos = Vec::new();
         let mut named = Vec::new();
-        if matches!(self.peek(), Some(Tok::RParen)) { return Ok((pos, named)); }
+        if matches!(self.peek(), Some(Tok::RParen)) {
+            return Ok((pos, named));
+        }
         loop {
             if let (Some(Tok::Ident(name)), Some(Tok::Colon)) =
-                (self.peek().cloned(), self.peek2().cloned()) {
+                (self.peek().cloned(), self.peek2().cloned())
+            {
                 self.next()?; // ident
                 self.next()?; // colon
                 named.push((name, self.expr()?));
@@ -709,7 +853,9 @@ impl Parser {
             match self.peek() {
                 Some(Tok::Comma) => {
                     self.next()?;
-                    if matches!(self.peek(), Some(Tok::RParen)) { break; }
+                    if matches!(self.peek(), Some(Tok::RParen)) {
+                        break;
+                    }
                 }
                 Some(Tok::RParen) => break,
                 Some(t) => bail!("expected , or ) in arg list, got {:?}", t),
@@ -723,11 +869,18 @@ impl Parser {
     /// Positional fill in order; named fill by name; unassigned default to `_`
     /// (Term::Wild), so `comment(p, rev, /re/, label: lab)` skips l0/l1. A named
     /// arg with an unknown name is a parse error (catches typos early).
-    fn assign_outputs(names: &[&str], pos: Vec<Term>, named: Vec<(String, Term)>) -> Result<Vec<Term>> {
+    fn assign_outputs(
+        names: &[&str],
+        pos: Vec<Term>,
+        named: Vec<(String, Term)>,
+    ) -> Result<Vec<Term>> {
         let mut out: Vec<Option<Term>> = vec![None; names.len()];
         for (i, t) in pos.into_iter().enumerate() {
             if i >= names.len() {
-                bail!("too many positional output args (expected one of: {})", names.join(", "));
+                bail!(
+                    "too many positional output args (expected one of: {})",
+                    names.join(", ")
+                );
             }
             out[i] = Some(t);
         }
@@ -744,10 +897,14 @@ impl Parser {
     fn constraint(&mut self) -> Result<Constraint> {
         let lhs = self.expr()?;
         let op = match self.next()? {
-            Tok::Eq => CmpOp::Eq, Tok::Ne => CmpOp::Ne,
-            Tok::Lt => CmpOp::Lt, Tok::Le => CmpOp::Le,
-            Tok::Gt => CmpOp::Gt, Tok::Ge => CmpOp::Ge,
-            Tok::Match => CmpOp::Match, Tok::Glob => CmpOp::Glob,
+            Tok::Eq => CmpOp::Eq,
+            Tok::Ne => CmpOp::Ne,
+            Tok::Lt => CmpOp::Lt,
+            Tok::Le => CmpOp::Le,
+            Tok::Gt => CmpOp::Gt,
+            Tok::Ge => CmpOp::Ge,
+            Tok::Match => CmpOp::Match,
+            Tok::Glob => CmpOp::Glob,
             other => bail!("expected comparison operator, got {:?}", other),
         };
         // `=~` takes a /regex/ literal (the unified regex syntax — same form
@@ -780,7 +937,11 @@ impl Parser {
             };
             self.next()?;
             let rhs = self.mul_expr()?;
-            lhs = Term::Arith { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Term::Arith {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
     }
 
@@ -796,7 +957,11 @@ impl Parser {
             };
             self.next()?;
             let rhs = self.term()?;
-            lhs = Term::Arith { op, lhs: Box::new(lhs), rhs: Box::new(rhs) };
+            lhs = Term::Arith {
+                op,
+                lhs: Box::new(lhs),
+                rhs: Box::new(rhs),
+            };
         }
     }
 
@@ -808,7 +973,9 @@ impl Parser {
             self.next()?;
             let inner = self.term()?;
             return Ok(Term::Arith {
-                op: ArithOp::Sub, lhs: Box::new(Term::Int(0)), rhs: Box::new(inner)
+                op: ArithOp::Sub,
+                lhs: Box::new(Term::Int(0)),
+                rhs: Box::new(inner),
             });
         }
         // Function call: `ident(args)` in term position. Body-leading atoms are
@@ -838,10 +1005,15 @@ impl Parser {
         match self.next()? {
             Tok::Ident(s) => Ok(if s == "_" { Term::Wild } else { Term::Var(s) }),
             Tok::Str(s) => Ok(Term::Str(s)),
-            Tok::InterpStr(parts) => Ok(Term::Interp(parts.into_iter().map(|p| match p {
-                crate::lex::StrPart::Lit(s) => InterpPart::Lit(s),
-                crate::lex::StrPart::Var(v) => InterpPart::Var(v),
-            }).collect())),
+            Tok::InterpStr(parts) => Ok(Term::Interp(
+                parts
+                    .into_iter()
+                    .map(|p| match p {
+                        crate::lex::StrPart::Lit(s) => InterpPart::Lit(s),
+                        crate::lex::StrPart::Var(v) => InterpPart::Var(v),
+                    })
+                    .collect(),
+            )),
             Tok::Int(n) => Ok(Term::Int(n)),
             Tok::Scheme { scheme, body, span } => Ok(Term::PathLit { scheme, body, span }),
             // Parenthesized sub-expression: `(a + b) * 2`.
@@ -861,7 +1033,10 @@ mod tests {
 
     #[test]
     fn holes_anchors_and_escapes() {
-        assert_eq!(desugar_regex_holes(r"TODO\($WHO\)"), r"TODO\((?P<WHO>.*?)\)");
+        assert_eq!(
+            desugar_regex_holes(r"TODO\($WHO\)"),
+            r"TODO\((?P<WHO>.*?)\)"
+        );
         assert_eq!(desugar_regex_holes(r"fn $name\("), r"fn (?P<name>.*?)\(");
         // EOL anchor and escaped dollar untouched.
         assert_eq!(desugar_regex_holes(r"\}$"), r"\}$");
@@ -869,7 +1044,10 @@ mod tests {
         // Digit tail is not an ident hole.
         assert_eq!(desugar_regex_holes(r"$1"), r"$1");
         // Hand-written named groups pass through.
-        assert_eq!(desugar_regex_holes(r"struct (?<name>\w+)"), r"struct (?<name>\w+)");
+        assert_eq!(
+            desugar_regex_holes(r"struct (?<name>\w+)"),
+            r"struct (?<name>\w+)"
+        );
     }
 
     /// christmas #30 repro: a `$NAME` hole used twice in one pattern must not
@@ -883,10 +1061,15 @@ mod tests {
         let desugared = desugar_regex_holes(r"$k=$k");
         assert_eq!(desugared, r"(?P<k>.*?)=(?:.*?)");
         // The desugared form must be a valid regex (no duplicate group).
-        assert!(regex::Regex::new(&desugared).is_ok(),
-            "desugared pattern must compile: {desugared}");
+        assert!(
+            regex::Regex::new(&desugared).is_ok(),
+            "desugared pattern must compile: {desugared}"
+        );
         // Three uses: first captures, the next two are anonymous.
-        assert_eq!(desugar_regex_holes(r"$x.$x.$x"), r"(?P<x>.*?).(?:.*?).(?:.*?)");
+        assert_eq!(
+            desugar_regex_holes(r"$x.$x.$x"),
+            r"(?P<x>.*?).(?:.*?).(?:.*?)"
+        );
         // Distinct names each keep their own capture.
         assert_eq!(desugar_regex_holes(r"$a=$b"), r"(?P<a>.*?)=(?P<b>.*?)");
     }
@@ -903,7 +1086,12 @@ mod tests {
     }
 
     fn one_item(src: &str) -> Item {
-        super::parse(lex(src).unwrap()).unwrap().items.into_iter().next().unwrap()
+        super::parse(lex(src).unwrap())
+            .unwrap()
+            .items
+            .into_iter()
+            .next()
+            .unwrap()
     }
 
     #[test]
@@ -922,7 +1110,9 @@ mod tests {
         assert!(matches!(&r.agg_args2[1], Some(Term::Var(v)) if v == "v"));
 
         // A one-arg call in the two-arg slot is a parse error (missing value).
-        let e = super::parse(lex("obj_of(g, json_group_object(k)) <- src(g, k, v).").unwrap()).unwrap_err().to_string();
+        let e = super::parse(lex("obj_of(g, json_group_object(k)) <- src(g, k, v).").unwrap())
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("expected") || e.contains(','), "{e}");
 
         // No aggregate anywhere: both parallel vecs are empty.
@@ -935,7 +1125,11 @@ mod tests {
     fn type_decl_three_arms() {
         // `<:` nominal brand: parent set, no variants.
         match one_item("type sha <: text.") {
-            Item::Brand(b) => { assert_eq!(b.name, "sha"); assert_eq!(b.parent, "text"); assert!(b.variants.is_none()); }
+            Item::Brand(b) => {
+                assert_eq!(b.name, "sha");
+                assert_eq!(b.parent, "text");
+                assert!(b.variants.is_none());
+            }
             other => panic!("expected a brand, got {other:?}"),
         }
         // `=` enum brand: closed string set, parent defaults to text.
@@ -943,7 +1137,10 @@ mod tests {
             Item::Brand(b) => {
                 assert_eq!(b.name, "severity");
                 assert_eq!(b.parent, "text");
-                assert_eq!(b.variants.as_deref(), Some(&["error".to_string(), "warn".to_string(), "info".to_string()][..]));
+                assert_eq!(
+                    b.variants.as_deref(),
+                    Some(&["error".to_string(), "warn".to_string(), "info".to_string()][..])
+                );
             }
             other => panic!("expected an enum brand, got {other:?}"),
         }
@@ -964,15 +1161,29 @@ mod tests {
     fn rel_shape_ref_and_type_arm_errors() {
         // `rel name: shape.` records the shape name, cols empty (expanded at load).
         match one_item("rel finding_rel: finding.") {
-            Item::Rel(d) => { assert_eq!(d.name, "finding_rel"); assert_eq!(d.shape_ref.as_deref(), Some("finding")); assert!(d.cols.is_empty()); }
+            Item::Rel(d) => {
+                assert_eq!(d.name, "finding_rel");
+                assert_eq!(d.shape_ref.as_deref(), Some("finding"));
+                assert!(d.cols.is_empty());
+            }
             other => panic!("expected a rel, got {other:?}"),
         }
         // A bogus token after the type name names the fix.
-        let e = super::parse(lex("type foo bar.").unwrap()).unwrap_err().to_string();
-        assert!(e.contains("expected `<:` (brand), `=` (enum), or `(` (shape)"), "{e}");
+        let e = super::parse(lex("type foo bar.").unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("expected `<:` (brand), `=` (enum), or `(` (shape)"),
+            "{e}"
+        );
         // Enum variants must be string literals.
-        let e = super::parse(lex("type sev = warn | info.").unwrap()).unwrap_err().to_string();
-        assert!(e.contains("enum brand variants must be string literals"), "{e}");
+        let e = super::parse(lex("type sev = warn | info.").unwrap())
+            .unwrap_err()
+            .to_string();
+        assert!(
+            e.contains("enum brand variants must be string literals"),
+            "{e}"
+        );
     }
 
     #[test]
@@ -980,9 +1191,18 @@ mod tests {
         // No modifier: today's deductive rule.
         assert_eq!(one_rule("p(X) <- q(X).").temporal, None);
         // `@next` and `@async` after the neck, with and without a leading space.
-        assert_eq!(one_rule("p(X) <- @next q(X).").temporal, Some(Temporal::Next));
-        assert_eq!(one_rule("p(X) <-@next q(X).").temporal, Some(Temporal::Next));
-        assert_eq!(one_rule("p(X) <- @async q(X).").temporal, Some(Temporal::Async));
+        assert_eq!(
+            one_rule("p(X) <- @next q(X).").temporal,
+            Some(Temporal::Next)
+        );
+        assert_eq!(
+            one_rule("p(X) <-@next q(X).").temporal,
+            Some(Temporal::Next)
+        );
+        assert_eq!(
+            one_rule("p(X) <- @async q(X).").temporal,
+            Some(Temporal::Async)
+        );
         // A ground fact carries no modifier.
         assert_eq!(one_rule("p(1).").temporal, None);
     }
@@ -991,7 +1211,10 @@ mod tests {
     fn unknown_modifier_and_lone_at_are_errors() {
         // Unknown `@word` after a neck is a parse error.
         let e = super::parse(lex("p(X) <- @soon q(X).").unwrap()).unwrap_err();
-        assert!(e.to_string().contains("unknown rule modifier `@soon`"), "{e}");
+        assert!(
+            e.to_string().contains("unknown rule modifier `@soon`"),
+            "{e}"
+        );
         // A lone `@` is a lex error.
         let e = lex("p(X) <- @ q(X).").unwrap_err();
         assert!(e.to_string().contains("lone '@'"), "{e}");
@@ -1002,11 +1225,22 @@ mod tests {
     fn body_of(src: &str) -> Vec<BodyItem> {
         one_rule(src).body
     }
-    fn str_is(t: &Term, s: &str) -> bool { matches!(t, Term::Str(v) if v == s) }
-    fn var_is(t: &Term, s: &str) -> bool { matches!(t, Term::Var(v) if v == s) }
+    fn str_is(t: &Term, s: &str) -> bool {
+        matches!(t, Term::Str(v) if v == s)
+    }
+    fn var_is(t: &Term, s: &str) -> bool {
+        matches!(t, Term::Var(v) if v == s)
+    }
     fn scan_of(src: &str) -> (Term, Term, Term, Term, Term) {
         for b in body_of(src) {
-            if let BodyItem::Scan { repo, rev, glob, path, rev_out } = b {
+            if let BodyItem::Scan {
+                repo,
+                rev,
+                glob,
+                path,
+                rev_out,
+            } = b
+            {
                 return (repo, rev, glob, path, rev_out);
             }
         }
@@ -1019,7 +1253,8 @@ mod tests {
     #[test]
     fn scan_wild_and_omitted_rev_out() {
         // 4-ary with `_` rev_out: rev bound as input, rev_out don't-care.
-        let (repo, rev, glob, path, rev_out) = scan_of("f(P) <- scan(\"WORK\", \"**/*.rs\", P, _).");
+        let (repo, rev, glob, path, rev_out) =
+            scan_of("f(P) <- scan(\"WORK\", \"**/*.rs\", P, _).");
         assert!(str_is(&repo, "."));
         assert!(str_is(&rev, "WORK"));
         assert!(str_is(&glob, "**/*.rs"));
@@ -1081,8 +1316,13 @@ mod tests {
     fn match_named_outputs_and_wild() {
         // Named end_col only: id/col default to `_` (None).
         let mut found = false;
-        for b in body_of("f(P,L,E) <- scan(\"**/*.rs\", P), match(P, \"WORK\", /x/, L, end_col: E).") {
-            if let BodyItem::Match { id, col, end_col, .. } = b {
+        for b in
+            body_of("f(P,L,E) <- scan(\"**/*.rs\", P), match(P, \"WORK\", /x/, L, end_col: E).")
+        {
+            if let BodyItem::Match {
+                id, col, end_col, ..
+            } = b
+            {
                 assert!(id.is_none());
                 assert!(col.is_none());
                 assert!(matches!(end_col, Some(t) if var_is(&t, "E")));
@@ -1103,7 +1343,9 @@ mod tests {
     fn ast_named_id_output() {
         // Named id, end omitted.
         let mut found = false;
-        for b in body_of("f(P,L,I) <- scan(\"**/*.rs\", P), ast(P, \"WORK\", :rust, \"(x) @c\", L, id: I).") {
+        for b in body_of(
+            "f(P,L,I) <- scan(\"**/*.rs\", P), ast(P, \"WORK\", :rust, \"(x) @c\", L, id: I).",
+        ) {
             if let BodyItem::Ast { end, id, .. } = b {
                 assert!(end.is_none());
                 assert!(matches!(id, Some(t) if var_is(&t, "I")));
@@ -1120,14 +1362,37 @@ mod tests {
     /// misread as a computed bind and stays the equality filter it always was.
     #[test]
     fn body_bind_and_var_equality_parse_apart() {
-        let body = body_of(r#"resolved(callee) <- raw_edge(callee_q), callee = replace(callee_q, ".", "::")."#);
-        let cmp = body.iter().find_map(|b| if let BodyItem::Cmp(c) = b { Some(c) } else { None }).unwrap();
+        let body = body_of(
+            r#"resolved(callee) <- raw_edge(callee_q), callee = replace(callee_q, ".", "::")."#,
+        );
+        let cmp = body
+            .iter()
+            .find_map(|b| {
+                if let BodyItem::Cmp(c) = b {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert!(matches!(&cmp.lhs, Term::Var(v) if v == "callee"));
         assert!(matches!(&cmp.rhs, Term::Call { name, .. } if name == "replace"));
 
         let body = body_of("same(a) <- pair(a, b), a = b.");
-        let cmp = body.iter().find_map(|b| if let BodyItem::Cmp(c) = b { Some(c) } else { None }).unwrap();
+        let cmp = body
+            .iter()
+            .find_map(|b| {
+                if let BodyItem::Cmp(c) = b {
+                    Some(c)
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert!(matches!(&cmp.lhs, Term::Var(v) if v == "a"));
-        assert!(matches!(&cmp.rhs, Term::Var(v) if v == "b"), "var=var stays a plain equality");
+        assert!(
+            matches!(&cmp.rhs, Term::Var(v) if v == "b"),
+            "var=var stays a plain equality"
+        );
     }
 }

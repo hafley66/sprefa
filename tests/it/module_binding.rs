@@ -30,8 +30,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -41,9 +46,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
 
 /// Find a row in `rows` (each a JSON array) matching every given (col index,
 /// expected string) pair.
-fn find_row<'a>(rows: &'a [serde_json::Value], cols: &[(usize, &str)]) -> Option<&'a serde_json::Value> {
+fn find_row<'a>(
+    rows: &'a [serde_json::Value],
+    cols: &[(usize, &str)],
+) -> Option<&'a serde_json::Value> {
     rows.iter().find(|row| {
-        cols.iter().all(|(i, expected)| row[*i].as_str() == Some(*expected))
+        cols.iter()
+            .all(|(i, expected)| row[*i].as_str() == Some(*expected))
     })
 }
 
@@ -171,8 +180,11 @@ seen(path) <- scan("WORK", "src/**/*.js", path, rev), match(path, rev, /./, line
     assert_eq!(namespace_row[3].as_str().unwrap(), "*");
     assert_eq!(namespace_row[4].as_str().unwrap(), "namespace");
 
-    let side_effect_row = find_row(rows, &[(0, "src/app.ts"), (2, "./polyfill"), (4, "side_effect")])
-        .unwrap_or_else(|| panic!("no side-effect-import row: {rows:?}"));
+    let side_effect_row = find_row(
+        rows,
+        &[(0, "src/app.ts"), (2, "./polyfill"), (4, "side_effect")],
+    )
+    .unwrap_or_else(|| panic!("no side-effect-import row: {rows:?}"));
     assert_eq!(side_effect_row[1].as_str().unwrap(), "");
     assert_eq!(side_effect_row[3].as_str().unwrap(), "");
 
@@ -241,7 +253,9 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
 
     let legacy_bindings = recs[1]["rows"].as_array().expect("rows");
     assert!(
-        !legacy_bindings.iter().any(|r| r[1].as_str() == Some("ExtAlias")),
+        !legacy_bindings
+            .iter()
+            .any(|r| r[1].as_str() == Some("ExtAlias")),
         "module_binding_resolved must NOT carry the external alias: {legacy_bindings:?}"
     );
 }

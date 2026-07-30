@@ -39,7 +39,9 @@ fn run_check(dir: &Path, db: &Path, extra_envs: &[(&str, &str)]) -> String {
         .args(["--db", db.to_str().unwrap(), "--no-daemon", "--check"])
         .current_dir(dir)
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml");
-    for (key, value) in extra_envs { cmd.env(key, value); }
+    for (key, value) in extra_envs {
+        cmd.env(key, value);
+    }
     let out = cmd.output().expect("run dl --check");
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -61,7 +63,10 @@ fn no_daemon_check_completion_emits_db_ratio_fields() {
     assert!(line.contains("db="), "missing db= field: {line}");
     assert!(line.contains("corpus="), "missing corpus= field: {line}");
     assert!(line.contains("ratio="), "missing ratio= field: {line}");
-    assert!(!line.contains("WARNING"), "default threshold should not warn: {line}");
+    assert!(
+        !line.contains("WARNING"),
+        "default threshold should not warn: {line}"
+    );
 }
 
 /// `DL_DB_RATIO_WARN` lowered below the fixture's actual ratio flips the
@@ -81,14 +86,24 @@ fn ratio_warn_env_lowers_the_ceiling_and_fires() {
     let warn_line = stderr
         .lines()
         .find(|l| l.starts_with("[db-ratio]") && l.contains("WARNING"))
-        .unwrap_or_else(|| panic!("no [db-ratio] WARNING line at a near-zero ceiling, got:\n{stderr}"));
-    assert!(warn_line.contains("exceeds 0.0x"), "threshold not named in warn line: {warn_line}");
-    assert!(warn_line.contains("class 17"), "warn line should point at the failure-modes rail: {warn_line}");
+        .unwrap_or_else(|| {
+            panic!("no [db-ratio] WARNING line at a near-zero ceiling, got:\n{stderr}")
+        });
+    assert!(
+        warn_line.contains("exceeds 0.0x"),
+        "threshold not named in warn line: {warn_line}"
+    );
+    assert!(
+        warn_line.contains("class 17"),
+        "warn line should point at the failure-modes rail: {warn_line}"
+    );
 
     // Same fixture, a ceiling no real ratio will cross: no WARNING line.
     let quiet_stderr = run_check(&dir, &dir.join("db2"), &[("DL_DB_RATIO_WARN", "1000000")]);
     assert!(
-        !quiet_stderr.lines().any(|l| l.starts_with("[db-ratio]") && l.contains("WARNING")),
+        !quiet_stderr
+            .lines()
+            .any(|l| l.starts_with("[db-ratio]") && l.contains("WARNING")),
         "a million-x ceiling must not warn: {quiet_stderr}"
     );
 }

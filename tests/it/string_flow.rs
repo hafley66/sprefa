@@ -24,7 +24,10 @@ fn tick_once(root: &Path) -> Engine {
     let conn = db::open(Some(root.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, root.to_path_buf());
     let (prog, diags, _) = prepare_paths(&[root.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|d| d.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "program should typecheck: {diags:?}");
     eng.tick(&prog, true).unwrap();
     eng
@@ -58,14 +61,19 @@ fn template_interpolation_traces_from_literal_seed_to_binding() {
     // the template's OWN df_lit row (raw source, hole intact) must also
     // reach somewhere (here: the let_bind for `greeting`).
     assert!(
-        trace.iter().any(|r| r[0] == "`hi ${home}`" && r[1] == "template"),
+        trace
+            .iter()
+            .any(|r| r[0] == "`hi ${home}`" && r[1] == "template"),
         "the template's own text must seed a string_flow row too: {trace:?}"
     );
 
     // df_edge sanity: the literal's node must actually appear in df_lit at all
     // (a regression that stops emitting df_lit would make the above vacuous).
     let lits = eng.rel_rows("df_lit", 3);
-    assert!(lits.iter().any(|r| r[1] == "/home" && r[2] == "lit"), "{lits:?}");
+    assert!(
+        lits.iter().any(|r| r[1] == "/home" && r[2] == "lit"),
+        "{lits:?}"
+    );
 }
 
 /// A concat (`base + '/x'`) also seeds string_flow — the new `concat` df_node
@@ -88,7 +96,9 @@ fn concat_seeds_string_flow_too() {
     let eng = tick_once(&d);
     let trace = eng.rel_rows("string_flow_trace", 4);
     assert!(
-        trace.iter().any(|r| r[1] == "concat" && r[0] == "base + '/x'"),
+        trace
+            .iter()
+            .any(|r| r[1] == "concat" && r[0] == "base + '/x'"),
         "{trace:?}"
     );
 }

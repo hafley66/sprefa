@@ -82,9 +82,9 @@ impl HookDialect {
             "claude" => Ok(HookDialect::Claude),
             "codex" => Ok(HookDialect::Codex),
             "opencode" => Ok(HookDialect::OpenCode),
-            other => anyhow::bail!(
-                "unknown --dialect `{other}` (expected claude, codex, or opencode)"
-            ),
+            other => {
+                anyhow::bail!("unknown --dialect `{other}` (expected claude, codex, or opencode)")
+            }
         }
     }
 
@@ -117,7 +117,9 @@ fn resolve_skill(name: &str, root: &Path) -> Option<String> {
         cands.push(h.join(".agents/skills").join(name).join("SKILL.md"));
         cands.push(h.join(".claude/skills").join(name).join("SKILL.md"));
     }
-    cands.into_iter().find_map(|c| std::fs::read_to_string(&c).ok())
+    cands
+        .into_iter()
+        .find_map(|c| std::fs::read_to_string(&c).ok())
 }
 
 /// The three emit relations read off one tick, plus the R7 staged-diagnostics
@@ -140,7 +142,10 @@ struct EmitRels {
 /// Read a single-column emit relation off an in-process engine (empty if the
 /// program never declares it).
 fn emit_col(eng: &crate::engine::Engine, rel: &str) -> Vec<String> {
-    eng.rel_rows(rel, 1).into_iter().filter_map(|r| r.into_iter().next()).collect()
+    eng.rel_rows(rel, 1)
+        .into_iter()
+        .filter_map(|r| r.into_iter().next())
+        .collect()
 }
 
 fn val_str(v: &serde_json::Value) -> String {
@@ -155,12 +160,21 @@ fn val_str(v: &serde_json::Value) -> String {
 /// never declared has no `rel_<name>` table; the daemon returns an error
 /// response, read here as empty.
 fn daemon_col(s: &mut crate::daemon_client::DaemonClient, root: &Path, table: &str) -> Vec<String> {
-    let req = crate::rpc::Request::new(1, "query_sql",
-        serde_json::json!({ "root": root.to_string_lossy(), "sql": format!("SELECT * FROM {table}") }));
-    let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return Vec::new() };
-    if resp.error.is_some() { return Vec::new(); }
-    resp.result.and_then(|v| v.get("rows").cloned())
-        .and_then(|v| v.as_array().cloned()).unwrap_or_default()
+    let req = crate::rpc::Request::new(
+        1,
+        "query_sql",
+        serde_json::json!({ "root": root.to_string_lossy(), "sql": format!("SELECT * FROM {table}") }),
+    );
+    let Ok(resp) = crate::daemon::rpc_call(s, &req) else {
+        return Vec::new();
+    };
+    if resp.error.is_some() {
+        return Vec::new();
+    }
+    resp.result
+        .and_then(|v| v.get("rows").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
         .iter()
         .filter_map(|row| row.as_array().and_then(|r| r.first()).map(val_str))
         .collect()
@@ -217,7 +231,15 @@ impl HookEvent {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        (HookEvent { kind, session, seq, json: raw.to_string() }, dialect)
+        (
+            HookEvent {
+                kind,
+                session,
+                seq,
+                json: raw.to_string(),
+            },
+            dialect,
+        )
     }
 }
 
@@ -250,11 +272,19 @@ fn render_inject(dialect: HookDialect, event_kind: &str, ctx: &str) -> String {
 }
 
 /// Feed one event into the daemon's warm engine (`hook_event` RPC: append + tick).
-fn daemon_feed_event(s: &mut crate::daemon_client::DaemonClient, root: &Path, ev: &HookEvent) -> Result<()> {
-    let req = crate::rpc::Request::new(1, "hook_event", serde_json::json!({
-        "root": root.to_string_lossy(),
-        "kind": ev.kind, "session": ev.session, "seq": ev.seq, "json": ev.json,
-    }));
+fn daemon_feed_event(
+    s: &mut crate::daemon_client::DaemonClient,
+    root: &Path,
+    ev: &HookEvent,
+) -> Result<()> {
+    let req = crate::rpc::Request::new(
+        1,
+        "hook_event",
+        serde_json::json!({
+            "root": root.to_string_lossy(),
+            "kind": ev.kind, "session": ev.session, "seq": ev.seq, "json": ev.json,
+        }),
+    );
     let resp = crate::daemon::rpc_call(s, &req)?;
     if let Some(e) = &resp.error {
         anyhow::bail!("daemon hook_event: {}", e.message);
@@ -267,7 +297,11 @@ fn daemon_feed_event(s: &mut crate::daemon_client::DaemonClient, root: &Path, ev
 fn diag_from_json(v: &serde_json::Value) -> DiagRow {
     let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
     let i = |k: &str| v.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
-    let hint = v.get("hint").and_then(|x| x.as_str()).filter(|h| !h.is_empty()).map(str::to_string);
+    let hint = v
+        .get("hint")
+        .and_then(|x| x.as_str())
+        .filter(|h| !h.is_empty())
+        .map(str::to_string);
     DiagRow {
         path: s("path"),
         line: i("line"),
@@ -284,20 +318,53 @@ fn diag_from_json(v: &serde_json::Value) -> DiagRow {
 /// R7: read the diags + `diag_stage` routes + `agent_touch` paths off the
 /// daemon in one `diag` RPC (the handler bundles all three). A missing field is
 /// tolerated as empty.
-fn diags_via_daemon(s: &mut crate::daemon_client::DaemonClient, root: &Path) -> (Vec<DiagRow>, Vec<Vec<String>>, Vec<String>) {
-    let req = crate::rpc::Request::new(1, "diag",
-        serde_json::json!({ "root": root.to_string_lossy() }));
-    let Ok(resp) = crate::daemon::rpc_call(s, &req) else { return (vec![], vec![], vec![]) };
-    if resp.error.is_some() { return (vec![], vec![], vec![]); }
-    let Some(result) = resp.result else { return (vec![], vec![], vec![]) };
-    let diags = result.get("rows").and_then(|v| v.as_array())
-        .map(|a| a.iter().map(diag_from_json).collect()).unwrap_or_default();
-    let stage_rows = result.get("stages").and_then(|v| v.as_array()).map(|a| a.iter()
-        .filter_map(|row| row.as_array())
-        .map(|cells| cells.iter().map(|c| c.as_str().unwrap_or("").to_string()).collect())
-        .collect()).unwrap_or_default();
-    let touch = result.get("touch").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+fn diags_via_daemon(
+    s: &mut crate::daemon_client::DaemonClient,
+    root: &Path,
+) -> (Vec<DiagRow>, Vec<Vec<String>>, Vec<String>) {
+    let req = crate::rpc::Request::new(
+        1,
+        "diag",
+        serde_json::json!({ "root": root.to_string_lossy() }),
+    );
+    let Ok(resp) = crate::daemon::rpc_call(s, &req) else {
+        return (vec![], vec![], vec![]);
+    };
+    if resp.error.is_some() {
+        return (vec![], vec![], vec![]);
+    }
+    let Some(result) = resp.result else {
+        return (vec![], vec![], vec![]);
+    };
+    let diags = result
+        .get("rows")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().map(diag_from_json).collect())
+        .unwrap_or_default();
+    let stage_rows = result
+        .get("stages")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|row| row.as_array())
+                .map(|cells| {
+                    cells
+                        .iter()
+                        .map(|c| c.as_str().unwrap_or("").to_string())
+                        .collect()
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let touch = result
+        .get("touch")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
     (diags, stage_rows, touch)
 }
 
@@ -338,17 +405,32 @@ fn rels_via_daemon(ev: &HookEvent, root: &Path) -> Result<EmitRels> {
 /// table exists, append the event, tick again to re-derive, read the emit
 /// rels. `broken` if the program has a type error. WAL + busy_timeout covers
 /// the daemon-up-but-attach-failed write pairing.
-fn rels_inproc(ev: &HookEvent, programs: &[String], db_path: Option<&str>, root: &Path) -> Result<EmitRels> {
+fn rels_inproc(
+    ev: &HookEvent,
+    programs: &[String],
+    db_path: Option<&str>,
+    root: &Path,
+) -> Result<EmitRels> {
     let files = crate::resolve_programs(programs, root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
     // `?` queries and `gen` never run from a hook tick: emit/observe, not codegen.
-    prog.items.retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
-    if type_diags.iter().any(|d| d.severity == ast::Severity::Error) {
-        for d in type_diags.iter().filter(|d| d.severity == ast::Severity::Error) {
+    prog.items
+        .retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
+    if type_diags
+        .iter()
+        .any(|d| d.severity == ast::Severity::Error)
+    {
+        for d in type_diags
+            .iter()
+            .filter(|d| d.severity == ast::Severity::Error)
+        {
             let msg = &d.msg;
             tracing::warn!(msg = %msg, "dl --hook: program error: {msg}");
         }
-        return Ok(EmitRels { broken: true, ..Default::default() });
+        return Ok(EmitRels {
+            broken: true,
+            ..Default::default()
+        });
     }
     let conn = crate::db::open(db_path)?;
     let mut eng = crate::engine::Engine::new(conn, root.to_path_buf());
@@ -357,8 +439,11 @@ fn rels_inproc(ev: &HookEvent, programs: &[String], db_path: Option<&str>, root:
     eng.tick(&prog, true)?;
     eng.insert_hook_event(&ev.kind, &ev.session, ev.seq, &ev.json)?;
     eng.tick(&prog, true)?;
-    let touch_paths = eng.rel_rows("agent_touch", 3)
-        .into_iter().filter_map(|r| r.into_iter().nth(2)).collect();
+    let touch_paths = eng
+        .rel_rows("agent_touch", 3)
+        .into_iter()
+        .filter_map(|r| r.into_iter().nth(2))
+        .collect();
     Ok(EmitRels {
         inject: emit_col(&eng, "inject"),
         skills: emit_col(&eng, "inject_skill"),
@@ -391,15 +476,26 @@ fn staged_diag_context(
         let (counts, sample) = stage::session_summary(&staged, SESSION_TOP_N);
         let mut out = String::from("# dl diagnostics (session summary)\n\n");
         for (code, n) in &counts {
-            let label = if code.is_empty() { "(no code)" } else { code.as_str() };
+            let label = if code.is_empty() {
+                "(no code)"
+            } else {
+                code.as_str()
+            };
             out.push_str(&format!("- {label}: {n}\n"));
         }
         out.push_str("\ntop:\n");
         for d in sample {
-            out.push_str(&format!("- {}:{}: {}: {}\n", d.path, d.line, d.severity, d.msg));
+            out.push_str(&format!(
+                "- {}:{}: {}: {}\n",
+                d.path, d.line, d.severity, d.msg
+            ));
         }
-        tracing::debug!(kind, codes = counts.len(), total = staged.len(),
-            "hook agent-session diag summary");
+        tracing::debug!(
+            kind,
+            codes = counts.len(),
+            total = staged.len(),
+            "hook agent-session diag summary"
+        );
         Some(out)
     } else {
         let staged = stage::stage_filter(diags, "agent-turn", &routes);
@@ -410,8 +506,15 @@ fn staged_diag_context(
         }
         let mut out = String::from("# dl diagnostics (files edited this turn)\n\n");
         for d in &staged {
-            let code = if d.code.is_empty() { String::new() } else { format!("[{}]", d.code) };
-            out.push_str(&format!("- {}:{}: {}{}: {}\n", d.path, d.line, d.severity, code, d.msg));
+            let code = if d.code.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", d.code)
+            };
+            out.push_str(&format!(
+                "- {}:{}: {}{}: {}\n",
+                d.path, d.line, d.severity, code, d.msg
+            ));
         }
         tracing::debug!(kind, kept = staged.len(), "hook agent-turn diag routing");
         Some(out)
@@ -431,7 +534,10 @@ impl HookOutcome {
     /// The dialect-correct no-op: empty stdout + exit 0 reads as "proceed
     /// silently" in every supported harness (claude/codex/opencode).
     fn noop() -> Self {
-        HookOutcome { payload: None, code: 0 }
+        HookOutcome {
+            payload: None,
+            code: 0,
+        }
     }
 }
 
@@ -470,9 +576,9 @@ pub fn refuse_worktree_cold_check(root: &Path) -> Option<String> {
         return None;
     }
     let canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let registered = crate::daemon::read_roots_json().iter().any(|rec| {
-        rec.root.canonicalize().unwrap_or_else(|_| rec.root.clone()) == canon
-    });
+    let registered = crate::daemon::read_roots_json()
+        .iter()
+        .any(|rec| rec.root.canonicalize().unwrap_or_else(|_| rec.root.clone()) == canon);
     if registered {
         return None;
     }
@@ -552,12 +658,18 @@ fn hook_work(
         return Ok(HookOutcome::noop());
     };
     if rels.broken {
-        return Ok(HookOutcome { payload: None, code: 1 });
+        return Ok(HookOutcome {
+            payload: None,
+            code: 1,
+        });
     }
 
     // A block short-circuits: emit the decision, inject nothing.
     if let Some(reason) = rels.blocks.into_iter().next() {
-        return Ok(HookOutcome { payload: Some(render_block(dialect, &reason)), code: 0 });
+        return Ok(HookOutcome {
+            payload: Some(render_block(dialect, &reason)),
+            code: 0,
+        });
     }
 
     // The rule already filtered `inject_skill` against `!skill_loaded`, so every
@@ -565,15 +677,21 @@ fn hook_work(
     let mut ctx = rels.inject;
     for name in rels.skills {
         match resolve_skill(&name, &root) {
-            Some(body) => ctx.push(format!("# Skill `{name}` (auto-loaded by dl --hook)\n\n{body}")),
-            None => tracing::warn!(name = %name, "dl --hook: skill `{name}` not found under .agents/skills or .claude/skills"),
+            Some(body) => ctx.push(format!(
+                "# Skill `{name}` (auto-loaded by dl --hook)\n\n{body}"
+            )),
+            None => {
+                tracing::warn!(name = %name, "dl --hook: skill `{name}` not found under .agents/skills or .claude/skills")
+            }
         }
     }
 
     // R7: append the routed diagnostics for this surface — the agent-turn list
     // (gated to touched files) or the agent-session summary. The db keeps every
     // diag; this is presentation-time routing only.
-    if let Some(staged) = staged_diag_context(&ev.kind, rels.diags, &rels.stage_rows, &rels.touch_paths) {
+    if let Some(staged) =
+        staged_diag_context(&ev.kind, rels.diags, &rels.stage_rows, &rels.touch_paths)
+    {
         ctx.push(staged);
     }
 
@@ -584,7 +702,11 @@ fn hook_work(
     // which must echo the event we received (UserPromptSubmit / PostToolUse /
     // ...); the harness keys the output arm off it. Fall back to PostToolUse
     // when the event carried no name (an old harness, or a bare invocation).
-    let event_name = if ev.kind.is_empty() { "PostToolUse" } else { ev.kind.as_str() };
+    let event_name = if ev.kind.is_empty() {
+        "PostToolUse"
+    } else {
+        ev.kind.as_str()
+    };
     Ok(HookOutcome {
         payload: Some(render_inject(dialect, event_name, &ctx.join("\n\n---\n\n"))),
         code: 0,
@@ -612,7 +734,13 @@ pub fn run_hook(
     let started = std::time::Instant::now();
     let outcome = if deadline_ms == 0 {
         // Test-harness escape: unbounded, inline, cold builds allowed.
-        Some(hook_work(programs.to_vec(), db_path.map(str::to_string), root, dialect, false)?)
+        Some(hook_work(
+            programs.to_vec(),
+            db_path.map(str::to_string),
+            root,
+            dialect,
+            false,
+        )?)
     } else {
         let programs = programs.to_vec();
         let db_path = db_path.map(str::to_string);
@@ -671,15 +799,25 @@ mod tests {
         std::env::set_var("DL_HOOK_DEADLINE_MS", "250");
         assert_eq!(hook_deadline_ms(), 250);
         std::env::set_var("DL_HOOK_DEADLINE_MS", "garbage");
-        assert_eq!(hook_deadline_ms(), DEFAULT_HOOK_DEADLINE_MS, "malformed falls back to default");
+        assert_eq!(
+            hook_deadline_ms(),
+            DEFAULT_HOOK_DEADLINE_MS,
+            "malformed falls back to default"
+        );
         std::env::remove_var("DL_HOOK_DEADLINE_MS");
     }
 
     #[test]
     fn dialect_flag_parses_the_three_harness_names() {
-        assert_eq!(HookDialect::from_flag("claude").unwrap(), HookDialect::Claude);
+        assert_eq!(
+            HookDialect::from_flag("claude").unwrap(),
+            HookDialect::Claude
+        );
         assert_eq!(HookDialect::from_flag("codex").unwrap(), HookDialect::Codex);
-        assert_eq!(HookDialect::from_flag("opencode").unwrap(), HookDialect::OpenCode);
+        assert_eq!(
+            HookDialect::from_flag("opencode").unwrap(),
+            HookDialect::OpenCode
+        );
         assert!(HookDialect::from_flag("cursor").is_err());
     }
 
@@ -713,7 +851,11 @@ mod tests {
             "not json",
         ] {
             let (_, dialect) = HookEvent::parse(raw, None);
-            assert_eq!(dialect, HookDialect::Claude, "payload {raw} must not pick codex");
+            assert_eq!(
+                dialect,
+                HookDialect::Claude,
+                "payload {raw} must not pick codex"
+            );
         }
     }
 
@@ -728,7 +870,11 @@ mod tests {
 
     #[test]
     fn parse_tolerates_missing_fields_per_dialect() {
-        for dialect in [HookDialect::Claude, HookDialect::Codex, HookDialect::OpenCode] {
+        for dialect in [
+            HookDialect::Claude,
+            HookDialect::Codex,
+            HookDialect::OpenCode,
+        ] {
             let (ev, _) = HookEvent::parse("{}", Some(dialect));
             assert_eq!(ev.kind, "");
             assert_eq!(ev.session, "");
@@ -744,15 +890,28 @@ mod tests {
         assert_eq!(claude_block, r#"{"decision":"block","reason":"no"}"#);
 
         let claude_inject = render_inject(HookDialect::Claude, "PostToolUse", "ctx");
-        assert_eq!(claude_inject, render_inject(HookDialect::Codex, "PostToolUse", "ctx"));
+        assert_eq!(
+            claude_inject,
+            render_inject(HookDialect::Codex, "PostToolUse", "ctx")
+        );
         let v: serde_json::Value = serde_json::from_str(&claude_inject).unwrap();
         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PostToolUse");
         assert_eq!(v["hookSpecificOutput"]["additionalContext"], "ctx");
-        assert_eq!(v.as_object().unwrap().len(), 1, "nothing beyond hookSpecificOutput");
+        assert_eq!(
+            v.as_object().unwrap().len(),
+            1,
+            "nothing beyond hookSpecificOutput"
+        );
         assert_eq!(v["hookSpecificOutput"].as_object().unwrap().len(), 2);
 
         // opencode: the neutral shapes the shipped plugin applies.
-        assert_eq!(render_block(HookDialect::OpenCode, "no"), r#"{"block":"no"}"#);
-        assert_eq!(render_inject(HookDialect::OpenCode, "PostToolUse", "ctx"), r#"{"inject":"ctx"}"#);
+        assert_eq!(
+            render_block(HookDialect::OpenCode, "no"),
+            r#"{"block":"no"}"#
+        );
+        assert_eq!(
+            render_inject(HookDialect::OpenCode, "PostToolUse", "ctx"),
+            r#"{"inject":"ctx"}"#
+        );
     }
 }

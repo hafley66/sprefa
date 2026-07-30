@@ -29,10 +29,7 @@ fn pk_prefix_col(meta: &RelMeta) -> Option<&str> {
 /// `<rel>` (source-rule seed), `rows:<rel>` (builtin whole-rel refresh),
 /// `drv:<rel>` (derived digest-before-write). Motion in any one moves the
 /// fold; a rel with no digest row in any namespace returns `None` (cold).
-fn rel_digest_fingerprint(
-    digests: &HashMap<String, [u8; 32]>,
-    rel: &str,
-) -> Option<[u8; 32]> {
+fn rel_digest_fingerprint(digests: &HashMap<String, [u8; 32]>, rel: &str) -> Option<[u8; 32]> {
     let keys = [rel.to_string(), format!("rows:{rel}"), format!("drv:{rel}")];
     let mut fold: Option<[u8; 32]> = None;
     for key in &keys {
@@ -341,12 +338,11 @@ impl Engine {
                 let mut have = Vec::new();
                 // (pk_position, column) for columns in the existing PRIMARY KEY.
                 let mut pk_pos: Vec<(i64, String)> = Vec::new();
-                let rows = self.db.query_rows(
-                    &d.name,
-                    &format!("PRAGMA table_info({table})"),
-                    &[],
-                    |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)),
-                );
+                let rows =
+                    self.db
+                        .query_rows(&d.name, &format!("PRAGMA table_info({table})"), &[], |r| {
+                            Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?))
+                        });
                 if let Ok(rows) = rows {
                     for (name, pk) in rows {
                         if name == "__src" {
@@ -448,7 +444,11 @@ impl Engine {
             // duplicate full-row autoindex. `__src` rides along as an
             // ordinary non-key column in the WITHOUT ROWID leaf; SQLite does
             // not require the PK to cover every column.
-            let without_rowid = if wants_without_rowid(d) { " WITHOUT ROWID" } else { "" };
+            let without_rowid = if wants_without_rowid(d) {
+                " WITHOUT ROWID"
+            } else {
+                ""
+            };
             format!(
                 "CREATE TABLE IF NOT EXISTS {} ({}, __src TEXT DEFAULT '', PRIMARY KEY ({})){}",
                 tbl(&d.name),
@@ -512,7 +512,8 @@ impl Engine {
         // must drop first. `DROP TABLE IF EXISTS` on an object that is a VIEW (or
         // vice versa) ERRORS in SQLite even with IF EXISTS — the object exists,
         // just as the wrong type — so pick the drop verb from the actual type.
-        self.db.exec_on(&d.name, &format!("DROP VIEW IF EXISTS {txt}"))?;
+        self.db
+            .exec_on(&d.name, &format!("DROP VIEW IF EXISTS {txt}"))?;
         let existing_type: Option<String> = self
             .db
             .query_rows(
@@ -536,7 +537,11 @@ impl Engine {
             .exec_on(&d.name, &format!("CREATE VIEW {table} AS {body}"))?;
         // This rel never owns rows/digest/completion. Clear any tracking a prior
         // base-table incarnation wrote so a stale row cannot outlive the table.
-        for key in [d.name.clone(), format!("rows:{}", d.name), format!("drv:{}", d.name)] {
+        for key in [
+            d.name.clone(),
+            format!("rows:{}", d.name),
+            format!("drv:{}", d.name),
+        ] {
             self.db.exec_params(
                 "_reldigest",
                 "DELETE FROM _reldigest WHERE rel = ?1",
@@ -691,7 +696,10 @@ impl Engine {
             &[],
             |row| Ok(row.get::<_, String>(0)?),
         )?;
-        let stale: Vec<&String> = existing.iter().filter(|n| !wanted_names.contains(*n)).collect();
+        let stale: Vec<&String> = existing
+            .iter()
+            .filter(|n| !wanted_names.contains(*n))
+            .collect();
         if !stale.is_empty() {
             tracing::debug!(
                 pruned = stale.len(),
@@ -754,12 +762,11 @@ impl Engine {
             }
         }
         let table = tbl(rel);
-        let total_rows: i64 = self.db.query_one(
-            rel,
-            &format!("SELECT count(*) FROM {table}"),
-            &[],
-            |row| Ok(row.get(0)?),
-        )?;
+        let total_rows: i64 =
+            self.db
+                .query_one(rel, &format!("SELECT count(*) FROM {table}"), &[], |row| {
+                    Ok(row.get(0)?)
+                })?;
         let demand = if total_rows == 0 {
             true // cold build: probes run pre-extraction; an empty index is free
         } else if total_rows < TINY_REL_FLOOR {
@@ -771,9 +778,7 @@ impl Engine {
             // keeps that off every subsequent unchanged tick.
             let distinct_seen: i64 = self.db.query_one(
                 rel,
-                &format!(
-                    "SELECT count(*) FROM (SELECT DISTINCT \"{col}\" FROM {table} LIMIT 2)"
-                ),
+                &format!("SELECT count(*) FROM (SELECT DISTINCT \"{col}\" FROM {table} LIMIT 2)"),
                 &[],
                 |row| Ok(row.get(0)?),
             )?;
@@ -787,9 +792,13 @@ impl Engine {
                 "auto-index demand dropped: planner-honesty probe (tiny rel or constant column)"
             );
         }
-        self.idx_demand_cache
-            .borrow_mut()
-            .insert(key, IdxDemandProbe { fingerprint, demand });
+        self.idx_demand_cache.borrow_mut().insert(
+            key,
+            IdxDemandProbe {
+                fingerprint,
+                demand,
+            },
+        );
         Ok(demand)
     }
 
@@ -1143,7 +1152,8 @@ impl Engine {
             &[],
             |r| Ok(r.get(0)?),
         )?;
-        self.db.exec_on("every", &format!("DELETE FROM {}", tbl("every")))?;
+        self.db
+            .exec_on("every", &format!("DELETE FROM {}", tbl("every")))?;
         let now = now_secs();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for &n in intervals {
@@ -1346,7 +1356,13 @@ mod without_rowid_classifier_tests {
     // helper's default arm is deliberately the SAME shape any `.dl`-parsed
     // decl gets, so a test that wants the vouch must ask for it explicitly.
     fn decl(cols: Vec<Col>, key: Option<Vec<String>>, pk_never_null: bool) -> RelDecl {
-        RelDecl { name: "t".into(), cols, key, pk_never_null, ..Default::default() }
+        RelDecl {
+            name: "t".into(),
+            cols,
+            key,
+            pk_never_null,
+            ..Default::default()
+        }
     }
 
     fn int_col(name: &str) -> Col {
@@ -1357,7 +1373,10 @@ mod without_rowid_classifier_tests {
     fn two_to_four_column_all_integer_no_key_vouched_rels_qualify() {
         for n in 2..=4 {
             let cols: Vec<Col> = (0..n).map(|i| int_col(&format!("c{i}"))).collect();
-            assert!(wants_without_rowid(&decl(cols, None, true)), "{n}-column all-INTEGER no-key vouched rel should qualify");
+            assert!(
+                wants_without_rowid(&decl(cols, None, true)),
+                "{n}-column all-INTEGER no-key vouched rel should qualify"
+            );
         }
     }
 
@@ -1372,7 +1391,10 @@ mod without_rowid_classifier_tests {
     /// rowid table's composite PK would not.
     #[test]
     fn unvouched_rel_does_not_qualify_even_when_shape_matches() {
-        let cols = vec![Col::plain("name".into(), Type::Text), Col::plain("age".into(), Type::Int)];
+        let cols = vec![
+            Col::plain("name".into(), Type::Text),
+            Col::plain("age".into(), Type::Int),
+        ];
         assert!(
             !wants_without_rowid(&decl(cols, None, false)),
             "pk_never_null defaults false; an un-vouched decl must never get WITHOUT ROWID regardless of shape"
@@ -1387,13 +1409,19 @@ mod without_rowid_classifier_tests {
     #[test]
     fn five_column_rel_does_not_qualify() {
         let cols: Vec<Col> = (0..5).map(|i| int_col(&format!("c{i}"))).collect();
-        assert!(!wants_without_rowid(&decl(cols, None, true)), "wide rels ride Direction 1/4b, not step 4a");
+        assert!(
+            !wants_without_rowid(&decl(cols, None, true)),
+            "wide rels ride Direction 1/4b, not step 4a"
+        );
     }
 
     #[test]
     fn key_narrowed_rel_does_not_qualify() {
         let cols = vec![int_col("a"), int_col("b"), int_col("c")];
-        assert!(!wants_without_rowid(&decl(cols, Some(vec!["a".to_string()]), true)), "key(...) means the full row is not the PK — not a pure junction");
+        assert!(
+            !wants_without_rowid(&decl(cols, Some(vec!["a".to_string()]), true)),
+            "key(...) means the full row is not the PK — not a pure junction"
+        );
     }
 
     #[test]
@@ -1407,7 +1435,10 @@ mod without_rowid_classifier_tests {
         // Type::Text columns intern to _strings and store as SQLite INTEGER
         // (Col::interned() / Col::sql()) — this is the df_edge shape
         // (`from: text, to: text`), one of the plan's own named examples.
-        let cols = vec![Col::plain("from".into(), Type::Text), Col::plain("to".into(), Type::Text)];
+        let cols = vec![
+            Col::plain("from".into(), Type::Text),
+            Col::plain("to".into(), Type::Text),
+        ];
         assert!(wants_without_rowid(&decl(cols, None, true)));
     }
 }

@@ -67,13 +67,22 @@ pub struct SchemeSpec {
 /// The v1 scheme registry. `re:` is intentionally absent: `/.../` regex literals
 /// already exist and are not disturbed.
 pub const SCHEMES: &[SchemeSpec] = &[
-    SchemeSpec { name: "fs", concrete: true },
-    SchemeSpec { name: "glob", concrete: false },
+    SchemeSpec {
+        name: "fs",
+        concrete: true,
+    },
+    SchemeSpec {
+        name: "glob",
+        concrete: false,
+    },
     // `q:{ $k: $v }` — a structural brace-pattern literal (the declarative
     // `json` op's carrier). Not a filesystem path; `concrete: false` keeps it
     // out of descriptor materialization. The body is opaque to the lexer
     // (balanced brackets) and parsed by datapath::parse_pattern.
-    SchemeSpec { name: "q", concrete: false },
+    SchemeSpec {
+        name: "q",
+        concrete: false,
+    },
 ];
 
 pub fn scheme_spec(name: &str) -> Option<&'static SchemeSpec> {
@@ -97,10 +106,14 @@ pub enum Resolved {
 
 impl Resolved {
     pub fn text(&self) -> &str {
-        match self { Resolved::Value(d) | Resolved::Pattern(d) => &d.text }
+        match self {
+            Resolved::Value(d) | Resolved::Pattern(d) => &d.text,
+        }
     }
     pub fn desc(&self) -> &Desc {
-        match self { Resolved::Value(d) | Resolved::Pattern(d) => d }
+        match self {
+            Resolved::Value(d) | Resolved::Pattern(d) => d,
+        }
     }
 }
 
@@ -130,7 +143,9 @@ impl DescError {
         match self {
             DescError::UnknownAnchor(a) => format!("unknown anchor `{a}` (v1 supports only `~`)"),
             DescError::PathEscapesRoot(p) => format!("path `{p}` escapes the scan root"),
-            DescError::HoleInConcrete => "a concrete `fs:` literal cannot contain a `${{}}` / `*` hole; use `glob:`".into(),
+            DescError::HoleInConcrete => {
+                "a concrete `fs:` literal cannot contain a `${{}}` / `*` hole; use `glob:`".into()
+            }
         }
     }
 }
@@ -157,7 +172,10 @@ fn split_unescaped_slash(body: &str) -> Vec<String> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             cur.push('\\');
-            if let Some(&n) = chars.peek() { cur.push(n); chars.next(); }
+            if let Some(&n) = chars.peek() {
+                cur.push(n);
+                chars.next();
+            }
         } else if c == '/' {
             out.push(std::mem::take(&mut cur));
         } else {
@@ -170,21 +188,31 @@ fn split_unescaped_slash(body: &str) -> Vec<String> {
 
 fn classify_segment(seg: &str) -> Segment {
     // Whole-segment holes.
-    if seg == "**" { return Segment::Hole(HoleKind::Globstar); }
-    if seg == "*" { return Segment::Hole(HoleKind::Star); }
+    if seg == "**" {
+        return Segment::Hole(HoleKind::Globstar);
+    }
+    if seg == "*" {
+        return Segment::Hole(HoleKind::Star);
+    }
     if let Some(name) = whole_named_hole(seg) {
         return Segment::Hole(HoleKind::Named(name));
     }
     // Mixed if it still contains a wildcard or interp after unescaping detection.
     let has_hole = seg_contains_hole(seg);
     let literal = unescape(seg);
-    if has_hole { Segment::Mixed(literal) } else { Segment::Name(literal) }
+    if has_hole {
+        Segment::Mixed(literal)
+    } else {
+        Segment::Name(literal)
+    }
 }
 
 /// `${NAME}` occupying the whole segment -> Some(NAME).
 fn whole_named_hole(seg: &str) -> Option<String> {
     let inner = seg.strip_prefix("${")?.strip_suffix('}')?;
-    if inner.contains('{') || inner.contains('}') { return None; }
+    if inner.contains('{') || inner.contains('}') {
+        return None;
+    }
     Some(inner.to_string())
 }
 
@@ -193,7 +221,9 @@ fn seg_contains_hole(seg: &str) -> bool {
     let mut chars = seg.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\\' => { chars.next(); }
+            '\\' => {
+                chars.next();
+            }
             '*' => return true,
             '$' if chars.peek() == Some(&'{') => return true,
             _ => {}
@@ -208,7 +238,9 @@ fn unescape(seg: &str) -> String {
     let mut chars = seg.chars();
     while let Some(c) = chars.next() {
         if c == '\\' {
-            if let Some(n) = chars.next() { out.push(n); }
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
         } else {
             out.push(c);
         }
@@ -230,7 +262,9 @@ pub fn resolve(body: &str, concrete: bool, anchored_root: bool) -> Result<Resolv
     // resolution is identical; the flag only records that the anchor was seen.
     let _ = anchored_root;
     let segs = lex_segments(body);
-    let any_hole = segs.iter().any(|s| matches!(s, Segment::Hole(_) | Segment::Mixed(_)));
+    let any_hole = segs
+        .iter()
+        .any(|s| matches!(s, Segment::Hole(_) | Segment::Mixed(_)));
 
     if concrete && any_hole {
         return Err(DescError::HoleInConcrete);
@@ -251,15 +285,27 @@ pub fn resolve(body: &str, concrete: bool, anchored_root: bool) -> Result<Resolv
     // Concrete: normalize the repo-relative path and reject escapes.
     let joined = render_concrete(&segs);
     let norm = normalize_rel(&joined).ok_or_else(|| DescError::PathEscapesRoot(joined.clone()))?;
-    let kind = if norm.is_empty() || joined.ends_with('/') { DescKind::Dir } else { DescKind::File };
-    Ok(Resolved::Value(Desc { text: norm, kind, segments: segs }))
+    let kind = if norm.is_empty() || joined.ends_with('/') {
+        DescKind::Dir
+    } else {
+        DescKind::File
+    };
+    Ok(Resolved::Value(Desc {
+        text: norm,
+        kind,
+        segments: segs,
+    }))
 }
 
 fn first_hole_kind(segs: &[Segment]) -> Option<HoleKind> {
     for s in segs {
-        if let Segment::Hole(h) = s { return Some(h.clone()); }
+        if let Segment::Hole(h) = s {
+            return Some(h.clone());
+        }
         if let Segment::Mixed(m) = s {
-            if m.contains("**") { return Some(HoleKind::Globstar); }
+            if m.contains("**") {
+                return Some(HoleKind::Globstar);
+            }
             return Some(HoleKind::Star);
         }
     }
@@ -269,23 +315,29 @@ fn first_hole_kind(segs: &[Segment]) -> Option<HoleKind> {
 /// Rejoin segments into the canonical glob pattern. Holes render to their glob
 /// form (`*`, `**`, `${name}`); names/mixed render their literal text.
 fn render_pattern(segs: &[Segment]) -> String {
-    let parts: Vec<String> = segs.iter().map(|s| match s {
-        Segment::Name(n) => n.clone(),
-        Segment::Mixed(m) => m.clone(),
-        Segment::Hole(HoleKind::Star) => "*".into(),
-        Segment::Hole(HoleKind::Globstar) => "**".into(),
-        Segment::Hole(HoleKind::Named(n)) => format!("${{{n}}}"),
-    }).collect();
+    let parts: Vec<String> = segs
+        .iter()
+        .map(|s| match s {
+            Segment::Name(n) => n.clone(),
+            Segment::Mixed(m) => m.clone(),
+            Segment::Hole(HoleKind::Star) => "*".into(),
+            Segment::Hole(HoleKind::Globstar) => "**".into(),
+            Segment::Hole(HoleKind::Named(n)) => format!("${{{n}}}"),
+        })
+        .collect();
     parts.join("/")
 }
 
 fn render_concrete(segs: &[Segment]) -> String {
-    let parts: Vec<String> = segs.iter().map(|s| match s {
-        Segment::Name(n) => n.clone(),
-        // Concrete path can't have holes (checked earlier); render best-effort.
-        Segment::Mixed(m) => m.clone(),
-        Segment::Hole(_) => String::new(),
-    }).collect();
+    let parts: Vec<String> = segs
+        .iter()
+        .map(|s| match s {
+            Segment::Name(n) => n.clone(),
+            // Concrete path can't have holes (checked earlier); render best-effort.
+            Segment::Mixed(m) => m.clone(),
+            Segment::Hole(_) => String::new(),
+        })
+        .collect();
     parts.join("/")
 }
 
@@ -299,7 +351,9 @@ pub fn normalize_rel(rel: &str) -> Option<String> {
         match comp {
             Component::CurDir => {}
             Component::ParentDir => {
-                if stack.pop().is_none() { return None; }
+                if stack.pop().is_none() {
+                    return None;
+                }
             }
             Component::Normal(s) => stack.push(s.to_string_lossy().to_string()),
             Component::RootDir | Component::Prefix(_) => return None,
@@ -325,9 +379,17 @@ pub fn strip_anchor(body: &str) -> (bool, &str) {
 /// keeps the enum from tripping dead-code lints before `rs:` lands.
 #[allow(dead_code)]
 fn _reserved_kinds() -> [DescKind; 6] {
-    [DescKind::Namespace, DescKind::Type_, DescKind::Term,
-     DescKind::Method, DescKind::Param, DescKind::Index(0)]
+    [
+        DescKind::Namespace,
+        DescKind::Type_,
+        DescKind::Term,
+        DescKind::Method,
+        DescKind::Param,
+        DescKind::Index(0),
+    ]
 }
 
 #[allow(dead_code)]
-fn _pathbuf_anchor(root: &Path, rel: &str) -> PathBuf { root.join(rel) }
+fn _pathbuf_anchor(root: &Path, rel: &str) -> PathBuf {
+    root.join(rel)
+}

@@ -26,9 +26,11 @@ fn run(dir: &Path, prog: &str, extra_env: &[(&str, &str)]) -> (i32, String, Stri
         cmd.env(key, value);
     }
     let out = cmd.output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// An allowlisted var (SPREFA_ prefix) shows up in `env(name, value)`.
@@ -55,5 +57,8 @@ fn non_allowlisted_var_is_invisible() {
         &[("MY_SECRET_TOKEN", "leaked")],
     );
     assert_eq!(code, 0, "{err}");
-    assert!(!out.contains("leaked"), "secret var must not surface:\n{out}");
+    assert!(
+        !out.contains("leaked"),
+        "secret var must not surface:\n{out}"
+    );
 }

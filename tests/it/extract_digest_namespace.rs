@@ -22,8 +22,16 @@ fn fixture(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("extract_ns_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/a.rs"), "fn alpha() { beta(); }\nfn beta() {}\n").unwrap();
-    fs::write(dir.join("src/b.rs"), "struct Foo { x: i32 }\nfn make() -> Foo { Foo { x: 1 } }\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "fn alpha() { beta(); }\nfn beta() {}\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("src/b.rs"),
+        "struct Foo { x: i32 }\nfn make() -> Foo { Foo { x: 1 } }\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("p.dl"),
         "rel seen(path: path).\n\
@@ -59,7 +67,10 @@ fn run(dir: &Path, exe_stamp: &str) -> String {
 #[test]
 fn one_binary_warm_tick_skips_the_second_run() {
     let dir = fixture("warm");
-    assert!(run(&dir, "A").contains("REBUILD"), "first run is a cold build");
+    assert!(
+        run(&dir, "A").contains("REBUILD"),
+        "first run is a cold build"
+    );
     assert!(
         run(&dir, "A").contains("skipped"),
         "an unchanged corpus under the same binary must skip the second run"
@@ -75,7 +86,10 @@ fn a_different_binary_does_not_invalidate_the_first_binarys_warm_state() {
     let dir = fixture("twobin");
     assert!(run(&dir, "A").contains("REBUILD"), "A cold");
     assert!(run(&dir, "A").contains("skipped"), "A warm");
-    assert!(run(&dir, "B").contains("REBUILD"), "B is a new binary: one cold build in its own namespace");
+    assert!(
+        run(&dir, "B").contains("REBUILD"),
+        "B is a new binary: one cold build in its own namespace"
+    );
     let a_again = run(&dir, "A");
     assert!(
         a_again.contains("skipped"),

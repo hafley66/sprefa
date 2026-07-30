@@ -154,8 +154,7 @@ impl<'a> FullSourceStageBuilder<'a> {
     pub(crate) fn seal(mut self) -> Result<PreparedSourceFacts> {
         let writer = self.writer.take().expect("source stage writer is active");
         writer.finish()?;
-        let sealed =
-            SourceStage::open(self.db)?.seal(self.stage_id, self.generation, self.base)?;
+        let sealed = SourceStage::open(self.db)?.seal(self.stage_id, self.generation, self.base)?;
         self.sealed = true;
         Ok(PreparedSourceFacts { sealed })
     }

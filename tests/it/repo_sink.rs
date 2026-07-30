@@ -44,8 +44,10 @@ fn repo_sink_pulls_only_allowlisted_orgs_and_registers() {
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter()
-        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "program should typecheck");
     eng.set_repos(vec![]); // no config repos; every repo arrives via the sink
 
@@ -55,21 +57,37 @@ fn repo_sink_pulls_only_allowlisted_orgs_and_registers() {
     // is a pure read); call drain_external_sinks to fire the pull explicitly.
     eng.tick(&prog, true).unwrap();
     eng.drain_external_sinks(&prog).unwrap();
-    let registered: Vec<String> = eng.snapshot_repos().iter()
-        .map(|r| r.slug.clone()).collect();
-    assert!(registered.contains(&"ok".to_string()),
-        "ok (good-org, allowlisted) should register: {registered:?}");
-    assert!(!registered.contains(&"no".to_string()),
-        "no (evil-org, not listed) must be filtered: {registered:?}");
+    let registered: Vec<String> = eng
+        .snapshot_repos()
+        .iter()
+        .map(|r| r.slug.clone())
+        .collect();
+    assert!(
+        registered.contains(&"ok".to_string()),
+        "ok (good-org, allowlisted) should register: {registered:?}"
+    );
+    assert!(
+        !registered.contains(&"no".to_string()),
+        "no (evil-org, not listed) must be filtered: {registered:?}"
+    );
 
     // Tick 2: refresh_builtin_rels emits the registered repo into `repo`.
     eng.tick(&prog, true).unwrap();
-    let rel: Vec<String> = eng.repo_relation().iter()
-        .map(|(s, _, _)| s.clone()).collect();
-    assert!(rel.contains(&"ok".to_string()),
-        "repo builtin reflects the pulled repo: {:?}", eng.repo_relation());
-    assert!(!rel.contains(&"no".to_string()),
-        "filtered repo must not appear in repo builtin: {:?}", eng.repo_relation());
+    let rel: Vec<String> = eng
+        .repo_relation()
+        .iter()
+        .map(|(s, _, _)| s.clone())
+        .collect();
+    assert!(
+        rel.contains(&"ok".to_string()),
+        "repo builtin reflects the pulled repo: {:?}",
+        eng.repo_relation()
+    );
+    assert!(
+        !rel.contains(&"no".to_string()),
+        "filtered repo must not appear in repo builtin: {:?}",
+        eng.repo_relation()
+    );
 }
 
 /// A repo-sink rule whose body carries a scan/match/... op is rejected somewhere
@@ -83,8 +101,11 @@ fn repo_sink_with_source_body_is_rejected() {
     let d = sandbox("reject");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/a.rs"), "fn a() {}\n").unwrap();
-    fs::write(d.join("p.dl"),
-        "repo(slug, root, url) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n").unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "repo(slug, root, url) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, _, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
@@ -98,7 +119,7 @@ fn repo_sink_with_source_body_is_rejected() {
         Err(e) => format!("{e}"),
     };
     assert!(
-        (msg.contains("repo-sink") && msg.contains("derived-style"))
-            || msg.contains("head var"),
-        "expected a repo-sink source-body rejection (drain-time OR head-var binding), got: {msg}");
+        (msg.contains("repo-sink") && msg.contains("derived-style")) || msg.contains("head var"),
+        "expected a repo-sink source-body rejection (drain-time OR head-var binding), got: {msg}"
+    );
 }

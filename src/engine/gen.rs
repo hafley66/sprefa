@@ -193,18 +193,26 @@ impl Engine {
                         // branch the "15 changed paths, ten ticks, no mtime
                         // movement" hypothesis needs to be decidable from the
                         // trail — `wrote: false` here is the whole answer.
-                        crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                            "path": p, "target": "file", "bytes": bytes, "wrote": false,
-                        }));
+                        crate::eventlog::emit(
+                            "gen_write",
+                            Some(&self.root),
+                            serde_json::json!({
+                                "path": p, "target": "file", "bytes": bytes, "wrote": false,
+                            }),
+                        );
                         continue;
                     }
                     if let Some(dir) = full.parent() {
                         std::fs::create_dir_all(dir)?;
                     }
                     self.journaled_write(&full, &p, content.as_bytes())?;
-                    crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                        "path": p, "target": "file", "bytes": bytes, "wrote": true,
-                    }));
+                    crate::eventlog::emit(
+                        "gen_write",
+                        Some(&self.root),
+                        serde_json::json!({
+                            "path": p, "target": "file", "bytes": bytes, "wrote": true,
+                        }),
+                    );
                     written.push(p);
                 }
             }
@@ -366,14 +374,22 @@ impl Engine {
             let bytes = content.len();
             if content != old {
                 self.journaled_write(&full, p, content.as_bytes())?;
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "splice", "bytes": bytes, "wrote": true,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "splice", "bytes": bytes, "wrote": true,
+                    }),
+                );
                 written.push(p.to_string());
             } else {
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "splice", "bytes": bytes, "wrote": false,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "splice", "bytes": bytes, "wrote": false,
+                    }),
+                );
             }
         }
         Ok(())
@@ -402,18 +418,26 @@ impl Engine {
             let full = resolve_write_full(write_roots, p);
             let bytes = content.len();
             if std::fs::read(&full).ok().as_deref() == Some(content.as_bytes()) {
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "append", "bytes": bytes, "wrote": false,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "append", "bytes": bytes, "wrote": false,
+                    }),
+                );
                 continue;
             }
             if let Some(dir) = full.parent() {
                 std::fs::create_dir_all(dir)?;
             }
             self.journaled_write(&full, p, content.as_bytes())?;
-            crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                "path": p, "target": "append", "bytes": bytes, "wrote": true,
-            }));
+            crate::eventlog::emit(
+                "gen_write",
+                Some(&self.root),
+                serde_json::json!({
+                    "path": p, "target": "append", "bytes": bytes, "wrote": true,
+                }),
+            );
             written.push(p.clone());
         }
         Ok(())
@@ -507,14 +531,22 @@ impl Engine {
             let bytes = buf.len();
             if buf != original {
                 self.journaled_write(&full, p, &buf)?;
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "cursor", "bytes": bytes, "wrote": true,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "cursor", "bytes": bytes, "wrote": true,
+                    }),
+                );
                 written.push(p.to_string());
             } else {
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "cursor", "bytes": bytes, "wrote": false,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "cursor", "bytes": bytes, "wrote": false,
+                    }),
+                );
             }
         }
         Ok(())
@@ -592,14 +624,22 @@ impl Engine {
             let bytes = content.len();
             if content != old {
                 self.journaled_write(&full, p, content.as_bytes())?;
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "zone", "bytes": bytes, "wrote": true,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "zone", "bytes": bytes, "wrote": true,
+                    }),
+                );
                 written.push(p.to_string());
             } else {
-                crate::eventlog::emit("gen_write", Some(&self.root), serde_json::json!({
-                    "path": p, "target": "zone", "bytes": bytes, "wrote": false,
-                }));
+                crate::eventlog::emit(
+                    "gen_write",
+                    Some(&self.root),
+                    serde_json::json!({
+                        "path": p, "target": "zone", "bytes": bytes, "wrote": false,
+                    }),
+                );
             }
         }
         Ok(())

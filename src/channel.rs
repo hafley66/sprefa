@@ -80,7 +80,10 @@ pub struct VecChannel {
 
 impl VecChannel {
     pub fn new(inbound: impl IntoIterator<Item = Frame>) -> Self {
-        Self { inbound: inbound.into_iter().collect(), sent: Vec::new() }
+        Self {
+            inbound: inbound.into_iter().collect(),
+            sent: Vec::new(),
+        }
     }
 }
 

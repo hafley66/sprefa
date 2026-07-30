@@ -38,7 +38,9 @@ fn rows_for_tick(eng: &Engine, tick: i64) -> Vec<(String, i64, String)> {
 }
 
 fn max_tick(eng: &Engine) -> i64 {
-    let rows = eng.query_sql("SELECT MAX(tick) FROM _write_ledger", &[]).unwrap();
+    let rows = eng
+        .query_sql("SELECT MAX(tick) FROM _write_ledger", &[])
+        .unwrap();
     rows.first()
         .and_then(|r| r.first())
         .and_then(|v| v.as_i64())
@@ -64,18 +66,18 @@ fn write_ledger_captures_extract_and_derived_writes() {
     );
 
     // At least one extract-family rel (spine's `node`) was written on the source seam.
-    let has_extract = rows.iter().any(|(rel, rows, seam)| {
-        rel == "node" && *rows > 0 && seam == "source"
-    });
+    let has_extract = rows
+        .iter()
+        .any(|(rel, rows, seam)| rel == "node" && *rows > 0 && seam == "source");
     assert!(
         has_extract,
         "ledger should record a source write to an extract-family rel (node); got {rows:?}"
     );
 
     // At least one derived rel (`n`) was written on the derived seam.
-    let has_derived = rows.iter().any(|(rel, rows, seam)| {
-        rel == "n" && *rows > 0 && seam == "derived"
-    });
+    let has_derived = rows
+        .iter()
+        .any(|(rel, rows, seam)| rel == "n" && *rows > 0 && seam == "derived");
     assert!(
         has_derived,
         "ledger should record a derived write to `n`; got {rows:?}"

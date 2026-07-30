@@ -129,9 +129,13 @@ const ORG_KEYS: &[&str] = &["dir", "max_depth", "foldername", "folder"];
 /// silently dropped — the classic "I set it and nothing happened" config trap.
 fn unknown_keys(raw: &toml::Value) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
-    let toml::Value::Table(top) = raw else { return out };
+    let toml::Value::Table(top) = raw else {
+        return out;
+    };
     for (k, v) in top {
-        if !TOP_KEYS.contains(&k.as_str()) { out.push(("the config root", k.clone())); }
+        if !TOP_KEYS.contains(&k.as_str()) {
+            out.push(("the config root", k.clone()));
+        }
         // [[repos]] / [[org]] / [[orgs]] are arrays of tables; check each entry.
         let (entry_keys, label) = match k.as_str() {
             "repos" => (REPO_KEYS, "a [[repos]] entry"),
@@ -142,7 +146,9 @@ fn unknown_keys(raw: &toml::Value) -> Vec<(&'static str, String)> {
             for entry in entries {
                 if let toml::Value::Table(t) = entry {
                     for ek in t.keys() {
-                        if !entry_keys.contains(&ek.as_str()) { out.push((label, ek.clone())); }
+                        if !entry_keys.contains(&ek.as_str()) {
+                            out.push((label, ek.clone()));
+                        }
                     }
                 }
             }
@@ -154,8 +160,10 @@ fn unknown_keys(raw: &toml::Value) -> Vec<(&'static str, String)> {
 /// Warn (stderr) on each unknown config key, naming the table and key.
 fn warn_unknown_keys(raw: &toml::Value, path: &Path) {
     for (table, key) in unknown_keys(raw) {
-        eprintln!("[config] {}: unknown key `{key}` in {table} — ignored (typo or renamed field?)",
-            path.display()); // @eprintln-ok: human-facing config typo warning
+        eprintln!(
+            "[config] {}: unknown key `{key}` in {table} — ignored (typo or renamed field?)",
+            path.display()
+        ); // @eprintln-ok: human-facing config typo warning
     }
 }
 
@@ -182,7 +190,11 @@ impl SprfConfig {
     /// is set.
     pub fn config_path() -> Option<PathBuf> {
         let paths = Self::search_paths();
-        paths.iter().find(|p| p.exists()).cloned().or_else(|| paths.into_iter().next())
+        paths
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .or_else(|| paths.into_iter().next())
     }
 
     /// Load from the first existing search path. Missing file (or no path at
@@ -226,9 +238,15 @@ impl SprfConfig {
         let mut seen: HashSet<PathBuf> = self.repos.iter().map(|r| r.root.clone()).collect();
         for org in &self.orgs {
             let dir = expand_tilde(&org.dir);
-            let org_name = org.foldername.clone().filter(|s| !s.is_empty())
-                .unwrap_or_else(|| dir.file_name().map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "org".to_string()));
+            let org_name = org
+                .foldername
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    dir.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "org".to_string())
+                });
             let flatten = org_name == ".";
             if !dir.is_dir() {
                 let dir_disp = dir.display();
@@ -239,21 +257,42 @@ impl SprfConfig {
             let mut repos = find_git_repos(&dir, depth);
             repos.sort();
             for root in repos {
-                if !seen.insert(root.clone()) { continue; }
+                if !seen.insert(root.clone()) {
+                    continue;
+                }
                 // rel path under `dir`, `/`-joined, as the slug suffix.
                 let rel = root.strip_prefix(&dir).unwrap_or(&root);
-                let suffix = rel.components()
-                    .map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
+                let suffix = rel
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 // `dir` itself is a repo (empty suffix) → fall back to its basename.
-                let leaf = || root.file_name().map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "repo".to_string());
+                let leaf = || {
+                    root.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "repo".to_string())
+                };
                 let slug = if flatten {
-                    if suffix.is_empty() { leaf() } else { suffix }
+                    if suffix.is_empty() {
+                        leaf()
+                    } else {
+                        suffix
+                    }
                 } else {
-                    let suffix = if suffix.is_empty() { org_name.clone() } else { suffix };
+                    let suffix = if suffix.is_empty() {
+                        org_name.clone()
+                    } else {
+                        suffix
+                    };
                     format!("{org_name}/{suffix}")
                 };
-                self.repos.push(RepoConfig { slug, root, url: None, allow_missing: false });
+                self.repos.push(RepoConfig {
+                    slug,
+                    root,
+                    url: None,
+                    allow_missing: false,
+                });
             }
         }
     }
@@ -296,7 +335,9 @@ fn find_git_repos(dir: &Path, max_depth: usize) -> Vec<PathBuf> {
             out.push(d.to_path_buf());
             return; // don't descend into a checkout
         }
-        if depth >= max { return; }
+        if depth >= max {
+            return;
+        }
         if let Ok(entries) = std::fs::read_dir(d) {
             for e in entries.flatten() {
                 let p = e.path();
@@ -324,13 +365,16 @@ mod tests {
 
     #[test]
     fn parses_repos() {
-        let p = write_tmp("repos", "\
+        let p = write_tmp(
+            "repos",
+            "\
             [[repos]]\n\
             slug = \"alpha/one\"\n\
             root = \"/tmp/alpha\"\n\
             [[repos]]\n\
             slug = \"beta/two\"\n\
-            root = \"/tmp/beta\"\n");
+            root = \"/tmp/beta\"\n",
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         assert_eq!(cfg.repos.len(), 2);
         assert_eq!(cfg.repos[0].slug, "alpha/one");
@@ -340,7 +384,10 @@ mod tests {
     #[test]
     fn empty_file_is_empty_config() {
         let p = write_tmp("empty", "");
-        assert_eq!(SprfConfig::load_from_path(&p).unwrap(), SprfConfig::default());
+        assert_eq!(
+            SprfConfig::load_from_path(&p).unwrap(),
+            SprfConfig::default()
+        );
     }
 
     #[test]
@@ -360,14 +407,17 @@ mod tests {
 
     #[test]
     fn default_org_prefixes_bare_slugs() {
-        let p = write_tmp("org", "\
+        let p = write_tmp(
+            "org",
+            "\
             default_org = \"alpha\"\n\
             [[repos]]\n\
             slug = \"one\"\n\
             root = \"/tmp/one\"\n\
             [[repos]]\n\
             slug = \"beta/two\"\n\
-            root = \"/tmp/two\"\n");
+            root = \"/tmp/two\"\n",
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         assert_eq!(cfg.repos[0].slug, "alpha/one");
         assert_eq!(cfg.repos[1].slug, "beta/two");
@@ -375,10 +425,13 @@ mod tests {
 
     #[test]
     fn no_default_org_leaves_slugs_alone() {
-        let p = write_tmp("no_org", "\
+        let p = write_tmp(
+            "no_org",
+            "\
             [[repos]]\n\
             slug = \"one\"\n\
-            root = \"/tmp/one\"\n");
+            root = \"/tmp/one\"\n",
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         assert_eq!(cfg.repos[0].slug, "one");
     }
@@ -398,7 +451,8 @@ mod tests {
     #[test]
     fn unknown_config_keys_are_flagged_not_silently_dropped() {
         // A typo'd top-level key, a renamed org field, and an unknown repo key.
-        let raw: toml::Value = toml::from_str("\
+        let raw: toml::Value = toml::from_str(
+            "\
             default_orgz = \"acme\"\n\
             [[org]]\n\
             dir = \"/tmp/x\"\n\
@@ -406,7 +460,9 @@ mod tests {
             [[repos]]\n\
             slug = \"a\"\n\
             root = \"/tmp/a\"\n\
-            urls = \"x\"\n").unwrap();
+            urls = \"x\"\n",
+        )
+        .unwrap();
         let mut found = unknown_keys(&raw);
         found.sort();
         assert_eq!(found, vec![
@@ -416,31 +472,51 @@ mod tests {
         ], "each unknown key is reported with its table; known keys + `folder` alias never flagged");
 
         // The accepted spellings + aliases must NOT warn.
-        let ok: toml::Value = toml::from_str("\
+        let ok: toml::Value = toml::from_str(
+            "\
             default_org = \"acme\"\n\
             [[org]]\n\
             dir = \"/tmp/x\"\n\
             folder = \".\"\n\
-            max_depth = 2\n").unwrap();
-        assert!(unknown_keys(&ok).is_empty(), "known keys + folder alias are clean");
+            max_depth = 2\n",
+        )
+        .unwrap();
+        assert!(
+            unknown_keys(&ok).is_empty(),
+            "known keys + folder alias are clean"
+        );
     }
 
     #[test]
     fn org_dir_expands_into_repos() {
         let base = org_fixture("expand");
-        let p = write_tmp("orgdir", &format!("\
+        let p = write_tmp(
+            "orgdir",
+            &format!(
+                "\
             [[org]]\n\
-            dir = \"{}/grafana\"\n", base.display()));
+            dir = \"{}/grafana\"\n",
+                base.display()
+            ),
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         let mut slugs: Vec<_> = cfg.repos.iter().map(|r| r.slug.clone()).collect();
         slugs.sort();
-        assert_eq!(slugs, vec![
-            "grafana/group/svc".to_string(),
-            "grafana/loki".to_string(),
-            "grafana/mimir".to_string(),
-        ], "one repo per checkout, rel-path slug, non-repo dir skipped");
+        assert_eq!(
+            slugs,
+            vec![
+                "grafana/group/svc".to_string(),
+                "grafana/loki".to_string(),
+                "grafana/mimir".to_string(),
+            ],
+            "one repo per checkout, rel-path slug, non-repo dir skipped"
+        );
         // Roots point at the checkout dirs.
-        let mimir = cfg.repos.iter().find(|r| r.slug == "grafana/mimir").unwrap();
+        let mimir = cfg
+            .repos
+            .iter()
+            .find(|r| r.slug == "grafana/mimir")
+            .unwrap();
         assert_eq!(mimir.root, base.join("grafana/mimir"));
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -449,16 +525,28 @@ mod tests {
     fn org_foldername_dot_flattens_the_slug() {
         let base = org_fixture("flat");
         // foldername = "." drops the org prefix: slugs are the bare rel-path.
-        let p = write_tmp("orgflat", &format!("\
+        let p = write_tmp(
+            "orgflat",
+            &format!(
+                "\
             [[org]]\n\
             dir = \"{}/grafana\"\n\
-            foldername = \".\"\n", base.display()));
+            foldername = \".\"\n",
+                base.display()
+            ),
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         let mut slugs: Vec<_> = cfg.repos.iter().map(|r| r.slug.clone()).collect();
         slugs.sort();
-        assert_eq!(slugs, vec![
-            "group/svc".to_string(), "loki".to_string(), "mimir".to_string(),
-        ], "foldername=. flattens: no `grafana/` prefix");
+        assert_eq!(
+            slugs,
+            vec![
+                "group/svc".to_string(),
+                "loki".to_string(),
+                "mimir".to_string(),
+            ],
+            "foldername=. flattens: no `grafana/` prefix"
+        );
         // Root is unchanged — only the slug (address) flattens, not the path.
         let mimir = cfg.repos.iter().find(|r| r.slug == "mimir").unwrap();
         assert_eq!(mimir.root, base.join("grafana/mimir"));
@@ -468,13 +556,22 @@ mod tests {
     #[test]
     fn org_foldername_overrides_the_prefix() {
         let base = org_fixture("rename");
-        let p = write_tmp("orgrename", &format!("\
+        let p = write_tmp(
+            "orgrename",
+            &format!(
+                "\
             [[org]]\n\
             dir = \"{}/grafana\"\n\
-            foldername = \"gf\"\n", base.display()));
+            foldername = \"gf\"\n",
+                base.display()
+            ),
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
-        assert!(cfg.repos.iter().any(|r| r.slug == "gf/mimir"),
-            "foldername renames the prefix: {:?}", cfg.repos.iter().map(|r| &r.slug).collect::<Vec<_>>());
+        assert!(
+            cfg.repos.iter().any(|r| r.slug == "gf/mimir"),
+            "foldername renames the prefix: {:?}",
+            cfg.repos.iter().map(|r| &r.slug).collect::<Vec<_>>()
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -482,31 +579,49 @@ mod tests {
     fn org_max_depth_caps_the_walk() {
         let base = org_fixture("depth");
         // depth 1: only immediate children (mimir, loki), not group/svc (depth 2).
-        let p = write_tmp("orgdepth", &format!("\
+        let p = write_tmp(
+            "orgdepth",
+            &format!(
+                "\
             [[org]]\n\
             dir = \"{}/grafana\"\n\
-            max_depth = 1\n", base.display()));
+            max_depth = 1\n",
+                base.display()
+            ),
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         let mut slugs: Vec<_> = cfg.repos.iter().map(|r| r.slug.clone()).collect();
         slugs.sort();
-        assert_eq!(slugs, vec!["grafana/loki".to_string(), "grafana/mimir".to_string()]);
+        assert_eq!(
+            slugs,
+            vec!["grafana/loki".to_string(), "grafana/mimir".to_string()]
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn explicit_repo_wins_over_org_duplicate() {
         let base = org_fixture("dup");
-        let p = write_tmp("orgdup", &format!("\
+        let p = write_tmp(
+            "orgdup",
+            &format!(
+                "\
             [[repos]]\n\
             slug = \"pinned/mimir\"\n\
             root = \"{mimir}\"\n\
             [[org]]\n\
             dir = \"{base}/grafana\"\n",
-            mimir = base.join("grafana/mimir").display(), base = base.display()));
+                mimir = base.join("grafana/mimir").display(),
+                base = base.display()
+            ),
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
         // mimir's root appears once, under the explicit slug.
-        let for_mimir: Vec<_> = cfg.repos.iter()
-            .filter(|r| r.root == base.join("grafana/mimir")).collect();
+        let for_mimir: Vec<_> = cfg
+            .repos
+            .iter()
+            .filter(|r| r.root == base.join("grafana/mimir"))
+            .collect();
         assert_eq!(for_mimir.len(), 1, "org duplicate dropped");
         assert_eq!(for_mimir[0].slug, "pinned/mimir", "explicit slug wins");
         let _ = std::fs::remove_dir_all(&base);
@@ -514,10 +629,16 @@ mod tests {
 
     #[test]
     fn missing_org_dir_is_skipped_not_fatal() {
-        let p = write_tmp("orgmissing", "\
+        let p = write_tmp(
+            "orgmissing",
+            "\
             [[org]]\n\
-            dir = \"/no/such/org/dir/xyz\"\n");
+            dir = \"/no/such/org/dir/xyz\"\n",
+        );
         let cfg = SprfConfig::load_from_path(&p).unwrap();
-        assert!(cfg.repos.is_empty(), "a missing org dir yields no repos, no error");
+        assert!(
+            cfg.repos.is_empty(),
+            "a missing org dir yields no repos, no error"
+        );
     }
 }

@@ -25,16 +25,24 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
-        .lines().filter(|l| !l.trim().is_empty())
+        .lines()
+        .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("bad json line `{l}`: {e}")))
         .collect()
 }
 
 fn q<'a>(recs: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
-    recs.iter().find(|r| r["query"] == name).unwrap_or_else(|| panic!("no query {name} in {recs:?}"))
+    recs.iter()
+        .find(|r| r["query"] == name)
+        .unwrap_or_else(|| panic!("no query {name} in {recs:?}"))
 }
 
 #[test]
@@ -60,19 +68,33 @@ texted(t) <- hit(id), ref(id, sid, _f, _lo, _hi), string(sid, t, _n).
     let recs = run_json(&d, prog);
     let loc = q(&recs, "located");
     assert_eq!(loc["count"], 1, "sg id resolves through ref: {loc}");
-    assert_eq!(loc["rows"][0][0].as_i64().unwrap(), 0, "lo (whole match start)");
-    assert_eq!(loc["rows"][0][1].as_i64().unwrap(), 13, "hi (whole match end)");
+    assert_eq!(
+        loc["rows"][0][0].as_i64().unwrap(),
+        0,
+        "lo (whole match start)"
+    );
+    assert_eq!(
+        loc["rows"][0][1].as_i64().unwrap(),
+        13,
+        "hi (whole match end)"
+    );
 
     let txt = q(&recs, "texted");
     assert_eq!(txt["count"], 1, "sg id resolves through string: {txt}");
-    assert_eq!(txt["rows"][0][0], "fn alpha() {}",
-        "sg id -> ref -> string recovers the whole-match source bytes: {txt}");
+    assert_eq!(
+        txt["rows"][0][0], "fn alpha() {}",
+        "sg id -> ref -> string recovers the whole-match source bytes: {txt}"
+    );
 }
 
 #[test]
 fn json_value_id_resolves_through_ref_and_string() {
     let d = sandbox("json");
-    fs::write(d.join("conf.yaml"), "spec:\n  image: \"registry.io/app:v3\"\n").unwrap();
+    fs::write(
+        d.join("conf.yaml"),
+        "spec:\n  image: \"registry.io/app:v3\"\n",
+    )
+    .unwrap();
 
     // `id` is the trailing 5th jsonp arg: jsonp(path, rev, jpath, out, id). It
     // binds the located id of the matched value's byte span. (The dotted-string
@@ -100,6 +122,8 @@ texted(t) <- hit(_v, id), ref(id, sid, _f, _lo, _hi), string(sid, t, _n).
     // datapath strips quotes from the bound value, but the located span covers
     // the raw source slice including quotes; both go through the same intern.
     let resolved = txt["rows"][0][0].as_str().unwrap();
-    assert!(resolved.contains("registry.io/app:v3"),
-        "json id -> ref -> string recovers the value's source bytes: {txt}");
+    assert!(
+        resolved.contains("registry.io/app:v3"),
+        "json id -> ref -> string recovers the value's source bytes: {txt}"
+    );
 }

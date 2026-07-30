@@ -26,7 +26,10 @@ fn state_home(dir: &Path) -> PathBuf {
 /// Every `roots/<key>/db.sqlite` under the sandboxed state home.
 fn root_dbs(dir: &Path) -> Vec<PathBuf> {
     let roots = state_home(dir).join("sprefa").join("roots");
-    fs::read_dir(&roots).into_iter().flatten().flatten()
+    fs::read_dir(&roots)
+        .into_iter()
+        .flatten()
+        .flatten()
         .map(|entry| entry.path().join("db.sqlite"))
         .filter(|db| db.is_file())
         .collect()
@@ -45,10 +48,13 @@ fn run(dir: &Path, extra: &[&str]) -> (i32, String, String) {
         .env("DL_NO_DAEMON", "1")
         .env("XDG_STATE_HOME", state_home(dir))
         .args(extra)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Two rail files, each writing the built-in `diag` sink (no decl — `diag` is a
@@ -81,9 +87,18 @@ fn fixture(tag: &str) -> PathBuf {
 fn discovery_merges_files_and_dedupes_identical_decls() {
     let d = fixture("merge");
     let (code, _out, err) = run(&d, &["--check"]);
-    assert_eq!(code, 2, "rail-a is error severity -> blocking-hook exit code:\n{err}");
-    assert!(err.contains("rail-a"), "rule from 10-a.dl must fire:\n{err}");
-    assert!(err.contains("rail-b"), "rule from 20-b.dl must fire:\n{err}");
+    assert_eq!(
+        code, 2,
+        "rail-a is error severity -> blocking-hook exit code:\n{err}"
+    );
+    assert!(
+        err.contains("rail-a"),
+        "rule from 10-a.dl must fire:\n{err}"
+    );
+    assert!(
+        err.contains("rail-b"),
+        "rule from 20-b.dl must fire:\n{err}"
+    );
 }
 
 /// (2) No `.dl` dir at all: loud error naming the missing directory.
@@ -92,7 +107,10 @@ fn missing_dl_dir_is_a_loud_error() {
     let d = sandbox("nodir");
     let (code, _out, err) = run(&d, &["--check"]);
     assert_ne!(code, 0);
-    assert!(err.contains(".dl"), "error must name the missing dir:\n{err}");
+    assert!(
+        err.contains(".dl"),
+        "error must name the missing dir:\n{err}"
+    );
 }
 
 /// (3) `.dl` exists but holds no .dl files: also loud, never a green no-op.
@@ -102,7 +120,10 @@ fn empty_dl_dir_is_a_loud_error() {
     fs::create_dir_all(d.join(".dl")).unwrap();
     let (code, _out, err) = run(&d, &["--check"]);
     assert_ne!(code, 0);
-    assert!(err.contains("no .dl files"), "error must say the dir is empty:\n{err}");
+    assert!(
+        err.contains("no .dl files"),
+        "error must say the dir is empty:\n{err}"
+    );
 }
 
 /// (4) The same relation declared with different columns across files is a
@@ -111,10 +132,20 @@ fn empty_dl_dir_is_a_loud_error() {
 #[test]
 fn conflicting_decl_across_files_errors() {
     let d = fixture("conflict");
-    fs::write(d.join(".dl/30-c.dl"), "rel a_hit(path: text, line: int, extra: text).\n").unwrap();
+    fs::write(
+        d.join(".dl/30-c.dl"),
+        "rel a_hit(path: text, line: int, extra: text).\n",
+    )
+    .unwrap();
     let (code, _out, err) = run(&d, &["--check"]);
-    assert_eq!(code, 1, "a broken program is exit 1 (user-facing), not 2:\n{err}");
-    assert!(err.contains("declared twice"), "conflict must be named:\n{err}");
+    assert_eq!(
+        code, 1,
+        "a broken program is exit 1 (user-facing), not 2:\n{err}"
+    );
+    assert!(
+        err.contains("declared twice"),
+        "conflict must be named:\n{err}"
+    );
 }
 
 /// (5) Discovery defaults the db to the shared per-root
@@ -127,9 +158,19 @@ fn discovery_defaults_db_to_shared_root_db() {
     let (code, _out, _err) = run(&d, &["--check"]);
     assert_ne!(code, 0); // rail-a error severity; db side effects still happen
     let dbs = root_dbs(&d);
-    assert_eq!(dbs.len(), 1, "exactly one roots/<key>/db.sqlite expected: {dbs:?}");
-    assert!(!d.join(".dl/.state/cache.db").exists(), "no cache.db world may grow beside the root db");
-    assert!(!d.join(".dl/cache.db").exists(), "cache db must NOT land in .dl/ either");
+    assert_eq!(
+        dbs.len(),
+        1,
+        "exactly one roots/<key>/db.sqlite expected: {dbs:?}"
+    );
+    assert!(
+        !d.join(".dl/.state/cache.db").exists(),
+        "no cache.db world may grow beside the root db"
+    );
+    assert!(
+        !d.join(".dl/cache.db").exists(),
+        "cache db must NOT land in .dl/ either"
+    );
 }
 
 /// (5b) A pre-existing `.dl/.state/cache.db` (the pre-L2 one-shot world) is
@@ -144,9 +185,16 @@ fn old_cache_db_world_is_left_untouched() {
 
     let (code, _out, _err) = run(&d, &["--check"]);
     assert_ne!(code, 0);
-    assert_eq!(fs::read(&fossil).unwrap(), b"not-a-real-sqlite-file-and-never-opened",
-        "the historical cache.db must be byte-identical after the run");
-    assert_eq!(root_dbs(&d).len(), 1, "the run must land in roots/<key>/db.sqlite");
+    assert_eq!(
+        fs::read(&fossil).unwrap(),
+        b"not-a-real-sqlite-file-and-never-opened",
+        "the historical cache.db must be byte-identical after the run"
+    );
+    assert_eq!(
+        root_dbs(&d).len(),
+        1,
+        "the run must land in roots/<key>/db.sqlite"
+    );
 }
 
 /// (6) An explicit positional still works unchanged and does NOT touch .dl/.
@@ -164,9 +212,16 @@ fn explicit_program_bypasses_discovery() {
         .arg(d.join("p.dl"))
         .current_dir(&d)
         .env("DL_NO_DAEMON", "1")
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("src/x.rs"), "query rows expected:\n{stdout}");
-    assert!(!d.join(".dl").exists(), "explicit program must not create .dl/");
+    assert!(
+        stdout.contains("src/x.rs"),
+        "query rows expected:\n{stdout}"
+    );
+    assert!(
+        !d.join(".dl").exists(),
+        "explicit program must not create .dl/"
+    );
 }

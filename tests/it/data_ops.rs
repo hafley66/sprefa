@@ -22,59 +22,93 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn prog(glob: &str, jpath: &str) -> String {
-    format!(concat!(
-        "rel val(p: file, v: text).\n",
-        "val(p, v) <- scan(\"WORK\", \"{}\", p, rev), jsonp(p, rev, \"{}\", v).\n",
-        "? val(p, v).\n"), glob, jpath)
+    format!(
+        concat!(
+            "rel val(p: file, v: text).\n",
+            "val(p, v) <- scan(\"WORK\", \"{}\", p, rev), jsonp(p, rev, \"{}\", v).\n",
+            "? val(p, v).\n"
+        ),
+        glob, jpath
+    )
 }
 
 #[test]
 fn yaml_dotted_path() {
     let d = sandbox("yaml");
-    fs::write(d.join("deploy.yaml"), concat!(
-        "spec:\n",
-        "  template:\n",
-        "    containers:\n",
-        "      - name: app\n",
-        "        image: \"registry.io/app:v3\"\n",
-        "      - name: sidecar\n",
-        "        image: registry.io/sidecar:v1\n")).unwrap();
+    fs::write(
+        d.join("deploy.yaml"),
+        concat!(
+            "spec:\n",
+            "  template:\n",
+            "    containers:\n",
+            "      - name: app\n",
+            "        image: \"registry.io/app:v3\"\n",
+            "      - name: sidecar\n",
+            "        image: registry.io/sidecar:v1\n"
+        ),
+    )
+    .unwrap();
     let (code, out, err) = run(&d, &prog("*.yaml", "spec.template.containers.*.image"));
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("registry.io/app:v3"), "double-quoted scalar, quotes stripped:\n{out}");
-    assert!(out.contains("registry.io/sidecar:v1"), "plain scalar:\n{out}");
-    assert!(!out.contains("\"registry.io/app:v3\""), "quotes must be stripped:\n{out}");
+    assert!(
+        out.contains("registry.io/app:v3"),
+        "double-quoted scalar, quotes stripped:\n{out}"
+    );
+    assert!(
+        out.contains("registry.io/sidecar:v1"),
+        "plain scalar:\n{out}"
+    );
+    assert!(
+        !out.contains("\"registry.io/app:v3\""),
+        "quotes must be stripped:\n{out}"
+    );
 }
 
 #[test]
 fn yaml_multi_document_stream() {
     let d = sandbox("yaml_multi");
-    fs::write(d.join("all.yml"), concat!(
-        "metadata:\n  name: svc-a\n",
-        "---\n",
-        "metadata:\n  name: svc-b\n")).unwrap();
+    fs::write(
+        d.join("all.yml"),
+        concat!(
+            "metadata:\n  name: svc-a\n",
+            "---\n",
+            "metadata:\n  name: svc-b\n"
+        ),
+    )
+    .unwrap();
     let (code, out, err) = run(&d, &prog("*.yml", "metadata.name"));
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("svc-a") && out.contains("svc-b"), "both documents must match:\n{out}");
+    assert!(
+        out.contains("svc-a") && out.contains("svc-b"),
+        "both documents must match:\n{out}"
+    );
 }
 
 #[test]
 fn toml_tables_and_dotted_keys() {
     let d = sandbox("toml");
-    fs::write(d.join("Settings.toml"), concat!(
-        "top = 1\n",
-        "workspace.members = \"crates\"\n",
-        "[dependencies]\n",
-        "serde = { version = \"1.0\", features = [\"derive\"] }\n",
-        "[dependencies.tokio]\n",
-        "version = \"1.38\"\n")).unwrap();
+    fs::write(
+        d.join("Settings.toml"),
+        concat!(
+            "top = 1\n",
+            "workspace.members = \"crates\"\n",
+            "[dependencies]\n",
+            "serde = { version = \"1.0\", features = [\"derive\"] }\n",
+            "[dependencies.tokio]\n",
+            "version = \"1.38\"\n"
+        ),
+    )
+    .unwrap();
     let (code, out, err) = run(&d, &prog("*.toml", "dependencies.serde.version"));
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("1.0"), "inline table value:\n{out}");
@@ -83,7 +117,10 @@ fn toml_tables_and_dotted_keys() {
     assert!(out.contains("1.38"), "dotted table header:\n{out}");
 
     let (_, out, _) = run(&d, &prog("*.toml", "workspace.members"));
-    assert!(out.contains("crates"), "dotted pair key spans two segments:\n{out}");
+    assert!(
+        out.contains("crates"),
+        "dotted pair key spans two segments:\n{out}"
+    );
 }
 
 #[test]
@@ -114,9 +151,18 @@ fn json_declarative_brace_pattern() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("name") && out.contains("app"), "key+value row:\n{out}");
-    assert!(out.contains("version") && out.contains("1.2.3"), "second entry:\n{out}");
-    assert!(out.contains("private") && out.contains("true"), "boolean value:\n{out}");
+    assert!(
+        out.contains("name") && out.contains("app"),
+        "key+value row:\n{out}"
+    );
+    assert!(
+        out.contains("version") && out.contains("1.2.3"),
+        "second entry:\n{out}"
+    );
+    assert!(
+        out.contains("private") && out.contains("true"),
+        "boolean value:\n{out}"
+    );
 }
 
 /// Nested + literal-key descent in the declarative `json` pattern.
@@ -176,7 +222,10 @@ fn json_term_source_brace_pattern_and_filter() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("alice"), "brace capture binds from the bound value:\n{out}");
+    assert!(
+        out.contains("alice"),
+        "brace capture binds from the bound value:\n{out}"
+    );
 }
 
 /// A string passed to `json(` is redirected: it's a parse error pointing at jsonp.
@@ -191,7 +240,10 @@ fn json_string_arg_redirects_to_jsonp() {
     );
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "expected a parse error, got success");
-    assert!(err.contains("jsonp") || err.contains("brace-pattern"), "redirect msg:\n{err}");
+    assert!(
+        err.contains("jsonp") || err.contains("brace-pattern"),
+        "redirect msg:\n{err}"
+    );
 }
 
 /// The declarative `json` pattern dispatches by file extension (the same
@@ -200,11 +252,7 @@ fn json_string_arg_redirects_to_jsonp() {
 #[test]
 fn json_declarative_over_yaml() {
     let d = sandbox("json_decl_yaml");
-    fs::write(
-        d.join("svc.yaml"),
-        concat!("name: svc-a\n", "port: 8080\n"),
-    )
-    .unwrap();
+    fs::write(d.join("svc.yaml"), concat!("name: svc-a\n", "port: 8080\n")).unwrap();
     let prog = concat!(
         "rel kv(p: file, k: text, v: text).\n",
         "kv(p, k, v) <- scan(\"WORK\", \"*.yaml\", p, rev), json(p, rev, q:{ $k: $v }).\n",
@@ -231,6 +279,9 @@ fn json_declarative_over_toml() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("app"), "toml string value (quotes stripped):\n{out}");
+    assert!(
+        out.contains("app"),
+        "toml string value (quotes stripped):\n{out}"
+    );
     assert!(out.contains("1.2.3"), "toml second pair:\n{out}");
 }

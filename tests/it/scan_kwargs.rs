@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// `scan("WORK", glob, p, _)` — the rev_out slot is a don't-care; `p` still binds
@@ -34,10 +37,14 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn wild_rev_out_binds_path() {
     let d = sandbox("wild");
-    let (code, out, err) = run(&d, concat!(
-        "rel f(p: file).\n",
-        "f(p) <- scan(\"WORK\", \"src/**/*.rs\", p, _).\n",
-        "? f(p).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel f(p: file).\n",
+            "f(p) <- scan(\"WORK\", \"src/**/*.rs\", p, _).\n",
+            "? f(p).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("src/a.rs"), "path must bind:\n{out}");
     assert!(out.contains("src/b.rs"), "path must bind:\n{out}");
@@ -47,10 +54,14 @@ fn wild_rev_out_binds_path() {
 #[test]
 fn omitted_rev_out_binds_path() {
     let d = sandbox("omit");
-    let (code, out, err) = run(&d, concat!(
-        "rel f(p: file).\n",
-        "f(p) <- scan(\"src/**/*.rs\", p).\n",
-        "? f(p).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel f(p: file).\n",
+            "f(p) <- scan(\"src/**/*.rs\", p).\n",
+            "? f(p).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("src/a.rs"), "{out}");
     assert!(out.contains("src/b.rs"), "{out}");
@@ -60,10 +71,14 @@ fn omitted_rev_out_binds_path() {
 #[test]
 fn named_path_output_binds_path() {
     let d = sandbox("named");
-    let (code, out, err) = run(&d, concat!(
-        "rel f(p: file).\n",
-        "f(p) <- scan(\"src/**/*.rs\", path: p).\n",
-        "? f(p).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel f(p: file).\n",
+            "f(p) <- scan(\"src/**/*.rs\", path: p).\n",
+            "? f(p).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("src/a.rs"), "{out}");
 }
@@ -72,12 +87,19 @@ fn named_path_output_binds_path() {
 #[test]
 fn named_rev_out_binds_rev() {
     let d = sandbox("namedrev");
-    let (code, out, err) = run(&d, concat!(
-        "rel f(p: file, r: text).\n",
-        "f(p, r) <- scan(\"WORK\", \"src/**/*.rs\", path: p, rev_out: r).\n",
-        "? f(p, r).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel f(p: file, r: text).\n",
+            "f(p, r) <- scan(\"WORK\", \"src/**/*.rs\", path: p, rev_out: r).\n",
+            "? f(p, r).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     // `WORK` is an ALIAS: `rev_out` binds the RESOLVED rev (INV-1), which in a
     // sandbox with no git HEAD is the all-zero oid plus the dirty marker.
-    assert!(out.contains(crate::util::NO_HEAD_REV), "rev_out must bind the resolved rev:\n{out}");
+    assert!(
+        out.contains(crate::util::NO_HEAD_REV),
+        "rev_out must bind the resolved rev:\n{out}"
+    );
 }

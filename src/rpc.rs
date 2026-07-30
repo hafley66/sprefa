@@ -14,7 +14,7 @@
 //!   response (err):{"jsonrpc":"2.0","id":N,"error":{"code":C,"message":M}}
 //!   notification:  {"jsonrpc":"2.0","method":"X","params":{...}}    (no id)
 
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use std::io::{Read, Write};
 
 /// Write one framed JSON-RPC message. `body` is the JSON string; the codec
@@ -44,7 +44,9 @@ pub fn read_frame<R: Read>(r: &mut R) -> Result<Option<String>> {
         }
         // Strip the trailing \r\n; headers are ASCII so byte-equality is safe.
         let trimmed = trim_crlf(&line);
-        if trimmed.is_empty() { break; }                  // end of header block
+        if trimmed.is_empty() {
+            break;
+        } // end of header block
         if let Some(rest) = trimmed.strip_prefix(b"Content-Length:") {
             let s = std::str::from_utf8(rest)?.trim();
             content_length = Some(s.parse()?);
@@ -64,16 +66,22 @@ fn read_line<R: Read>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> {
     let mut byte = [0u8; 1];
     loop {
         let n = r.read(&mut byte)?;
-        if n == 0 { return Ok(total); }
+        if n == 0 {
+            return Ok(total);
+        }
         buf.push(byte[0]);
         total += 1;
-        if byte[0] == b'\n' { return Ok(total); }
+        if byte[0] == b'\n' {
+            return Ok(total);
+        }
     }
 }
 
 fn trim_crlf(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
-    while end > 0 && (bytes[end - 1] == b'\n' || bytes[end - 1] == b'\r') { end -= 1; }
+    while end > 0 && (bytes[end - 1] == b'\n' || bytes[end - 1] == b'\r') {
+        end -= 1;
+    }
     &bytes[..end]
 }
 
@@ -103,15 +111,19 @@ pub struct RpcError {
 }
 
 // Standard JSON-RPC error codes.
-pub const PARSE_ERROR: i64      = -32700;
-pub const INVALID_REQUEST: i64  = -32600;
+pub const PARSE_ERROR: i64 = -32700;
+pub const INVALID_REQUEST: i64 = -32600;
 pub const METHOD_NOT_FOUND: i64 = -32601;
-pub const INVALID_PARAMS: i64   = -32602;
-pub const INTERNAL_ERROR: i64   = -32603;
+pub const INVALID_PARAMS: i64 = -32602;
+pub const INTERNAL_ERROR: i64 = -32603;
 
 impl Request {
     pub fn new(id: u64, method: &str, params: serde_json::Value) -> Self {
-        Self { id, method: method.to_string(), params }
+        Self {
+            id,
+            method: method.to_string(),
+            params,
+        }
     }
 
     pub fn to_json(&self) -> serde_json::Value {
@@ -126,26 +138,48 @@ impl Request {
 
 impl Response {
     pub fn ok(id: u64, result: serde_json::Value) -> Self {
-        Self { id, result: Some(result), error: None }
+        Self {
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
     pub fn err(id: u64, code: i64, message: impl Into<String>) -> Self {
-        Self { id, result: None, error: Some(RpcError { code, message: message.into() }) }
+        Self {
+            id,
+            result: None,
+            error: Some(RpcError {
+                code,
+                message: message.into(),
+            }),
+        }
     }
     pub fn to_json(&self) -> serde_json::Value {
         let mut v = serde_json::json!({"jsonrpc": "2.0", "id": self.id});
-        if let Some(r) = &self.result { v["result"] = r.clone(); }
+        if let Some(r) = &self.result {
+            v["result"] = r.clone();
+        }
         if let Some(e) = &self.error {
             v["error"] = serde_json::json!({"code": e.code, "message": e.message});
         }
         v
     }
     pub fn from_value(v: serde_json::Value) -> Result<Self> {
-        let id = v.get("id").and_then(|i| i.as_u64())
+        let id = v
+            .get("id")
+            .and_then(|i| i.as_u64())
             .ok_or_else(|| anyhow::anyhow!("response missing id"))?;
         let result = v.get("result").cloned();
         let error = v.get("error").map(|e| RpcError {
-            code: e.get("code").and_then(|c| c.as_i64()).unwrap_or(INTERNAL_ERROR),
-            message: e.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+            code: e
+                .get("code")
+                .and_then(|c| c.as_i64())
+                .unwrap_or(INTERNAL_ERROR),
+            message: e
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string(),
         });
         Ok(Response { id, result, error })
     }
@@ -153,7 +187,11 @@ impl Response {
 
 /// Write a notification (no id). Used for server-sent events like
 /// `diag_changed` pushed to subscribers.
-pub fn write_notification<W: Write>(w: &mut W, method: &str, params: serde_json::Value) -> Result<()> {
+pub fn write_notification<W: Write>(
+    w: &mut W,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<()> {
     let v = serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params});
     write_frame(w, &serde_json::to_string(&v)?)
 }
@@ -171,8 +209,10 @@ mod tests {
 
     #[test]
     fn frame_round_trip_ascii() {
-        assert_eq!(round_trip(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#),
-                   r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#);
+        assert_eq!(
+            round_trip(r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#),
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#
+        );
     }
 
     #[test]
@@ -187,8 +227,8 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         write_frame(&mut buf, r#"{"x":1}"#).unwrap();
         let mut cursor = std::io::Cursor::new(buf);
-        assert!(read_frame(&mut cursor).unwrap().is_some());   // first frame
-        assert!(read_frame(&mut cursor).unwrap().is_none());   // clean EOF
+        assert!(read_frame(&mut cursor).unwrap().is_some()); // first frame
+        assert!(read_frame(&mut cursor).unwrap().is_none()); // clean EOF
     }
 
     #[test]

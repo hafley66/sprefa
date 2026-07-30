@@ -361,7 +361,11 @@ impl Engine {
                 rule.head.rel
             );
         }
-        crate::lower::resolve_work_alias_body(&mut binding_atoms, &self.rels, &self.self_rev_text());
+        crate::lower::resolve_work_alias_body(
+            &mut binding_atoms,
+            &self.rels,
+            &self.self_rev_text(),
+        );
         let sql = crate::lower::lower_gen(&sel_vars, &binding_atoms, &self.rels)?;
         // Collect the coordinate tuples fully (drop the statement borrow) before
         // the resolve loop: resolve_rev takes &mut self (rev_cache).
@@ -465,7 +469,10 @@ impl Engine {
             self.db
                 .query_rows(
                     "org",
-                    &format!("SELECT DISTINCT \"name\" FROM {}", crate::lower::txt_tbl("org")),
+                    &format!(
+                        "SELECT DISTINCT \"name\" FROM {}",
+                        crate::lower::txt_tbl("org")
+                    ),
                     &[],
                     |r| Ok(r.get::<_, String>(0)?),
                 )?

@@ -19,10 +19,15 @@ use std::process::Command;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn sandbox(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("deprecated_op_names_{tag}_{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("deprecated_op_names_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/x.rs"), "fn alpha_target() {}\nfn beta_other() {}\n").unwrap();
+    fs::write(
+        dir.join("src/x.rs"),
+        "fn alpha_target() {}\nfn beta_other() {}\n",
+    )
+    .unwrap();
     dir
 }
 
@@ -33,10 +38,13 @@ fn run(dir: &Path, prog: &str, db_name: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--no-daemon", "--db", db.to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Sorted line set, so a comparison is content-equal without depending on any
@@ -60,18 +68,36 @@ fn legacy_match_runs_identically_to_match_line_and_warns() {
         "? hit(p, l).\n",
     );
     let prog_new = prog_old.replace("match(", "match_line(");
-    assert!(prog_new.contains("match_line("), "sanity: replace actually fired");
+    assert!(
+        prog_new.contains("match_line("),
+        "sanity: replace actually fired"
+    );
 
     let (code_old, out_old, err_old) = run(&d, prog_old, "old.db");
     assert_eq!(code_old, 0, "legacy `match` still runs: {err_old}");
-    assert!(err_old.contains("warn[deprecated-op-name]"), "warns: {err_old}");
-    assert!(err_old.contains("`match(...)` is deprecated"), "names itself: {err_old}");
-    assert!(err_old.contains("match_line"), "names the replacement: {err_old}");
-    assert!(err_old.contains("match_ast"), "also points at match_ast for source code: {err_old}");
+    assert!(
+        err_old.contains("warn[deprecated-op-name]"),
+        "warns: {err_old}"
+    );
+    assert!(
+        err_old.contains("`match(...)` is deprecated"),
+        "names itself: {err_old}"
+    );
+    assert!(
+        err_old.contains("match_line"),
+        "names the replacement: {err_old}"
+    );
+    assert!(
+        err_old.contains("match_ast"),
+        "also points at match_ast for source code: {err_old}"
+    );
 
     let (code_new, out_new, err_new) = run(&d, &prog_new, "new.db");
     assert_eq!(code_new, 0, "{err_new}");
-    assert!(!err_new.contains("deprecated-op-name"), "canonical spelling is clean: {err_new}");
+    assert!(
+        !err_new.contains("deprecated-op-name"),
+        "canonical spelling is clean: {err_new}"
+    );
 
     assert!(!out_old.is_empty(), "the legacy run actually produced rows");
     assert_eq!(sorted_lines(&out_old), sorted_lines(&out_new),
@@ -93,17 +119,32 @@ fn legacy_sg_runs_identically_to_match_ast_and_warns() {
         "? hit(p, name, l).\n",
     );
     let prog_new = prog_old.replace("sg(", "match_ast(");
-    assert!(prog_new.contains("match_ast("), "sanity: replace actually fired");
+    assert!(
+        prog_new.contains("match_ast("),
+        "sanity: replace actually fired"
+    );
 
     let (code_old, out_old, err_old) = run(&d, prog_old, "old.db");
     assert_eq!(code_old, 0, "legacy `sg` still runs: {err_old}");
-    assert!(err_old.contains("warn[deprecated-op-name]"), "warns: {err_old}");
-    assert!(err_old.contains("`sg(...)` is deprecated"), "names itself: {err_old}");
-    assert!(err_old.contains("match_ast"), "names the replacement: {err_old}");
+    assert!(
+        err_old.contains("warn[deprecated-op-name]"),
+        "warns: {err_old}"
+    );
+    assert!(
+        err_old.contains("`sg(...)` is deprecated"),
+        "names itself: {err_old}"
+    );
+    assert!(
+        err_old.contains("match_ast"),
+        "names the replacement: {err_old}"
+    );
 
     let (code_new, out_new, err_new) = run(&d, &prog_new, "new.db");
     assert_eq!(code_new, 0, "{err_new}");
-    assert!(!err_new.contains("deprecated-op-name"), "canonical spelling is clean: {err_new}");
+    assert!(
+        !err_new.contains("deprecated-op-name"),
+        "canonical spelling is clean: {err_new}"
+    );
 
     assert!(!out_old.is_empty(), "the legacy run actually produced rows");
     assert_eq!(sorted_lines(&out_old), sorted_lines(&out_new),
@@ -130,8 +171,14 @@ fn both_legacy_names_warn_independently_in_one_program() {
     );
     let (code, out, err) = run(&d, prog, "both.db");
     assert_eq!(code, 0, "{err}");
-    assert!(err.contains("`match(...)` is deprecated"), "match warns: {err}");
-    assert!(err.contains("`sg(...)` is deprecated"), "sg warns too: {err}");
+    assert!(
+        err.contains("`match(...)` is deprecated"),
+        "match warns: {err}"
+    );
+    assert!(
+        err.contains("`sg(...)` is deprecated"),
+        "sg warns too: {err}"
+    );
     assert!(!out.is_empty(), "both rules still produced rows: {out}");
     let _ = fs::remove_dir_all(&d);
 }

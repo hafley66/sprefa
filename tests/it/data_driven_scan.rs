@@ -19,8 +19,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -60,7 +69,10 @@ fn data_driven_scan_reads_each_pinned_rev() {
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "data-driven scan program should typecheck");
 
     // Tick 1: `pin` derives (after the source phase), so the scan reads an empty
@@ -70,16 +82,30 @@ fn data_driven_scan_reads_each_pinned_rev() {
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.rel_rows("scanned", 2);
-    let mut got: Vec<(String, String)> = rows.into_iter()
-        .map(|r| (r[0].clone(), r[1].clone())).collect();
+    let mut got: Vec<(String, String)> = rows
+        .into_iter()
+        .map(|r| (r[0].clone(), r[1].clone()))
+        .collect();
     got.sort();
     // HEAD (c2) has both files; c1 has only a.rs.
-    let head_rows: Vec<&str> = got.iter().filter(|(v, _)| v == "HEAD").map(|(_, p)| p.as_str()).collect();
-    let c1_rows: Vec<&str> = got.iter().filter(|(v, _)| v == &c1).map(|(_, p)| p.as_str()).collect();
-    assert!(head_rows.contains(&"src/a.rs") && head_rows.contains(&"src/b.rs"),
-        "HEAD should scan both files: {head_rows:?}");
-    assert!(c1_rows.contains(&"src/a.rs") && !c1_rows.contains(&"src/b.rs"),
-        "c1 should scan only a.rs: {c1_rows:?}");
+    let head_rows: Vec<&str> = got
+        .iter()
+        .filter(|(v, _)| v == "HEAD")
+        .map(|(_, p)| p.as_str())
+        .collect();
+    let c1_rows: Vec<&str> = got
+        .iter()
+        .filter(|(v, _)| v == &c1)
+        .map(|(_, p)| p.as_str())
+        .collect();
+    assert!(
+        head_rows.contains(&"src/a.rs") && head_rows.contains(&"src/b.rs"),
+        "HEAD should scan both files: {head_rows:?}"
+    );
+    assert!(
+        c1_rows.contains(&"src/a.rs") && !c1_rows.contains(&"src/b.rs"),
+        "c1 should scan only a.rs: {c1_rows:?}"
+    );
 }
 
 /// A data-driven scan with no coordinate-providing atom (unbound variable) is
@@ -92,14 +118,19 @@ fn data_driven_scan_rejects_unbound_coord() {
     fs::write(d.join("src/a.rs"), "fn a() {}\n").unwrap();
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "c1"]);
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel scanned(rev: text, path: file).\n\
-         scanned(V, p) <- scan(R, V, \"src/**/*.rs\", p, rout).\n").unwrap();
+         scanned(V, p) <- scan(R, V, \"src/**/*.rs\", p, rout).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, _, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     let err = eng.tick(&prog, true).unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("coordinate-providing body atom"),
-        "expected an unbound-coordinate rejection, got: {msg}");
+    assert!(
+        msg.contains("coordinate-providing body atom"),
+        "expected an unbound-coordinate rejection, got: {msg}"
+    );
 }

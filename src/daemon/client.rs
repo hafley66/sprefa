@@ -43,7 +43,10 @@ fn with_root(mut params: Value, root: Option<&Path>) -> Value {
 /// every 10s with the daemon's current phase (from the same on-disk `why.jsonl`
 /// trail `dl daemon why` reads) and gives up with exit 75 after
 /// `DL_MAX_WALL_SECS` total (default 300; `0` disables the deadline).
-pub fn rpc_call(client: &mut crate::daemon_client::DaemonClient, req: &Request) -> Result<Response> {
+pub fn rpc_call(
+    client: &mut crate::daemon_client::DaemonClient,
+    req: &Request,
+) -> Result<Response> {
     client.call(req)
 }
 
@@ -62,7 +65,10 @@ pub fn ensure_daemon(_root: &Path, _program: Option<&str>) -> Result<()> {
 /// verbs (`dl daemon start`/`load`/`load-once`, `dl watch`) call
 /// `start_singleton`, which always may spawn.
 pub fn autostart_allowed() -> bool {
-    matches!(std::env::var("DL_AUTOSTART").ok().as_deref(), Some("1") | Some("true"))
+    matches!(
+        std::env::var("DL_AUTOSTART").ok().as_deref(),
+        Some("1") | Some("true")
+    )
 }
 
 /// Attach-or-spawn for implicit call sites; spawning gated by `autostart_allowed`.
@@ -88,7 +94,9 @@ fn ensure_singleton_inner(explicit: bool) -> Result<()> {
         let req = Request::new(0, "ping", json!({}));
         match rpc_call(&mut s, &req) {
             Ok(r) if r.error.is_none() => {
-                let running_id = r.result.as_ref()
+                let running_id = r
+                    .result
+                    .as_ref()
                     .and_then(|v| v.get("build_id"))
                     .and_then(|v| v.as_str());
                 tracing::debug!(pid,
@@ -113,11 +121,15 @@ fn ensure_singleton_inner(explicit: bool) -> Result<()> {
     if !explicit && !autostart_allowed() {
         // The class-16 stop order made structural: a kill stays a kill. No
         // implicit client resurrects the daemon behind the user's back.
-        tracing::warn!(pid, ppid,
+        tracing::warn!(
+            pid,
+            ppid,
             "[daemon] no live singleton and autostart is disabled — refusing to spawn \
-             (start one: `dl daemon start`; tests: DL_AUTOSTART=1)");
+             (start one: `dl daemon start`; tests: DL_AUTOSTART=1)"
+        );
         anyhow::bail!(
-            "no daemon running and autostart is disabled — start one with `dl daemon start`");
+            "no daemon running and autostart is disabled — start one with `dl daemon start`"
+        );
     }
     // The respawn-storm event: this client found no live daemon and is about
     // to spawn one. A one-shot `dl --check` autostarting a daemon, killed
@@ -125,15 +137,26 @@ fn ensure_singleton_inner(explicit: bool) -> Result<()> {
     // is exactly the incident this warning is for; it lands in the CALLING
     // process's own dl.log/error.log (via `crate::trace::init`), not the new
     // daemon's, since the daemon doesn't exist yet to log it.
-    tracing::warn!(pid, ppid, explicit, "[daemon] no live singleton found — spawning one");
+    tracing::warn!(
+        pid,
+        ppid,
+        explicit,
+        "[daemon] no live singleton found — spawning one"
+    );
     let spawn_started = std::time::Instant::now();
     spawn_detached()?;
-    tracing::debug!(pid, ms = spawn_started.elapsed().as_millis() as u64,
-        "[daemon] ensure_singleton: spawned detached, waiting ready");
-    let ready = wait_ready();
-    tracing::debug!(pid, ok = ready.is_ok(),
+    tracing::debug!(
+        pid,
         ms = spawn_started.elapsed().as_millis() as u64,
-        "[daemon] ensure_singleton: wait_ready done");
+        "[daemon] ensure_singleton: spawned detached, waiting ready"
+    );
+    let ready = wait_ready();
+    tracing::debug!(
+        pid,
+        ok = ready.is_ok(),
+        ms = spawn_started.elapsed().as_millis() as u64,
+        "[daemon] ensure_singleton: wait_ready done"
+    );
     ready
 }
 
@@ -142,13 +165,21 @@ fn ensure_singleton_inner(explicit: bool) -> Result<()> {
 /// section 3.4: no service manager installed, CI, `cargo test`.
 pub fn restart() -> Result<()> {
     let was_running = is_running();
-    if was_running { let _ = stop(); }
+    if was_running {
+        let _ = stop();
+    }
     spawn_detached()?;
     let ready = wait_ready().is_ok();
-    eprintln!("[daemon] {} (build {}){}",
+    eprintln!(
+        "[daemon] {} (build {}){}",
         if was_running { "restarted" } else { "started" },
         build_id(),
-        if ready { "" } else { " — starting (first tick still in progress)" }); // @eprintln-ok: human-facing status report for dl daemon restart
+        if ready {
+            ""
+        } else {
+            " — starting (first tick still in progress)"
+        }
+    ); // @eprintln-ok: human-facing status report for dl daemon restart
     Ok(())
 }
 
@@ -165,7 +196,9 @@ pub fn start_singleton_supervised() -> Result<()> {
         let req = Request::new(0, "ping", json!({}));
         if let Ok(r) = rpc_call(&mut s, &req) {
             if r.error.is_none() {
-                let running_id = r.result.as_ref()
+                let running_id = r
+                    .result
+                    .as_ref()
                     .and_then(|v| v.get("build_id"))
                     .and_then(|v| v.as_str());
                 match running_id {
@@ -192,17 +225,22 @@ pub fn restart_supervised() -> Result<()> {
     let was_running = is_running();
     crate::supervise::restart()?;
     let ready = wait_ready().is_ok();
-    eprintln!("[daemon] {} (build {}){}",
+    eprintln!(
+        "[daemon] {} (build {}){}",
         if was_running { "restarted" } else { "started" },
         build_id(),
-        if ready { "" } else { " — starting (first tick still in progress)" }); // @eprintln-ok: human-facing status report for dl daemon restart
+        if ready {
+            ""
+        } else {
+            " — starting (first tick still in progress)"
+        }
+    ); // @eprintln-ok: human-facing status report for dl daemon restart
     Ok(())
 }
 
 /// Spawn the singleton daemon detached (background, idle timeout on).
 pub fn spawn_detached() -> Result<()> {
-    let exe = std::env::current_exe()
-        .context("locate current exe for daemon spawn")?;
+    let exe = std::env::current_exe().context("locate current exe for daemon spawn")?;
     let home = daemon_home();
     std::fs::create_dir_all(&home)?;
     // Same path `daemon::logcap::sweep` checks on every idle tick once the
@@ -229,10 +267,7 @@ pub fn spawn_detached() -> Result<()> {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    let n = daemon_thread_count(
-        cores,
-        std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
-    );
+    let n = daemon_thread_count(cores, std::env::var("DL_DAEMON_THREADS").ok().as_deref());
     cmd.env("DL_RAYON_THREADS", n.to_string());
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::from(log_file))
@@ -247,15 +282,21 @@ pub(crate) fn wait_ready() -> Result<()> {
     let mut backoff_idx = 0;
     loop {
         if start.elapsed() > timeout {
-            bail!("daemon did not become ready in {}s", CONNECT_TOTAL_TIMEOUT_SECS);
+            bail!(
+                "daemon did not become ready in {}s",
+                CONNECT_TOTAL_TIMEOUT_SECS
+            );
         }
         if let Ok(mut s) = connect() {
             let req = Request::new(0, "ping", json!({}));
             if let Ok(resp) = rpc_call(&mut s, &req) {
-                if resp.error.is_none() { return Ok(()); }
+                if resp.error.is_none() {
+                    return Ok(());
+                }
             }
         }
-        let delay_ms = CONNECT_BACKOFF_MS.get(backoff_idx)
+        let delay_ms = CONNECT_BACKOFF_MS
+            .get(backoff_idx)
             .copied()
             .unwrap_or(CONNECT_BACKOFF_MS.last().copied().unwrap_or(500));
         backoff_idx += 1;
@@ -277,7 +318,9 @@ pub fn stop() -> Result<()> {
         bail!("daemon shutdown refused: {}", e.message);
     }
     for _ in 0..50 {
-        if !is_running() { return Ok(()); }
+        if !is_running() {
+            return Ok(());
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
     bail!("daemon did not close socket after shutdown")
@@ -293,14 +336,18 @@ pub fn drop_root(root: &Path, purge: bool) -> Result<()> {
         let mut records = read_roots_json();
         records.retain(|r| r.key != key);
         write_roots_json(&records);
-        if purge { let _ = std::fs::remove_dir_all(root_db_dir(&key)); }
+        if purge {
+            let _ = std::fs::remove_dir_all(root_db_dir(&key));
+        }
         return Ok(());
     }
     let mut s = connect()?;
     let params = with_root(json!({"purge": purge}), Some(root));
     let req = Request::new(1, "drop_root", params);
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(e) = resp.error { bail!("drop_root: {}", e.message); }
+    if let Some(e) = resp.error {
+        bail!("drop_root: {}", e.message);
+    }
     Ok(())
 }
 
@@ -316,8 +363,10 @@ pub fn await_quiescent(root: Option<&Path>, timeout_ms: u64) -> Result<(bool, u6
         bail!("await_quiescent failed: {}", e.message);
     }
     let r = resp.result.unwrap_or(json!({}));
-    Ok((r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false),
-        r.get("tick_count").and_then(|v| v.as_u64()).unwrap_or(0)))
+    Ok((
+        r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false),
+        r.get("tick_count").and_then(|v| v.as_u64()).unwrap_or(0),
+    ))
 }
 
 /// Load a script into the given root. mode="watched" joins the program;
@@ -339,16 +388,33 @@ pub fn query_rel(root: Option<&Path>, rel: &str) -> Result<(Vec<String>, Vec<Vec
         anyhow::bail!("{}", err.message);
     }
     let result = resp.result.unwrap_or_default();
-    let cols: Vec<String> = result.get("columns").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+    let cols: Vec<String> = result
+        .get("columns")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
-    let rows: Vec<Vec<String>> = result.get("rows").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|r| r.as_array().map(|cells| {
-            cells.iter().map(|c| match c {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            }).collect()
-        })).collect())
+    let rows: Vec<Vec<String>> = result
+        .get("rows")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| {
+                    r.as_array().map(|cells| {
+                        cells
+                            .iter()
+                            .map(|c| match c {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .collect()
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
     Ok((cols, rows))
 }
@@ -364,16 +430,31 @@ pub struct QueryAnswer {
 fn decode_query_answer(result: &Value) -> QueryAnswer {
     let strs = |v: Option<&Value>| -> Vec<String> {
         v.and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default()
     };
-    let rows: Vec<Vec<String>> = result.get("rows").and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|r| r.as_array().map(|cells| {
-            cells.iter().map(|c| match c {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            }).collect()
-        })).collect())
+    let rows: Vec<Vec<String>> = result
+        .get("rows")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|r| {
+                    r.as_array().map(|cells| {
+                        cells
+                            .iter()
+                            .map(|c| match c {
+                                Value::String(s) => s.clone(),
+                                other => other.to_string(),
+                            })
+                            .collect()
+                    })
+                })
+                .collect()
+        })
         .unwrap_or_default();
     QueryAnswer {
         columns: strs(result.get("columns")),
@@ -384,16 +465,25 @@ fn decode_query_answer(result: &Value) -> QueryAnswer {
 }
 
 /// `dl what <anchor>` against the daemon.
-pub fn what(root: Option<&Path>, anchor: &str, limit: Option<usize>, offset: Option<usize>)
-    -> Result<QueryAnswer>
-{
+pub fn what(
+    root: Option<&Path>,
+    anchor: &str,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<QueryAnswer> {
     let mut s = connect()?;
     let mut params = with_root(json!({"anchor": anchor}), root);
-    if let Some(l) = limit { params["limit"] = json!(l); }
-    if let Some(o) = offset { params["offset"] = json!(o); }
+    if let Some(l) = limit {
+        params["limit"] = json!(l);
+    }
+    if let Some(o) = offset {
+        params["offset"] = json!(o);
+    }
     let req = Request::new(0, "what", params);
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    if let Some(err) = resp.error {
+        anyhow::bail!("{}", err.message);
+    }
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
@@ -403,21 +493,33 @@ pub fn summary(root: Option<&Path>, path: &str) -> Result<QueryAnswer> {
     let params = with_root(json!({"path": path}), root);
     let req = Request::new(0, "summary", params);
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    if let Some(err) = resp.error {
+        anyhow::bail!("{}", err.message);
+    }
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
 /// `dl q <verb> <target>` against the daemon.
-pub fn q(root: Option<&Path>, verb: &str, target: &str, limit: Option<usize>, offset: Option<usize>)
-    -> Result<QueryAnswer>
-{
+pub fn q(
+    root: Option<&Path>,
+    verb: &str,
+    target: &str,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<QueryAnswer> {
     let mut s = connect()?;
     let mut params = with_root(json!({"verb": verb, "target": target}), root);
-    if let Some(l) = limit { params["limit"] = json!(l); }
-    if let Some(o) = offset { params["offset"] = json!(o); }
+    if let Some(l) = limit {
+        params["limit"] = json!(l);
+    }
+    if let Some(o) = offset {
+        params["offset"] = json!(o);
+    }
     let req = Request::new(0, "q", params);
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(err) = resp.error { anyhow::bail!("{}", err.message); }
+    if let Some(err) = resp.error {
+        anyhow::bail!("{}", err.message);
+    }
     Ok(decode_query_answer(&resp.result.unwrap_or_default()))
 }
 
@@ -443,8 +545,11 @@ pub fn jobs() -> Result<Vec<Value>> {
     let mut s = connect()?;
     let req = Request::new(0, "jobs", json!({}));
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(e) = resp.error { bail!("jobs: {}", e.message); }
-    Ok(resp.result
+    if let Some(e) = resp.error {
+        bail!("jobs: {}", e.message);
+    }
+    Ok(resp
+        .result
         .and_then(|v| v.get("jobs").and_then(|j| j.as_array()).cloned())
         .unwrap_or_default())
 }
@@ -457,6 +562,8 @@ pub fn add_root(root: &Path) -> Result<()> {
     let params = with_root(json!({}), Some(root));
     let req = Request::new(0, "add_root", params);
     let resp = rpc_call(&mut s, &req)?;
-    if let Some(e) = resp.error { bail!("add_root: {}", e.message); }
+    if let Some(e) = resp.error {
+        bail!("add_root: {}", e.message);
+    }
     Ok(())
 }

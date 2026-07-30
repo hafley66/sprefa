@@ -45,7 +45,9 @@ impl Family for CallSite {
             let callee = as_int(&row[2]);
             let file = as_int(&row[3]);
             let line = as_int(&row[4]);
-            let Some(&repo) = repo_by_owner.get(&owner_id) else { continue; };
+            let Some(&repo) = repo_by_owner.get(&owner_id) else {
+                continue;
+            };
             if seen.insert([repo, caller, callee, file, line]) {
                 out.rows.push(vec![
                     Value::Int(repo),

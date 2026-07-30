@@ -93,11 +93,13 @@ fn jsx_props_flow_into_the_component_by_name() {
     // label prop too (the lift covers host elements, resolution skips them).
     let uses = rows(&secs[0]);
     assert!(
-        uses.iter().any(|r| r.len() >= 2 && r[0] == "Card" && r[1] == "title"),
+        uses.iter()
+            .any(|r| r.len() >= 2 && r[0] == "Card" && r[1] == "title"),
         "expected jsx_use(Card, title):\n{out}"
     );
     assert!(
-        uses.iter().any(|r| r.len() >= 2 && r[0] == "div" && r[1] == "label"),
+        uses.iter()
+            .any(|r| r.len() >= 2 && r[0] == "div" && r[1] == "label"),
         "expected jsx_use(div, label):\n{out}"
     );
 
@@ -192,25 +194,57 @@ prop_reaches(name, comp, prop) <-
     let secs = sections(&stdout);
     let reaches = rows(&secs[0]);
     let hit = |name: &str, prop: &str| {
-        reaches.iter().any(|r| r.len() >= 3 && r[0] == name && r[1] == "Card" && r[2] == prop)
+        reaches
+            .iter()
+            .any(|r| r.len() >= 3 && r[0] == name && r[1] == "Card" && r[2] == prop)
     };
     // Conditional: both branches reach the title prop.
-    assert!(hit("secret", "title"), "conditional consequent must flow to title:\n{stdout}");
-    assert!(hit("fallback", "title"), "conditional alternate must flow to title:\n{stdout}");
+    assert!(
+        hit("secret", "title"),
+        "conditional consequent must flow to title:\n{stdout}"
+    );
+    assert!(
+        hit("fallback", "title"),
+        "conditional alternate must flow to title:\n{stdout}"
+    );
     // `??`: both operands reach subtitle.
-    assert!(hit("secret", "subtitle"), "?? left must flow to subtitle:\n{stdout}");
-    assert!(hit("backup", "subtitle"), "?? right must flow to subtitle:\n{stdout}");
+    assert!(
+        hit("secret", "subtitle"),
+        "?? left must flow to subtitle:\n{stdout}"
+    );
+    assert!(
+        hit("backup", "subtitle"),
+        "?? right must flow to subtitle:\n{stdout}"
+    );
     // `(guarded && secret)`: the value (`secret`) flows through the parens.
-    assert!(hit("secret", "note"), "&& value must flow through parens to note:\n{stdout}");
+    assert!(
+        hit("secret", "note"),
+        "&& value must flow through parens to note:\n{stdout}"
+    );
     // `` `hi ${secret}` ``: the interpolation flows through the template.
-    assert!(hit("secret", "label"), "template interpolation must flow to label:\n{stdout}");
+    assert!(
+        hit("secret", "label"),
+        "template interpolation must flow to label:\n{stdout}"
+    );
     // `bag?.secret`: optional chaining is transparent to the base object.
-    assert!(hit("bag", "opt"), "optional-chain base must flow to opt:\n{stdout}");
+    assert!(
+        hit("bag", "opt"),
+        "optional-chain base must flow to opt:\n{stdout}"
+    );
     // `[first, secret]`: both array elements flow through.
-    assert!(hit("first", "items"), "array element must flow to items:\n{stdout}");
-    assert!(hit("secret", "items"), "array element must flow to items:\n{stdout}");
+    assert!(
+        hit("first", "items"),
+        "array element must flow to items:\n{stdout}"
+    );
+    assert!(
+        hit("secret", "items"),
+        "array element must flow to items:\n{stdout}"
+    );
     // DECISIVE negative: `&&` left is a truthiness guard, not a value.
-    assert!(!hit("guarded", "note"), "&& guard must NOT flow as a value:\n{stdout}");
+    assert!(
+        !hit("guarded", "note"),
+        "&& guard must NOT flow as a value:\n{stdout}"
+    );
 }
 
 /// The member-read target shape: a component that keeps `props` whole and

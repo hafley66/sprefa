@@ -98,7 +98,8 @@ fn explain_plan(conn: &Connection, seed: i64) -> Vec<String> {
 }
 
 fn run_walk(conn: &Connection, seed: i64) -> i64 {
-    conn.query_row(REVERSE_WALK_SQL, [seed], |row| row.get(0)).unwrap()
+    conn.query_row(REVERSE_WALK_SQL, [seed], |row| row.get(0))
+        .unwrap()
 }
 
 #[test]
@@ -125,7 +126,8 @@ fn reverse_walk_without_index_builds_an_automatic_covering_index() {
 fn reverse_walk_with_index_avoids_the_automatic_covering_index() {
     let conn = Connection::open_in_memory().unwrap();
     build_fixture(&conn);
-    conn.execute_batch("CREATE INDEX idx_edge_dst ON edge(dst)").unwrap();
+    conn.execute_batch("CREATE INDEX idx_edge_dst ON edge(dst)")
+        .unwrap();
     let seed = NBUCKETS / 2;
 
     let plan = explain_plan(&conn, seed);
@@ -157,7 +159,9 @@ fn reverse_walk_timing_is_reported_as_advisory_evidence() {
     build_fixture(&without_index);
     let with_index = Connection::open_in_memory().unwrap();
     build_fixture(&with_index);
-    with_index.execute_batch("CREATE INDEX idx_edge_dst ON edge(dst)").unwrap();
+    with_index
+        .execute_batch("CREATE INDEX idx_edge_dst ON edge(dst)")
+        .unwrap();
     let seed = NBUCKETS / 2;
 
     // Warm-up runs so both connections' page caches and query plans are hot

@@ -15,19 +15,30 @@ use anyhow::Result;
 
 use super::ShellCtx;
 use crate::config;
-use crate::daemon::{enforce_fresh_binary, enforce_mem_limit, lock, served_repos, ExeStamp, ServedRoot};
+use crate::daemon::{
+    enforce_fresh_binary, enforce_mem_limit, lock, served_repos, ExeStamp, ServedRoot,
+};
 use crate::watchgate::WatchGate;
 
 /// One served root's watcher task. Retirement: `drop_root` sets `d.stopped`; the
 /// shell cancellation token stops it on daemon shutdown. Both are observed
 /// between events.
-pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_stamp: Option<ExeStamp>) {
+pub(crate) async fn watch_task(
+    d: Arc<ServedRoot>,
+    ctx: ShellCtx,
+    launch_exe_stamp: Option<ExeStamp>,
+) {
     use notify::{RecursiveMode, Watcher};
     let is_config = d.key.is_none();
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<notify::Result<notify::Event>>();
-    let mut watcher = match notify::recommended_watcher(move |res| { let _ = tx.send(res); }) {
+    let mut watcher = match notify::recommended_watcher(move |res| {
+        let _ = tx.send(res);
+    }) {
         Ok(w) => w,
-        Err(e) => { tracing::error!("[{}] watcher init failed: {e}", d.root_label()); return; }
+        Err(e) => {
+            tracing::error!("[{}] watcher init failed: {e}", d.root_label());
+            return;
+        }
     };
     // Snapshot this engine's corpus once (a `spawn_blocking` read — it takes the
     // engine lock). Used for the initial watch set; expansion re-reads it.
@@ -48,14 +59,16 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
     // hermetic served root's snapshot is empty (only its own `--root`, watched
     // above); the config view's snapshot is the config repos.
     for rc in &corpus {
-        if rc.root.exists() && rc.root != d.root
-            && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+        if rc.root.exists()
+            && rc.root != d.root
+            && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok()
+        {
             watch_count += 1;
             gate.add_root(&rc.root);
         }
     }
-    let cfg_path = config::SprfConfig::config_path()
-        .and_then(|p| p.canonicalize().ok().or(Some(p)));
+    let cfg_path =
+        config::SprfConfig::config_path().and_then(|p| p.canonicalize().ok().or(Some(p)));
     if is_config {
         if let Some(cp) = &cfg_path {
             if let Some(dir) = cp.parent() {
@@ -66,19 +79,29 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         }
         // Watch home/.dl for load'd programs (non-recursive; not the dbs).
         let dl = d.root.join(".dl");
-        if dl.is_dir() { let _ = watcher.watch(&dl, RecursiveMode::NonRecursive); }
+        if dl.is_dir() {
+            let _ = watcher.watch(&dl, RecursiveMode::NonRecursive);
+        }
     }
     // Narrow-watch the `.git` dir of the root + this engine's corpus repos.
-    if !is_config { watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root); }
+    if !is_config {
+        watch_count += watch_git_narrow(&mut watcher, &mut gate, &d.root);
+    }
     for rc in &corpus {
-        if rc.root.exists() { watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root); }
+        if rc.root.exists() {
+            watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
+        }
     }
 
     let mut watched: std::collections::HashSet<PathBuf> = std::collections::HashSet::from_iter(
-        [d.root.clone()].into_iter()
-            .chain(corpus.iter().filter(|r| r.root.exists()).map(|r| r.root.clone())));
-    let mut watched_roots: Vec<String> =
-        watched.iter().map(|p| p.display().to_string()).collect();
+        [d.root.clone()].into_iter().chain(
+            corpus
+                .iter()
+                .filter(|r| r.root.exists())
+                .map(|r| r.root.clone()),
+        ),
+    );
+    let mut watched_roots: Vec<String> = watched.iter().map(|p| p.display().to_string()).collect();
     watched_roots.sort();
     tracing::info!(
         "[{}] watcher ready — {watch_count} watch(es), recursive roots: {}",
@@ -99,13 +122,17 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
             Ok(Some(ev)) => ev,
             Ok(None) => return, // watcher/channel closed
             Err(_) => {
-                if d.stopped.load(Ordering::Relaxed) { return; }
+                if d.stopped.load(Ordering::Relaxed) {
+                    return;
+                }
                 enforce_mem_limit(&d.root_label());
                 enforce_fresh_binary(launch_exe_stamp);
                 continue;
             }
         };
-        if d.stopped.load(Ordering::Relaxed) { return; }
+        if d.stopped.load(Ordering::Relaxed) {
+            return;
+        }
         if watcher_start.elapsed() < STARTUP_GRACE {
             while rx.try_recv().is_ok() {}
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -117,7 +144,11 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         let mut rescan = false;
         match first {
             Ok(ev) => {
-                if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
+                if ev.need_rescan() {
+                    rescan = true;
+                } else {
+                    paths.extend(ev.paths);
+                }
             }
             Err(e) => {
                 tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
@@ -128,13 +159,21 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         loop {
             match tokio::time::timeout(QUIET, rx.recv()).await {
                 Ok(Some(Ok(ev))) => {
-                    if ev.need_rescan() { rescan = true; } else { paths.extend(ev.paths); }
-                    if window_start.elapsed() > MAX_WINDOW { break; }
+                    if ev.need_rescan() {
+                        rescan = true;
+                    } else {
+                        paths.extend(ev.paths);
+                    }
+                    if window_start.elapsed() > MAX_WINDOW {
+                        break;
+                    }
                 }
                 Ok(Some(Err(e))) => {
                     tracing::warn!("[{}] watch error, forcing full tick: {e}", d.root_label());
                     rescan = true;
-                    if window_start.elapsed() > MAX_WINDOW { break; }
+                    if window_start.elapsed() > MAX_WINDOW {
+                        break;
+                    }
                 }
                 Ok(None) => return,
                 Err(_) => break, // QUIET window elapsed
@@ -143,8 +182,13 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         if rescan {
             let tick_num = d.tick_count.load(Ordering::Relaxed);
             match run_tick_full(&d).await {
-                Ok(()) => tracing::info!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label()),
-                Err(e) => tracing::error!("[{}] tick #{tick_num} (rescan recovery) error: {e}", d.root_label()),
+                Ok(()) => {
+                    tracing::info!("[{}] tick #{tick_num} (rescan recovery) ok", d.root_label())
+                }
+                Err(e) => tracing::error!(
+                    "[{}] tick #{tick_num} (rescan recovery) error: {e}",
+                    d.root_label()
+                ),
             }
             d.touch();
             enforce_mem_limit(&d.root_label());
@@ -157,8 +201,11 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
             continue;
         }
         d.touch();
-        let touches_cfg = cfg_path.as_ref().is_some_and(|c|
-            paths.iter().any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c));
+        let touches_cfg = cfg_path.as_ref().is_some_and(|c| {
+            paths
+                .iter()
+                .any(|p| p.canonicalize().ok().as_deref() == Some(c) || p == c)
+        });
         let mut paths = paths;
         // Daemon-owned state under <root>/.dl (perf.jsonl, why.jsonl, invlog,
         // cache.db + wal/shm) is appended on every tick; letting those events
@@ -173,15 +220,24 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         }
         let touches_program = d.program_in_paths(&paths);
         if touches_program {
-            let names: Vec<String> = paths.iter()
-                .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            let names: Vec<String> = paths
+                .iter()
+                .filter_map(|p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
             // Singleton daemon: program edits ALWAYS hot-reload (never exit for
             // respawn — one exit would kill every served root).
             if d.discovery_mode {
                 match run_reload_discovery(&d).await {
                     Ok(false) => {
-                        tracing::info!("[{}] program edit ({}) — reloading (discovery)", d.root_label(), names.join(", "));
+                        tracing::info!(
+                            "[{}] program edit ({}) — reloading (discovery)",
+                            d.root_label(),
+                            names.join(", ")
+                        );
                         if let Err(e) = run_reload_program(&d).await {
                             tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
                         }
@@ -190,7 +246,11 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
                     Err(e) => tracing::warn!("[{}] discovery reload: {e}", d.root_label()),
                 }
             } else {
-                tracing::info!("[{}] program edit ({}) — reloading", d.root_label(), names.join(", "));
+                tracing::info!(
+                    "[{}] program edit ({}) — reloading",
+                    d.root_label(),
+                    names.join(", ")
+                );
                 if let Err(e) = run_reload_program(&d).await {
                     tracing::warn!("[{}] reload failed, keeping old: {e}", d.root_label());
                 }
@@ -205,7 +265,10 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
                         .unwrap_or(false)
             });
             if has_dl {
-                tracing::info!("[{}] .dl discovery change — re-merging program", d.root_label());
+                tracing::info!(
+                    "[{}] .dl discovery change — re-merging program",
+                    d.root_label()
+                );
                 if let Err(e) = run_reload_discovery(&d).await {
                     tracing::warn!("[{}] discovery reload: {e}", d.root_label());
                 }
@@ -215,9 +278,15 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         if touches_git {
             let (n, changed) = run_on_git_event(&d).await;
             if n > 0 || !changed.is_empty() {
-                tracing::info!("[{}] git change — {n} ref(s) advanced, {} worktree file(s)", d.root_label(), changed.len());
+                tracing::info!(
+                    "[{}] git change — {n} ref(s) advanced, {} worktree file(s)",
+                    d.root_label(),
+                    changed.len()
+                );
             }
-            if changed.is_empty() { continue; }
+            if changed.is_empty() {
+                continue;
+            }
             paths = changed;
         }
         let tick_label;
@@ -238,8 +307,14 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         let tick_num = d.tick_count.load(Ordering::Relaxed);
         let tick_ok = result.is_ok();
         match result {
-            Ok(()) => tracing::info!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok", d.root_label()),
-            Err(e) => tracing::error!("[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}", d.root_label()),
+            Ok(()) => tracing::info!(
+                "[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) ok",
+                d.root_label()
+            ),
+            Err(e) => tracing::error!(
+                "[{}] tick #{tick_num} ({tick_label}, {n_paths} paths) error: {e}",
+                d.root_label()
+            ),
         }
         // A tick is where the image grows (extract, closure, spine writes), so
         // check the ceiling here too, not only on the idle heartbeat.
@@ -248,16 +323,27 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
         if tick_ok {
             let before = watch_count;
             for rc in snapshot_repos_blocking(&d).await {
-                if rc.root.exists() && watched.insert(rc.root.clone())
-                    && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok() {
+                if rc.root.exists()
+                    && watched.insert(rc.root.clone())
+                    && watcher.watch(&rc.root, RecursiveMode::Recursive).is_ok()
+                {
                     watch_count += 1;
                     gate.add_root(&rc.root);
                     watch_count += watch_git_narrow(&mut watcher, &mut gate, &rc.root);
-                    tracing::info!("[{}] watching (pulled) {} ({})", d.root_label(), rc.slug, rc.root.display());
+                    tracing::info!(
+                        "[{}] watching (pulled) {} ({})",
+                        d.root_label(),
+                        rc.slug,
+                        rc.root.display()
+                    );
                 }
             }
             if watch_count != before {
-                tracing::info!("[{}] watch count now {watch_count} (+{})", d.root_label(), watch_count - before);
+                tracing::info!(
+                    "[{}] watch count now {watch_count} (+{})",
+                    d.root_label(),
+                    watch_count - before
+                );
             }
         }
     }
@@ -266,22 +352,44 @@ pub(crate) async fn watch_task(d: Arc<ServedRoot>, ctx: ShellCtx, launch_exe_sta
 /// Narrow-watch a repo's `.git` dir. Returns the number of watch registrations
 /// installed. (Runs `git rev-parse` synchronously; rare — only at watcher
 /// startup and when a new corpus repo is pulled in — so it stays inline.)
-fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGate, root: &Path) -> usize {
+fn watch_git_narrow(
+    watcher: &mut notify::RecommendedWatcher,
+    gate: &mut WatchGate,
+    root: &Path,
+) -> usize {
     use notify::{RecursiveMode, Watcher};
-    let out = match std::process::Command::new("git").arg("-C").arg(root)
-        .args(["rev-parse", "--git-dir"]).output() {
+    let out = match std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--git-dir"])
+        .output()
+    {
         Ok(o) if o.status.success() => o,
         _ => return 0,
     };
     let gd = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let gdp = if Path::new(&gd).is_absolute() { PathBuf::from(&gd) } else { root.join(&gd) };
-    if !gdp.exists() { return 0; }
+    let gdp = if Path::new(&gd).is_absolute() {
+        PathBuf::from(&gd)
+    } else {
+        root.join(&gd)
+    };
+    if !gdp.exists() {
+        return 0;
+    }
     gate.add_git_dir(&gdp);
     let mut added = 0;
     for (path, recursive) in gate.git_watch_targets(&gdp) {
-        if !path.exists() { continue; }
-        let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
-        if watcher.watch(&path, mode).is_ok() { added += 1; }
+        if !path.exists() {
+            continue;
+        }
+        let mode = if recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
+        if watcher.watch(&path, mode).is_ok() {
+            added += 1;
+        }
     }
     added
 }
@@ -295,30 +403,37 @@ fn watch_git_narrow(watcher: &mut notify::RecommendedWatcher, gate: &mut WatchGa
 
 async fn snapshot_repos_blocking(d: &Arc<ServedRoot>) -> Vec<config::RepoConfig> {
     let d = d.clone();
-    tokio::task::spawn_blocking(move || lock(&d.eng).snapshot_repos()).await.unwrap_or_default()
+    tokio::task::spawn_blocking(move || lock(&d.eng).snapshot_repos())
+        .await
+        .unwrap_or_default()
 }
 
 async fn run_tick_full(d: &Arc<ServedRoot>) -> Result<()> {
     let d = d.clone();
-    tokio::task::spawn_blocking(move || d.tick_full(true)).await
+    tokio::task::spawn_blocking(move || d.tick_full(true))
+        .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("tick task panicked")))
 }
 
 async fn run_reload_program(d: &Arc<ServedRoot>) -> Result<()> {
     let d = d.clone();
-    tokio::task::spawn_blocking(move || d.reload_program()).await
+    tokio::task::spawn_blocking(move || d.reload_program())
+        .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("reload task panicked")))
 }
 
 async fn run_reload_discovery(d: &Arc<ServedRoot>) -> Result<bool> {
     let d = d.clone();
-    tokio::task::spawn_blocking(move || d.reload_discovery()).await
+    tokio::task::spawn_blocking(move || d.reload_discovery())
+        .await
         .unwrap_or_else(|_| Err(anyhow::anyhow!("discovery reload task panicked")))
 }
 
 async fn run_on_git_event(d: &Arc<ServedRoot>) -> (usize, Vec<PathBuf>) {
     let d = d.clone();
-    tokio::task::spawn_blocking(move || d.on_git_event()).await.unwrap_or((0, Vec::new()))
+    tokio::task::spawn_blocking(move || d.on_git_event())
+        .await
+        .unwrap_or((0, Vec::new()))
 }
 
 async fn run_config_change_tick(d: &Arc<ServedRoot>) -> Result<()> {
@@ -353,8 +468,12 @@ async fn run_enqueue_tick(d: &Arc<ServedRoot>, paths: &[PathBuf]) -> Result<()> 
 /// schedule a tick. `.dl` programs are NOT state: discovery and hot-reload
 /// depend on their events.
 fn daemon_state_path(root: &std::path::Path, path: &std::path::Path) -> bool {
-    let Ok(rel) = path.strip_prefix(root) else { return false };
-    if !rel.starts_with(".dl") { return false; }
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    if !rel.starts_with(".dl") {
+        return false;
+    }
     path.extension().and_then(|e| e.to_str()) != Some("dl")
 }
 
@@ -373,7 +492,10 @@ mod watch_filter_tests {
             "/repo/.dl/.state/cache.db-wal",
             "/repo/.dl/.state/cache.db-shm",
         ] {
-            assert!(daemon_state_path(root, Path::new(state)), "{state} must be filtered");
+            assert!(
+                daemon_state_path(root, Path::new(state)),
+                "{state} must be filtered"
+            );
         }
         for kept in [
             "/repo/.dl/serve.dl",
@@ -381,7 +503,10 @@ mod watch_filter_tests {
             "/repo/src/main.rs",
             "/other/.dl/perf.jsonl",
         ] {
-            assert!(!daemon_state_path(root, Path::new(kept)), "{kept} must pass through");
+            assert!(
+                !daemon_state_path(root, Path::new(kept)),
+                "{kept} must pass through"
+            );
         }
     }
 }

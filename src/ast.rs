@@ -2,13 +2,26 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Type { Text, Int, Path, File, Dir, Repo, Rev }
+pub enum Type {
+    Text,
+    Int,
+    Path,
+    File,
+    Dir,
+    Repo,
+    Rev,
+}
 
 impl Type {
     pub fn name(self) -> &'static str {
         match self {
-            Type::Text => "text", Type::Int => "int", Type::Path => "path",
-            Type::File => "file", Type::Dir => "dir", Type::Repo => "repo", Type::Rev => "rev",
+            Type::Text => "text",
+            Type::Int => "int",
+            Type::Path => "path",
+            Type::File => "file",
+            Type::Dir => "dir",
+            Type::Repo => "repo",
+            Type::Rev => "rev",
         }
     }
     pub fn parse(s: &str) -> Option<Type> {
@@ -35,11 +48,19 @@ impl Type {
 }
 
 #[derive(Clone, Debug)]
-pub enum Value { Text(String), Int(i64), Null }
+pub enum Value {
+    Text(String),
+    Int(i64),
+    Null,
+}
 
 impl Value {
     pub fn as_str(&self) -> String {
-        match self { Value::Text(s) => s.clone(), Value::Int(n) => n.to_string(), Value::Null => String::new() }
+        match self {
+            Value::Text(s) => s.clone(),
+            Value::Int(n) => n.to_string(),
+            Value::Null => String::new(),
+        }
     }
 }
 
@@ -65,15 +86,35 @@ pub struct Col {
 }
 
 impl Col {
-    pub fn plain(name: String, ty: Type) -> Col { Col { name, ty, brand: None, raw: false, coord: false } }
+    pub fn plain(name: String, ty: Type) -> Col {
+        Col {
+            name,
+            ty,
+            brand: None,
+            raw: false,
+            coord: false,
+        }
+    }
     pub fn raw(name: &str, ty: Type) -> Col {
-        Col { name: name.to_string(), ty, brand: None, raw: true, coord: false }
+        Col {
+            name: name.to_string(),
+            ty,
+            brand: None,
+            raw: true,
+            coord: false,
+        }
     }
     /// A dataflow-coordinate id column (see `Col::coord`). Storage is an
     /// interned-style INTEGER hash; the coordinate text is never interned;
     /// display reconstructs from `rel_df_node`.
     pub fn node(name: &str) -> Col {
-        Col { name: name.to_string(), ty: Type::Text, brand: None, raw: false, coord: true }
+        Col {
+            name: name.to_string(),
+            ty: Type::Text,
+            brand: None,
+            raw: false,
+            coord: true,
+        }
     }
     /// Resolve a `.dl` column type keyword to a `Col`: a base `Type`, the
     /// `node` coordinate type, or (unknown keyword) a text column carrying that
@@ -83,20 +124,44 @@ impl Col {
             return Col::node(&name);
         }
         match Type::parse(tname) {
-            Some(ty) => Col { name, ty, brand: None, raw: false, coord: false },
-            None => Col { name, ty: Type::Text, brand: Some(tname.to_string()), raw: false, coord: false },
+            Some(ty) => Col {
+                name,
+                ty,
+                brand: None,
+                raw: false,
+                coord: false,
+            },
+            None => Col {
+                name,
+                ty: Type::Text,
+                brand: Some(tname.to_string()),
+                raw: false,
+                coord: false,
+            },
         }
     }
-    pub fn interned(&self) -> bool { self.ty.textish() && !self.raw }
+    pub fn interned(&self) -> bool {
+        self.ty.textish() && !self.raw
+    }
     pub fn sql(&self) -> &'static str {
-        if self.ty == Type::Int || self.interned() { "INTEGER" } else { "TEXT" }
+        if self.ty == Type::Int || self.interned() {
+            "INTEGER"
+        } else {
+            "TEXT"
+        }
     }
     /// A text column carrying an enum brand: a builtin decl's closed kind
     /// vocabulary (e.g. `type_edge.kind`). Storage stays text; the brand name
     /// resolves through the ambient `engine::builtin_enum_brands` table, so a
     /// literal pin outside the set is an `enum-variant-unknown` typecheck error.
     pub fn branded(name: &str, brand: &str) -> Col {
-        Col { name: name.to_string(), ty: Type::Text, brand: Some(brand.to_string()), raw: false, coord: false }
+        Col {
+            name: name.to_string(),
+            ty: Type::Text,
+            brand: Some(brand.to_string()),
+            raw: false,
+            coord: false,
+        }
     }
 }
 
@@ -142,7 +207,10 @@ impl MergeFn {
 
 /// Which way rows cross the engine boundary for a port rel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PortDir { In, Out }
+pub enum PortDir {
+    In,
+    Out,
+}
 
 /// `@in(class)` / `@out(class)` decl qualifier: the rel is a port — rows enter
 /// (`@in`, injected by a serving loop before its tick) or leave (`@out`,
@@ -165,7 +233,11 @@ impl Port {
     /// `"abc"`), so both integer and string JSON-RPC ids round-trip exactly.
     pub fn envelope(class: &str, dir: PortDir) -> Option<&'static [(&'static str, Type)]> {
         match (class, dir) {
-            ("rpc", PortDir::In) => Some(&[("id", Type::Text), ("method", Type::Text), ("params", Type::Text)]),
+            ("rpc", PortDir::In) => Some(&[
+                ("id", Type::Text),
+                ("method", Type::Text),
+                ("params", Type::Text),
+            ]),
             ("rpc", PortDir::Out) => Some(&[("id", Type::Text), ("result", Type::Text)]),
             _ => None,
         }
@@ -249,36 +321,63 @@ pub struct RelMeta {
 }
 
 impl RelMeta {
-    pub fn col_name(&self, i: usize) -> &str { &self.cols[i].name }
+    pub fn col_name(&self, i: usize) -> &str {
+        &self.cols[i].name
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CmpOp { Eq, Ne, Lt, Le, Gt, Ge, Match, Glob }
+pub enum CmpOp {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Match,
+    Glob,
+}
 
 impl CmpOp {
     pub fn sql(self) -> &'static str {
         match self {
-            CmpOp::Eq => "=", CmpOp::Ne => "<>",
-            CmpOp::Lt => "<", CmpOp::Le => "<=",
-            CmpOp::Gt => ">", CmpOp::Ge => ">=",
-            CmpOp::Match => "REGEXP", CmpOp::Glob => "GLOB",
+            CmpOp::Eq => "=",
+            CmpOp::Ne => "<>",
+            CmpOp::Lt => "<",
+            CmpOp::Le => "<=",
+            CmpOp::Gt => ">",
+            CmpOp::Ge => ">=",
+            CmpOp::Match => "REGEXP",
+            CmpOp::Glob => "GLOB",
         }
     }
 }
 
 #[derive(Clone, Debug)]
-pub enum InterpPart { Lit(String), Var(String) }
+pub enum InterpPart {
+    Lit(String),
+    Var(String),
+}
 
 /// Integer arithmetic operator for `Term::Arith`. `/` is SQLite/Rust integer
 /// division (truncating); `%` is the remainder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ArithOp { Add, Sub, Mul, Div, Mod }
+pub enum ArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+}
 
 impl ArithOp {
     pub fn sql(self) -> &'static str {
         match self {
-            ArithOp::Add => "+", ArithOp::Sub => "-",
-            ArithOp::Mul => "*", ArithOp::Div => "/", ArithOp::Mod => "%",
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+            ArithOp::Div => "/",
+            ArithOp::Mod => "%",
         }
     }
 }
@@ -293,18 +392,29 @@ pub enum Term {
     /// A typed path literal `scheme:body` (`fs:src/x`, `glob:src/**/*.rs`). Carries
     /// the raw body and the source span for diagnostics. Resolved to canonical
     /// text/pattern (then rewritten to `Str`) at lower time by the engine.
-    PathLit { scheme: String, body: String, span: (u32, u32) },
+    PathLit {
+        scheme: String,
+        body: String,
+        span: (u32, u32),
+    },
     /// Int arithmetic `a + 1`, `n * 2 - 1` — allowed in rule heads (derived AND
     /// source) and on either side of a comparison; never a binding position, so
     /// body atoms reject it. Derived rules lower it to SQL arithmetic; source
     /// rules evaluate it on the bound row values.
-    Arith { op: ArithOp, lhs: Box<Term>, rhs: Box<Term> },
+    Arith {
+        op: ArithOp,
+        lhs: Box<Term>,
+        rhs: Box<Term>,
+    },
     /// Pure string function call `split(s, "/", -1)`, `replace(s, "_", "-")`.
     /// Same positioning rules as `Arith`: head columns and comparison sides,
     /// never a binding position. Derived rules lower to SQL (`replace` is
     /// native; `split` is the `sprf_split` UDF); source rules evaluate via
     /// `val_of`. The function set is whitelist-checked at lower/eval time.
-    Call { name: String, args: Vec<Term> },
+    Call {
+        name: String,
+        args: Vec<Term>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -326,7 +436,14 @@ pub struct Atom {
 /// `Text` (a JSON array / object built by SQLite). `json_group_object` is the only
 /// TWO-ARG aggregate — its value arg rides `Rule::agg_args2`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AggFn { Count, Sum, Min, Max, JsonGroupArray, JsonGroupObject }
+pub enum AggFn {
+    Count,
+    Sum,
+    Min,
+    Max,
+    JsonGroupArray,
+    JsonGroupObject,
+}
 
 impl AggFn {
     pub fn parse(s: &str) -> Option<AggFn> {
@@ -342,8 +459,12 @@ impl AggFn {
     }
     pub fn sql(self) -> &'static str {
         match self {
-            AggFn::Count => "COUNT", AggFn::Sum => "SUM", AggFn::Min => "MIN", AggFn::Max => "MAX",
-            AggFn::JsonGroupArray => "json_group_array", AggFn::JsonGroupObject => "json_group_object",
+            AggFn::Count => "COUNT",
+            AggFn::Sum => "SUM",
+            AggFn::Min => "MIN",
+            AggFn::Max => "MAX",
+            AggFn::JsonGroupArray => "json_group_array",
+            AggFn::JsonGroupObject => "json_group_object",
         }
     }
     /// The output type of the aggregate. Count/Sum are always Int; the two json
@@ -358,17 +479,29 @@ impl AggFn {
     }
     /// `json_group_object(key, value)` is the only two-arg aggregate. The value
     /// arg is carried in `Rule::agg_args2` parallel to the key in `Rule::head.terms`.
-    pub fn is_two_arg(self) -> bool { matches!(self, AggFn::JsonGroupObject) }
+    pub fn is_two_arg(self) -> bool {
+        matches!(self, AggFn::JsonGroupObject)
+    }
 }
 
 #[derive(Clone, Debug)]
-pub struct Constraint { pub lhs: Term, pub op: CmpOp, pub rhs: Term }
+pub struct Constraint {
+    pub lhs: Term,
+    pub op: CmpOp,
+    pub rhs: Term,
+}
 
 #[derive(Clone, Debug)]
 pub enum BodyItem {
     Pos(Atom),
     Neg(Atom),
-    Scan { repo: Term, rev: Term, glob: Term, path: Term, rev_out: Term },
+    Scan {
+        repo: Term,
+        rev: Term,
+        glob: Term,
+        path: Term,
+        rev_out: Term,
+    },
     /// `col`/`end_col` are the whole-match span's 0-based byte columns within
     /// `line`. Optional trailing args after `line`: 1 ⇒ `id`; 2 ⇒ `col, end_col`;
     /// 3 ⇒ `id, col, end_col`. Feeds sub-line diagnostic spans.
@@ -378,9 +511,25 @@ pub enum BodyItem {
     /// `match` (the pre-rename name); `typecheck::normalize_body_item` emits a
     /// `deprecated-op-name` warning pointing at `match_line`, and (for source
     /// code) at `match_ast`. Both spellings parse identically otherwise.
-    Match { path: Term, rev: Term, regex: String, line: Term, id: Option<Term>,
-            col: Option<Term>, end_col: Option<Term>, legacy_name: bool },
-    Ast { path: Term, rev: Term, lang: String, query: String, line: Term, end: Option<Term>, id: Option<Term> },
+    Match {
+        path: Term,
+        rev: Term,
+        regex: String,
+        line: Term,
+        id: Option<Term>,
+        col: Option<Term>,
+        end_col: Option<Term>,
+        legacy_name: bool,
+    },
+    Ast {
+        path: Term,
+        rev: Term,
+        lang: String,
+        query: String,
+        line: Term,
+        end: Option<Term>,
+        id: Option<Term>,
+    },
     /// `line`/`col`/`end_line`/`end_col` are the match span (1-based lines,
     /// 0-based byte columns). All four accept the kwarg/`_` form: positional in
     /// order, `name: term` to bind a later slot, or unmentioned to bind nothing.
@@ -402,15 +551,33 @@ pub enum BodyItem {
     /// pre-rename name); `typecheck::normalize_body_item` emits a
     /// `deprecated-op-name` warning pointing at `match_ast`. Both spellings
     /// parse identically otherwise, file form and term form alike.
-    Sg { src: Term, rev: Option<Term>, lang: String, pattern: String, line: Term,
-         col: Term, end_line: Term, end_col: Term, id: Option<Term>, legacy_name: bool },
+    Sg {
+        src: Term,
+        rev: Option<Term>,
+        lang: String,
+        pattern: String,
+        line: Term,
+        col: Term,
+        end_line: Term,
+        end_col: Term,
+        id: Option<Term>,
+        legacy_name: bool,
+    },
     /// ast-grep relational YAML rule (RuleCore: inside/has/any/all/not/kind/
     /// regex/pattern). `yaml` is the (usually backtick, multiline) body; the
     /// span + capture binds mirror `Sg`. Superset of `Sg` — a bare `pattern:`
     /// body matches the same surface, but `inside:`/`has:` add the structural
     /// relationships a pattern alone can't express.
-    AstYaml { path: Term, rev: Term, lang: String, yaml: String, line: Term,
-              col: Term, end_line: Term, end_col: Term },
+    AstYaml {
+        path: Term,
+        rev: Term,
+        lang: String,
+        yaml: String,
+        line: Term,
+        col: Term,
+        end_line: Term,
+        end_col: Term,
+    },
     /// `jsonp(path, rev, "a.b.*", out, id?)` — dotted-string evaluator over
     /// json/yaml/toml (dispatched by extension; `*` = any key/element). Renamed
     /// from `json` to free the name for the declarative brace pattern. Trailing
@@ -419,46 +586,79 @@ pub enum BodyItem {
     /// `rev: None` = the TERM form (`src` is a bound `str` content value — a
     /// response body / column / stdout — parsed directly, no file, no span). The
     /// term form runs in the join+extract hybrid pass, not the file scan.
-    JsonP { src: Term, rev: Option<Term>, jpath: String, out: Term, id: Option<Term> },
+    JsonP {
+        src: Term,
+        rev: Option<Term>,
+        jpath: String,
+        out: Term,
+        id: Option<Term>,
+    },
     /// `json(path, rev, q:{ $k: $v })` — declarative brace pattern over a
     /// json/yaml/toml document (dispatched by extension, like jsonp). Each
     /// match binds N named captures (keys AND values) as rule vars, mirroring
     /// match's named groups. `pat` is the raw `q:` body (validated at parse
     /// time; the engine re-parses it to walk the Step tree). `rev: None` = the
     /// term form (`src` is bound content), like `JsonP`.
-    Json { src: Term, rev: Option<Term>, pat: String },
+    Json {
+        src: Term,
+        rev: Option<Term>,
+        pat: String,
+    },
     /// Shell out per matched file: `cmd(p, rev, "tool {file}", line, out)` binds
     /// one row per stdout line. Cached like every source op: rows re-run only
     /// when the file content or the rule text moves (the docker-layer contract).
-    Cmd { path: Term, rev: Term, template: String, line: Term, out: Term },
+    Cmd {
+        path: Term,
+        rev: Term,
+        template: String,
+        line: Term,
+        out: Term,
+    },
     /// Comment-marker regions: `comment(p, rev, /open/[, /close/], l0, l1, label)`.
     /// One row per region; `l0`/`l1` are 1-based lines (open marker line and the
     /// region's last line), `label` is the open regex's first named group or the
     /// trimmed post-match tail ("" if neither). See comment.rs for the modes.
-    Comment { path: Term, rev: Term, open: String, close: Option<String>,
-              l0: Term, l1: Term, label: Term },
+    Comment {
+        path: Term,
+        rev: Term,
+        open: String,
+        close: Option<String>,
+        l0: Term,
+        l1: Term,
+        label: Term,
+    },
     Cmp(Constraint),
     /// Transitive closure of an edge relation, e.g. `reaches(a,b) <- closure(calls).`
-    Closure { rel: String },
+    Closure {
+        rel: String,
+    },
     /// SCC membership of an edge relation, e.g. `g(rep, member) <- scc(calls).`
     /// One row per node: (component representative, node). The representative is
     /// the min member name in the component. Reuses the closure condensation
     /// (Tarjan) — shares `closure(edge)`'s per-edge cache, no second Tarjan run.
-    Scc { rel: String },
+    Scc {
+        rel: String,
+    },
     /// Structural node embedding of an edge relation, e.g.
     /// `node_sim(a, b, score) <- node2vec(g).` Reads the 2-col edge rel `g`,
     /// learns one vector per node (random walks + skip-gram, src/embed/node2vec.rs),
     /// and emits top-k cosine-nearest node pairs into the 3-col head. Vectors
     /// persist in `_node_embeddings` keyed by the edge rel name. The graph sibling
     /// of the text `similar` rel.
-    Node2vec { rel: String },
+    Node2vec {
+        rel: String,
+    },
     /// An effect CALL inside an `@async`/`@stream` rule body: `gh(repo, path) ->
     /// (status, body)`. `name` resolves to a `ShellFn` (the effect kind/template);
     /// `args` fill the template `{hole}`s (param-positional); `outs` are fresh
     /// vars bound to the executor's response columns, in order. The body-effect
     /// form D-3 desugars to; the runtime sees ONE model. Not a lowerable relation
     /// (`body_sql` ignores it); the engine reads it via `Rule::effect()`.
-    Effect { name: String, args: Vec<Term>, outs: Vec<Term> },
+    Effect {
+        name: String,
+        args: Vec<Term>,
+        outs: Vec<Term>,
+    },
 }
 
 /// A temporal rule modifier, written `@next` / `@async` / `@stream` after the
@@ -470,7 +670,11 @@ pub enum BodyItem {
 /// `Rule` = today's same-tick deductive rule. See
 /// docs/research-reactive-effectful-datalog.md §8.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Temporal { Next, Async, Stream }
+pub enum Temporal {
+    Next,
+    Async,
+    Stream,
+}
 
 #[derive(Clone, Debug)]
 pub struct Rule {
@@ -508,7 +712,9 @@ impl Rule {
     }
 
     /// Does any head term carry an aggregate?
-    pub fn has_agg(&self) -> bool { self.aggs.iter().any(|a| a.is_some()) }
+    pub fn has_agg(&self) -> bool {
+        self.aggs.iter().any(|a| a.is_some())
+    }
 
     /// Does any head slot lower to SQL NULL? A `_` head term (explicit, or the
     /// named-arg padding for an unnamed column) projects NULL. A NULL row never
@@ -517,20 +723,28 @@ impl Rule {
     /// `rebuild_derived` bails when the head rel sits in a recursive component.
     /// An aggregated `_` (`count(_)`) is not a projected slot and does not count.
     pub fn head_null_pads(&self) -> bool {
-        self.head.terms.iter().enumerate().any(|(i, t)| {
-            matches!(t, Term::Wild) && !matches!(self.aggs.get(i), Some(Some(_)))
-        })
+        self.head
+            .terms
+            .iter()
+            .enumerate()
+            .any(|(i, t)| matches!(t, Term::Wild) && !matches!(self.aggs.get(i), Some(Some(_))))
     }
 
     /// `@next` carry rule: head staged for the next tick's seed.
-    pub fn is_next(&self) -> bool { self.temporal == Some(Temporal::Next) }
+    pub fn is_next(&self) -> bool {
+        self.temporal == Some(Temporal::Next)
+    }
 
     /// `@async` effect rule: body emits a request, response lands later.
-    pub fn is_async(&self) -> bool { self.temporal == Some(Temporal::Async) }
+    pub fn is_async(&self) -> bool {
+        self.temporal == Some(Temporal::Async)
+    }
 
     /// `@stream` subscription rule: body opens a long-lived `sh*` source whose
     /// rows append over many ticks, fanned into the head by `drain_streams`.
-    pub fn is_stream(&self) -> bool { self.temporal == Some(Temporal::Stream) }
+    pub fn is_stream(&self) -> bool {
+        self.temporal == Some(Temporal::Stream)
+    }
 
     /// The single `BodyItem::Effect` of an `@async`/`@stream` rule, if present.
     /// After the frontend desugar every effectful rule carries exactly one (the
@@ -544,14 +758,18 @@ impl Rule {
 
     pub fn is_source(&self) -> bool {
         self.body.iter().any(|b| match b {
-            BodyItem::Scan { .. } | BodyItem::Match { .. } | BodyItem::Ast { .. }
+            BodyItem::Scan { .. }
+            | BodyItem::Match { .. }
+            | BodyItem::Ast { .. }
             | BodyItem::AstYaml { .. }
-            | BodyItem::Cmd { .. } | BodyItem::Comment { .. } => true,
+            | BodyItem::Cmd { .. }
+            | BodyItem::Comment { .. } => true,
             // A FILE-form json/jsonp/sg (rev=Some) scans a file = a source op. The
             // TERM form (rev=None) reads a bound value, so it is NOT a source —
             // it runs in the join+extract hybrid pass over already-derived rels.
-            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. }
-            | BodyItem::Sg { rev, .. } => rev.is_some(),
+            BodyItem::JsonP { rev, .. } | BodyItem::Json { rev, .. } | BodyItem::Sg { rev, .. } => {
+                rev.is_some()
+            }
             _ => false,
         })
     }
@@ -560,9 +778,14 @@ impl Rule {
     /// is a bound `str` value, not a file. Such a rule joins relations (the Pos
     /// atoms bind the content var) and then extracts — the hybrid evaluator.
     pub fn has_term_extract(&self) -> bool {
-        self.body.iter().any(|b| matches!(b,
-            BodyItem::JsonP { rev: None, .. } | BodyItem::Json { rev: None, .. }
-            | BodyItem::Sg { rev: None, .. }))
+        self.body.iter().any(|b| {
+            matches!(
+                b,
+                BodyItem::JsonP { rev: None, .. }
+                    | BodyItem::Json { rev: None, .. }
+                    | BodyItem::Sg { rev: None, .. }
+            )
+        })
     }
 
     /// Some(edge) iff this rule is exactly `head(..) <- closure(edge).`
@@ -594,8 +817,12 @@ impl Rule {
     /// NOT inserted into the `repo` table by `rebuild_derived` (which would wipe
     /// the engine-emitted registered set). Excluded from source/derived
     /// classification so neither reconcile nor rebuild touches the `repo` table.
-    pub fn is_repo_sink(&self) -> bool { self.head.rel == "repo" }
-    pub fn is_checkout_sink(&self) -> bool { self.head.rel == "checkout" }
+    pub fn is_repo_sink(&self) -> bool {
+        self.head.rel == "repo"
+    }
+    pub fn is_checkout_sink(&self) -> bool {
+        self.head.rel == "checkout"
+    }
 }
 
 #[cfg(test)]
@@ -605,8 +832,16 @@ mod tests {
     #[test]
     fn rule_structural_key_ignores_file_location() {
         let make_rule = |path: &str| Rule {
-            head: Atom { rel: "reach".to_string(), terms: vec![Term::Var("node".to_string())], named: Vec::new() },
-            body: vec![BodyItem::Pos(Atom { rel: "seed".to_string(), terms: vec![Term::Var("node".to_string())], named: Vec::new() })],
+            head: Atom {
+                rel: "reach".to_string(),
+                terms: vec![Term::Var("node".to_string())],
+                named: Vec::new(),
+            },
+            body: vec![BodyItem::Pos(Atom {
+                rel: "seed".to_string(),
+                terms: vec![Term::Var("node".to_string())],
+                named: Vec::new(),
+            })],
             aggs: Vec::new(),
             agg_args2: Vec::new(),
             origin: Some(PathBuf::from(path)),
@@ -626,14 +861,20 @@ mod tests {
 /// constraints of its own — the `where` clause was removed (see
 /// plans/2026-06-02-kill-where-seed-closures-by-nesting.md).
 #[derive(Clone, Debug)]
-pub struct Query { pub head: Atom }
+pub struct Query {
+    pub head: Atom,
+}
 
 /// `anchor <name> = <fs-literal>.` A named filesystem anchor. `name` is `~` or an
 /// ident; `body` is the `fs:` literal's raw body. v1 accepts the declaration but
 /// only the default `~` anchor (scan root) is referenced in literal bodies; named
 /// anchor refs in bodies are deferred (with `rs:`).
 #[derive(Clone, Debug)]
-pub struct AnchorDecl { pub name: String, pub body: String, pub span: (u32, u32) }
+pub struct AnchorDecl {
+    pub name: String,
+    pub body: String,
+    pub span: (u32, u32),
+}
 
 /// A brand: a named subtype used only at typecheck time (runtime storage stays
 /// text). Two surface forms:
@@ -643,14 +884,21 @@ pub struct AnchorDecl { pub name: String, pub body: String, pub span: (u32, u32)
 ///     `Some([...])`. A literal filling an enum-branded column must be in the set
 ///     (`enum-variant-unknown` otherwise). `variants` is `None` for the `<:` form.
 #[derive(Clone, Debug)]
-pub struct BrandDecl { pub name: String, pub parent: String, pub variants: Option<Vec<String>> }
+pub struct BrandDecl {
+    pub name: String,
+    pub parent: String,
+    pub variants: Option<Vec<String>>,
+}
 
 /// `type <name>(col: ty, ...).` A named row SHAPE: a reusable column list. A
 /// `rel <name>: <shape>.` decl expands to an ordinary `RelDecl` whose columns are
 /// the shape's, at load (frontend + typecheck seam), so downstream code only ever
 /// sees plain `RelDecl`s. A shape column may reference a brand or an enum brand.
 #[derive(Clone, Debug)]
-pub struct ShapeDecl { pub name: String, pub cols: Vec<Col> }
+pub struct ShapeDecl {
+    pub name: String,
+    pub cols: Vec<Col>,
+}
 
 /// Where a `gen` rule's rendered rows land.
 #[derive(Clone, Debug)]
@@ -672,7 +920,12 @@ pub enum GenTarget {
     /// come from the ref spine (`ref(id, _, path, lo, hi)`), so spine-captured
     /// sites are editable in place. One read-modify-write per file, regions
     /// applied right-to-left so earlier offsets stay valid across the batch.
-    Cursor { mode: SpliceMode, path: Term, lo: Term, hi: Term },
+    Cursor {
+        mode: SpliceMode,
+        path: Term,
+        lo: Term,
+        hi: Term,
+    },
     /// `gen(:zone, p, name, ...)`: replace the content between a NAMED marker
     /// pair in a WORK file. The engine finds `BEGIN: name` and the next `END:`
     /// after it (comment-prefix-tolerant: `//`, `#`, `/*`, `;`, `<!--`) and
@@ -681,7 +934,10 @@ pub enum GenTarget {
     /// `Splice`). Rows group by (path, name). `path_tmpl`/`name_tmpl` are
     /// `{var}`-hole templates (literal when no holes) so a single rule can fan
     /// over many files / many zones via body bindings.
-    Zone { path_tmpl: String, name_tmpl: String },
+    Zone {
+        path_tmpl: String,
+        name_tmpl: String,
+    },
 }
 
 /// Mode for `GenTarget::Cursor`, ported from v4's `WriteMode`:
@@ -690,7 +946,12 @@ pub enum GenTarget {
 ///   `:prepend`  insert value at lo                       (hi ignored at apply time)
 ///   `:wrap`     insert value at lo AND hi                (surrounds [lo, hi))
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum SpliceMode { Replace, Append, Prepend, Wrap }
+pub enum SpliceMode {
+    Replace,
+    Append,
+    Prepend,
+    Wrap,
+}
 
 impl SpliceMode {
     pub fn tag(self) -> &'static str {
@@ -716,14 +977,27 @@ pub struct GenRule {
 }
 
 #[derive(Clone, Debug)]
-pub enum Item { Rel(RelDecl), Rule(Rule), Query(Query), Anchor(AnchorDecl), Brand(BrandDecl), Shape(ShapeDecl), Gen(GenRule), Shell(ShellFn) }
+pub enum Item {
+    Rel(RelDecl),
+    Rule(Rule),
+    Query(Query),
+    Anchor(AnchorDecl),
+    Brand(BrandDecl),
+    Shape(ShapeDecl),
+    Gen(GenRule),
+    Shell(ShellFn),
+}
 
 /// The read/mutate/stream axis of a `sh` decl: `sh` = `Read` (cached, deduped,
 /// at-least-once, retryable), `sh!` = `Mutate` (idempotency-keyed, exactly-once,
 /// never cached), `sh*` = `Stream` (long-lived, many rows over time). The bang/
 /// star is the only thing that distinguishes the three at parse time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ShellKind { Read, Mutate, Stream }
+pub enum ShellKind {
+    Read,
+    Mutate,
+    Stream,
+}
 
 /// `sh name(p1, p2) -> (c1: t1, c2: t2) = `cmd {p1}`.` — a named, typed,
 /// shell-callable effect template. `name` IS the effect kind (it matches the
@@ -746,7 +1020,9 @@ pub struct ShellFn {
 /// parses its surface, and splices its Core items into the merge. Diamond
 /// imports load once (canonical-path dedup).
 #[derive(Clone, Debug)]
-pub struct Import { pub path: String }
+pub struct Import {
+    pub path: String,
+}
 
 /// `def name(p1, p2) <- body.` — a parameterized rule template. The body is
 /// inlined at every call site (`name(args)` as a body atom) with the params
@@ -774,11 +1050,17 @@ pub enum SurfaceItem {
 /// Diagnostic severity for a `TypeDiag`. `Error` fails `--check` (non-zero exit);
 /// `Warn` prints but does not fail (the coerce grandfather case).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Severity { Error, Warn }
+pub enum Severity {
+    Error,
+    Warn,
+}
 
 impl Severity {
     pub fn as_str(self) -> &'static str {
-        match self { Severity::Error => "error", Severity::Warn => "warn" }
+        match self {
+            Severity::Error => "error",
+            Severity::Warn => "warn",
+        }
     }
 }
 
@@ -797,6 +1079,8 @@ pub struct TypeDiag {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct Program { pub items: Vec<Item> }
+pub struct Program {
+    pub items: Vec<Item>,
+}
 
 pub type Rels = HashMap<String, RelMeta>;

@@ -78,8 +78,10 @@ mod tests {
         let src = "rel t(a: text.\n";
         let e = errors(src);
         assert!(!e.is_empty(), "expected at least one error");
-        assert!(e.iter().any(|(_, _, m)| m.contains("missing")),
-            "expected a missing-token error, got: {e:?}");
+        assert!(
+            e.iter().any(|(_, _, m)| m.contains("missing")),
+            "expected a missing-token error, got: {e:?}"
+        );
     }
 
     #[test]

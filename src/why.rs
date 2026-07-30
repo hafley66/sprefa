@@ -90,7 +90,10 @@ pub fn read_self_usage() -> SelfUsage {
                 buffer: *mut RusageInfoV2,
             ) -> libc::c_int;
         }
-        let mut info = RusageInfoV2 { ri_uuid: [0; 16], fields: [0; 18] };
+        let mut info = RusageInfoV2 {
+            ri_uuid: [0; 16],
+            fields: [0; 18],
+        };
         // SAFETY: out-param sized for flavor 2, own pid.
         if unsafe { proc_pid_rusage(std::process::id() as libc::c_int, 2, &mut info) } == 0 {
             u.rss_bytes = info.fields[7]; // ri_phys_footprint
@@ -110,7 +113,11 @@ pub fn read_self_usage() -> SelfUsage {
             }
         }
         if let Ok(s) = std::fs::read_to_string("/proc/self/statm") {
-            let pages: u64 = s.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+            let pages: u64 = s
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
             u.rss_bytes = pages * 4096;
         }
     }
@@ -126,7 +133,11 @@ fn append_line(home: &Path, line: &Value) {
             let _ = std::fs::rename(&path, home.join("why.jsonl.1"));
         }
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         // One write_all per line: `writeln!` streams many small writes, and two
         // process threads appending concurrently interleave them into corrupt
         // JSON (seen live: the double shutdown_cleanup race). A single
@@ -148,14 +159,20 @@ fn append_line(home: &Path, line: &Value) {
 /// fixed for the process lifetime anyway (`apply_daemon_budget` sets it once),
 /// so a snapshot loses nothing a live sample would have added.
 pub fn mark_boot(home: &Path, build: &str) {
-    append_line(home, &json!({
-        "kind":"boot","ts":now_secs(),"pid":std::process::id(),"build":build,
-        "threads": rayon::current_num_threads(),
-    }));
+    append_line(
+        home,
+        &json!({
+            "kind":"boot","ts":now_secs(),"pid":std::process::id(),"build":build,
+            "threads": rayon::current_num_threads(),
+        }),
+    );
 }
 
 pub fn mark_shutdown(home: &Path) {
-    append_line(home, &json!({"kind":"shutdown","ts":now_secs(),"pid":std::process::id()}));
+    append_line(
+        home,
+        &json!({"kind":"shutdown","ts":now_secs(),"pid":std::process::id()}),
+    );
 }
 
 /// One sample line: activity slot + running job + OS counters.
@@ -164,7 +181,10 @@ fn sample_line(jobs: &crate::jobq::JobQueue) -> Value {
     let job = jobs
         .list()
         .ok()
-        .and_then(|rows| rows.into_iter().find(|r| r.state == "running" || r.state == "queued"))
+        .and_then(|rows| {
+            rows.into_iter()
+                .find(|r| r.state == "running" || r.state == "queued")
+        })
         .map(|r| r.key)
         .unwrap_or_default();
     let u = read_self_usage();
@@ -182,18 +202,20 @@ fn sample_line(jobs: &crate::jobq::JobQueue) -> Value {
 /// connection, so the sampler keeps writing while a tick holds the engine —
 /// that wedged-mid-rebuild window is exactly when the trail matters.
 pub fn start_sampler(home: PathBuf, jobs: std::sync::Arc<crate::jobq::JobQueue>) {
-    let _ = std::thread::Builder::new().name("dl-why".into()).spawn(move || {
-        let mut n: u32 = 0;
-        loop {
-            std::thread::sleep(Duration::from_secs(SAMPLE_SECS));
-            let line = sample_line(&jobs);
-            let idle = line["phase"] == "idle";
-            n = n.wrapping_add(1);
-            if !idle || n % IDLE_EVERY == 0 {
-                append_line(&home, &line);
+    let _ = std::thread::Builder::new()
+        .name("dl-why".into())
+        .spawn(move || {
+            let mut n: u32 = 0;
+            loop {
+                std::thread::sleep(Duration::from_secs(SAMPLE_SECS));
+                let line = sample_line(&jobs);
+                let idle = line["phase"] == "idle";
+                n = n.wrapping_add(1);
+                if !idle || n % IDLE_EVERY == 0 {
+                    append_line(&home, &line);
+                }
             }
-        }
-    });
+        });
 }
 
 // ---------- reader (`dl daemon why`) ----------
@@ -254,9 +276,16 @@ pub fn report(home: &Path) -> String {
             path.display()
         ));
     };
-    let lines: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
+    let lines: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
     let Some(boot_at) = lines.iter().rposition(|l| l["kind"] == "boot") else {
-        return finish(format!("{}: no boot marker found ({} lines)\n", path.display(), lines.len()));
+        return finish(format!(
+            "{}: no boot marker found ({} lines)\n",
+            path.display(),
+            lines.len()
+        ));
     };
     let run = &lines[boot_at..];
     let pid = run[0]["pid"].as_u64().unwrap_or(0) as u32;
@@ -299,7 +328,11 @@ pub fn report(home: &Path) -> String {
         last["tick"],
         last["phase"].as_str().unwrap_or("?"),
         last["detail"].as_str().unwrap_or(""),
-        if job.is_empty() { String::new() } else { format!(" | job {job}") },
+        if job.is_empty() {
+            String::new()
+        } else {
+            format!(" | job {job}")
+        },
     );
 
     // Deltas over the trailing 60s window of THIS run (counters cumulative).
@@ -339,8 +372,10 @@ pub fn report(home: &Path) -> String {
     }
     phase_secs.sort_by_key(|(_, t)| -*t);
     if !phase_secs.is_empty() {
-        let parts: Vec<String> =
-            phase_secs.iter().map(|(phase, t)| format!("{phase} {t}s")).collect();
+        let parts: Vec<String> = phase_secs
+            .iter()
+            .map(|(phase, t)| format!("{phase} {t}s"))
+            .collect();
         out += &format!("phase time (window): {}\n", parts.join(", "));
     }
     finish(out)
@@ -368,19 +403,23 @@ mod tests {
         let dead_pid = 4_000_000u32; // beyond macOS/Linux pid ranges
         let base = now_secs() - 70;
         for (i, ts) in [(0i64, base), (1, base + 30), (2, base + 60)] {
-            append_line(home, &json!({
-                "kind":"sample","ts":ts,"pid":dead_pid,
-                "tick":3,"phase":"extract","detail":"repo=smashy",
-                "program":"self.dl","job":"tick:/x/smashy","root":"/x/smashy",
-                "cpu_ms": 1000 * (i + 1), "io_read_mb": 50.0 * (i + 1) as f64,
-                "io_write_mb": 200.0 * (i + 1) as f64, "rss_mb": 900.0,
-            }));
+            append_line(
+                home,
+                &json!({
+                    "kind":"sample","ts":ts,"pid":dead_pid,
+                    "tick":3,"phase":"extract","detail":"repo=smashy",
+                    "program":"self.dl","job":"tick:/x/smashy","root":"/x/smashy",
+                    "cpu_ms": 1000 * (i + 1), "io_read_mb": 50.0 * (i + 1) as f64,
+                    "io_write_mb": 200.0 * (i + 1) as f64, "rss_mb": 900.0,
+                }),
+            );
         }
         // Overwrite the boot pid with the dead one so liveness reads false.
         let path = trail_path(home);
-        let fixed = std::fs::read_to_string(&path)
-            .unwrap()
-            .replace(&format!("\"pid\":{}", std::process::id()), &format!("\"pid\":{dead_pid}"));
+        let fixed = std::fs::read_to_string(&path).unwrap().replace(
+            &format!("\"pid\":{}", std::process::id()),
+            &format!("\"pid\":{dead_pid}"),
+        );
         std::fs::write(&path, fixed).unwrap();
 
         let r = report(home);
@@ -404,8 +443,11 @@ mod tests {
         let line = sample_line(&jobs);
         crate::activity::end_tick();
 
-        assert_eq!(line["root"].as_str(), Some("/tmp/myroot"), "root missing:\n{line}");
+        assert_eq!(
+            line["root"].as_str(),
+            Some("/tmp/myroot"),
+            "root missing:\n{line}"
+        );
         assert_eq!(line["phase"].as_str(), Some("idle"));
     }
-
 }

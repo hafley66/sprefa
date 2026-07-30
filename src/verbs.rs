@@ -177,7 +177,11 @@ pub(crate) fn shape(results: Vec<QueryResult>) -> (Vec<String>, Vec<Vec<String>>
 }
 
 /// In-memory paging over a bounded row set.
-pub(crate) fn page(rows: Vec<Vec<String>>, limit: Option<usize>, offset: Option<usize>) -> Vec<Vec<String>> {
+pub(crate) fn page(
+    rows: Vec<Vec<String>>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Vec<Vec<String>> {
     let off = offset.unwrap_or(0);
     let mut out: Vec<Vec<String>> = rows.into_iter().skip(off).collect();
     if let Some(lim) = limit {
@@ -199,10 +203,16 @@ pub(crate) fn resolve_note(eng: &Engine, arg: &str) -> String {
                 let mut families: Vec<&str> = hits.iter().map(|hit| hit.family).collect();
                 families.sort_unstable();
                 families.dedup();
-                format!("resolved: {} candidate(s) across {}", hits.len(), families.join(", "))
+                format!(
+                    "resolved: {} candidate(s) across {}",
+                    hits.len(),
+                    families.join(", ")
+                )
             }
         }
-        _ => format!("resolved: {arg:?} is not a bare symbol name; who-calls / where-defined expect a name"),
+        _ => format!(
+            "resolved: {arg:?} is not a bare symbol name; who-calls / where-defined expect a name"
+        ),
     }
 }
 
@@ -230,7 +240,12 @@ pub fn run_inproc(
     let total = rows.len();
     let rows = page(rows, limit, offset);
     let notes = vec![resolve_note(&eng, arg)];
-    Ok(QueryOut { columns, rows, total, notes })
+    Ok(QueryOut {
+        columns,
+        rows,
+        total,
+        notes,
+    })
 }
 
 #[cfg(test)]

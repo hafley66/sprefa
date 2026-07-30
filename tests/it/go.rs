@@ -29,11 +29,21 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
     let cfg = empty_config(dir);
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--no-daemon", "--db", dir.join("db").to_str().unwrap(), "--query-json"])
+        .args([
+            "--no-daemon",
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--query-json",
+        ])
         .env("SPREFA_CONFIG", cfg)
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -117,32 +127,62 @@ seen(path) <- scan("WORK", "pkg/**/*.go", path, rev), match(path, rev, /./, line
 "#;
     let recs = run_json(&d, prog);
     let entities = recs[0]["rows"].as_array().expect("rows");
-    let kinds: Vec<(&str, &str)> = entities.iter()
-        .map(|r| (r[1].as_str().unwrap(), r[2].as_str().unwrap())).collect();
+    let kinds: Vec<(&str, &str)> = entities
+        .iter()
+        .map(|r| (r[1].as_str().unwrap(), r[2].as_str().unwrap()))
+        .collect();
     assert!(kinds.contains(&("Store", "struct")), "{kinds:?}");
     assert!(kinds.contains(&("Pricing", "interface")), "{kinds:?}");
     assert!(kinds.contains(&("NewStore", "function")), "{kinds:?}");
     assert!(kinds.contains(&("Name", "method")), "{kinds:?}");
     // the Name method's parent joins Store's own entity sym.
-    let store_sym = entities.iter().find(|r| r[1].as_str() == Some("Store")).unwrap()[0].as_str().unwrap().to_string();
-    let name_parent = entities.iter().find(|r| r[1].as_str() == Some("Name")).unwrap()[3].as_str().unwrap();
+    let store_sym = entities
+        .iter()
+        .find(|r| r[1].as_str() == Some("Store"))
+        .unwrap()[0]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let name_parent = entities
+        .iter()
+        .find(|r| r[1].as_str() == Some("Name"))
+        .unwrap()[3]
+        .as_str()
+        .unwrap();
     assert_eq!(name_parent, store_sym);
 
     let edges = recs[1]["rows"].as_array().expect("rows");
-    let field_edges: Vec<(&str, &str, &str)> = edges.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap(), r[2].as_str().unwrap())).collect();
+    let field_edges: Vec<(&str, &str, &str)> = edges
+        .iter()
+        .map(|r| {
+            (
+                r[0].as_str().unwrap(),
+                r[1].as_str().unwrap(),
+                r[2].as_str().unwrap(),
+            )
+        })
+        .collect();
     // Host/Port are builtin-typed (string/int), no ref; Meta is a named type.
-    assert!(field_edges.contains(&("Store", "Metadata", "field")), "{field_edges:?}");
+    assert!(
+        field_edges.contains(&("Store", "Metadata", "field")),
+        "{field_edges:?}"
+    );
 
     let docs = recs[2]["rows"].as_array().expect("rows");
-    assert!(docs.iter().any(|r| r[3].as_str().unwrap().contains("Store holds pricing data.")), "{docs:?}");
+    assert!(
+        docs.iter()
+            .any(|r| r[3].as_str().unwrap().contains("Store holds pricing data.")),
+        "{docs:?}"
+    );
 }
 
 #[test]
 fn call_graph_resolves_go_calls() {
     let d = sandbox("callgraph");
     fs::write(d.join("pkg/store/store.go"), STORE_GO).unwrap();
-    fs::write(d.join("main.go"), "\
+    fs::write(
+        d.join("main.go"),
+        "\
 package main
 
 import \"example.com/app/pkg/store\"
@@ -151,7 +191,9 @@ func main() {
 \ts := store.NewStore(\"local\")
 \t_ = s.Name()
 }
-").unwrap();
+",
+    )
+    .unwrap();
     fs::write(d.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
     let prog = r#"
 rel seen(path: file).
@@ -161,21 +203,35 @@ seen(path) <- scan("WORK", "**/*.go", path, rev), match(path, rev, /./, line).
 "#;
     let recs = run_json(&d, prog);
     let calls = recs[0]["rows"].as_array().expect("rows");
-    let call_pairs: Vec<(&str, &str)> = calls.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap())).collect();
-    assert!(call_pairs.iter().any(|(_, callee)| callee.contains("NewStore")), "{call_pairs:?}");
+    let call_pairs: Vec<(&str, &str)> = calls
+        .iter()
+        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap()))
+        .collect();
+    assert!(
+        call_pairs
+            .iter()
+            .any(|(_, callee)| callee.contains("NewStore")),
+        "{call_pairs:?}"
+    );
 
     let modules = recs[1]["rows"].as_array().expect("rows");
-    let mod_pairs: Vec<(&str, &str)> = modules.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap())).collect();
-    assert!(mod_pairs.contains(&("main.go", "pkg/store/store.go")), "{mod_pairs:?}");
+    let mod_pairs: Vec<(&str, &str)> = modules
+        .iter()
+        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap()))
+        .collect();
+    assert!(
+        mod_pairs.contains(&("main.go", "pkg/store/store.go")),
+        "{mod_pairs:?}"
+    );
 }
 
 #[test]
 fn module_graph_resolves_aliased_go_import() {
     let d = sandbox("modbinding");
     fs::write(d.join("pkg/store/store.go"), STORE_GO).unwrap();
-    fs::write(d.join("main.go"), "\
+    fs::write(
+        d.join("main.go"),
+        "\
 package main
 
 import s \"example.com/app/pkg/store\"
@@ -183,7 +239,9 @@ import s \"example.com/app/pkg/store\"
 func main() {
 \t_ = s.NewStore(\"local\")
 }
-").unwrap();
+",
+    )
+    .unwrap();
     fs::write(d.join("go.mod"), "module example.com/app\n\ngo 1.22\n").unwrap();
     let prog = r#"
 rel seen(path: file).
@@ -192,8 +250,19 @@ seen(path) <- scan("WORK", "**/*.go", path, rev), match(path, rev, /./, line).
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");
-    let bindings: Vec<(&str, &str, &str, &str)> = rows.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap(), r[2].as_str().unwrap(), r[3].as_str().unwrap()))
+    let bindings: Vec<(&str, &str, &str, &str)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r[0].as_str().unwrap(),
+                r[1].as_str().unwrap(),
+                r[2].as_str().unwrap(),
+                r[3].as_str().unwrap(),
+            )
+        })
         .collect();
-    assert!(bindings.contains(&("main.go", "s", "store", "pkg/store/store.go")), "{bindings:?}");
+    assert!(
+        bindings.contains(&("main.go", "s", "store", "pkg/store/store.go")),
+        "{bindings:?}"
+    );
 }

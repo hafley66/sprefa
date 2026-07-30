@@ -24,18 +24,31 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn col_set(eng: &Engine, sql: &str) -> BTreeSet<String> {
-    eng.query_sql(sql, &[]).unwrap().into_iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect()
+    eng.query_sql(sql, &[])
+        .unwrap()
+        .into_iter()
+        .map(|r| r[0].as_str().unwrap().to_string())
+        .collect()
 }
 
 fn count(eng: &Engine, sql: &str) -> i64 {
-    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0].as_i64().unwrap()
+    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0]
+        .as_i64()
+        .unwrap()
 }
 
 /// The rev-pair diff program: the core rules from `.dl/graph-diff.dl`,
@@ -105,17 +118,23 @@ fn init_git(d: &Path) {
 fn rev_pair_diff_reports_exact_added_and_removed() {
     let d = sandbox("addremove");
     // BASE (committed): Alpha, Beta; Beta has a field of type Alpha (a type_link).
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Alpha { pub n: i64 }\n\
-         pub struct Beta { pub a: Alpha }\n").unwrap();
+         pub struct Beta { pub a: Alpha }\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
 
     // WORK: Beta -> Gamma (Beta removed, Gamma added), both linking Alpha.
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Alpha { pub n: i64 }\n\
-         pub struct Gamma { pub a: Alpha }\n").unwrap();
+         pub struct Gamma { pub a: Alpha }\n",
+    )
+    .unwrap();
 
     let prog = parse::parse(lex::lex(DIFF_PROG).unwrap()).unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
@@ -124,31 +143,58 @@ fn rev_pair_diff_reports_exact_added_and_removed() {
     // diff_pair FACT), so the fact lands tick 1, the scans + extraction land
     // tick 2, and the derived diff rels converge after. Tick to a fixpoint,
     // exactly the daemon's steady-state convergence.
-    for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
 
     // The twins spanned both revs (sanity: the data-driven base scan resolved).
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(), 2,
-        "type_entity_rev spans HEAD + WORK");
+    assert_eq!(
+        col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(),
+        2,
+        "type_entity_rev spans HEAD + WORK"
+    );
 
     // Nodes: exactly Gamma added, Beta removed (Alpha unchanged, present both).
     let added = col_set(&eng, "SELECT sym FROM rel_node_added_txt");
     let removed = col_set(&eng, "SELECT sym FROM rel_node_removed_txt");
     assert_eq!(added.len(), 1, "one node added: {added:?}");
     assert_eq!(removed.len(), 1, "one node removed: {removed:?}");
-    assert!(added.iter().next().unwrap().ends_with("::struct::Gamma"),
-        "Gamma is the added node: {added:?}");
-    assert!(removed.iter().next().unwrap().ends_with("::struct::Beta"),
-        "Beta is the removed node: {removed:?}");
+    assert!(
+        added.iter().next().unwrap().ends_with("::struct::Gamma"),
+        "Gamma is the added node: {added:?}"
+    );
+    assert!(
+        removed.iter().next().unwrap().ends_with("::struct::Beta"),
+        "Beta is the removed node: {removed:?}"
+    );
     // Alpha never shows up in either set.
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt WHERE sym LIKE '%Alpha'"), 0);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_node_added_txt WHERE sym LIKE '%Alpha'"
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_node_removed_txt WHERE sym LIKE '%Alpha'"
+        ),
+        0
+    );
 
     // Edges: exactly one field link added (Gamma->Alpha) and one removed
     // (Beta->Alpha).
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1,
-        "one edge added (Gamma -> Alpha)");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1,
-        "one edge removed (Beta -> Alpha)");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"),
+        1,
+        "one edge added (Gamma -> Alpha)"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"),
+        1,
+        "one edge removed (Beta -> Alpha)"
+    );
     assert_eq!(count(&eng,
         "SELECT COUNT(*) FROM rel_edge_added_txt WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"), 1,
         "the added edge is Gamma -> Alpha");
@@ -164,10 +210,13 @@ fn rev_pair_diff_reports_exact_added_and_removed() {
 #[test]
 fn rev_pair_diff_is_empty_when_work_equals_base() {
     let d = sandbox("nochange");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Alpha { pub n: i64 }\n\
          pub struct Beta { pub a: Alpha }\n\
-         pub fn make() -> Beta { Beta { a: Alpha { n: 1 } } }\n").unwrap();
+         pub fn make() -> Beta { Beta { a: Alpha { n: 1 } } }\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
@@ -180,26 +229,49 @@ fn rev_pair_diff_is_empty_when_work_equals_base() {
     // diff_pair FACT), so the fact lands tick 1, the scans + extraction land
     // tick 2, and the derived diff rels converge after. Tick to a fixpoint,
     // exactly the daemon's steady-state convergence.
-    for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
 
     // Both revs populated, with identical sym sets (the diff's premise).
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(), 2,
-        "type_entity_rev spans HEAD + WORK");
+    assert_eq!(
+        col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt").len(),
+        2,
+        "type_entity_rev spans HEAD + WORK"
+    );
     // `WORK` is an ALIAS resolved at the scan seam, so the stored rev is an oid
     // (`<sha>+` here: the sandbox's db files are untracked, so the tree is
     // dirty). Read the head rev the program itself bound rather than a literal.
-    let work = col_set(&eng,
-        "SELECT sym FROM rel_bare_node_txt WHERE repo IN (SELECT rev FROM rel_head_rev_txt)");
+    let work = col_set(
+        &eng,
+        "SELECT sym FROM rel_bare_node_txt WHERE repo IN (SELECT rev FROM rel_head_rev_txt)",
+    );
     assert!(!work.is_empty(), "WORK nodes exist");
     assert_eq!(work, col_set(&eng,
         "SELECT sym FROM rel_bare_node_txt WHERE repo NOT IN (SELECT rev FROM rel_head_rev_txt)"),
         "the two revs carry identical sym sets");
 
     // The diff is empty across the board.
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 0, "no edges added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 0, "no edges removed");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"),
+        0,
+        "no nodes added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"),
+        0,
+        "no nodes removed"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"),
+        0,
+        "no edges added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"),
+        0,
+        "no edges removed"
+    );
 }
 
 // ============================================================================
@@ -313,7 +385,9 @@ fn run_full(d: &Path) -> Engine {
     let prog = parse::parse(lex::lex(FULL_PROG).unwrap()).unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.to_path_buf());
-    for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
     eng
 }
 
@@ -323,24 +397,46 @@ fn run_full(d: &Path) -> Engine {
 #[test]
 fn scenario_s1_call_site_move() {
     let d = sandbox("s1_callmove");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub fn helper() {}\n\
          pub fn run() { helper(); }\n\
-         pub fn other() {}\n").unwrap();
+         pub fn other() {}\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
     // WORK: move the helper() call from run() to other().
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub fn helper() {}\n\
          pub fn run() {}\n\
-         pub fn other() { helper(); }\n").unwrap();
+         pub fn other() { helper(); }\n",
+    )
+    .unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "S1: no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "S1: no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1, "S1: one edge added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1, "S1: one edge removed");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"),
+        0,
+        "S1: no nodes added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"),
+        0,
+        "S1: no nodes removed"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"),
+        1,
+        "S1: one edge added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"),
+        1,
+        "S1: one edge removed"
+    );
     assert_eq!(count(&eng,
         "SELECT COUNT(*) FROM rel_edge_added_txt WHERE a LIKE '%::function::other' AND b LIKE '%::function::helper' AND kind = 'call'"),
         1, "S1: added call edge is other -> helper");
@@ -356,22 +452,44 @@ fn scenario_s1_call_site_move() {
 #[test]
 fn scenario_s2_field_fill_df() {
     let d = sandbox("s2_fieldfill");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Config { pub name: i64 }\n\
-         pub fn make() -> Config { Config { name: 0 } }\n").unwrap();
+         pub fn make() -> Config { Config { name: 0 } }\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
     // WORK: add the `level` field and fill it at the ctor.
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Config { pub name: i64, pub level: i64 }\n\
-         pub fn make() -> Config { Config { name: 0, level: 0 } }\n").unwrap();
+         pub fn make() -> Config { Config { name: 0, level: 0 } }\n",
+    )
+    .unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 0, "S2: no nodes removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 0, "S2: no edges removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 1, "S2: one node added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 1, "S2: one edge added");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"),
+        0,
+        "S2: no nodes removed"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"),
+        0,
+        "S2: no edges removed"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"),
+        1,
+        "S2: one node added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"),
+        1,
+        "S2: one edge added"
+    );
     assert_eq!(count(&eng,
         "SELECT COUNT(*) FROM rel_node_added_txt WHERE sym LIKE '%::struct::Config::field::level' AND kind = 'field'"),
         1, "S2: added node is the Config.level field");
@@ -387,21 +505,39 @@ fn scenario_s2_field_fill_df() {
 #[test]
 fn scenario_s3_delete_fn() {
     let d = sandbox("s3_deletefn");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub fn helper() {}\n\
-         pub fn run() { helper(); }\n").unwrap();
+         pub fn run() { helper(); }\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
     // WORK: delete helper()'s def (the call in run() stays, now unresolved).
-    fs::write(d.join("src/a.rs"),
-        "pub fn run() { helper(); }\n").unwrap();
+    fs::write(d.join("src/a.rs"), "pub fn run() { helper(); }\n").unwrap();
 
     let eng = run_full(&d);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"), 0, "S3: no nodes added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"), 0, "S3: no edges added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"), 1, "S3: one node removed");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"), 1, "S3: one edge removed");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_added_txt"),
+        0,
+        "S3: no nodes added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_added_txt"),
+        0,
+        "S3: no edges added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_node_removed_txt"),
+        1,
+        "S3: one node removed"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_edge_removed_txt"),
+        1,
+        "S3: one edge removed"
+    );
     assert_eq!(count(&eng,
         "SELECT COUNT(*) FROM rel_node_removed_txt WHERE sym LIKE '%::function::helper' AND kind = 'function'"),
         1, "S3: removed node is the helper fn");

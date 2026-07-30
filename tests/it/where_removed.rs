@@ -27,12 +27,16 @@ fn sandbox(tag: &str) -> PathBuf {
 /// path the examples use produces the edges.
 fn write_corpus(dir: &Path) {
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/lib.rs"), "\
+    fs::write(
+        dir.join("src/lib.rs"),
+        "\
 fn a() { b(); d(); }
 fn b() { c(); }
 fn c() {}
 fn d() {}
-").unwrap();
+",
+    )
+    .unwrap();
 }
 
 /// Reaches over a free-function call graph (no qualified names, so node = ident).
@@ -55,16 +59,20 @@ fn run(dir: &Path, prog: &str) -> (bool, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.success(),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Pull the dst column (last cell) of every data row out of a query block.
 fn dsts(out: &str, after: &str) -> Vec<String> {
     let block = out.split(after).nth(1).unwrap_or("");
-    block.lines()
+    block
+        .lines()
         .skip(1) // the header remnant line (the "... => col1\tcol2" tail)
         .take_while(|l| !l.contains("rows)"))
         .map(|l| l.trim().rsplit('\t').next().unwrap().to_string())
@@ -94,7 +102,8 @@ fn closure_body_read_seedable_ok_and_matches_query() {
     assert!(ok, "stderr: {err}");
     let mut body = dsts(&out, "? from_a");
     let mut query = dsts(&out, "? reaches");
-    body.sort(); query.sort();
+    body.sort();
+    query.sort();
     assert_eq!(body, vec!["b", "c", "d"], "body-seeded set: {out}");
     assert_eq!(body, query, "body-read must equal the query seed: {out}");
 }
@@ -103,7 +112,8 @@ fn closure_body_read_seedable_ok_and_matches_query() {
 fn closure_body_read_unpinned_errors() {
     let d = sandbox("unpinned");
     write_corpus(&d);
-    let prog = format!("{GRAPH}\nrel all(a: text, b: text).\nall(a, b) <- reaches(a, b).\n? all(a, b).\n");
+    let prog =
+        format!("{GRAPH}\nrel all(a: text, b: text).\nall(a, b) <- reaches(a, b).\n? all(a, b).\n");
     let (ok, _out, err) = run(&d, &prog);
     assert!(!ok, "an unpinned closure body-read must error");
     assert!(err.contains("unpinned shape"), "stderr: {err}");
@@ -119,8 +129,14 @@ fn regex_filter_via_nested_rule() {
         "{GRAPH}\nrel def(name: text).\ndef(n) <- fndef(n, _, _, _).\nrel just_a(name: text).\njust_a(n) <- def(n), n =~ /^a$/.\n? just_a(name).\n");
     let (ok, out, err) = run(&d, &prog);
     assert!(ok, "stderr: {err}");
-    assert!(out.contains("\na\n") || out.contains("a\n  ("), "expected only 'a': {out}");
-    assert!(!out.contains("\nb\n") && !out.contains("\nc\n"), "must exclude b,c: {out}");
+    assert!(
+        out.contains("\na\n") || out.contains("a\n  ("),
+        "expected only 'a': {out}"
+    );
+    assert!(
+        !out.contains("\nb\n") && !out.contains("\nc\n"),
+        "must exclude b,c: {out}"
+    );
 }
 
 #[test]

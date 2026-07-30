@@ -23,8 +23,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -33,7 +38,9 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
 }
 
 fn q<'a>(recs: &'a [serde_json::Value], name: &str) -> &'a serde_json::Value {
-    recs.iter().find(|r| r["query"] == name).unwrap_or_else(|| panic!("no query {name} in {recs:?}"))
+    recs.iter()
+        .find(|r| r["query"] == name)
+        .unwrap_or_else(|| panic!("no query {name} in {recs:?}"))
 }
 
 #[test]
@@ -52,12 +59,22 @@ kinds(kind) <- node(_id, kind, _f, _lo, _hi, _p).
 "#;
     let recs = run_json(&d, prog);
     let kinds = q(&recs, "kinds");
-    let set: Vec<String> = kinds["rows"].as_array().unwrap().iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect();
+    let set: Vec<String> = kinds["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r[0].as_str().unwrap().to_string())
+        .collect();
     // Rust grammar
-    assert!(set.contains(&"function_item".to_string()), "rust function_item: {set:?}");
+    assert!(
+        set.contains(&"function_item".to_string()),
+        "rust function_item: {set:?}"
+    );
     // Python grammar
-    assert!(set.contains(&"function_definition".to_string()), "python function_definition: {set:?}");
+    assert!(
+        set.contains(&"function_definition".to_string()),
+        "python function_definition: {set:?}"
+    );
 }
 
 #[test]
@@ -94,7 +111,8 @@ anc(a, b) <- closure(child).
     assert_ne!(root_id, fi_id, "root and function_item have distinct ids");
 
     // Now assert the closure reaches fi from root via a seeded ancestor query.
-    let prog2 = format!(r#"
+    let prog2 = format!(
+        r#"
 rel seen(path: text).
 rel anc(a: text, b: text).
 rel reach(b: text).
@@ -102,11 +120,16 @@ seen(path) <- scan("WORK","src/**/*",path,rev), match(path, rev, /./, _l).
 anc(a, b) <- closure(child).
 reach(b) <- anc("{root_id}", b).
 ? reach(b).
-"#);
+"#
+    );
     let recs2 = run_json(&d, &prog2);
     let reach = q(&recs2, "reach");
-    let reached: Vec<String> = reach["rows"].as_array().unwrap().iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect();
+    let reached: Vec<String> = reach["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r[0].as_str().unwrap().to_string())
+        .collect();
     assert!(reached.contains(&fi_id),
         "closure(child) reaches the function_item from the root: {reached:?} should contain {fi_id}");
 }
@@ -131,13 +154,21 @@ cover(kind, hi - lo) <- node(_id, kind, _f, lo, hi, _p), lo <= 18, 18 < hi.
 "#;
     let recs = run_json(&d, prog);
     let cover = q(&recs, "cover");
-    let mut rows: Vec<(String, i64)> = cover["rows"].as_array().unwrap().iter()
-        .map(|r| (r[0].as_str().unwrap().to_string(), r[1].as_i64().unwrap())).collect();
+    let mut rows: Vec<(String, i64)> = cover["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r[0].as_str().unwrap().to_string(), r[1].as_i64().unwrap()))
+        .collect();
     rows.sort_by_key(|(_, s)| *s);
     assert!(!rows.is_empty(), "byte 18 is covered by some node");
     // The tightest (first) node is NOT the whole source_file.
     let (tightest_kind, tightest_span) = &rows[0];
-    let source_span = rows.iter().find(|(k, _)| k == "source_file").map(|(_, s)| *s).unwrap_or(i64::MAX);
+    let source_span = rows
+        .iter()
+        .find(|(k, _)| k == "source_file")
+        .map(|(_, s)| *s)
+        .unwrap_or(i64::MAX);
     assert!(*tightest_span < source_span,
         "innermost node {tightest_kind}({tightest_span}) is tighter than source_file({source_span}): {rows:?}");
 }
@@ -168,7 +199,12 @@ texted(t) <- ident(id), ref(id, sid, _f, _lo, _hi), string(sid, t, _n).
     assert_eq!(loc["rows"][0][1].as_i64().unwrap(), 8, "hi");
 
     let txt = q(&recs, "texted");
-    assert_eq!(txt["count"], 1, "identifier id resolves through string: {txt}");
-    assert_eq!(txt["rows"][0][0], "alpha",
-        "node id -> ref -> string recovers the source bytes `alpha`: {txt}");
+    assert_eq!(
+        txt["count"], 1,
+        "identifier id resolves through string: {txt}"
+    );
+    assert_eq!(
+        txt["rows"][0][0], "alpha",
+        "node id -> ref -> string recovers the source bytes `alpha`: {txt}"
+    );
 }

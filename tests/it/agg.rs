@@ -29,10 +29,13 @@ fn run_root(dir: &Path, prog: &str, root: &Path) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(root)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Parse `? rel => ...` block rows into (col0, col1) pairs.
@@ -42,7 +45,12 @@ fn rows_of(out: &str, rel: &str) -> Vec<(String, String)> {
     // The first line of the block is the header (`col0\tcol1`); skip it.
     for line in block.lines().skip(1) {
         let l = line.trim();
-        if l.is_empty() || l.starts_with('(') || l.starts_with('?') { if l.starts_with('?') { break; } continue; }
+        if l.is_empty() || l.starts_with('(') || l.starts_with('?') {
+            if l.starts_with('?') {
+                break;
+            }
+            continue;
+        }
         let mut it = l.split('\t');
         if let (Some(a), Some(b)) = (it.next(), it.next()) {
             rows.push((a.to_string(), b.to_string()));
@@ -75,7 +83,9 @@ fan_out(f, count(t)) <- type_edge(f, t, _, _).
     assert_eq!(code, 0, "gate run failed:\nstdout={out}\nstderr={err}");
     let rows = rows_of(&out, "fan_out");
     let get = |name: &str| -> i64 {
-        rows.iter().find(|(f, _)| f == name).map(|(_, n)| n.parse().unwrap())
+        rows.iter()
+            .find(|(f, _)| f == name)
+            .map(|(_, n)| n.parse().unwrap())
             .unwrap_or_else(|| panic!("no fan_out row for {name}\nout={out}"))
     };
     // Live values: Tok is the unambiguous top (31 after the `Tok::Pipe` enum-brand
@@ -86,16 +96,35 @@ fan_out(f, count(t)) <- type_edge(f, t, _, _).
     assert_eq!(get("Tok"), 31, "Tok fan-out drifted again: {out}");
     // The recurring high-fan-out aggregates each clear a floor; exact ties among
     // them are not asserted (the 12-tie shifts as src/ changes).
-    assert!(get("BodyItem") >= 12, "BodyItem fan-out dropped below 12: {out}");
-    assert!(get("ProjectCx") >= 11, "ProjectCx fan-out dropped below 11: {out}");
-    assert!(get("Engine") >= 10, "Engine fan-out dropped below 10: {out}");
+    assert!(
+        get("BodyItem") >= 12,
+        "BodyItem fan-out dropped below 12: {out}"
+    );
+    assert!(
+        get("ProjectCx") >= 11,
+        "ProjectCx fan-out dropped below 11: {out}"
+    );
+    assert!(
+        get("Engine") >= 10,
+        "Engine fan-out dropped below 10: {out}"
+    );
     // Tok is strictly the highest fan-out node, by a clear margin over rank 2.
-    let mut sorted: Vec<(i64, String)> = rows.iter()
-        .map(|(f, n)| (n.parse::<i64>().unwrap(), f.clone())).collect();
+    let mut sorted: Vec<(i64, String)> = rows
+        .iter()
+        .map(|(f, n)| (n.parse::<i64>().unwrap(), f.clone()))
+        .collect();
     sorted.sort_by(|a, b| b.0.cmp(&a.0));
-    assert_eq!(sorted[0].1, "Tok", "top fan-out drifted: {:?}", &sorted[..4.min(sorted.len())]);
-    assert!(sorted[0].0 > sorted[1].0,
-        "Tok must be the strict, unique top fan-out: {:?}", &sorted[..4.min(sorted.len())]);
+    assert_eq!(
+        sorted[0].1,
+        "Tok",
+        "top fan-out drifted: {:?}",
+        &sorted[..4.min(sorted.len())]
+    );
+    assert!(
+        sorted[0].0 > sorted[1].0,
+        "Tok must be the strict, unique top fan-out: {:?}",
+        &sorted[..4.min(sorted.len())]
+    );
     // BodyItem, ProjectCx, Engine all sit in the top band below Tok. The window
     // is top-8: the high-fan-out set grew (ServedRoot reached 15 with the
     // read-path snapshot fields, and a three-way tie at 13 — StageError /
@@ -104,8 +133,11 @@ fan_out(f, count(t)) <- type_edge(f, t, _, _).
     let top: std::collections::HashSet<&str> =
         sorted.iter().take(8).map(|(_, f)| f.as_str()).collect();
     for name in ["BodyItem", "ProjectCx", "Engine"] {
-        assert!(top.contains(name), "{name} fell out of the top fan-out band: {:?}",
-            &sorted[..8.min(sorted.len())]);
+        assert!(
+            top.contains(name),
+            "{name} fell out of the top fan-out band: {:?}",
+            &sorted[..8.min(sorted.len())]
+        );
     }
 }
 
@@ -115,7 +147,11 @@ fan_out(f, count(t)) <- type_edge(f, t, _, _).
 fn count_sum_min_max_basics() {
     let d = sandbox("basics");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/x.rs"), "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n").unwrap();
+    fs::write(
+        d.join("src/x.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+    )
+    .unwrap();
     let prog = r#"
 rel fns(p: file, line: int).
 fns(p, line) <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /fn /, line).
@@ -134,10 +170,26 @@ tot(p, sum(line)) <- fns(p, line).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert_eq!(rows_of(&out, "cnt"), vec![("src/x.rs".into(), "3".into())], "count: {out}");
-    assert_eq!(rows_of(&out, "lo"), vec![("src/x.rs".into(), "1".into())], "min: {out}");
-    assert_eq!(rows_of(&out, "hi"), vec![("src/x.rs".into(), "3".into())], "max: {out}");
-    assert_eq!(rows_of(&out, "tot"), vec![("src/x.rs".into(), "6".into())], "sum: {out}");
+    assert_eq!(
+        rows_of(&out, "cnt"),
+        vec![("src/x.rs".into(), "3".into())],
+        "count: {out}"
+    );
+    assert_eq!(
+        rows_of(&out, "lo"),
+        vec![("src/x.rs".into(), "1".into())],
+        "min: {out}"
+    );
+    assert_eq!(
+        rows_of(&out, "hi"),
+        vec![("src/x.rs".into(), "3".into())],
+        "max: {out}"
+    );
+    assert_eq!(
+        rows_of(&out, "tot"),
+        vec![("src/x.rs".into(), "6".into())],
+        "sum: {out}"
+    );
 }
 
 /// An aggregated relation is ordinary: it feeds a downstream derived rule. Only
@@ -146,7 +198,11 @@ tot(p, sum(line)) <- fns(p, line).
 fn agg_result_feeds_another_rule() {
     let d = sandbox("feeds");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/x.rs"), "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n").unwrap();
+    fs::write(
+        d.join("src/x.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+    )
+    .unwrap();
     fs::write(d.join("src/y.rs"), "fn solo() {}\n").unwrap();
     let prog = r#"
 rel fns(p: file, line: int).
@@ -160,7 +216,10 @@ many(p) <- cnt(p, c), c > 2.
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("src/x.rs"), "x.rs (3 fns) should pass: {out}");
-    assert!(!out.contains("src/y.rs"), "y.rs (1 fn) should be filtered out: {out}");
+    assert!(
+        !out.contains("src/y.rs"),
+        "y.rs (1 fn) should be filtered out: {out}"
+    );
 }
 
 /// (3) An aggregation through its own SCC (`r` aggregates over a body that reads
@@ -179,7 +238,10 @@ r(a, count(b)) <- edge(a, b), r(b, _).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "agg through own SCC must fail");
-    assert!(err.contains("not-stratified"), "expected not-stratified: {err}");
+    assert!(
+        err.contains("not-stratified"),
+        "expected not-stratified: {err}"
+    );
 }
 
 /// (4) An agg combined with negation in a recursive cycle is `not-stratified`.
@@ -199,7 +261,10 @@ b(x) <- a(x, _).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "agg+negation cycle must fail");
-    assert!(err.contains("not-stratified"), "expected not-stratified: {err}");
+    assert!(
+        err.contains("not-stratified"),
+        "expected not-stratified: {err}"
+    );
 }
 
 /// (4b) A `@next` carry edge crosses a tick boundary, so it must NOT count toward
@@ -224,7 +289,10 @@ etag(ep, tag) <- @next etag_next(ep, tag).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_eq!(code, 0, "the @next cache loop must be stratified: {err}");
-    assert!(!err.contains("not-stratified"), "must not false-flag: {err}");
+    assert!(
+        !err.contains("not-stratified"),
+        "must not false-flag: {err}"
+    );
 }
 
 /// (4c) Dropping the `@next` edge does NOT hide a genuine within-tick negation
@@ -244,7 +312,10 @@ e(x) <- d(x), !e(x).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "a real within-tick neg cycle must still fail");
-    assert!(err.contains("not-stratified"), "expected not-stratified: {err}");
+    assert!(
+        err.contains("not-stratified"),
+        "expected not-stratified: {err}"
+    );
 }
 
 /// (5) BONUS FIX: a string literal in an int column is a `brand-mismatch` at
@@ -261,10 +332,18 @@ n(p, "oops") <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /fn /, line).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "string in int column must fail");
-    assert!(err.contains("brand-mismatch"), "expected brand-mismatch: {err}");
-    assert!(err.contains("int column"), "diag should name the int column: {err}");
-    assert!(!err.to_lowercase().contains("datatype mismatch"),
-        "must not reach the SQLite datatype error: {err}");
+    assert!(
+        err.contains("brand-mismatch"),
+        "expected brand-mismatch: {err}"
+    );
+    assert!(
+        err.contains("int column"),
+        "diag should name the int column: {err}"
+    );
+    assert!(
+        !err.to_lowercase().contains("datatype mismatch"),
+        "must not reach the SQLite datatype error: {err}"
+    );
 }
 
 /// An int literal in a path column is also a `brand-mismatch` (the symmetric hole).
@@ -280,7 +359,10 @@ m(5, line) <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /fn /, line).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "int in path column must fail");
-    assert!(err.contains("brand-mismatch"), "expected brand-mismatch: {err}");
+    assert!(
+        err.contains("brand-mismatch"),
+        "expected brand-mismatch: {err}"
+    );
 }
 
 /// An aggregate call in body position is a parse error (head-only).
@@ -295,5 +377,8 @@ r(a) <- e(a, b), count(b).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "agg in body must fail to parse");
-    assert!(err.contains("only allowed in a rule head"), "expected head-only parse error: {err}");
+    assert!(
+        err.contains("only allowed in a rule head"),
+        "expected head-only parse error: {err}"
+    );
 }

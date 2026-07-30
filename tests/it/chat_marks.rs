@@ -20,9 +20,15 @@ fn fixture(tag: &str) -> (PathBuf, PathBuf) {
         let _ = fs::remove_dir_all(&d);
         fs::create_dir_all(&d).unwrap();
         d
-    }).unwrap();
-    assert!(Command::new("git").arg("-C").arg(&root).args(["init", "-q"])
-        .status().unwrap().success());
+    })
+    .unwrap();
+    assert!(Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .args(["init", "-q"])
+        .status()
+        .unwrap()
+        .success());
     let db = root.join("db");
     (root, db)
 }
@@ -31,15 +37,24 @@ fn fixture(tag: &str) -> (PathBuf, PathBuf) {
 /// `db` across calls, so a sequence of `feed`s builds the session.
 fn feed(root: &Path, db: &Path, event: &str) {
     let mut child = Command::new(DL)
-        .arg("--hook").arg(PROG)
+        .arg("--hook")
+        .arg(PROG)
         .args(["--db", db.to_str().unwrap(), "--no-daemon"])
         // Test-harness escape: this fixture's db starts blank, which the
         // deadlined hook path deliberately cold-skips.
         .env("DL_HOOK_DEADLINE_MS", "0")
         .current_dir(root)
-        .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().unwrap();
-    child.stdin.take().unwrap().write_all(event.as_bytes()).unwrap();
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(event.as_bytes())
+        .unwrap();
     assert!(child.wait_with_output().unwrap().status.success());
 }
 
@@ -51,7 +66,8 @@ fn sections(root: &Path, db: &Path) -> String {
         .arg(PROG)
         .args(["--db", db.to_str().unwrap(), "--no-daemon"])
         .current_dir(root)
-        .output().unwrap();
+        .output()
+        .unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
@@ -64,13 +80,15 @@ fn hook_events(root: &Path, db: &Path) -> String {
         .arg(&qf)
         .args(["--db", db.to_str().unwrap(), "--no-daemon"])
         .current_dir(root)
-        .output().unwrap();
+        .output()
+        .unwrap();
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 fn prompt_event(session: &str, prompt: &str) -> String {
     format!(
-        r#"{{"hook_event_name":"UserPromptSubmit","session_id":"{session}","prompt":"{prompt}"}}"#)
+        r#"{{"hook_event_name":"UserPromptSubmit","session_id":"{session}","prompt":"{prompt}"}}"#
+    )
 }
 
 #[test]
@@ -81,12 +99,17 @@ fn hook_event_accumulates_and_section_assigns_to_mark() {
 
     // Two events landed in the accumulating built-in rel.
     let he = hook_events(&root, &db);
-    assert!(he.contains("(2 rows)"), "hook_event should hold 2 rows:\n{he}");
+    assert!(
+        he.contains("(2 rows)"),
+        "hook_event should hold 2 rows:\n{he}"
+    );
 
     // The plain message is assigned to the mark's title.
     let so = sections(&root, &db);
-    assert!(so.contains("Design pass\tlets discuss the layout"),
-        "second message should sit under the mark's title:\n{so}");
+    assert!(
+        so.contains("Design pass\tlets discuss the layout"),
+        "second message should sit under the mark's title:\n{so}"
+    );
 }
 
 #[test]
@@ -99,9 +122,18 @@ fn second_mark_flips_the_argmax() {
 
     let so = sections(&root, &db);
     // Earlier message stays with the earlier mark; later message follows the flip.
-    assert!(so.contains("First\tunder first"), "message 2 under First:\n{so}");
-    assert!(so.contains("Second\tunder second"), "message 4 under Second (flip):\n{so}");
-    assert!(!so.contains("First\tunder second"), "the flip must reassign message 4:\n{so}");
+    assert!(
+        so.contains("First\tunder first"),
+        "message 2 under First:\n{so}"
+    );
+    assert!(
+        so.contains("Second\tunder second"),
+        "message 4 under Second (flip):\n{so}"
+    );
+    assert!(
+        !so.contains("First\tunder second"),
+        "the flip must reassign message 4:\n{so}"
+    );
 }
 
 #[test]
@@ -110,16 +142,28 @@ fn non_prompt_event_lands_but_is_ignored_by_sections() {
     feed(&root, &db, &prompt_event("s1", "@@mark Only mark"));
     feed(&root, &db, &prompt_event("s1", "a real message"));
     // A different event kind: it must still land in the generic hook_event rel.
-    feed(&root, &db,
-        r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"Read"}"#);
+    feed(
+        &root,
+        &db,
+        r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"Read"}"#,
+    );
 
     let he = hook_events(&root, &db);
-    assert!(he.contains("(3 rows)"), "every event kind lands in hook_event:\n{he}");
+    assert!(
+        he.contains("(3 rows)"),
+        "every event kind lands in hook_event:\n{he}"
+    );
     assert!(he.contains("PostToolUse"), "PostToolUse row present:\n{he}");
 
     // section_of only reads UserPromptSubmit rows, so the PostToolUse event
     // produces no section and no title carries a tool name.
     let so = sections(&root, &db);
-    assert!(so.contains("(2 rows)"), "only the two prompts section:\n{so}");
-    assert!(!so.contains("PostToolUse"), "PostToolUse must not reach section_of:\n{so}");
+    assert!(
+        so.contains("(2 rows)"),
+        "only the two prompts section:\n{so}"
+    );
+    assert!(
+        !so.contains("PostToolUse"),
+        "PostToolUse must not reach section_of:\n{so}"
+    );
 }

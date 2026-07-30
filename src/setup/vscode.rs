@@ -23,64 +23,67 @@ pub(super) fn install_vscode_extension() -> Result<i32> {
         println!("[dl setup] VSCode installation skipped (SPREFA_SETUP_NO_VSCODE).");
         return Ok(0);
     }
-        let mut journal = SetupJournal::load()?;
-        // Prefer a fresh build from the checked-out source; fall back to embedded.
-        let (vsix, from_source) = match build_vscode_vsix(&mut journal) {
-            Some(built) => (built, true),
-            None => {
-                let embedded = std::env::temp_dir().join(format!(
-                    "{}-{}.vsix", VSCODE_VSIX_NAME.trim_end_matches(".vsix"), std::process::id()
-                ));
-                journal.stage_file(&embedded, VSCODE_VSIX)
-                    .with_context(|| format!("write {}", embedded.display()))?;
-                (embedded, false)
-            }
-        };
-        // The same-version trap: `code --install-extension --force` silently no-ops
-        // on a same-version reinstall while VSCode is running (a fresh build carries
-        // the same version). Uninstall first so the new bits always land.
-        let _ = std::process::Command::new("code")
-            .args(["--uninstall-extension", "sprefa.dl-lsp"])
-            .status();
-        let status = std::process::Command::new("code")
-            .arg("--install-extension")
-            .arg(&vsix)
-            .arg("--force")
-            .status();
-        match status {
-            Ok(s) if s.success() => {
-                let how = if from_source {
-                    "freshly built from editors/vscode-dl"
-                } else {
-                    "embedded"
-                };
-                println!("[dl setup] installed the dl LSP VSCode extension ({how}).");
-                println!("[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles.");
-                journal.finish_staged(&vsix)?;
-                journal.save()?;
-                Ok(0)
-            }
-            Ok(s) => {
-                eprintln!(
-                    "[dl setup] `code --install-extension` exited {s}; VSIX left at {}",
-                    vsix.display()
-                ); // @eprintln-ok: human-facing report of external command failure
-                journal.save()?;
-                Ok(1)
-            }
-            Err(_) => {
-                println!(
-                    "[dl setup] VSCode `code` CLI not found on PATH. The extension VSIX is at:"
-                );
-                println!("             {}", vsix.display());
-                println!(
-                    "[dl setup] install it by hand: `code --install-extension {}`",
-                    vsix.display()
-                );
-                println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
-                journal.save()?;
-                Ok(0)
-            }
+    let mut journal = SetupJournal::load()?;
+    // Prefer a fresh build from the checked-out source; fall back to embedded.
+    let (vsix, from_source) = match build_vscode_vsix(&mut journal) {
+        Some(built) => (built, true),
+        None => {
+            let embedded = std::env::temp_dir().join(format!(
+                "{}-{}.vsix",
+                VSCODE_VSIX_NAME.trim_end_matches(".vsix"),
+                std::process::id()
+            ));
+            journal
+                .stage_file(&embedded, VSCODE_VSIX)
+                .with_context(|| format!("write {}", embedded.display()))?;
+            (embedded, false)
+        }
+    };
+    // The same-version trap: `code --install-extension --force` silently no-ops
+    // on a same-version reinstall while VSCode is running (a fresh build carries
+    // the same version). Uninstall first so the new bits always land.
+    let _ = std::process::Command::new("code")
+        .args(["--uninstall-extension", "sprefa.dl-lsp"])
+        .status();
+    let status = std::process::Command::new("code")
+        .arg("--install-extension")
+        .arg(&vsix)
+        .arg("--force")
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            let how = if from_source {
+                "freshly built from editors/vscode-dl"
+            } else {
+                "embedded"
+            };
+            println!("[dl setup] installed the dl LSP VSCode extension ({how}).");
+            println!(
+                "[dl setup] reload VSCode; open any file your .dl rules scan for live squiggles."
+            );
+            journal.finish_staged(&vsix)?;
+            journal.save()?;
+            Ok(0)
+        }
+        Ok(s) => {
+            eprintln!(
+                "[dl setup] `code --install-extension` exited {s}; VSIX left at {}",
+                vsix.display()
+            ); // @eprintln-ok: human-facing report of external command failure
+            journal.save()?;
+            Ok(1)
+        }
+        Err(_) => {
+            println!("[dl setup] VSCode `code` CLI not found on PATH. The extension VSIX is at:");
+            println!("             {}", vsix.display());
+            println!(
+                "[dl setup] install it by hand: `code --install-extension {}`",
+                vsix.display()
+            );
+            println!("[dl setup] (in VSCode, enable the `code` command via Shell Command: Install 'code' in PATH).");
+            journal.save()?;
+            Ok(0)
+        }
     }
 }
 
@@ -102,7 +105,10 @@ fn build_vscode_vsix(journal: &mut SetupJournal) -> Option<PathBuf> {
             .map(|st| st.success())
             .unwrap_or(false)
     };
-    tracing::debug!("[dl setup] building the extension from {} ...", src.display());
+    tracing::debug!(
+        "[dl setup] building the extension from {} ...",
+        src.display()
+    );
     if !src.join("node_modules").exists() && !run(&["npm", "ci"]) && !run(&["npm", "install"]) {
         tracing::warn!("[dl setup] npm install failed; using the embedded VSIX instead");
         return None;
@@ -120,7 +126,9 @@ fn build_vscode_vsix(journal: &mut SetupJournal) -> Option<PathBuf> {
         .map(|st| st.success())
         .unwrap_or(false);
     if packaged && out.exists() {
-        if journal.record_staged(&out).is_err() { return None; }
+        if journal.record_staged(&out).is_err() {
+            return None;
+        }
         Some(out)
     } else {
         tracing::warn!("[dl setup] `vsce package` failed; using the embedded VSIX instead");

@@ -54,51 +54,83 @@ fn scip_want_loads_wanted_repo_indexes_per_repo() {
     let dep = d.join("dep-repo");
     fs::create_dir_all(&dep).unwrap();
     // self index: app/lib.go DEFINES it, app/main.go REFERENCES it (self-contained).
-    write_index(&d.join("index.scip"), vec![
-        document("app/lib.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
-        document("app/main.go", vec![occurrence(SYM, 0)]),
-    ]);
+    write_index(
+        &d.join("index.scip"),
+        vec![
+            document(
+                "app/lib.go",
+                vec![occurrence(SYM, SymbolRole::Definition as i32)],
+            ),
+            document("app/main.go", vec![occurrence(SYM, 0)]),
+        ],
+    );
     // dep index: lib/lib.go DEFINES it, lib/main.go REFERENCES it (self-contained).
-    write_index(&dep.join("index.scip"), vec![
-        document("lib/lib.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
-        document("lib/main.go", vec![occurrence(SYM, 0)]),
-    ]);
+    write_index(
+        &dep.join("index.scip"),
+        vec![
+            document(
+                "lib/lib.go",
+                vec![occurrence(SYM, SymbolRole::Definition as i32)],
+            ),
+            document("lib/main.go", vec![occurrence(SYM, 0)]),
+        ],
+    );
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "scip_want(\"dep\").\n\
          rel r(file: text, symbol: text, def_file: text, repo: text).\n\
-         r(F, S, D, R) <- scip_ref(F, S, D, R).\n").unwrap();
+         r(F, S, D, R) <- scip_ref(F, S, D, R).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.set_repos(vec![RepoConfig {
-        slug: "dep".into(), root: dep.clone(), url: None, allow_missing: false,
+        slug: "dep".into(),
+        root: dep.clone(),
+        url: None,
+        allow_missing: false,
     }]);
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "scip_want program should typecheck: {diags:?}");
 
     // Tick 1: want is empty at refresh time — only the self index loads. Its ref
     // resolves WITHIN itself (app/main.go -> app/lib.go); no dep-tagged rows yet.
     eng.tick(&prog, true).unwrap();
     let rows = eng.rel_rows("r", 4);
-    assert!(rows.iter().any(|r| r[0] == "app/main.go" && r[2] == "app/lib.go"),
-        "tick 1 self ref resolves within the self index: {rows:?}");
-    assert!(!rows.iter().any(|r| r[3] == "dep"),
-        "tick 1 must not load the dep index yet: {rows:?}");
+    assert!(
+        rows.iter()
+            .any(|r| r[0] == "app/main.go" && r[2] == "app/lib.go"),
+        "tick 1 self ref resolves within the self index: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r[3] == "dep"),
+        "tick 1 must not load the dep index yet: {rows:?}"
+    );
 
     // Tick 2: the want row demands dep; its index loads as a SEPARATE input,
     // tagged repo="dep", resolving its own ref within itself — NOT merged.
     eng.tick(&prog, true).unwrap();
     let rows = eng.rel_rows("r", 4);
-    let dep_row = rows.iter().find(|r| r[3] == "dep")
+    let dep_row = rows
+        .iter()
+        .find(|r| r[3] == "dep")
         .unwrap_or_else(|| panic!("no dep-tagged ref row on tick 2: {rows:?}"));
     assert_eq!(dep_row[0], "lib/main.go");
     assert_eq!(dep_row[1], SYM);
-    assert_eq!(dep_row[2], "lib/lib.go",
-        "dep ref resolves within the dep index, not across repos: {rows:?}");
+    assert_eq!(
+        dep_row[2], "lib/lib.go",
+        "dep ref resolves within the dep index, not across repos: {rows:?}"
+    );
     // both repos' rows coexist with distinct repo tags (no cross-root collapse).
-    assert!(rows.iter().any(|r| r[0] == "app/main.go" && r[3] != "dep"),
-        "self ref row still present, distinct repo tag: {rows:?}");
+    assert!(
+        rows.iter().any(|r| r[0] == "app/main.go" && r[3] != "dep"),
+        "self ref row still present, distinct repo tag: {rows:?}"
+    );
 }
 
 /// Tick accounting for the scip_want demand chain when the consumer is the CALL
@@ -124,17 +156,36 @@ fn scip_want_call_resolution_lands_on_tick_two() {
     // self root: one trivial file so the program has something to scan.
     fs::write(d.join("main.go"), "package main\n\nfunc main() {}\n").unwrap();
     // dep repo: two same-package Answer defs (a syntactic tie) + a caller.
-    fs::write(dep.join("a.go"), "package lib\n\nfunc Answer() int { return 1 }\n").unwrap();
-    fs::write(dep.join("b.go"), "package lib\n\nfunc Answer() int { return 2 }\n").unwrap();
-    fs::write(dep.join("caller.go"), "package lib\n\nfunc caller() {\n\tAnswer()\n}\n").unwrap();
+    fs::write(
+        dep.join("a.go"),
+        "package lib\n\nfunc Answer() int { return 1 }\n",
+    )
+    .unwrap();
+    fs::write(
+        dep.join("b.go"),
+        "package lib\n\nfunc Answer() int { return 2 }\n",
+    )
+    .unwrap();
+    fs::write(
+        dep.join("caller.go"),
+        "package lib\n\nfunc caller() {\n\tAnswer()\n}\n",
+    )
+    .unwrap();
     // dep index: a.go DEFINES Answer, caller.go REFERENCES it -> the name-level
     // map resolves (dep, caller.go, "Answer") -> a.go, disambiguating the tie.
-    write_index(&dep.join("index.scip"), vec![
-        document("a.go", vec![occurrence(ANSWER, SymbolRole::Definition as i32)]),
-        document("caller.go", vec![occurrence(ANSWER, 0)]),
-    ]);
+    write_index(
+        &dep.join("index.scip"),
+        vec![
+            document(
+                "a.go",
+                vec![occurrence(ANSWER, SymbolRole::Definition as i32)],
+            ),
+            document("caller.go", vec![occurrence(ANSWER, 0)]),
+        ],
+    );
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "scip_want(\"dep\").\n\
          rel seen(path: file).\n\
          seen(path) <- scan(\"WORK\", \"**/*.go\", path, rev).\n\
@@ -142,14 +193,22 @@ fn scip_want_call_resolution_lands_on_tick_two() {
          rel edge(caller: text, callee: text).\n\
          edge(caller, callee) <- call_edge(caller, callee, kind).\n\
          rel site(callee_name: text, path: file).\n\
-         site(callee_name, path) <- call_site(repo, caller, callee_name, path, line).\n").unwrap();
+         site(callee_name, path) <- call_site(repo, caller, callee_name, path, line).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.set_repos(vec![RepoConfig {
-        slug: "dep".into(), root: dep.clone(), url: None, allow_missing: false,
+        slug: "dep".into(),
+        root: dep.clone(),
+        url: None,
+        allow_missing: false,
     }]);
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "program should typecheck: {diags:?}");
 
     // Tick 1: scip_want is empty at pre-extract time -> the dep index does not
@@ -158,11 +217,17 @@ fn scip_want_call_resolution_lands_on_tick_two() {
     // IS scanned), not the dep files simply being absent from the corpus.
     eng.tick(&prog, true).unwrap();
     let sites1 = eng.rel_rows("site", 2);
-    assert!(sites1.iter().any(|r| r[0] == "Answer" && r[1].contains("caller.go")),
-        "tick 1: dep must be scanned (the Answer call site exists): {sites1:?}");
+    assert!(
+        sites1
+            .iter()
+            .any(|r| r[0] == "Answer" && r[1].contains("caller.go")),
+        "tick 1: dep must be scanned (the Answer call site exists): {sites1:?}"
+    );
     let edges1 = eng.rel_rows("edge", 2);
-    assert!(!edges1.iter().any(|r| r[1].contains("Answer")),
-        "tick 1: no dep index yet, the two-def Answer call must be bare: {edges1:?}");
+    assert!(
+        !edges1.iter().any(|r| r[1].contains("Answer")),
+        "tick 1: no dep index yet, the two-def Answer call must be bare: {edges1:?}"
+    );
 
     // Tick 2: the want row (derived on tick 1) demands dep; its index loads
     // pre-extract and the CALL family consumes it the SAME tick, resolving the
@@ -181,18 +246,29 @@ fn scip_want_skips_unindexable_repo() {
     let d = sandbox("skip");
     let dep = d.join("bare-repo");
     fs::create_dir_all(&dep).unwrap(); // no markers, no index
-    write_index(&d.join("index.scip"),
-        vec![document("app/main.go", vec![occurrence(SYM, SymbolRole::Definition as i32)])]);
+    write_index(
+        &d.join("index.scip"),
+        vec![document(
+            "app/main.go",
+            vec![occurrence(SYM, SymbolRole::Definition as i32)],
+        )],
+    );
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "scip_want(\"bare\").\n\
          scip_want(\"no-such-slug\").\n\
          rel r(symbol: text, file: text).\n\
-         r(S, F) <- scip_def(S, F, _).\n").unwrap();
+         r(S, F) <- scip_def(S, F, _).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.set_repos(vec![RepoConfig {
-        slug: "bare".into(), root: dep.clone(), url: None, allow_missing: false,
+        slug: "bare".into(),
+        root: dep.clone(),
+        url: None,
+        allow_missing: false,
     }]);
     let (prog, _, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     eng.tick(&prog, true).unwrap();

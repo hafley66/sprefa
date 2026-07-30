@@ -44,9 +44,13 @@ pub fn multi_source_walk(
     depth_cap: Option<i64>,
 ) -> Vec<(u32, u32, i64)> {
     let n = adj.len();
-    if let Some(h) = halt { debug_assert_eq!(h.len(), n, "halt mask must cover every node"); }
+    if let Some(h) = halt {
+        debug_assert_eq!(h.len(), n, "halt mask must cover every node");
+    }
     let mut out: Vec<(u32, u32, i64)> = Vec::new();
-    if starts.is_empty() { return out; }
+    if starts.is_empty() {
+        return out;
+    }
 
     // Sort so each tag's block is contiguous and, within a tag, a node's first
     // occurrence carries its minimum start depth.
@@ -73,8 +77,16 @@ pub fn multi_source_walk(
             i += 1;
         }
         while let Some((mid, d)) = queue.pop_front() {
-            if let Some(h) = halt { if h[mid as usize] { continue; } }
-            if let Some(cap) = depth_cap { if d >= cap { continue; } }
+            if let Some(h) = halt {
+                if h[mid as usize] {
+                    continue;
+                }
+            }
+            if let Some(cap) = depth_cap {
+                if d >= cap {
+                    continue;
+                }
+            }
             for &node in &adj[mid as usize] {
                 if seen[node as usize] != gen {
                     seen[node as usize] = gen;
@@ -110,7 +122,9 @@ pub fn multi_source_halt_bfs(
     // depth 0, no cap, drop the returned depth.
     let starts3: Vec<(u32, u32, i64)> = starts.iter().map(|&(tag, node)| (tag, node, 0)).collect();
     multi_source_walk(adj, &starts3, Some(halt), None)
-        .into_iter().map(|(tag, node, _)| (tag, node)).collect()
+        .into_iter()
+        .map(|(tag, node, _)| (tag, node))
+        .collect()
 }
 
 #[cfg(test)]
@@ -216,7 +230,11 @@ mod tests {
     fn walk_depth_cap_records_at_cap_but_stops() {
         let adj = adj_of(4, &[(0, 1), (1, 2), (2, 3)]);
         let got = multi_source_walk(&adj, &[(0, 0, 0)], None, Some(2));
-        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)], "node 3 is past the cap");
+        assert_eq!(
+            got,
+            vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)],
+            "node 3 is past the cap"
+        );
     }
 
     // Two paths to the same node — a short (2 hops) and a long (3 hops): the
@@ -227,8 +245,14 @@ mod tests {
         let adj = adj_of(5, &[(0, 1), (1, 4), (0, 2), (2, 3), (3, 4)]);
         let got = multi_source_walk(&adj, &[(0, 0, 0)], None, None);
         // node 4 reached at min depth 2, not 3.
-        assert!(got.contains(&(0, 4, 2)), "min-depth 2 expected, got {got:?}");
-        assert!(!got.contains(&(0, 4, 3)), "the longer depth-3 path must not win");
+        assert!(
+            got.contains(&(0, 4, 2)),
+            "min-depth 2 expected, got {got:?}"
+        );
+        assert!(
+            !got.contains(&(0, 4, 3)),
+            "the longer depth-3 path must not win"
+        );
     }
 
     // Cycle with a cap: terminates via the visited set, records min depth.
@@ -246,6 +270,10 @@ mod tests {
         let mut halt = vec![false; 4];
         halt[2] = true;
         let got = multi_source_walk(&adj, &[(0, 0, 0)], Some(&halt), None);
-        assert_eq!(got, vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)], "3 is behind the halt at 2");
+        assert_eq!(
+            got,
+            vec![(0, 0, 0), (0, 1, 1), (0, 2, 2)],
+            "3 is behind the halt at 2"
+        );
     }
 }

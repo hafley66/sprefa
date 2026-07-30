@@ -98,7 +98,9 @@ impl ServedRoot {
     /// for the key-less config view. `tick:{id}` / `sink:{id}` job keys are
     /// built from this, and `Daemon::served_root_for_job` reverses it.
     pub(crate) fn job_root_id(&self) -> String {
-        self.key.clone().unwrap_or_else(|| CONFIG_JOB_ID.to_string())
+        self.key
+            .clone()
+            .unwrap_or_else(|| CONFIG_JOB_ID.to_string())
     }
 
     pub(crate) fn root_label(&self) -> String {
@@ -125,22 +127,31 @@ impl ServedRoot {
         // Cold-start staging: a blank-slate seed or a resume re-enqueue defers the
         // extract fan-out onto the queue. Record the warming flag (status +
         // poll_idle read it) and enqueue the staged `ColdExtract` jobs.
-        self.cold_pending.store(report.cold_pending, Ordering::Relaxed);
+        self.cold_pending
+            .store(report.cold_pending, Ordering::Relaxed);
         if !report.cold_staged.is_empty() {
             let job_root_id = self.job_root_id();
             for (family, shard, priority) in &report.cold_staged {
-                let job = crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
+                let job =
+                    crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
                 if let Err(e) = self.enqueue_job(job) {
-                    tracing::warn!("[{}] cold-start enqueue {family}/{shard}: {e}", self.root_label());
+                    tracing::warn!(
+                        "[{}] cold-start enqueue {family}/{shard}: {e}",
+                        self.root_label()
+                    );
                 }
             }
             // The other end of `cold_extract_node` above: the full node list
             // this tick just fanned out onto the queue, collected once (not
             // emitted per enqueue call).
-            let staged_json: Vec<Value> = report.cold_staged.iter()
-                .map(|(family, shard, priority)| json!({
-                    "family": family, "shard": shard, "priority": priority,
-                }))
+            let staged_json: Vec<Value> = report
+                .cold_staged
+                .iter()
+                .map(|(family, shard, priority)| {
+                    json!({
+                        "family": family, "shard": shard, "priority": priority,
+                    })
+                })
                 .collect();
             crate::eventlog::emit(
                 "cold_staged_enqueued",
@@ -255,8 +266,11 @@ impl ServedRoot {
         let files: Vec<PathBuf> = all.iter().filter(|f| f.exists()).cloned().collect();
         if files.is_empty() {
             if !all.is_empty() {
-                tracing::warn!("[{}] all {} watched program file(s) missing; keeping last-good program",
-                    self.root_label(), all.len());
+                tracing::warn!(
+                    "[{}] all {} watched program file(s) missing; keeping last-good program",
+                    self.root_label(),
+                    all.len()
+                );
             }
             return Ok(());
         }
@@ -306,7 +320,10 @@ impl ServedRoot {
             .count();
         if n_err > 0 {
             crate::render_type_diags_eprintln(&type_diags);
-            tracing::warn!("[{}] discovery reload: {n_err} type error(s); keeping old", self.root_label());
+            tracing::warn!(
+                "[{}] discovery reload: {n_err} type error(s); keeping old",
+                self.root_label()
+            );
             return Ok(false);
         }
         crate::render_type_diags_eprintln(&type_diags);
@@ -387,9 +404,13 @@ impl ServedRoot {
         // two cheap probes below — skipping it would freeze `settled` at
         // `false` forever the moment the queue empties, which is exactly the
         // state `dl daemon await-settle` blocks on.
-        if !self.settled.load(Ordering::Relaxed) { return Ok(false); }
+        if !self.settled.load(Ordering::Relaxed) {
+            return Ok(false);
+        }
         let pending = lock(&self.eng).pending_effect_count()?;
-        if pending > 0 { return Ok(false); }
+        if pending > 0 {
+            return Ok(false);
+        }
         let dirty = self.tick_count.load(Ordering::Relaxed)
             != self.last_full_tick_count.load(Ordering::Relaxed);
         Ok(!dirty)
@@ -434,14 +455,19 @@ impl ServedRoot {
     /// boundary catches up (monotone ints compared by `!=`, never `+1`).
     fn restamp_cadence(&self, periods: &[i64]) {
         let now = crate::engine::now_secs();
-        *lock(&self.cadence_stamps) = periods.iter().map(|&period| (period, now / period)).collect();
+        *lock(&self.cadence_stamps) = periods
+            .iter()
+            .map(|&period| (period, now / period))
+            .collect();
     }
 
     /// One poll cycle (the clock source for `@async`): advance the tick, then
     /// drain outstanding effects + external sinks. Returns the number drained.
     /// Skips entirely (see `poll_idle`) when there is nothing to integrate.
     pub(crate) fn poll_tick(&self) -> Result<usize> {
-        if self.poll_idle()? { return Ok(0); }
+        if self.poll_idle()? {
+            return Ok(0);
+        }
         self.tick_full(true)?;
         let sinks_drained = {
             let prog = lock(&self.prog);
@@ -456,7 +482,9 @@ impl ServedRoot {
             let prog = lock(&self.prog);
             crate::engine::async_effect_arity(&prog)
         };
-        if arity.is_empty() { return Ok(sinks_drained); }
+        if arity.is_empty() {
+            return Ok(sinks_drained);
+        }
         let (templates, cwd) = {
             let mut m = {
                 let prog = lock(&self.prog);
@@ -464,17 +492,25 @@ impl ServedRoot {
             };
             let eng = lock(&self.eng);
             let effect_cmd_txt = crate::lower::txt_tbl("effect_cmd");
-            if let Ok(rows) = eng.query_sql(&format!("SELECT kind, template FROM {effect_cmd_txt}"), &[]) {
+            if let Ok(rows) =
+                eng.query_sql(&format!("SELECT kind, template FROM {effect_cmd_txt}"), &[])
+            {
                 for row in rows {
-                    if let (Some(k), Some(t)) = (row.first().and_then(|v| v.as_str()),
-                                                 row.get(1).and_then(|v| v.as_str())) {
+                    if let (Some(k), Some(t)) = (
+                        row.first().and_then(|v| v.as_str()),
+                        row.get(1).and_then(|v| v.as_str()),
+                    ) {
                         m.insert(k.to_string(), t.to_string());
                     }
                 }
             }
             (m, eng.root())
         };
-        let exec = crate::engine::ShellEffectExec { templates, n_out: arity, cwd };
+        let exec = crate::engine::ShellEffectExec {
+            templates,
+            n_out: arity,
+            cwd,
+        };
         let n = {
             let prog = lock(&self.prog);
             let mut eng = lock(&self.eng);
@@ -502,8 +538,10 @@ impl ServedRoot {
     }
 
     fn broadcast_diag_changed(&self) {
-        let paths: Vec<String> = lock(&self.last_changed_paths).iter()
-            .map(|p| p.to_string_lossy().into_owned()).collect();
+        let paths: Vec<String> = lock(&self.last_changed_paths)
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
         let note = json!({"jsonrpc": "2.0", "method": "diag_changed", "params": {
             "root": self.root.to_string_lossy(),
             "tick": self.tick_count.load(Ordering::Relaxed),
@@ -526,7 +564,11 @@ impl ServedRoot {
         for item in &prog.items {
             if let crate::ast::Item::Rule(r) = item {
                 for b in &r.body {
-                    if let crate::ast::BodyItem::Scan { rev: crate::ast::Term::Str(s), .. } = b {
+                    if let crate::ast::BodyItem::Scan {
+                        rev: crate::ast::Term::Str(s),
+                        ..
+                    } = b
+                    {
                         if s.as_str() != crate::engine::WORK_ALIAS && !names.contains(s) {
                             names.push(s.clone());
                         }
@@ -563,7 +605,12 @@ impl ServedRoot {
                     match eng.observe_ref(slug, root, name) {
                         Ok(Some((old, new))) => {
                             let files = eng
-                                .files_changed_between(slug, root, old.as_deref().unwrap_or(""), &new)
+                                .files_changed_between(
+                                    slug,
+                                    root,
+                                    old.as_deref().unwrap_or(""),
+                                    &new,
+                                )
                                 .unwrap_or_default();
                             for f in &files {
                                 let abs = root.join(f);
@@ -571,11 +618,18 @@ impl ServedRoot {
                                     changed.push(abs);
                                 }
                             }
-                            advances.push((slug.clone(), name.clone(),
-                                old.unwrap_or_default(), new, files));
+                            advances.push((
+                                slug.clone(),
+                                name.clone(),
+                                old.unwrap_or_default(),
+                                new,
+                                files,
+                            ));
                         }
                         Ok(None) => {}
-                        Err(e) => tracing::warn!("[{}] observe_ref {slug}/{name}: {e}", self.root_label()),
+                        Err(e) => {
+                            tracing::warn!("[{}] observe_ref {slug}/{name}: {e}", self.root_label())
+                        }
                     }
                 }
             }
@@ -593,15 +647,18 @@ impl ServedRoot {
             // incident needed and never had. Record every ref's old/new rev and
             // the worktree files that moved between them, one batched event
             // (not one per ref/file) covering the whole git-event pass.
-            let advances_json: Vec<Value> = advances.iter().map(|(repo, name, old, new, files)| {
-                json!({
-                    "repo": repo,
-                    "ref": name,
-                    "old": old,
-                    "new": new,
-                    "files": files,
+            let advances_json: Vec<Value> = advances
+                .iter()
+                .map(|(repo, name, old, new, files)| {
+                    json!({
+                        "repo": repo,
+                        "ref": name,
+                        "old": old,
+                        "new": new,
+                        "files": files,
+                    })
                 })
-            }).collect();
+                .collect();
             crate::eventlog::emit(
                 "git_ref_advanced",
                 Some(&self.root),
@@ -621,7 +678,10 @@ impl ServedRoot {
                 "root": self.root.to_string_lossy(),
                 "repo": repo, "ref": name, "old": old, "new": new, "paths": files,
             }});
-            let body = match serde_json::to_string(&note) { Ok(s) => s, Err(_) => continue };
+            let body = match serde_json::to_string(&note) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
             self.shared.push_frame(body);
         }
     }
@@ -661,16 +721,25 @@ impl ServedRoot {
             crate::prepare_paths(&files)?
         };
         crate::render_type_diags_eprintln(&type_diags);
-        let n_err = type_diags.iter().filter(|d| d.severity == crate::ast::Severity::Error).count();
-        if n_err > 0 { bail!("{n_err} type error(s) in program; root not served"); }
+        let n_err = type_diags
+            .iter()
+            .filter(|d| d.severity == crate::ast::Severity::Error)
+            .count();
+        if n_err > 0 {
+            bail!("{n_err} type error(s) in program; root not served");
+        }
 
         // Ensure the db's parent dir exists before opening it (the per-root db
         // lives under <home>/roots/<key>/, which won't exist on first register).
-        if let Some(k) = &key { let _ = std::fs::create_dir_all(root_db_dir(k)); }
+        if let Some(k) = &key {
+            let _ = std::fs::create_dir_all(root_db_dir(k));
+        }
         let conn = db::open(db_path)?;
         let mut eng = Engine::new(conn, eng_root.clone());
         eng.poll_loop = true;
-        if is_config { eng.set_root_implicit(true); }
+        if is_config {
+            eng.set_root_implicit(true);
+        }
         eng.set_repos(served_repos(is_config));
         // `begin_tick` (not the bare `set_root` this replaced) both pushes the
         // root AND opens the tick-level span for this root's very first cold
@@ -689,7 +758,8 @@ impl ServedRoot {
         if !cold_report.cold_staged.is_empty() {
             let job_root_id = key.clone().unwrap_or_else(|| CONFIG_JOB_ID.to_string());
             for (family, shard, priority) in &cold_report.cold_staged {
-                let job = crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
+                let job =
+                    crate::jobq::JobRow::cold_extract(&job_root_id, family, *shard, *priority);
                 if let Err(e) = shared.enqueue(job) {
                     tracing::warn!("[daemon] cold-start enqueue {family}/{shard}: {e}");
                 }
@@ -699,21 +769,30 @@ impl ServedRoot {
             .iter()
             .map(|f| std::fs::canonicalize(f).unwrap_or_else(|_| f.clone()))
             .collect();
-        if let Err(e) = eng.save_repos_meta() { tracing::warn!("[daemon] save_repos_meta: {e}"); }
-        if let Err(e) = eng.save_program_meta(&canon_files) { tracing::warn!("[daemon] save_program_meta: {e}"); }
+        if let Err(e) = eng.save_repos_meta() {
+            tracing::warn!("[daemon] save_repos_meta: {e}");
+        }
+        if let Err(e) = eng.save_program_meta(&canon_files) {
+            tracing::warn!("[daemon] save_program_meta: {e}");
+        }
 
-        let label = eng_root.file_name()
+        let label = eng_root
+            .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| eng_root.to_string_lossy().into_owned());
         // `program {prog_display}`, not `{display}`: the tracing macro pulls its
         // own `display` field-helper into scope, which shadows the local in the
         // format capture. The rendered text is byte-identical.
         let prog_display = display.as_str();
-        tracing::info!("[{label}] served ({} type diag(s), program {prog_display})", type_diags.len());
+        tracing::info!(
+            "[{label}] served ({} type diag(s), program {prog_display})",
+            type_diags.len()
+        );
 
         // Initial read-path snapshot from the cold-tick engine + program.
         let db_path_buf = db_path.map(PathBuf::from);
-        let read_view = crate::daemon_read::ReadView::snapshot(&eng.rels, &prog, db_path_buf.clone());
+        let read_view =
+            crate::daemon_read::ReadView::snapshot(&eng.rels, &prog, db_path_buf.clone());
 
         // Class-17 db-ratio rail (docs/failure-modes.md:407-441): once per
         // root at daemon boot (this fn also runs for a later `add_root`,
@@ -767,19 +846,37 @@ pub(crate) fn read_roots_json() -> Vec<RootRecord> {
         Ok(t) => t,
         Err(_) => return Vec::new(),
     };
-    let v: Value = match serde_json::from_str(&txt) { Ok(v) => v, Err(_) => return Vec::new() };
-    v.as_array().map(|arr| arr.iter().filter_map(|r| {
-        let root = r.get("root").and_then(|x| x.as_str())?;
-        let key = r.get("key").and_then(|x| x.as_str())?;
-        let added_at = r.get("added_at").and_then(|x| x.as_u64()).unwrap_or(0);
-        Some(RootRecord { root: PathBuf::from(root), key: key.to_string(), added_at })
-    }).collect()).unwrap_or_default()
+    let v: Value = match serde_json::from_str(&txt) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let root = r.get("root").and_then(|x| x.as_str())?;
+                    let key = r.get("key").and_then(|x| x.as_str())?;
+                    let added_at = r.get("added_at").and_then(|x| x.as_u64()).unwrap_or(0);
+                    Some(RootRecord {
+                        root: PathBuf::from(root),
+                        key: key.to_string(),
+                        added_at,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn write_roots_json(records: &[RootRecord]) {
-    let arr: Vec<Value> = records.iter().map(|r| json!({
-        "root": r.root.to_string_lossy(), "key": r.key, "added_at": r.added_at,
-    })).collect();
+    let arr: Vec<Value> = records
+        .iter()
+        .map(|r| {
+            json!({
+                "root": r.root.to_string_lossy(), "key": r.key, "added_at": r.added_at,
+            })
+        })
+        .collect();
     let _ = std::fs::create_dir_all(daemon_home());
     if let Ok(s) = serde_json::to_string_pretty(&Value::Array(arr)) {
         let _ = std::fs::write(roots_json_path(), s);

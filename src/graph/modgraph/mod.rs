@@ -20,16 +20,16 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
+mod go;
+mod kotlin;
+mod python;
 mod rust;
 mod ts;
-mod kotlin;
-mod go;
-mod python;
+pub(crate) use go::*;
+pub(crate) use kotlin::*;
+pub(crate) use python::*;
 pub(crate) use rust::*;
 pub(crate) use ts::*;
-pub(crate) use kotlin::*;
-pub(crate) use go::*;
-pub(crate) use python::*;
 
 /// Where a specifier points. `File` is a project-relative path in the file set;
 /// `External` is a package/std path we deliberately do not chase; `Unresolved`
@@ -134,7 +134,8 @@ impl<'a> ProjectCx<'a> {
     }
 
     fn python_roots(&self) -> &Vec<String> {
-        self.python_roots.get_or_init(|| py_import_roots(self.files))
+        self.python_roots
+            .get_or_init(|| py_import_roots(self.files))
     }
 
     fn rust_crates(&self) -> &RustCrates {
@@ -143,7 +144,8 @@ impl<'a> ProjectCx<'a> {
     }
 
     fn go_index(&self) -> &GoIndex {
-        self.go.get_or_init(|| GoIndex::build(self.files, self.manifests))
+        self.go
+            .get_or_init(|| GoIndex::build(self.files, self.manifests))
     }
 
     /// npm/pnpm workspace package name -> the package's directory (manifest parent).
@@ -673,10 +675,23 @@ mod tests {
 
         // brace-group alias alongside a non-aliased sibling leaf: only the
         // aliased leaf carries a binding.
-        let e2 = RustResolver.edges("src/lib.rs", "use crate::foo::{make as helper, other};\n", &c);
-        let aliased = e2.iter().find(|r| r.specifier == "crate::foo::make").unwrap();
-        assert_eq!(aliased.bindings, vec![("helper".to_string(), "make".to_string())]);
-        let plain = e2.iter().find(|r| r.specifier == "crate::foo::other").unwrap();
+        let e2 = RustResolver.edges(
+            "src/lib.rs",
+            "use crate::foo::{make as helper, other};\n",
+            &c,
+        );
+        let aliased = e2
+            .iter()
+            .find(|r| r.specifier == "crate::foo::make")
+            .unwrap();
+        assert_eq!(
+            aliased.bindings,
+            vec![("helper".to_string(), "make".to_string())]
+        );
+        let plain = e2
+            .iter()
+            .find(|r| r.specifier == "crate::foo::other")
+            .unwrap();
         assert!(plain.bindings.is_empty(), "{plain:?}");
 
         // a collapsed `self` leaf never carries a binding even when written
@@ -702,8 +717,14 @@ mod tests {
                 ("b".to_string(), "a".to_string()),
             ]
         );
-        assert!(parse_ts_import_clause("{ c }").is_empty(), "plain named skips");
-        assert!(parse_ts_import_clause("* as ns").is_empty(), "namespace skips");
+        assert!(
+            parse_ts_import_clause("{ c }").is_empty(),
+            "plain named skips"
+        );
+        assert!(
+            parse_ts_import_clause("* as ns").is_empty(),
+            "namespace skips"
+        );
         assert_eq!(
             parse_ts_import_clause("type { Foo as Bar }"),
             vec![("Bar".to_string(), "Foo".to_string())]
@@ -739,7 +760,9 @@ mod tests {
         let content = std::fs::read_to_string(dir.join("src/app.ts")).unwrap();
         let e = resolver.edges("src/app.ts", &content, &c);
         assert_eq!(
-            e.iter().find(|r| r.specifier == "./data.json").map(|r| &r.target),
+            e.iter()
+                .find(|r| r.specifier == "./data.json")
+                .map(|r| &r.target),
             Some(&Resolution::File("src/data.json".into())),
             "a tracked .json import target must resolve to Resolution::File: {e:?}"
         );
@@ -978,7 +1001,10 @@ mod tests {
     fn kotlin_import_alias_captured() {
         let contents = [
             ("lib/A.kt", "package com.foo\nclass Bar\n"),
-            ("app/Main.kt", "package com.app\n\nimport com.foo.Bar as Baz\n"),
+            (
+                "app/Main.kt",
+                "package com.app\n\nimport com.foo.Bar as Baz\n",
+            ),
         ];
         let files = set(&["lib/A.kt", "app/Main.kt"]);
         let m = no_manifests();
@@ -1028,7 +1054,10 @@ mod tests {
 
     fn go_manifest(module: &str) -> HashMap<String, String> {
         let mut m = HashMap::new();
-        m.insert("go.mod".to_string(), format!("module {module}\n\ngo 1.22\n"));
+        m.insert(
+            "go.mod".to_string(),
+            format!("module {module}\n\ngo 1.22\n"),
+        );
         m
     }
 
@@ -1040,12 +1069,19 @@ mod tests {
         let content = "package main\n\nimport \"example.com/app/pkg/store\"\n\nfunc main() {}\n";
         let e = GoResolver.edges("main.go", content, &c);
         // whole-package fan-out: BOTH files in the target dir resolve.
-        let mut got: Vec<&str> = e.iter().filter_map(|r| match &r.target {
-            Resolution::File(f) => Some(f.as_str()),
-            _ => None,
-        }).collect();
+        let mut got: Vec<&str> = e
+            .iter()
+            .filter_map(|r| match &r.target {
+                Resolution::File(f) => Some(f.as_str()),
+                _ => None,
+            })
+            .collect();
         got.sort();
-        assert_eq!(got, vec!["pkg/store/repo.go", "pkg/store/store.go"], "{e:?}");
+        assert_eq!(
+            got,
+            vec!["pkg/store/repo.go", "pkg/store/store.go"],
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -1067,11 +1103,26 @@ func main() {}
         let e = GoResolver.edges("main.go", content, &c);
         let fmt_row = e.iter().find(|r| r.specifier == "fmt").expect("fmt row");
         assert_eq!(fmt_row.target, Resolution::External("fmt".into()));
-        let store_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/store").expect("store row");
-        assert_eq!(store_row.target, Resolution::File("pkg/store/store.go".into()));
-        assert_eq!(store_row.bindings, vec![("s".to_string(), "store".to_string())]);
-        let missing_row = e.iter().find(|r| r.specifier == "example.com/app/pkg/missing").expect("missing row");
-        assert!(matches!(missing_row.target, Resolution::Unresolved(_)), "{missing_row:?}");
+        let store_row = e
+            .iter()
+            .find(|r| r.specifier == "example.com/app/pkg/store")
+            .expect("store row");
+        assert_eq!(
+            store_row.target,
+            Resolution::File("pkg/store/store.go".into())
+        );
+        assert_eq!(
+            store_row.bindings,
+            vec![("s".to_string(), "store".to_string())]
+        );
+        let missing_row = e
+            .iter()
+            .find(|r| r.specifier == "example.com/app/pkg/missing")
+            .expect("missing row");
+        assert!(
+            matches!(missing_row.target, Resolution::Unresolved(_)),
+            "{missing_row:?}"
+        );
     }
 
     #[test]
@@ -1097,8 +1148,15 @@ import (
         let files = set(&["main.go"]);
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
-        let e = GoResolver.edges("main.go", "package main\n\nimport \"example.com/app/pkg/store\"\n", &c);
-        assert_eq!(e[0].target, Resolution::External("example.com/app/pkg/store".into()));
+        let e = GoResolver.edges(
+            "main.go",
+            "package main\n\nimport \"example.com/app/pkg/store\"\n",
+            &c,
+        );
+        assert_eq!(
+            e[0].target,
+            Resolution::External("example.com/app/pkg/store".into())
+        );
     }
     #[test]
     fn python_absolute_import_package_and_module() {
@@ -1106,8 +1164,18 @@ import (
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
         let e = PyResolver.edges("app.py", "import pkg\nimport pkg.sub\n", &c);
-        assert!(e.iter().any(|r| r.specifier == "pkg" && r.target == Resolution::File("pkg/__init__.py".into())), "{e:?}");
-        assert!(e.iter().any(|r| r.specifier == "pkg.sub" && r.target == Resolution::File("pkg/sub.py".into())), "{e:?}");
+        assert!(
+            e.iter()
+                .any(|r| r.specifier == "pkg"
+                    && r.target == Resolution::File("pkg/__init__.py".into())),
+            "{e:?}"
+        );
+        assert!(
+            e.iter()
+                .any(|r| r.specifier == "pkg.sub"
+                    && r.target == Resolution::File("pkg/sub.py".into())),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -1126,16 +1194,32 @@ import (
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
         let e = PyResolver.edges("app.py", "from pkg.sub import make as build, other\n", &c);
-        let r = e.iter().find(|r| r.specifier == "pkg.sub").expect("one ModuleRef for the statement");
+        let r = e
+            .iter()
+            .find(|r| r.specifier == "pkg.sub")
+            .expect("one ModuleRef for the statement");
         assert_eq!(r.target, Resolution::File("pkg/sub.py".into()));
-        assert!(r.bindings.contains(&("build".to_string(), "make".to_string())), "{r:?}");
+        assert!(
+            r.bindings
+                .contains(&("build".to_string(), "make".to_string())),
+            "{r:?}"
+        );
         // even a non-aliased name gets an (local=source) binding row, per spec.
-        assert!(r.bindings.contains(&("other".to_string(), "other".to_string())), "{r:?}");
+        assert!(
+            r.bindings
+                .contains(&("other".to_string(), "other".to_string())),
+            "{r:?}"
+        );
     }
 
     #[test]
     fn python_relative_import_resolves_off_importing_package() {
-        let files = set(&["pkg/__init__.py", "pkg/a.py", "pkg/sub/__init__.py", "pkg/sub/b.py"]);
+        let files = set(&[
+            "pkg/__init__.py",
+            "pkg/a.py",
+            "pkg/sub/__init__.py",
+            "pkg/sub/b.py",
+        ]);
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
         // one dot = the current package (pkg/sub's own dir).
@@ -1143,10 +1227,18 @@ import (
         // "missing" isn't a submodule of pkg/sub, so this resolves to the
         // package's own __init__.py per the "from module import name targets
         // the module file" simplification.
-        assert!(e1.iter().any(|r| r.target == Resolution::File("pkg/sub/__init__.py".into())), "{e1:?}");
+        assert!(
+            e1.iter()
+                .any(|r| r.target == Resolution::File("pkg/sub/__init__.py".into())),
+            "{e1:?}"
+        );
         // two dots pop up to pkg/, reaching sibling module `a`.
         let e2 = PyResolver.edges("pkg/sub/b.py", "from .. import a\n", &c);
-        assert!(e2.iter().any(|r| r.target == Resolution::File("pkg/__init__.py".into())), "{e2:?}");
+        assert!(
+            e2.iter()
+                .any(|r| r.target == Resolution::File("pkg/__init__.py".into())),
+            "{e2:?}"
+        );
     }
 
     #[test]
@@ -1164,7 +1256,11 @@ import (
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
         let e = PyResolver.edges("app.py", "import os\nimport requests\n", &c);
-        assert!(e.iter().all(|r| matches!(r.target, Resolution::External(_))), "{e:?}");
+        assert!(
+            e.iter()
+                .all(|r| matches!(r.target, Resolution::External(_))),
+            "{e:?}"
+        );
     }
 
     #[test]
@@ -1176,7 +1272,8 @@ import (
         let c = cx(Path::new("/repo"), &files, &m);
         let e = PyResolver.edges("tests/test_mod.py", "import pkg.mod\n", &c);
         assert!(
-            e.iter().any(|r| r.target == Resolution::File("src/pkg/mod.py".into())),
+            e.iter()
+                .any(|r| r.target == Resolution::File("src/pkg/mod.py".into())),
             "{e:?}"
         );
     }
@@ -1185,11 +1282,7 @@ import (
     fn python_ambiguous_across_two_roots_stays_unresolved() {
         // the same package name reachable under two distinct top-level
         // package roots must NOT guess — stays Unresolved, loud.
-        let files = set(&[
-            "alpha/pkg/__init__.py",
-            "beta/pkg/__init__.py",
-            "app.py",
-        ]);
+        let files = set(&["alpha/pkg/__init__.py", "beta/pkg/__init__.py", "app.py"]);
         let m = no_manifests();
         let c = cx(Path::new("/repo"), &files, &m);
         let e = PyResolver.edges("app.py", "import pkg\n", &c);
@@ -1208,4 +1301,3 @@ import (
         assert!(e.iter().any(|r| r.specifier == "real"), "{e:?}");
     }
 }
-

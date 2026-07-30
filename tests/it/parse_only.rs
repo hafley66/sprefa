@@ -22,13 +22,15 @@ fn run(dir: &Path, prog: &str, db: &Path) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args(["--no-daemon",
-               "--parse-only", "--db", db.to_str().unwrap()])
+        .args(["--no-daemon", "--parse-only", "--db", db.to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl --parse-only");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl --parse-only");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// A clean program parses to exit 0 and writes NO db file (proving no scan/tick
@@ -37,13 +39,21 @@ fn run(dir: &Path, prog: &str, db: &Path) -> (i32, String, String) {
 fn clean_program_exits_zero_and_writes_no_db() {
     let d = sandbox("clean");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
-        "? hit(p, l).\n",
-    ), &db);
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /alpha/, l).\n",
+            "? hit(p, l).\n",
+        ),
+        &db,
+    );
     assert_eq!(code, 0, "clean program exits 0:\n{err}");
-    assert!(!db.exists(), "no db file created (no scan/tick ran): {}", db.display());
+    assert!(
+        !db.exists(),
+        "no db file created (no scan/tick ran): {}",
+        db.display()
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -67,10 +77,19 @@ fn reserved_builtin_name_exits_two_with_named_fix() {
     let d = sandbox("reserved");
     let db = d.join("should_not_exist.db");
     let (code, _out, err) = run(&d, "rel node(id: text).\n", &db);
-    assert_eq!(code, 2, "reserved relation uses the check-style exit: {err}");
+    assert_eq!(
+        code, 2,
+        "reserved relation uses the check-style exit: {err}"
+    );
     assert!(err.contains("reserved-name"), "diagnostic code: {err}");
-    assert!(err.contains("relation `node` is a reserved built-in"), "names collision: {err}");
-    assert!(err.contains("write to the built-in directly"), "names fix: {err}");
+    assert!(
+        err.contains("relation `node` is a reserved built-in"),
+        "names collision: {err}"
+    );
+    assert!(
+        err.contains("write to the built-in directly"),
+        "names fix: {err}"
+    );
     assert!(!db.exists(), "no db file created at parse tier");
     let _ = fs::remove_dir_all(&d);
 }
@@ -81,13 +100,23 @@ fn reserved_builtin_name_exits_two_with_named_fix() {
 fn lowercase_metavar_warns_but_exits_zero() {
     let d = sandbox("lcwarn");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel body_hit(l: int).\n",
-        "body_hit(l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
-        "sg(p, rev, :rust, \"fn $name() {}\", l).\n",
-    ), &db);
-    assert!(err.contains("lowercase-metavar"), "warn code surfaces:\n{err}");
-    assert!(err.contains("metavars are UPPERCASE"), "warn names the fix:\n{err}");
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel body_hit(l: int).\n",
+            "body_hit(l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
+            "sg(p, rev, :rust, \"fn $name() {}\", l).\n",
+        ),
+        &db,
+    );
+    assert!(
+        err.contains("lowercase-metavar"),
+        "warn code surfaces:\n{err}"
+    );
+    assert!(
+        err.contains("metavars are UPPERCASE"),
+        "warn names the fix:\n{err}"
+    );
     assert_eq!(code, 0, "a warn-only program still exits 0:\n{err}");
     assert!(!db.exists(), "no db file created");
     let _ = fs::remove_dir_all(&d);
@@ -101,14 +130,24 @@ fn lowercase_metavar_warns_but_exits_zero() {
 fn match_lookahead_regex_exits_one_with_note() {
     let d = sandbox("relookahead");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel banned(p: file, l: int).\n",
-        "banned(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
-        "match(p, rev, /(?!-)prefix/, l).\n",
-    ), &db);
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel banned(p: file, l: int).\n",
+            "banned(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
+            "match(p, rev, /(?!-)prefix/, l).\n",
+        ),
+        &db,
+    );
     assert_eq!(code, 1, "an uncompilable regex is exit 1:\n{err}");
-    assert!(err.contains("look-around"), "raw regex-crate error surfaces:\n{err}");
-    assert!(err.contains("regexes are Rust-flavor"), "the dl escape note is appended:\n{err}");
+    assert!(
+        err.contains("look-around"),
+        "raw regex-crate error surfaces:\n{err}"
+    );
+    assert!(
+        err.contains("regexes are Rust-flavor"),
+        "the dl escape note is appended:\n{err}"
+    );
     assert!(!db.exists(), "no db file created on a regex error");
     let _ = fs::remove_dir_all(&d);
 }
@@ -119,14 +158,24 @@ fn match_lookahead_regex_exits_one_with_note() {
 fn constraint_lookbehind_regex_exits_one_with_note() {
     let d = sandbox("recons");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel named(p: file, l: int).\n",
-        "named(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
-        "match(p, rev, /fn/, l), p =~ /(?<=x)y/.\n",
-    ), &db);
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel named(p: file, l: int).\n",
+            "named(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
+            "match(p, rev, /fn/, l), p =~ /(?<=x)y/.\n",
+        ),
+        &db,
+    );
     assert_eq!(code, 1, "an uncompilable =~ regex is exit 1:\n{err}");
-    assert!(err.contains("look-around"), "raw regex-crate error surfaces:\n{err}");
-    assert!(err.contains("regexes are Rust-flavor"), "the dl escape note is appended:\n{err}");
+    assert!(
+        err.contains("look-around"),
+        "raw regex-crate error surfaces:\n{err}"
+    );
+    assert!(
+        err.contains("regexes are Rust-flavor"),
+        "the dl escape note is appended:\n{err}"
+    );
     assert!(!db.exists(), "no db file created on a regex error");
     let _ = fs::remove_dir_all(&d);
 }
@@ -137,11 +186,15 @@ fn constraint_lookbehind_regex_exits_one_with_note() {
 fn valid_regex_literals_exit_zero() {
     let d = sandbox("reok");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel anchored(p: file, l: int).\n",
-        "anchored(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
-        "match(p, rev, /\\bprefix\\b/, l), p =~ /x$/.\n",
-    ), &db);
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel anchored(p: file, l: int).\n",
+            "anchored(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), ",
+            "match(p, rev, /\\bprefix\\b/, l), p =~ /x$/.\n",
+        ),
+        &db,
+    );
     assert_eq!(code, 0, "valid regex literals exit 0:\n{err}");
     assert!(!db.exists(), "no db file created (no scan/tick ran)");
     let _ = fs::remove_dir_all(&d);
@@ -153,13 +206,20 @@ fn valid_regex_literals_exit_zero() {
 fn plain_string_regex_escape_warns_with_raw_string_fix() {
     let d = sandbox("plainstrwarn");
     let db = d.join("should_not_exist.db");
-    let (code, _out, err) = run(&d, concat!(
-        "rel note(value: text).\n",
-        "note(\"\\bword\\n\").\n",
-    ), &db);
+    let (code, _out, err) = run(
+        &d,
+        concat!("rel note(value: text).\n", "note(\"\\bword\\n\").\n",),
+        &db,
+    );
     assert_eq!(code, 0, "a warn-only plain string is exit 0:\n{err}");
-    assert!(err.contains("plain-string-escape"), "warning code surfaces:\n{err}");
-    assert!(err.contains("use r\"...\" for regex text"), "warning names the fix:\n{err}");
+    assert!(
+        err.contains("plain-string-escape"),
+        "warning code surfaces:\n{err}"
+    );
+    assert!(
+        err.contains("use r\"...\" for regex text"),
+        "warning names the fix:\n{err}"
+    );
     assert!(!db.exists(), "no db file created");
     let _ = fs::remove_dir_all(&d);
 }

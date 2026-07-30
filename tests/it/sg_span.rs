@@ -29,9 +29,9 @@ fn diag_json(dir: &std::path::Path) -> serde_json::Value {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .current_dir(dir)
-        .args(["--db", dir.join("db").to_str().unwrap(),
-               "--diag-json"])
-        .output().expect("run dl");
+        .args(["--db", dir.join("db").to_str().unwrap(), "--diag-json"])
+        .output()
+        .expect("run dl");
     serde_json::from_slice(&out.stdout).expect("valid JSON")
 }
 
@@ -53,7 +53,11 @@ fn column_shifts_with_indent() {
     // Same match deeper in: the column must track the actual indent, proving it
     // is a real span and not a hardcoded 0 / whole-line fallback.
     let d = sandbox("indent");
-    fs::write(d.join("src/a.rs"), "fn f() {\n    if true {\n        dbg!(y);\n    }\n}\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "fn f() {\n    if true {\n        dbg!(y);\n    }\n}\n",
+    )
+    .unwrap();
     let v = diag_json(&d);
     let f = &v.as_array().expect("array")[0];
     assert_eq!(f["line"], 3);

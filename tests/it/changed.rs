@@ -24,10 +24,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .args(extra)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
@@ -37,8 +40,12 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .args(args)
         .output()
         .expect("run git");
-    assert!(out.status.success(), "git {args:?} failed:\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?} failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -66,9 +73,15 @@ fn changed_lists_worktree_diff() {
     let d = fixture("list");
     let (code, out, err) = run(&d, "? changed(p).\n", &[]);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("src/edited.rs"), "modified file missing:\n{out}");
+    assert!(
+        out.contains("src/edited.rs"),
+        "modified file missing:\n{out}"
+    );
     assert!(out.contains("src/new.rs"), "untracked file missing:\n{out}");
-    assert!(!out.contains("src/clean.rs"), "clean file must not appear:\n{out}");
+    assert!(
+        !out.contains("src/clean.rs"),
+        "clean file must not appear:\n{out}"
+    );
 }
 
 /// (2) The rails shape: a per-file hit relation joined with `changed(p)` only
@@ -82,11 +95,24 @@ fn rail_joined_with_changed_skips_clean_files() {
         "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /fn /, l).\n",
         "diag(path: p, line: l, severity: \"error\", code: \"rail\", msg: \"hit in changed file\") <- hit(p, l), changed(p).\n",
     );
-    let (code, out, _err) = run(&d, &format!("{prog}? diag(path: p, line: l, severity: s, code: c, msg: m).\n"), &[]);
+    let (code, out, _err) = run(
+        &d,
+        &format!("{prog}? diag(path: p, line: l, severity: s, code: c, msg: m).\n"),
+        &[],
+    );
     assert_eq!(code, 0);
-    assert!(out.contains("src/edited.rs"), "edited file must trip the rail:\n{out}");
-    assert!(out.contains("src/new.rs"), "untracked file must trip the rail:\n{out}");
-    assert!(!out.contains("src/clean.rs"), "clean file must not trip the rail:\n{out}");
+    assert!(
+        out.contains("src/edited.rs"),
+        "edited file must trip the rail:\n{out}"
+    );
+    assert!(
+        out.contains("src/new.rs"),
+        "untracked file must trip the rail:\n{out}"
+    );
+    assert!(
+        !out.contains("src/clean.rs"),
+        "clean file must not trip the rail:\n{out}"
+    );
 }
 
 /// (3) Outside a git repo the relation is empty (no error), so rails programs
@@ -107,5 +133,8 @@ fn changed_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel changed(p: text).\n", &[]);
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }

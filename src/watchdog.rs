@@ -118,7 +118,11 @@ mod tests {
         std::env::set_var("DL_MAX_WALL_SECS", "7");
         assert_eq!(max_wall_secs(), 7);
         std::env::set_var("DL_MAX_WALL_SECS", "garbage");
-        assert_eq!(max_wall_secs(), DEFAULT_MAX_WALL_SECS, "malformed falls back to default");
+        assert_eq!(
+            max_wall_secs(),
+            DEFAULT_MAX_WALL_SECS,
+            "malformed falls back to default"
+        );
         std::env::remove_var("DL_MAX_WALL_SECS");
     }
 }

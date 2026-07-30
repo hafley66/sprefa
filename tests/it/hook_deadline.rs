@@ -49,7 +49,12 @@ fn run_hook(dir: &Path, extra_args: &[&str], envs: &[(&str, &str)]) -> (Output, 
     }
     let started = Instant::now();
     let mut child = cmd.spawn().expect("spawn dl --hook");
-    child.stdin.take().unwrap().write_all(EVENT.as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(EVENT.as_bytes())
+        .unwrap();
     let out = child.wait_with_output().expect("wait dl --hook");
     (out, started.elapsed())
 }
@@ -70,13 +75,23 @@ fn overrun_work_returns_noop_exit0_within_2x_deadline() {
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "deadline give-up must exit 0:\n{stderr}");
-    assert!(stdout.trim().is_empty(), "deadline give-up must be a no-op reply:\n{stdout}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "deadline give-up must exit 0:\n{stderr}"
+    );
+    assert!(
+        stdout.trim().is_empty(),
+        "deadline give-up must be a no-op reply:\n{stdout}"
+    );
     assert!(
         elapsed < Duration::from_millis(2000),
         "hook must let go at the deadline (~2x budget), took {elapsed:?}:\n{stderr}"
     );
-    assert!(stderr.contains("deadline"), "give-up names itself on stderr:\n{stderr}");
+    assert!(
+        stderr.contains("deadline"),
+        "give-up names itself on stderr:\n{stderr}"
+    );
 }
 
 /// A blank/absent db means the in-process fallback would be a COLD engine; the
@@ -88,7 +103,14 @@ fn overrun_work_returns_noop_exit0_within_2x_deadline() {
 fn cold_blank_db_skips_work_and_zero_deadline_escape_runs_it() {
     let dir = sandbox("cold");
     let git = |args: &[&str]| {
-        assert!(Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .output()
+            .unwrap()
+            .status
+            .success());
     };
     git(&["init", "-q"]);
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -108,9 +130,19 @@ fn cold_blank_db_skips_work_and_zero_deadline_escape_runs_it() {
     let (out, _) = run_hook(&dir, &["--no-daemon"], &[]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "cold skip must exit 0:\n{stderr}");
-    assert!(stdout.trim().is_empty(), "cold skip must be a no-op reply:\n{stdout}\n{stderr}");
-    assert!(stderr.contains("cold"), "cold skip names itself on stderr:\n{stderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "cold skip must exit 0:\n{stderr}"
+    );
+    assert!(
+        stdout.trim().is_empty(),
+        "cold skip must be a no-op reply:\n{stdout}\n{stderr}"
+    );
+    assert!(
+        stderr.contains("cold"),
+        "cold skip names itself on stderr:\n{stderr}"
+    );
 
     // Escape hatch: deadline 0 disables the deadline AND the cold skip.
     let (out, _) = run_hook(&dir, &["--no-daemon"], &[("DL_HOOK_DEADLINE_MS", "0")]);
@@ -134,9 +166,16 @@ fn hook_never_autostarts_a_daemon() {
     let (out, _) = run_hook(&dir, &[], &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "no-daemon hook run must exit 0:\n{stderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "no-daemon hook run must exit 0:\n{stderr}"
+    );
     assert!(stdout.trim().is_empty(), "no-op reply expected:\n{stdout}");
-    assert!(stderr.contains("never starts one"), "attach-only notice expected:\n{stderr}");
+    assert!(
+        stderr.contains("never starts one"),
+        "attach-only notice expected:\n{stderr}"
+    );
     // The sandboxed daemon home must hold no socket: nothing was spawned.
     let home = dir.join("state/sprefa");
     let socks: Vec<_> = fs::read_dir(&home)
@@ -146,5 +185,8 @@ fn hook_never_autostarts_a_daemon() {
                 .collect()
         })
         .unwrap_or_default();
-    assert!(socks.is_empty(), "hook must never autostart a daemon; found {socks:?}\n{stderr}");
+    assert!(
+        socks.is_empty(),
+        "hook must never autostart a daemon; found {socks:?}\n{stderr}"
+    );
 }

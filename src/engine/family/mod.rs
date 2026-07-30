@@ -18,11 +18,11 @@ use crate::db::{Db, SqlVal};
 
 pub(crate) mod call_def;
 pub(crate) mod call_def_rev;
-pub(crate) mod call_site;
 pub(crate) mod call_edge;
 pub(crate) mod call_edge_rev;
 pub(crate) mod call_kind;
 pub(crate) mod call_name;
+pub(crate) mod call_site;
 pub(crate) mod router;
 
 pub(crate) use call_edge::CallEdge;
@@ -139,7 +139,10 @@ pub(crate) fn reconcile(old: &[OutRow], new: Vec<OutRow>) -> RowDelta {
         .filter(|row| !new_keys.contains(&row_key(row)))
         .cloned()
         .collect();
-    RowDelta { retracted, inserted }
+    RowDelta {
+        retracted,
+        inserted,
+    }
 }
 
 /// Cross-family scan cache for one `react_deltas` flip. Multiple families in
@@ -194,13 +197,25 @@ pub(crate) struct Ctx<'a> {
 
 impl<'a> Ctx<'a> {
     pub(crate) fn new(db: &'a Db) -> Self {
-        Self { db, deps: HashSet::new(), scan_ns: 0, cache_hits: 0, cache: None }
+        Self {
+            db,
+            deps: HashSet::new(),
+            scan_ns: 0,
+            cache_hits: 0,
+            cache: None,
+        }
     }
 
     /// Same as `new`, but shares `cache` with every other family derived in
     /// the same `react_deltas` flip — see [`ScanCache`].
     pub(crate) fn new_cached(db: &'a Db, cache: &'a mut ScanCache) -> Self {
-        Self { db, deps: HashSet::new(), scan_ns: 0, cache_hits: 0, cache: Some(cache) }
+        Self {
+            db,
+            deps: HashSet::new(),
+            scan_ns: 0,
+            cache_hits: 0,
+            cache: Some(cache),
+        }
     }
 
     /// Scan an internal table: return each row's integer PK plus the requested
@@ -235,8 +250,10 @@ impl<'a> Ctx<'a> {
         // across tables that happen to share a column name set (e.g. two owned
         // tables both scanned by their `site_id` PK).
         if let Some(cache) = &self.cache {
-            if let Some(cached_rows) =
-                cache.entries.get(rel).and_then(|by_cols| by_cols.get(col_list.as_str()))
+            if let Some(cached_rows) = cache
+                .entries
+                .get(rel)
+                .and_then(|by_cols| by_cols.get(col_list.as_str()))
             {
                 let cached_rows = cached_rows.clone();
                 for (pk, _) in &cached_rows {
@@ -262,7 +279,11 @@ impl<'a> Ctx<'a> {
             self.deps.insert(DepKey { rel, pk: *pk });
         }
         if let Some(cache) = &mut self.cache {
-            cache.entries.entry(rel).or_default().insert(col_list, rows.clone());
+            cache
+                .entries
+                .entry(rel)
+                .or_default()
+                .insert(col_list, rows.clone());
         }
         Ok(rows)
     }
@@ -330,7 +351,10 @@ pub(crate) struct DeriveTiming {
 /// exact 2-tuple contract; [`derive_family_timed_cached`] is the
 /// timing-and-cache-carrying twin used only where the extra breakdown is
 /// read.
-pub(crate) fn derive_family(db: &Db, family: &dyn Family) -> Result<(Vec<OutRow>, HashSet<DepKey>)> {
+pub(crate) fn derive_family(
+    db: &Db,
+    family: &dyn Family,
+) -> Result<(Vec<OutRow>, HashSet<DepKey>)> {
     let mut ctx = Ctx::new(db);
     let mut sink = RowSink { rows: Vec::new() };
     family.derive(&mut ctx, &mut sink)?;
@@ -353,8 +377,11 @@ pub(crate) fn derive_family_timed_cached(
     let mut sink = RowSink { rows: Vec::new() };
     let started = Instant::now();
     family.derive(&mut ctx, &mut sink)?;
-    let timing =
-        DeriveTiming { total_ns: started.elapsed().as_nanos(), scan_ns: ctx.scan_ns, cache_hits: ctx.cache_hits };
+    let timing = DeriveTiming {
+        total_ns: started.elapsed().as_nanos(),
+        scan_ns: ctx.scan_ns,
+        cache_hits: ctx.cache_hits,
+    };
     Ok((sink.rows, ctx.deps, timing))
 }
 
@@ -703,7 +730,6 @@ pub(crate) const DEMAND_RELS: [&str; 5] = [
 /// mixed-kind law).
 pub(crate) const TYPE_DECL_RELS: [&str; 1] = ["type_decl_row"];
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,7 +762,10 @@ mod tests {
         let prev = vec![int_row(&[1, 2]), int_row(&[3, 4])];
         let next = prev.clone();
         let delta = reconcile(&prev, next);
-        assert!(delta.is_empty(), "identical prev/next must reconcile to an empty delta");
+        assert!(
+            delta.is_empty(),
+            "identical prev/next must reconcile to an empty delta"
+        );
     }
 
     #[test]
@@ -744,7 +773,10 @@ mod tests {
         let prev: Vec<OutRow> = Vec::new();
         let next = vec![int_row(&[1, 2]), int_row(&[3, 4])];
         let delta = reconcile(&prev, next.clone());
-        assert!(delta.retracted.is_empty(), "never-derived prev has nothing to retract");
+        assert!(
+            delta.retracted.is_empty(),
+            "never-derived prev has nothing to retract"
+        );
         assert_eq!(
             row_keys(&delta.inserted),
             row_keys(&next),
@@ -757,7 +789,10 @@ mod tests {
         let prev = vec![int_row(&[1, 2]), int_row(&[3, 4])];
         let next: Vec<OutRow> = Vec::new();
         let delta = reconcile(&prev, next);
-        assert!(delta.inserted.is_empty(), "everything-gone next has nothing to insert");
+        assert!(
+            delta.inserted.is_empty(),
+            "everything-gone next has nothing to insert"
+        );
         assert_eq!(
             row_keys(&delta.retracted),
             row_keys(&prev),
@@ -770,8 +805,16 @@ mod tests {
         let prev = vec![int_row(&[1, 1]), int_row(&[2, 2])];
         let next = vec![int_row(&[3, 3]), int_row(&[4, 4])];
         let delta = reconcile(&prev, next.clone());
-        assert_eq!(row_keys(&delta.retracted), row_keys(&prev), "disjoint sets retract all of prev");
-        assert_eq!(row_keys(&delta.inserted), row_keys(&next), "disjoint sets insert all of next");
+        assert_eq!(
+            row_keys(&delta.retracted),
+            row_keys(&prev),
+            "disjoint sets retract all of prev"
+        );
+        assert_eq!(
+            row_keys(&delta.inserted),
+            row_keys(&next),
+            "disjoint sets insert all of next"
+        );
     }
 
     #[test]
@@ -802,7 +845,11 @@ mod tests {
     fn reconcile_duplicate_rows_in_next_dedupe_to_one_insert() {
         let prev: Vec<OutRow> = Vec::new();
         let repeated_row = int_row(&[1, 1]);
-        let next = vec![repeated_row.clone(), repeated_row.clone(), repeated_row.clone()];
+        let next = vec![
+            repeated_row.clone(),
+            repeated_row.clone(),
+            repeated_row.clone(),
+        ];
         let delta = reconcile(&prev, next);
         assert_eq!(
             row_keys(&delta.inserted),
@@ -821,8 +868,16 @@ mod tests {
         let prev = vec![vec![Value::Int(1)]];
         let next = vec![vec![Value::Text("1".to_string())]];
         let delta = reconcile(&prev, next.clone());
-        assert_eq!(row_keys(&delta.retracted), row_keys(&prev), "Int(1) row must retract, not match Text(\"1\")");
-        assert_eq!(row_keys(&delta.inserted), row_keys(&next), "Text(\"1\") row must insert as a distinct tuple");
+        assert_eq!(
+            row_keys(&delta.retracted),
+            row_keys(&prev),
+            "Int(1) row must retract, not match Text(\"1\")"
+        );
+        assert_eq!(
+            row_keys(&delta.inserted),
+            row_keys(&next),
+            "Text(\"1\") row must insert as a distinct tuple"
+        );
     }
 
     /// Pinned semantic: `row_key` maps every `Value::Null` cell to the same
@@ -836,7 +891,10 @@ mod tests {
         let prev = vec![vec![Value::Int(1), Value::Null]];
         let next = vec![vec![Value::Int(1), Value::Null]];
         let delta = reconcile(&prev, next);
-        assert!(delta.is_empty(), "pinned: NULL cells compare equal to NULL for row identity");
+        assert!(
+            delta.is_empty(),
+            "pinned: NULL cells compare equal to NULL for row identity"
+        );
     }
 
     /// Minimal Rust: `beta` calls `alpha` so both `call_site` and the resolved
@@ -923,9 +981,7 @@ fn gamma() {
         dir
     }
 
-    fn snapshot(
-        engine: &Engine,
-    ) -> (Vec<Vec<serde_json::Value>>, Vec<Vec<serde_json::Value>>) {
+    fn snapshot(engine: &Engine) -> (Vec<Vec<serde_json::Value>>, Vec<Vec<serde_json::Value>>) {
         let site = decoded_rows(
             engine,
             "SELECT repo, caller, callee, file, line FROM rel_call_site_txt",
@@ -1052,8 +1108,12 @@ fn gamma() {
 
         // Real working-tree edit: rewrite the file and bump its fact digest.
         fs::write(dir.join("lib.rs"), V2).unwrap();
-        engine.db
-            .exec_on("_file", "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'")
+        engine
+            .db
+            .exec_on(
+                "_file",
+                "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'",
+            )
             .unwrap();
 
         // Drive the genuine incremental path.
@@ -1073,15 +1133,25 @@ fn gamma() {
 
         // (iii) the reran families are byte-identical to a reference v2 extraction.
         let (site_after, edge_after) = snapshot(&engine);
-        assert_eq!(site_after, reference_site_v2, "reran call_site must match reference v2");
-        assert_eq!(edge_after, reference_edge_v2, "reran call_edge must match reference v2");
+        assert_eq!(
+            site_after, reference_site_v2,
+            "reran call_site must match reference v2"
+        );
+        assert_eq!(
+            edge_after, reference_edge_v2,
+            "reran call_edge must match reference v2"
+        );
         // The change was real: the gamma->alpha site is gone.
         assert_ne!(site_after, site_v1, "delta must have altered call_site");
 
         // (ii) the SKIPPED family's public rel is untouched by the delta: the
         // router leaves call_name alone, so it still holds the v1 rows (equal
         // to v2, since defs are identical).
-        assert_eq!(names(&engine), name_v1, "skipped call_name rows must be unchanged");
+        assert_eq!(
+            names(&engine),
+            name_v1,
+            "skipped call_name rows must be unchanged"
+        );
 
         // (i) the skip itself: replay the router with the delta's real footprint
         // (`react` is a pure function of memo footprints + changed-set, so the

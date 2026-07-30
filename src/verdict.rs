@@ -64,7 +64,10 @@ fn write_jsonl(kind: &str, fields: &[(&str, &str)]) {
     obj.insert("type".into(), serde_json::Value::String("verdict".into()));
     obj.insert("kind".into(), serde_json::Value::String(kind.into()));
     for (key, value) in fields {
-        obj.insert((*key).to_string(), serde_json::Value::String((*value).to_string()));
+        obj.insert(
+            (*key).to_string(),
+            serde_json::Value::String((*value).to_string()),
+        );
     }
     crate::perflog::emit_verdict(serde_json::Value::Object(obj));
 }

@@ -222,7 +222,13 @@ pub fn profile_enabled() -> bool {
 /// write); `detail` carries the owning family/phase. No-op unless
 /// `profile_enabled()`, so callers can time unconditionally and gate here.
 pub fn emit_profile(kind: &str, name: &str, ms: u64, n: u64, detail: &str) {
-    emit_profile_detail(kind, name, ms, n, serde_json::Value::String(detail.to_string()));
+    emit_profile_detail(
+        kind,
+        name,
+        ms,
+        n,
+        serde_json::Value::String(detail.to_string()),
+    );
 }
 
 /// `emit_profile` with a structured `detail` (an object/array, not just a
@@ -337,10 +343,19 @@ mod tests {
         // the shape the perf_log_end_to_end e2e test (tests/it/tick_digest.rs)
         // asserts `.is_null()` against on a warm, non-full tick.
         let unchanged = tick_record_json(&TickRec {
-            tick: 4, kind: "full", files_parsed: 1, files_total: 1,
-            extracted: 0, retracted: 0, derived_strategy: "unchanged",
-            derived_rebuilt: &[], derived_skipped: &[], changed_rels: &[], full_reason: None,
-            effects_inflight: 0, total_ms: 1,
+            tick: 4,
+            kind: "full",
+            files_parsed: 1,
+            files_total: 1,
+            extracted: 0,
+            retracted: 0,
+            derived_strategy: "unchanged",
+            derived_rebuilt: &[],
+            derived_skipped: &[],
+            changed_rels: &[],
+            full_reason: None,
+            effects_inflight: 0,
+            total_ms: 1,
         });
         assert!(unchanged["derived"]["full_reason"].is_null());
     }
@@ -365,8 +380,11 @@ mod tests {
             "default path is <root>/.dl/perf.jsonl"
         );
         std::env::set_var("DL_PERF_LOG", "/tmp/alt-perf.jsonl");
-        assert_eq!(path(), Some(PathBuf::from("/tmp/alt-perf.jsonl")),
-            "explicit DL_PERF_LOG path wins");
+        assert_eq!(
+            path(),
+            Some(PathBuf::from("/tmp/alt-perf.jsonl")),
+            "explicit DL_PERF_LOG path wins"
+        );
         std::env::set_var("DL_PERF_LOG", "0");
         assert_eq!(path(), None, "DL_PERF_LOG=0 disables");
         std::env::remove_var("DL_PERF_LOG");

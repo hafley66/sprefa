@@ -44,20 +44,31 @@ impl Sandbox {
 
     fn write_program(&self) -> PathBuf {
         let p = self.root.join("p.dl");
-        fs::write(&p, "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n? edge(a, b).\n").unwrap();
+        fs::write(
+            &p,
+            "rel edge(a: text, b: text).\nedge(\"a\", \"b\").\n? edge(a, b).\n",
+        )
+        .unwrap();
         p
     }
 
     /// `dl daemon invocations` output, read straight off this sandbox's
     /// invocations.db (no daemon needs to be running — it's a file read).
     fn invocations_report(&self) -> String {
-        let out = self.cmd().args(["daemon", "invocations", "--limit", "50"]).output()
+        let out = self
+            .cmd()
+            .args(["daemon", "invocations", "--limit", "50"])
+            .output()
             .expect("run dl daemon invocations");
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 
     fn why_report(&self) -> String {
-        let out = self.cmd().args(["daemon", "why"]).output().expect("run dl daemon why");
+        let out = self
+            .cmd()
+            .args(["daemon", "why"])
+            .output()
+            .expect("run dl daemon why");
         String::from_utf8_lossy(&out.stdout).into_owned()
     }
 }
@@ -101,7 +112,12 @@ fn one_shot_run_records_a_finished_invocation() {
     let sb = Sandbox::new("oneshot");
     let prog = sb.write_program();
 
-    let status = sb.cmd().arg(&prog).arg("--no-daemon").status().expect("run dl");
+    let status = sb
+        .cmd()
+        .arg(&prog)
+        .arg("--no-daemon")
+        .status()
+        .expect("run dl");
     assert!(status.success(), "one-shot query run should exit 0");
 
     let report = sb.invocations_report();
@@ -109,9 +125,14 @@ fn one_shot_run_records_a_finished_invocation() {
     // row is still open (RUNNING) at the moment it reads the table — that is
     // expected, not a leak — so scope the assertion to the query program's
     // own line rather than asserting no row anywhere is open.
-    let prog_line = report.lines().find(|l| l.contains("--no-daemon") && l.contains("p.dl"))
+    let prog_line = report
+        .lines()
+        .find(|l| l.contains("--no-daemon") && l.contains("p.dl"))
         .unwrap_or_else(|| panic!("no line for the p.dl run in report:\n{report}"));
-    assert!(prog_line.contains("exit=0"), "expected a finished (exit=0) row:\n{prog_line}");
+    assert!(
+        prog_line.contains("exit=0"),
+        "expected a finished (exit=0) row:\n{prog_line}"
+    );
 }
 
 /// (2) A long-running one-shot (`--watch`, which loops until killed) that
@@ -123,19 +144,35 @@ fn sigkilled_invocation_leaves_an_open_row_flagged_killed() {
     let sb = Sandbox::new("killed");
     let prog = sb.write_program();
 
-    let child = sb.cmd().arg(&prog).arg("--watch").arg("--no-daemon")
-        .stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().expect("spawn watch run");
+    let child = sb
+        .cmd()
+        .arg(&prog)
+        .arg("--watch")
+        .arg("--no-daemon")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn watch run");
     let mut child = wait_and_kill(child, Duration::from_secs(3));
     let _ = child.wait();
 
     let report = wait_for(Duration::from_secs(5), || {
         let r = sb.invocations_report();
-        if r.contains("KILLED") { Some(r) } else { None }
+        if r.contains("KILLED") {
+            Some(r)
+        } else {
+            None
+        }
     });
     let report = report.unwrap_or_else(|| sb.invocations_report());
-    assert!(report.contains("KILLED"), "killed --watch row must be flagged KILLED:\n{report}");
-    assert!(report.contains("--watch"), "argv should still show the watch invocation:\n{report}");
+    assert!(
+        report.contains("KILLED"),
+        "killed --watch row must be flagged KILLED:\n{report}"
+    );
+    assert!(
+        report.contains("--watch"),
+        "argv should still show the watch invocation:\n{report}"
+    );
 }
 
 /// (3) `dl daemon why`'s invocations section prints even when this sandbox
@@ -146,12 +183,23 @@ fn sigkilled_invocation_leaves_an_open_row_flagged_killed() {
 fn why_report_prints_invocations_section_with_no_daemon_ever_run() {
     let sb = Sandbox::new("whyjoin");
     let prog = sb.write_program();
-    let status = sb.cmd().arg(&prog).arg("--no-daemon").status().expect("run dl");
+    let status = sb
+        .cmd()
+        .arg(&prog)
+        .arg("--no-daemon")
+        .status()
+        .expect("run dl");
     assert!(status.success());
 
     let report = sb.why_report();
-    assert!(report.contains("recent invocations:"), "invocations section must print:\n{report}");
-    assert!(report.contains("--no-daemon"), "the one-shot run's argv should appear:\n{report}");
+    assert!(
+        report.contains("recent invocations:"),
+        "invocations section must print:\n{report}"
+    );
+    assert!(
+        report.contains("--no-daemon"),
+        "the one-shot run's argv should appear:\n{report}"
+    );
 }
 
 /// (4) `DL_INVLOG=0` disables recording end to end: no row for that
@@ -162,8 +210,13 @@ fn dl_invlog_0_disables_recording_end_to_end() {
     let sb = Sandbox::new("disabled");
     let prog = sb.write_program();
 
-    let status = sb.cmd().arg(&prog).arg("--no-daemon").env("DL_INVLOG", "0")
-        .status().expect("run dl");
+    let status = sb
+        .cmd()
+        .arg(&prog)
+        .arg("--no-daemon")
+        .env("DL_INVLOG", "0")
+        .status()
+        .expect("run dl");
     assert!(status.success());
 
     let report = sb.invocations_report();
@@ -182,15 +235,29 @@ fn dl_log_writes_rolling_files_with_correct_levels() {
     let sb = Sandbox::new("logfiles");
     let prog = sb.write_program();
 
-    let status = sb.cmd().arg(&prog).arg("--no-daemon").env("DL_LOG", "info")
-        .status().expect("run dl");
+    let status = sb
+        .cmd()
+        .arg(&prog)
+        .arg("--no-daemon")
+        .env("DL_LOG", "info")
+        .status()
+        .expect("run dl");
     assert!(status.success());
 
     let dl_log_path = sb.log_dir().join("dl.log");
-    let dl_log = wait_for(Duration::from_secs(2), || fs::read_to_string(&dl_log_path).ok())
-        .unwrap_or_default();
-    assert!(!dl_log.is_empty(), "dl.log should exist and be non-empty at {}", dl_log_path.display());
-    assert!(dl_log.contains("INFO"), "dl.log should carry at least one INFO line:\n{dl_log}");
+    let dl_log = wait_for(Duration::from_secs(2), || {
+        fs::read_to_string(&dl_log_path).ok()
+    })
+    .unwrap_or_default();
+    assert!(
+        !dl_log.is_empty(),
+        "dl.log should exist and be non-empty at {}",
+        dl_log_path.display()
+    );
+    assert!(
+        dl_log.contains("INFO"),
+        "dl.log should carry at least one INFO line:\n{dl_log}"
+    );
 
     let error_log_path = sb.log_dir().join("error.log");
     // error.log is created by the SAME `file_layers` construction even when
@@ -199,6 +266,9 @@ fn dl_log_writes_rolling_files_with_correct_levels() {
     // contains no INFO line, and if it DOES have content, none of it may be
     // an INFO line (this crate's fmt layer prints the level per line).
     if let Ok(error_log) = fs::read_to_string(&error_log_path) {
-        assert!(!error_log.contains(" INFO "), "error.log must not contain info lines:\n{error_log}");
+        assert!(
+            !error_log.contains(" INFO "),
+            "error.log must not contain info lines:\n{error_log}"
+        );
     }
 }

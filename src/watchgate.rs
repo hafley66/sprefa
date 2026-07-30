@@ -99,7 +99,9 @@ impl WatchGate {
     /// `git_dir` but not under a narrow ref path are dropped (`.git/objects`
     /// churn); events under a narrow ref path are kept and `touches_git`-routed.
     pub fn add_git_dir(&mut self, git_dir: &Path) {
-        let canon = git_dir.canonicalize().unwrap_or_else(|_| git_dir.to_path_buf());
+        let canon = git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| git_dir.to_path_buf());
         // Both forms (as-given + canonical), same platform reason as GateRoot.
         for form in [git_dir.to_path_buf(), canon] {
             if !self.git_dirs.contains(&form) {
@@ -117,10 +119,12 @@ impl WatchGate {
     /// git dir is robust to `packed-refs` being created later (by `git gc`),
     /// which a fixed file-level watch would miss. `(path, recursive)`.
     pub fn git_watch_targets(&self, git_dir: &Path) -> Vec<(PathBuf, bool)> {
-        let canon = git_dir.canonicalize().unwrap_or_else(|_| git_dir.to_path_buf());
+        let canon = git_dir
+            .canonicalize()
+            .unwrap_or_else(|_| git_dir.to_path_buf());
         vec![
-            (canon.clone(), false),      // git dir NonRecursive
-            (canon.join("refs"), true),  // refs/ Recursive
+            (canon.clone(), false),     // git dir NonRecursive
+            (canon.join("refs"), true), // refs/ Recursive
         ]
     }
 
@@ -135,8 +139,12 @@ impl WatchGate {
             }
             // Git: keep only the narrow ref paths; drop all other `.git` churn.
             if self.git_dirs.iter().any(|g| path.starts_with(g)) {
-                if self.git_paths.iter().any(|gp| path.starts_with(gp) || &path == gp)
-                    && seen.insert(path.clone()) {
+                if self
+                    .git_paths
+                    .iter()
+                    .any(|gp| path.starts_with(gp) || &path == gp)
+                    && seen.insert(path.clone())
+                {
                     kept.push(path);
                 }
                 continue;
@@ -153,13 +161,21 @@ impl WatchGate {
             }
             // Under a known root: apply that root's gitignore matcher, relative
             // to whichever prefix (as-given or canonical) matched.
-            if let Some((gr, prefix)) = self.roots.iter()
-                .find_map(|r| r.prefixes.iter().find(|p| path.starts_with(p)).map(|p| (r, p))) {
+            if let Some((gr, prefix)) = self.roots.iter().find_map(|r| {
+                r.prefixes
+                    .iter()
+                    .find(|p| path.starts_with(p))
+                    .map(|p| (r, p))
+            }) {
                 let is_dir = path.is_dir();
                 if let Ok(rel) = path.strip_prefix(prefix) {
                     // `_or_any_parents` so a file under an ignored dir (`target/`
                     // matching `target/out`) is dropped, like git itself.
-                    if gr.ignore.matched_path_or_any_parents(rel, is_dir).is_ignore() {
+                    if gr
+                        .ignore
+                        .matched_path_or_any_parents(rel, is_dir)
+                        .is_ignore()
+                    {
                         continue;
                     }
                 }
@@ -193,7 +209,9 @@ impl WatchGate {
     /// True if any kept path is under a narrow git ref path.
     pub fn touches_git(&self, kept: &[PathBuf]) -> bool {
         !self.git_paths.is_empty()
-            && kept.iter().any(|p| self.git_paths.iter().any(|gp| p.starts_with(gp) || p == gp))
+            && kept
+                .iter()
+                .any(|p| self.git_paths.iter().any(|gp| p.starts_with(gp) || p == gp))
     }
 }
 
@@ -255,12 +273,15 @@ mod tests {
         fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
         fs::write(root.join("target/out"), "junk").unwrap();
         let gate = WatchGate::new(&[root.clone()]);
-        let kept = gate.filter(vec![
-            root.join("src/main.rs"),
-            root.join("target/out"),
-        ]);
-        assert!(kept.iter().any(|p| p.ends_with("src/main.rs")), "source kept");
-        assert!(!kept.iter().any(|p| p.ends_with("target/out")), "gitignored dropped");
+        let kept = gate.filter(vec![root.join("src/main.rs"), root.join("target/out")]);
+        assert!(
+            kept.iter().any(|p| p.ends_with("src/main.rs")),
+            "source kept"
+        );
+        assert!(
+            !kept.iter().any(|p| p.ends_with("target/out")),
+            "gitignored dropped"
+        );
     }
 
     #[test]
@@ -272,11 +293,18 @@ mod tests {
         fs::write(root.join(".dl/index.scip"), "index").unwrap();
         fs::write(root.join(".dl/other.generated"), "noise").unwrap();
         let gate = WatchGate::new(&[root.clone()]);
-        let kept = gate.filter(vec![root.join(".dl/index.scip"), root.join(".dl/other.generated")]);
-        assert!(kept.iter().any(|p| p.ends_with(".dl/index.scip")),
-            "gitignored SCIP index must still dirty ScipKind: {kept:?}");
-        assert!(!kept.iter().any(|p| p.ends_with(".dl/other.generated")),
-            "other gitignored generated files remain dropped: {kept:?}");
+        let kept = gate.filter(vec![
+            root.join(".dl/index.scip"),
+            root.join(".dl/other.generated"),
+        ]);
+        assert!(
+            kept.iter().any(|p| p.ends_with(".dl/index.scip")),
+            "gitignored SCIP index must still dirty ScipKind: {kept:?}"
+        );
+        assert!(
+            !kept.iter().any(|p| p.ends_with(".dl/other.generated")),
+            "other gitignored generated files remain dropped: {kept:?}"
+        );
     }
 
     #[test]
@@ -296,8 +324,14 @@ mod tests {
             gitdir.join("refs/heads/main"),
         ]);
         assert!(kept.iter().any(|p| p.ends_with("HEAD")), "HEAD kept");
-        assert!(kept.iter().any(|p| p.ends_with("refs/heads/main")), "refs kept");
-        assert!(!kept.iter().any(|p| p.ends_with("objects/ab/cdef")), "objects churn dropped");
+        assert!(
+            kept.iter().any(|p| p.ends_with("refs/heads/main")),
+            "refs kept"
+        );
+        assert!(
+            !kept.iter().any(|p| p.ends_with("objects/ab/cdef")),
+            "objects churn dropped"
+        );
         assert!(gate.touches_git(&kept), "narrow ref path routes to git");
     }
 
@@ -314,15 +348,28 @@ mod tests {
             root.join(".dl/cache.db"),
             root.join(".dl/daemon.sock"),
         ]);
-        assert_eq!(kept.iter().filter(|p| p.ends_with("a.rs")).count(), 1, "dedup");
-        assert!(!kept.iter().any(|p| p.ends_with("cache.db")), "cache.db internal");
-        assert!(!kept.iter().any(|p| p.ends_with("daemon.sock")), "sock internal");
+        assert_eq!(
+            kept.iter().filter(|p| p.ends_with("a.rs")).count(),
+            1,
+            "dedup"
+        );
+        assert!(
+            !kept.iter().any(|p| p.ends_with("cache.db")),
+            "cache.db internal"
+        );
+        assert!(
+            !kept.iter().any(|p| p.ends_with("daemon.sock")),
+            "sock internal"
+        );
     }
 
     #[test]
     fn state_subdir_cache_db_is_internal() {
         let state_cache_db = Path::new("/repo/.dl/.state/cache.db");
-        assert!(is_daemon_internal(state_cache_db), ".dl/.state/cache.db should be internal");
+        assert!(
+            is_daemon_internal(state_cache_db),
+            ".dl/.state/cache.db should be internal"
+        );
     }
 
     #[test]
@@ -338,22 +385,40 @@ mod tests {
             root.join(".dl/.state/index.scip"),
             root.join(".dl/.state/other.generated"),
         ]);
-        assert!(kept.iter().any(|p| p.ends_with(".dl/.state/index.scip")),
-            "gitignored SCIP index under .state/ must still dirty ScipKind: {kept:?}");
-        assert!(!kept.iter().any(|p| p.ends_with(".dl/.state/other.generated")),
-            "other gitignored generated files remain dropped: {kept:?}");
+        assert!(
+            kept.iter().any(|p| p.ends_with(".dl/.state/index.scip")),
+            "gitignored SCIP index under .state/ must still dirty ScipKind: {kept:?}"
+        );
+        assert!(
+            !kept
+                .iter()
+                .any(|p| p.ends_with(".dl/.state/other.generated")),
+            "other gitignored generated files remain dropped: {kept:?}"
+        );
     }
 
     #[test]
     fn daemon_internal_matches_bookkeeping_not_programs() {
         let dl = Path::new("/repo/.dl");
-        for name in ["cache.db", "cache.db-wal", "cache.db-shm", "daemon.log",
-                     "daemon.sock", "daemon.pid"] {
-            assert!(is_daemon_internal(&dl.join(name)), "{name} should be internal");
+        for name in [
+            "cache.db",
+            "cache.db-wal",
+            "cache.db-shm",
+            "daemon.log",
+            "daemon.sock",
+            "daemon.pid",
+        ] {
+            assert!(
+                is_daemon_internal(&dl.join(name)),
+                "{name} should be internal"
+            );
         }
         // Program files (incl. marks) must still fire: NOT internal.
         for name in ["prog.dl", "marks.dl", "mark-lens.dl", "rails.dl"] {
-            assert!(!is_daemon_internal(&dl.join(name)), "{name} must not be internal");
+            assert!(
+                !is_daemon_internal(&dl.join(name)),
+                "{name} must not be internal"
+            );
         }
         assert!(!is_daemon_internal(Path::new("/repo/src/main.rs")));
         // A source file that merely starts "cache.db" must NOT be internal.
@@ -368,7 +433,10 @@ mod tests {
         let gate = WatchGate::new(&[root.clone()]);
         let other = tmp().join("elsewhere/config.toml");
         let kept = gate.filter(vec![other.clone()]);
-        assert!(kept.contains(&other), "out-of-root path is not silently swallowed");
+        assert!(
+            kept.contains(&other),
+            "out-of-root path is not silently swallowed"
+        );
     }
 
     /// A submodule's contents are not gitignored (git ignores the fence for
@@ -379,7 +447,11 @@ mod tests {
         let root = tmp().join("wg5");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("vendor/nested/.git")).unwrap();
-        fs::write(root.join("vendor/nested/.git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        fs::write(
+            root.join("vendor/nested/.git/HEAD"),
+            "ref: refs/heads/main\n",
+        )
+        .unwrap();
         fs::write(root.join("vendor/nested/lib.rs"), "fn nested() {}").unwrap();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
@@ -388,9 +460,14 @@ mod tests {
             root.join("vendor/nested/lib.rs"),
             root.join("src/main.rs"),
         ]);
-        assert!(!kept.iter().any(|p| p.ends_with("vendor/nested/lib.rs")),
-            "nested repo content dropped: {kept:?}");
-        assert!(kept.iter().any(|p| p.ends_with("src/main.rs")), "sibling source file kept");
+        assert!(
+            !kept.iter().any(|p| p.ends_with("vendor/nested/lib.rs")),
+            "nested repo content dropped: {kept:?}"
+        );
+        assert!(
+            kept.iter().any(|p| p.ends_with("src/main.rs")),
+            "sibling source file kept"
+        );
     }
 
     /// A submodule worktree's `.git` is a FILE ("gitdir: <path>"), not a
@@ -400,11 +477,18 @@ mod tests {
         let root = tmp().join("wg6");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(root.join("vendor/sub")).unwrap();
-        fs::write(root.join("vendor/sub/.git"), "gitdir: /elsewhere/modules/sub\n").unwrap();
+        fs::write(
+            root.join("vendor/sub/.git"),
+            "gitdir: /elsewhere/modules/sub\n",
+        )
+        .unwrap();
         fs::write(root.join("vendor/sub/main.go"), "package sub").unwrap();
         let gate = WatchGate::new(&[root.clone()]);
         let kept = gate.filter(vec![root.join("vendor/sub/main.go")]);
-        assert!(kept.is_empty(), "submodule worktree content must be pruned: {kept:?}");
+        assert!(
+            kept.is_empty(),
+            "submodule worktree content must be pruned: {kept:?}"
+        );
     }
 
     /// The nested-repo prune must not disturb the root's OWN `.git` ref
@@ -419,7 +503,10 @@ mod tests {
         let mut gate = WatchGate::new(&[root.clone()]);
         gate.add_git_dir(&gitdir);
         let kept = gate.filter(vec![gitdir.join("HEAD")]);
-        assert!(kept.iter().any(|p| p.ends_with("HEAD")), "root's own HEAD still kept: {kept:?}");
+        assert!(
+            kept.iter().any(|p| p.ends_with("HEAD")),
+            "root's own HEAD still kept: {kept:?}"
+        );
         assert!(gate.touches_git(&kept), "HEAD still routes to git");
     }
 }

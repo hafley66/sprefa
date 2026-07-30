@@ -76,7 +76,13 @@ fn warm_engine(o: &Opts) -> Result<crate::engine::Engine> {
 
 /// Print a `QueryOut`-shaped answer: the rows via the shared helper, then a
 /// paging footer (when paged or offset) and any advisory notes.
-fn print_answer(columns: &[String], rows: &[Vec<String>], total: usize, notes: &[String], offset: Option<usize>) {
+fn print_answer(
+    columns: &[String],
+    rows: &[Vec<String>],
+    total: usize,
+    notes: &[String],
+    offset: Option<usize>,
+) {
     cli_daemon::print_rows(columns, rows);
     let off = offset.unwrap_or(0);
     if total != rows.len() || off > 0 {
@@ -159,7 +165,10 @@ pub fn run_q(args: &[String]) -> Result<i32> {
         return Ok(0);
     };
     if crate::verbs::find(&verb).is_none() {
-        eprintln!("dl q: unknown verb {verb:?}; available: {}", crate::verbs::verb_list()); // @eprintln-ok: final user-facing error print at CLI top level
+        eprintln!(
+            "dl q: unknown verb {verb:?}; available: {}",
+            crate::verbs::verb_list()
+        ); // @eprintln-ok: final user-facing error print at CLI top level
         return Ok(2);
     }
     let Some(target) = target else {
@@ -174,7 +183,8 @@ pub fn run_q(args: &[String]) -> Result<i32> {
     } else {
         let cwd = std::env::current_dir()?;
         let root = cwd.canonicalize().unwrap_or(cwd);
-        let out = crate::verbs::run_inproc(root, o.db.as_deref(), &verb, &target, o.limit, o.offset)?;
+        let out =
+            crate::verbs::run_inproc(root, o.db.as_deref(), &verb, &target, o.limit, o.offset)?;
         print_answer(&out.columns, &out.rows, out.total, &out.notes, o.offset);
     }
     Ok(0)

@@ -45,9 +45,14 @@ fn write_fixture(dir: &PathBuf, newer: bool) {
     let stamp = if newer {
         running_mtime + Duration::from_secs(3600)
     } else {
-        running_mtime.checked_sub(Duration::from_secs(3600)).unwrap_or(SystemTime::UNIX_EPOCH)
+        running_mtime
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap_or(SystemTime::UNIX_EPOCH)
     };
-    fs::File::open(&candidate).unwrap().set_modified(stamp).unwrap();
+    fs::File::open(&candidate)
+        .unwrap()
+        .set_modified(stamp)
+        .unwrap();
 }
 
 fn run_status(dir: &PathBuf, extra_envs: &[(&str, &str)]) -> String {
@@ -72,7 +77,9 @@ fn daemon_status_warns_when_repo_build_is_newer() {
     write_fixture(&dir, true);
     let stderr = run_status(&dir, &[]);
     assert!(
-        stderr.lines().any(|l| l.contains("installed dl is older than this repo's build")),
+        stderr
+            .lines()
+            .any(|l| l.contains("installed dl is older than this repo's build")),
         "expected a stale-binary warning, got:\n{stderr}"
     );
     assert!(
@@ -87,7 +94,9 @@ fn daemon_status_silent_when_repo_build_is_older() {
     write_fixture(&dir, false);
     let stderr = run_status(&dir, &[]);
     assert!(
-        !stderr.lines().any(|l| l.contains("installed dl is older than this repo's build")),
+        !stderr
+            .lines()
+            .any(|l| l.contains("installed dl is older than this repo's build")),
         "an OLDER repo build must not warn, got:\n{stderr}"
     );
 }
@@ -98,7 +107,9 @@ fn dl_no_stale_warn_suppresses() {
     write_fixture(&dir, true);
     let stderr = run_status(&dir, &[("DL_NO_STALE_WARN", "1")]);
     assert!(
-        !stderr.lines().any(|l| l.contains("installed dl is older than this repo's build")),
+        !stderr
+            .lines()
+            .any(|l| l.contains("installed dl is older than this repo's build")),
         "DL_NO_STALE_WARN=1 must suppress the warning, got:\n{stderr}"
     );
 }

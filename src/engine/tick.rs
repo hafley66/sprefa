@@ -137,7 +137,10 @@ impl TickReport {
     pub fn is_settled(&self) -> bool {
         !self.cold_pending
             && !self.derived_moved
-            && self.changed_rels.iter().all(|r| is_timer_rel(r) || crate::rels::is_bookkeeping_rel(r))
+            && self
+                .changed_rels
+                .iter()
+                .all(|r| is_timer_rel(r) || crate::rels::is_bookkeeping_rel(r))
             && !self.staged_next
             && self.inflight_effects == 0
     }
@@ -197,7 +200,10 @@ impl Engine {
         for name in names {
             if !families.iter().any(|fam| fam.name() == *name) {
                 let available: Vec<&str> = families.iter().map(|fam| fam.name()).collect();
-                bail!("ensure_families: unknown family {name:?}; available: {}", available.join(", "));
+                bail!(
+                    "ensure_families: unknown family {name:?}; available: {}",
+                    available.join(", ")
+                );
             }
         }
         if names.contains(&"spine-rels") {
@@ -261,9 +267,14 @@ impl Engine {
         // original `prog`, no clone paid.
         let desugared = desugar::desugar_mixed_rels(prog)?;
         let prog: &Program = desugared.as_ref().map(|(p, _)| p).unwrap_or(prog);
-        let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i {
-            Item::Rule(r) => Some(r), _ => None,
-        }).collect();
+        let rules: Vec<&Rule> = prog
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) => Some(r),
+                _ => None,
+            })
+            .collect();
         let closures = closure_map(&rules);
         crate::activity::set(crate::activity::Phase::Declare, "");
         // Meta tables (incl. `_shapes`) before declare: `resolve_derived_shapes`
@@ -291,8 +302,11 @@ impl Engine {
         // row runs once (`drain_effects`), a @stream row stays 'running' and fans
         // output lines into the head rel each drain (`drain_streams`). `is_effect`
         // is the union used for emission and the response-rel conflict checks.
-        let async_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.is_async() || r.is_stream()).collect();
+        let async_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| r.is_async() || r.is_stream())
+            .collect();
         // An effect body fires over already-derived relations; a source op
         // (scan/match/...) in the body has no meaning here (the effect, not the
         // file system, is the IO). Reject it like a repo-sink.
@@ -313,45 +327,65 @@ impl Engine {
         // can't run inside the SQL fixpoint, so it is evaluated by the hybrid
         // `eval_extract_rules` pass (after sources/responses are present, before
         // the derived fixpoint) and excluded from `all_derived` here.
-        let extract_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.has_term_extract() && !r.is_source()
-                && self.rels.contains_key(&r.head.rel)).collect();
-        let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
+        let extract_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| {
+                r.has_term_extract() && !r.is_source() && self.rels.contains_key(&r.head.rel)
+            })
+            .collect();
+        let all_derived: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| {
+                !r.is_source() && !r.is_repo_sink() && !r.is_next() && !r.is_async()
                 && !r.is_stream() && !r.has_term_extract()
                 && r.closure_edge().is_none() && r.scc_edge().is_none()
                 && r.node2vec_edge().is_none()
                 // A rule heading a still-PENDING derived-shape rel (its `rel name:
                 // shape.` has no persisted columns yet) has no table to write —
                 // skip it this tick; it runs once the shape resolves (Phase 5).
-                && self.rels.contains_key(&r.head.rel)).collect();
+                && self.rels.contains_key(&r.head.rel)
+            })
+            .collect();
         // `head(..) <- scc(edge).` rules: materialize (rep, member) from the
         // closure condensation in the query phase (after refresh_cond_cache).
         // Excluded from all_derived — the Scc body item can't lower to SQL, and
         // the head is filled from the already-computed Tarjan condensation.
-        let scc_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.scc_edge().is_some()).collect();
+        let scc_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| r.scc_edge().is_some())
+            .collect();
         // `head(..) <- node2vec(edge).` rules: same exclusion shape as scc. The
         // edge rel is an ordinary derived rel; after it materializes we read its
         // rows, learn node vectors, and fill the head with KNN pairs.
-        let node2vec_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.node2vec_edge().is_some()).collect();
+        let node2vec_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| r.node2vec_edge().is_some())
+            .collect();
         check_stratification(&all_derived, &closures)?;
         let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
 
         // source rels are heads of source rules; they get incremental retraction.
         let mut source_rels: Vec<String> = Vec::new();
         for r in &source_rules {
-            if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); }
+            if !source_rels.contains(&r.head.rel) {
+                source_rels.push(r.head.rel.clone());
+            }
         }
         let mut derived_rels: Vec<String> = Vec::new();
         for r in &derived_rules {
-            if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); }
+            if !derived_rels.contains(&r.head.rel) {
+                derived_rels.push(r.head.rel.clone());
+            }
         }
         // Split the derived layer around the operator boundary: pre-stratum rules
         // run in the main fixpoint, post-stratum rules (those transitively reading
         // an scc/node2vec head) run AFTER the operator evals fill those heads.
-        let strata = partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
+        let strata =
+            partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
         // A rel written by BOTH a source rule (scan/match/ast/sg/json/cmd/comment)
         // and a derived rule cannot share one table: `reconcile_sources` fills the
         // source rows incrementally (tracked in `_prov`), then `rebuild_derived`
@@ -360,10 +394,12 @@ impl Engine {
         // a third derived rule (see examples/anim-self.dl's pin/fpin -> span_of).
         for rel in &source_rels {
             if derived_rels.contains(rel) {
-                bail!("relation '{rel}' is written by both a source rule (scan/match/ast/...) \
+                bail!(
+                    "relation '{rel}' is written by both a source rule (scan/match/ast/...) \
                        and a derived rule; the scanned rows would be dropped on rebuild. Put \
                        the source rule and the derived rule in two separate relations and union \
-                       them in a third derived rule.");
+                       them in a third derived rule."
+                );
             }
         }
         // An `@in(class)` port rel is EDB injected by the serving loop (--mcp);
@@ -377,9 +413,11 @@ impl Engine {
         }).collect();
         for rel in source_rels.iter().chain(derived_rels.iter()) {
             if in_ports.contains(&rel.as_str()) {
-                bail!("relation '{rel}' is an @in port (rows are injected by the serving loop); \
+                bail!(
+                    "relation '{rel}' is an @in port (rows are injected by the serving loop); \
                        rules read it, never head it — head your handler output in an @out rel \
-                       (or an ordinary relation) instead.");
+                       (or an ordinary relation) instead."
+                );
             }
         }
         // Same hazard for a rel headed by BOTH a term-extract rule (json/jsonp body
@@ -390,14 +428,18 @@ impl Engine {
         // split the extract into its own rel and union it in a third derived rule.
         let mut extract_rels: Vec<String> = Vec::new();
         for r in &extract_rules {
-            if !extract_rels.contains(&r.head.rel) { extract_rels.push(r.head.rel.clone()); }
+            if !extract_rels.contains(&r.head.rel) {
+                extract_rels.push(r.head.rel.clone());
+            }
         }
         for rel in &extract_rels {
             if derived_rels.contains(rel) {
-                bail!("relation '{rel}' is written by both a term-extract rule (json/jsonp \
+                bail!(
+                    "relation '{rel}' is written by both a term-extract rule (json/jsonp \
                        body form) and a derived rule; the extracted rows would be dropped when \
                        the derived rule rebuilds. Put the extract in its own relation and union \
-                       it with the derived rule in a third relation.");
+                       it with the derived rule in a third relation."
+                );
             }
         }
         // `@next` carry relations: a head rel staged for the next tick must be
@@ -406,12 +448,16 @@ impl Engine {
         // collide (reconcile). Its dedup head set drives the carry load/stage.
         let mut next_rels: Vec<String> = Vec::new();
         for r in &next_rules {
-            if !next_rels.contains(&r.head.rel) { next_rels.push(r.head.rel.clone()); }
+            if !next_rels.contains(&r.head.rel) {
+                next_rels.push(r.head.rel.clone());
+            }
         }
         for rel in &next_rels {
             if source_rels.contains(rel) || derived_rels.contains(rel) {
-                bail!("relation '{rel}' is headed by a @next rule and also by a source/derived \
-                       rule; a @next (carry) relation must be written only by @next rules.");
+                bail!(
+                    "relation '{rel}' is headed by a @next rule and also by a source/derived \
+                       rule; a @next (carry) relation must be written only by @next rules."
+                );
             }
         }
         // `@async` response relations: like carry, an @async head rel is written
@@ -419,12 +465,16 @@ impl Engine {
         // derived rule heading it would be wiped each tick. Bail loudly.
         let mut async_rels: Vec<String> = Vec::new();
         for r in &async_rules {
-            if !async_rels.contains(&r.head.rel) { async_rels.push(r.head.rel.clone()); }
+            if !async_rels.contains(&r.head.rel) {
+                async_rels.push(r.head.rel.clone());
+            }
         }
         for rel in &async_rels {
             if source_rels.contains(rel) || derived_rels.contains(rel) {
-                bail!("relation '{rel}' is headed by a @async rule and also by a source/derived \
-                       rule; an @async (response) relation is written only by the effect drain.");
+                bail!(
+                    "relation '{rel}' is headed by a @async rule and also by a source/derived \
+                       rule; an @async (response) relation is written only by the effect drain."
+                );
             }
             if next_rels.contains(rel) {
                 bail!("relation '{rel}' is headed by both @next and @async rules; pick one.");
@@ -436,8 +486,12 @@ impl Engine {
         let cur_tx = self.current_tx()?;
         let mut carry_changed = false;
         for rel in &next_rels {
-            let meta = self.rels.get(rel)
-                .ok_or_else(|| anyhow::anyhow!("@next relation {rel} is not declared (add `rel {rel}(...)`)"))?
+            let meta = self
+                .rels
+                .get(rel)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("@next relation {rel} is not declared (add `rel {rel}(...)`)")
+                })?
                 .clone();
             self.ensure_carry_table(rel, &meta)?;
             carry_changed |= self.load_carry(rel, &meta, cur_tx)?;
@@ -458,12 +512,17 @@ impl Engine {
         // Rels read as a body predicate anywhere (source or derived): a scan whose
         // head feeds a rule is "consumed", so an empty tick softens rather than
         // shouting (see the zero-match diagnostic in reconcile_sources).
-        let consumed: std::collections::HashSet<String> = derived_rules.iter()
+        let consumed: std::collections::HashSet<String> = derived_rules
+            .iter()
             .chain(source_rules.iter())
-            .flat_map(|r| r.body.iter().filter_map(|b| match b {
-                crate::ast::BodyItem::Pos(a) | crate::ast::BodyItem::Neg(a) => Some(a.rel.clone()),
-                _ => None,
-            }))
+            .flat_map(|r| {
+                r.body.iter().filter_map(|b| match b {
+                    crate::ast::BodyItem::Pos(a) | crate::ast::BodyItem::Neg(a) => {
+                        Some(a.rel.clone())
+                    }
+                    _ => None,
+                })
+            })
             .collect();
         crate::activity::set(crate::activity::Phase::Reconcile, "");
         // Mid-run cancellation checkpoints (class-18 residual): each fires at
@@ -479,7 +538,12 @@ impl Engine {
         let recon = if source_rules.is_empty() {
             let file_count: i64 = self
                 .db
-                .query_one("_file", "SELECT COUNT(*) FROM _file", &[], |r| Ok(r.get(0)?))
+                .query_one(
+                    "_file",
+                    "SELECT COUNT(*) FROM _file",
+                    &[],
+                    |r| Ok(r.get(0)?),
+                )
                 .unwrap_or(0);
             if file_count > 0 {
                 tracing::warn!(
@@ -502,20 +566,20 @@ impl Engine {
         phase("reconcile-sources", t);
         // A carried-in @next rel that moved is an EDB change for this tick's
         // derived rules (e.g. a `poll` rule that reads the carried `etag`).
-        let mut changed = recon.changed || carry_changed;        // Per-rel change attribution for the scoped rebuild below (perf gap B):
-        // every source/built-in relation whose rows moved this tick lands here,
-        // and only the derived rels dependency-reachable from the set re-derive.
-        // Baselining each source relation's content digest doubles as the
-        // attribution for extraction rels (the digests were already computed
-        // here for tick_paths' bytes-moved-rows-didn't prune).
-        // Source-attribution digest saves are DEFERRED to after the rebuild
-        // lands (flushed at the `derived:program` deferral point below): a tick
-        // killed mid-rebuild must leave every `_reldigest` baseline unmoved, so
-        // the next boot re-detects the change and re-scopes the rebuild. Before
-        // the crash-window fix this was safe only because the whole-pass
-        // derived-missing full rebuild re-attributed anything lost; `rebuild_derived`
-        // now marks completion per component, so that backstop is gone and the
-        // saves must not race ahead of the rows they describe.
+        let mut changed = recon.changed || carry_changed; // Per-rel change attribution for the scoped rebuild below (perf gap B):
+                                                          // every source/built-in relation whose rows moved this tick lands here,
+                                                          // and only the derived rels dependency-reachable from the set re-derive.
+                                                          // Baselining each source relation's content digest doubles as the
+                                                          // attribution for extraction rels (the digests were already computed
+                                                          // here for tick_paths' bytes-moved-rows-didn't prune).
+                                                          // Source-attribution digest saves are DEFERRED to after the rebuild
+                                                          // lands (flushed at the `derived:program` deferral point below): a tick
+                                                          // killed mid-rebuild must leave every `_reldigest` baseline unmoved, so
+                                                          // the next boot re-detects the change and re-scopes the rebuild. Before
+                                                          // the crash-window fix this was safe only because the whole-pass
+                                                          // derived-missing full rebuild re-attributed anything lost; `rebuild_derived`
+                                                          // now marks completion per component, so that backstop is gone and the
+                                                          // saves must not race ahead of the rows they describe.
         let mut pending_digests: Vec<(String, [u8; 32])> = Vec::new();
         let (seed_moved, seed_pending) = self.seed_rel_digests(&source_rels)?;
         pending_digests.extend(seed_pending);
@@ -536,7 +600,11 @@ impl Engine {
         // before derived rules that may join them are rebuilt.
         let t = std::time::Instant::now();
         self.refresh_builtin_rels()?;
-        if recon.changed { for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); } }
+        if recon.changed {
+            for b in BUILTIN_RELS {
+                changed_source_rels.insert(b.to_string());
+            }
+        }
         phase("builtin-rels", t);
         // The clock can move with no file change (a boundary crossing, or the
         // clear after one), so feed its change into `changed` — else the full tick
@@ -568,8 +636,12 @@ impl Engine {
         // `node` (CST) is not a member (it must run BEFORE spine — its walk
         // writes the `_strings`/`_where_bytes` meta tables spine projects),
         // so it stays hand-dispatched between the pre/post-node slices.
-        let any_extract = crate::rels::extract_families_pre_node().iter().any(|f| f.used(prog))
-            || crate::rels::extract_families_post_node().iter().any(|f| f.used(prog))
+        let any_extract = crate::rels::extract_families_pre_node()
+            .iter()
+            .any(|f| f.used(prog))
+            || crate::rels::extract_families_post_node()
+                .iter()
+                .any(|f| f.used(prog))
             || node_rels_used(prog);
         if any_extract {
             crate::activity::set(crate::activity::Phase::ParseExtract, "extract");
@@ -584,8 +656,7 @@ impl Engine {
         // short. A resume tick (`kill -9` mid-start) re-enqueues only the still-
         // pending nodes. See `engine/cold_stage.rs`.
         let cold_should_seed = self.cold_start_should_seed(prog)?;
-        let cold_resume =
-            !cold_should_seed && self.poll_loop && self.cold_start_in_progress()?;
+        let cold_resume = !cold_should_seed && self.poll_loop && self.cold_start_in_progress()?;
         let cold_staging_active = cold_should_seed || cold_resume;
         // Pre-extract RelKinds (scip): the index load is an INPUT to the extract
         // families below (the type/call resolvers read `scip_ref`), so it must
@@ -594,9 +665,15 @@ impl Engine {
         // deferred to its own node and prime to the family nodes.
         if !cold_staging_active {
             for k in crate::rels::rel_kinds() {
-                if k.pre_extract() && k.used(prog) && k.refresh(self)? && !(self.poll_loop && k.bookkeeping()) {
+                if k.pre_extract()
+                    && k.used(prog)
+                    && k.refresh(self)?
+                    && !(self.poll_loop && k.bookkeeping())
+                {
                     changed = true;
-                    for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                    for r in k.rels() {
+                        changed_source_rels.insert(r.to_string());
+                    }
                 }
             }
             // Type/call/dataflow share a parsed representation in language front
@@ -631,7 +708,9 @@ impl Engine {
             });
         }
         for fam in crate::rels::extract_families_pre_node() {
-            if !fam.used(prog) { continue; }
+            if !fam.used(prog) {
+                continue;
+            }
             crate::cancel::checkpoint(fam.name())?;
             crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
@@ -648,12 +727,16 @@ impl Engine {
             let t = std::time::Instant::now();
             if self.refresh_node_rels()? {
                 changed = true;
-                for n in NODE_RELS { changed_source_rels.insert(n.to_string()); }
+                for n in NODE_RELS {
+                    changed_source_rels.insert(n.to_string());
+                }
             }
             phase("node-rels", t);
         }
         for fam in crate::rels::extract_families_post_node() {
-            if !fam.used(prog) { continue; }
+            if !fam.used(prog) {
+                continue;
+            }
             crate::cancel::checkpoint(fam.name())?;
             crate::activity::detail(fam.name());
             let t = std::time::Instant::now();
@@ -674,7 +757,9 @@ impl Engine {
                 false
             };
             if moved {
-                for r in fam.rels() { changed_source_rels.insert(r.to_string()); }
+                for r in fam.rels() {
+                    changed_source_rels.insert(r.to_string());
+                }
             }
             phase(fam.name(), t);
         }
@@ -685,7 +770,9 @@ impl Engine {
         // always refreshes every used family (`dirty` is consulted only by the
         // incremental `tick_paths`), so the scip index reload runs here too.
         for k in crate::rels::rel_kinds() {
-            if k.pre_extract() { continue; } // ran before the extract families
+            if k.pre_extract() {
+                continue;
+            } // ran before the extract families
             if k.used(prog) && k.refresh(self)? {
                 // Under a repeated-tick scheduler, bookkeeping families
                 // (stmt_ms/rel_count/query_log) move on every tick by
@@ -696,9 +783,13 @@ impl Engine {
                 // ticks forever (75GB/2.7h measured 2026-07-17). One-shot
                 // ticks keep the seed: they cannot loop, and the perf rails'
                 // second-invocation contract needs it (see Engine::poll_loop).
-                if self.poll_loop && k.bookkeeping() { continue; }
+                if self.poll_loop && k.bookkeeping() {
+                    continue;
+                }
                 changed = true;
-                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                for r in k.rels() {
+                    changed_source_rels.insert(r.to_string());
+                }
             }
         }
         // `program`/`head`/`rev_advanced` and `effect_log` are wholesale
@@ -716,7 +807,9 @@ impl Engine {
         if daemon_rels_used(prog) {
             self.refresh_daemon_rels()?;
             for rel in DAEMON_RELS {
-                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let Some(meta) = self.rels.get(rel).cloned() else {
+                    continue;
+                };
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("daemon:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
@@ -729,7 +822,9 @@ impl Engine {
         if effect_rels_used(prog) {
             self.refresh_effect_rels()?;
             for rel in EFFECT_RELS {
-                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let Some(meta) = self.rels.get(rel).cloned() else {
+                    continue;
+                };
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("effect:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
@@ -746,7 +841,9 @@ impl Engine {
         // leaves them out of the scoped rebuild. First-ever seeding counts as
         // moved, like the source-rel baseline.
         for rel in &async_rels {
-            let Some(meta) = self.rels.get(rel).cloned() else { continue };
+            let Some(meta) = self.rels.get(rel).cloned() else {
+                continue;
+            };
             let d = self.rel_content_digest(rel, &meta)?;
             let key = format!("async:{rel}");
             if self.load_rel_digest(&key)? != Some(d) {
@@ -763,7 +860,9 @@ impl Engine {
         // a program that never reads hook_event pays nothing.
         if hook_rels_used(prog) {
             for rel in HOOK_RELS {
-                let Some(meta) = self.rels.get(rel).cloned() else { continue };
+                let Some(meta) = self.rels.get(rel).cloned() else {
+                    continue;
+                };
                 let d = self.rel_content_digest(rel, &meta)?;
                 let key = format!("hook:{rel}");
                 if self.load_rel_digest(&key)? != Some(d) {
@@ -784,13 +883,20 @@ impl Engine {
         // must be attributed here, the same `port:` key pattern as `async:`/
         // `hook:` above — a freshly injected request row re-derives its
         // `@out`-port dependents; a tick with no new injection stays scoped out.
-        let in_port_rels: Vec<String> = prog.items.iter().filter_map(|i| match i {
-            Item::Rel(d) if matches!(&d.port, Some(p) if p.dir == crate::ast::PortDir::In) =>
-                Some(d.name.clone()),
-            _ => None,
-        }).collect();
+        let in_port_rels: Vec<String> = prog
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rel(d) if matches!(&d.port, Some(p) if p.dir == crate::ast::PortDir::In) => {
+                    Some(d.name.clone())
+                }
+                _ => None,
+            })
+            .collect();
         for rel in &in_port_rels {
-            let Some(meta) = self.rels.get(rel).cloned() else { continue };
+            let Some(meta) = self.rels.get(rel).cloned() else {
+                continue;
+            };
             let d = self.rel_content_digest(rel, &meta)?;
             let key = format!("port:{rel}");
             if self.load_rel_digest(&key)? != Some(d) {
@@ -831,19 +937,30 @@ impl Engine {
         // db, so effectively every tick.
         let incomplete_derived = self.derived_incomplete_rels(&derived_rels)?;
         let empty_closure_edge = self.first_empty_closure_edge(&edges)?;
-        let mut need_full = derived_moved || carry_changed
-            || !incomplete_derived.is_empty() || empty_closure_edge.is_some();
+        let mut need_full = derived_moved
+            || carry_changed
+            || !incomplete_derived.is_empty()
+            || empty_closure_edge.is_some();
         // P3: name WHY a full rebuild happened, in tick record priority order
         // matching the `need_full` OR above (a blank slate/program-shape
         // change is the more useful diagnosis when several conditions coincide,
         // e.g. the very first tick on a fresh db has both `derived_moved` and
         // every rel "incomplete").
-        let mut full_reason: Option<String> = if !need_full { None }
-            else if derived_moved && prior_der_digest.is_none() { Some("blank-slate".to_string()) }
-            else if derived_moved { Some("program-edit".to_string()) }
-            else if carry_changed { Some("carry-changed".to_string()) }
-            else if !incomplete_derived.is_empty() { Some(format!("derived-missing:{}", incomplete_derived.join(","))) }
-            else { empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}")) };
+        let mut full_reason: Option<String> = if !need_full {
+            None
+        } else if derived_moved && prior_der_digest.is_none() {
+            Some("blank-slate".to_string())
+        } else if derived_moved {
+            Some("program-edit".to_string())
+        } else if carry_changed {
+            Some("carry-changed".to_string())
+        } else if !incomplete_derived.is_empty() {
+            Some(format!("derived-missing:{}", incomplete_derived.join(",")))
+        } else {
+            empty_closure_edge
+                .as_ref()
+                .map(|edge| format!("closure-missing:{edge}"))
+        };
         // The #13 downgrade: ONLY the pure program-edit trigger is scopable — a
         // blank slate has nothing to keep, carry/closure triggers mean table
         // state (not rule shape) is untrustworthy. `full_reason` is priority-
@@ -855,11 +972,15 @@ impl Engine {
         // owns the motion).
         let mut program_scope: HashSet<String> = HashSet::new();
         if full_reason.as_deref() == Some("program-edit")
-            && !carry_changed && empty_closure_edge.is_none()
+            && !carry_changed
+            && empty_closure_edge.is_none()
         {
             if let Some(diff) = &shape_diff {
-                if diff.attributable && !diff.moved.is_empty()
-                    && incomplete_derived.iter().all(|rel| diff.moved.contains(rel))
+                if diff.attributable
+                    && !diff.moved.is_empty()
+                    && incomplete_derived
+                        .iter()
+                        .all(|rel| diff.moved.contains(rel))
                 {
                     need_full = false;
                     full_reason = None;
@@ -870,7 +991,10 @@ impl Engine {
                         names.sort_unstable();
                         let names_str = names.join(", ");
                         // @eprintln-ok: DL_STMT_TRACE companion line is the command's stderr output contract
-                        eprintln!("[derived-scope] program edit scoped to {} rel(s): {names_str}", names.len());
+                        eprintln!(
+                            "[derived-scope] program edit scoped to {} rel(s): {names_str}",
+                            names.len()
+                        );
                     }
                 }
             }
@@ -900,13 +1024,24 @@ impl Engine {
             let mut scope_seed = changed_source_rels.clone();
             scope_seed.extend(program_scope.iter().cloned());
             affected = affected_derived(&derived_rules, &scope_seed);
-            let sub_rules: Vec<&Rule> = strata.pre_rules.iter().copied()
-                .filter(|r| affected.contains(&r.head.rel)).collect();
-            let sub_rels: Vec<String> = strata.pre_rels.iter()
-                .filter(|r| affected.contains(*r)).cloned().collect();
+            let sub_rules: Vec<&Rule> = strata
+                .pre_rules
+                .iter()
+                .copied()
+                .filter(|r| affected.contains(&r.head.rel))
+                .collect();
+            let sub_rels: Vec<String> = strata
+                .pre_rels
+                .iter()
+                .filter(|r| affected.contains(*r))
+                .cloned()
+                .collect();
             self.last_derived_skipped = self.rebuild_derived(&sub_rules, &sub_rels)?;
-            let aff_edges: Vec<&str> = edges.iter().copied()
-                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
+            let aff_edges: Vec<&str> = edges
+                .iter()
+                .copied()
+                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e))
+                .collect();
             self.rebuild_closures(&aff_edges)?;
             dirty_edges = aff_edges.into_iter().collect();
             self.last_derived_rebuilt = sub_rels;
@@ -954,7 +1089,8 @@ impl Engine {
         // off-tick-written rels; the per-path file content-hash test for the
         // WORK source-file case lives in `source_prepare.rs` (see report).
         if !pending_digests.is_empty() {
-            let moved_keys: Vec<String> = pending_digests.iter().map(|(key, _)| key.clone()).collect();
+            let moved_keys: Vec<String> =
+                pending_digests.iter().map(|(key, _)| key.clone()).collect();
             crate::eventlog::emit(
                 "digest_moved",
                 Some(&self.root()),
@@ -970,7 +1106,11 @@ impl Engine {
             let total = recon.total;
             let extracted = recon.extracted;
             let retracted = recon.retracted;
-            let derived = if changed || !program_scope.is_empty() { "rebuilt" } else { "unchanged" };
+            let derived = if changed || !program_scope.is_empty() {
+                "rebuilt"
+            } else {
+                "unchanged"
+            };
             tracing::debug!(
                 parsed,
                 total,
@@ -1001,9 +1141,15 @@ impl Engine {
             crate::cancel::checkpoint("operators")?;
         }
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
-        for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
-        for r in &scc_rules { self.eval_scc_rule(r)?; }
-        for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
+        for (r, cs) in &seed_rules {
+            self.eval_closure_seed_rule(r, cs)?;
+        }
+        for r in &scc_rules {
+            self.eval_scc_rule(r)?;
+        }
+        for r in &node2vec_rules {
+            self.eval_node2vec_rule(r)?;
+        }
         // Post-stratum: derived rules that read an operator head. The heads just
         // filled (scc/node2vec evals above), so these now lower correctly. On a
         // warm tick no derived rel moved, so no operator edge moved, so the heads
@@ -1019,17 +1165,27 @@ impl Engine {
                 let mut seed = changed_source_rels.clone();
                 seed.extend(program_scope.iter().cloned());
                 for r in scc_rules.iter().chain(node2vec_rules.iter()) {
-                    let edge = r.scc_edge().or_else(|| r.node2vec_edge())
+                    let edge = r
+                        .scc_edge()
+                        .or_else(|| r.node2vec_edge())
                         .expect("operator rule has an scc/node2vec edge");
                     if affected.contains(edge) || changed_source_rels.contains(edge) {
                         seed.insert(r.head.rel.clone());
                     }
                 }
                 let aff_post = affected_derived(&derived_rules, &seed);
-                let sub_post_rules: Vec<&Rule> = strata.post_rules.iter().copied()
-                    .filter(|r| aff_post.contains(&r.head.rel)).collect();
-                let sub_post_rels: Vec<String> = strata.post_rels.iter()
-                    .filter(|r| aff_post.contains(*r)).cloned().collect();
+                let sub_post_rules: Vec<&Rule> = strata
+                    .post_rules
+                    .iter()
+                    .copied()
+                    .filter(|r| aff_post.contains(&r.head.rel))
+                    .collect();
+                let sub_post_rels: Vec<String> = strata
+                    .post_rels
+                    .iter()
+                    .filter(|r| aff_post.contains(*r))
+                    .cloned()
+                    .collect();
                 if !sub_post_rels.is_empty() {
                     let skipped = self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
                     self.last_derived_skipped.extend(skipped);
@@ -1132,9 +1288,13 @@ impl Engine {
         // tick's wall cost. `derived_strategy` names WHY everything re-ran
         // ("full" = program/blank-slate/carry; "scoped" = only reachable rels;
         // "unchanged" = nothing propagated) — the fact the spike hunter wants.
-        let derived_strategy = if need_full { "full" }
-            else if changed || !program_scope.is_empty() { "scoped" }
-            else { "unchanged" };
+        let derived_strategy = if need_full {
+            "full"
+        } else if changed || !program_scope.is_empty() {
+            "scoped"
+        } else {
+            "unchanged"
+        };
         crate::perflog::emit_tick(&crate::perflog::TickRec {
             tick: crate::activity::snapshot().tick,
             kind: "full",
@@ -1224,7 +1384,14 @@ impl Engine {
         let original_prog = prog;
         let desugared = desugar::desugar_mixed_rels(prog)?;
         let prog: &Program = desugared.as_ref().map(|(p, _)| p).unwrap_or(prog);
-        let rules: Vec<&Rule> = prog.items.iter().filter_map(|i| match i { Item::Rule(r) => Some(r), _ => None }).collect();
+        let rules: Vec<&Rule> = prog
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) => Some(r),
+                _ => None,
+            })
+            .collect();
         let closures = closure_map(&rules);
         // Meta tables (incl. `_shapes`) before declare (Phase 5, see tick_report).
         self.ensure_meta()?;
@@ -1253,21 +1420,43 @@ impl Engine {
         }
 
         let source_rules: Vec<&Rule> = rules.iter().copied().filter(|r| r.is_source()).collect();
-        let all_derived: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| !r.is_source() && r.closure_edge().is_none() && r.scc_edge().is_none()
-                && r.node2vec_edge().is_none()
-                && self.rels.contains_key(&r.head.rel)).collect();
-        let scc_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.scc_edge().is_some()).collect();
-        let node2vec_rules: Vec<&Rule> = rules.iter().copied()
-            .filter(|r| r.node2vec_edge().is_some()).collect();
+        let all_derived: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| {
+                !r.is_source()
+                    && r.closure_edge().is_none()
+                    && r.scc_edge().is_none()
+                    && r.node2vec_edge().is_none()
+                    && self.rels.contains_key(&r.head.rel)
+            })
+            .collect();
+        let scc_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| r.scc_edge().is_some())
+            .collect();
+        let node2vec_rules: Vec<&Rule> = rules
+            .iter()
+            .copied()
+            .filter(|r| r.node2vec_edge().is_some())
+            .collect();
         check_stratification(&all_derived, &closures)?;
         let (seed_rules, derived_rules) = split_seed_and_derived(&all_derived, &closures)?;
         let mut source_rels: Vec<String> = Vec::new();
-        for r in &source_rules { if !source_rels.contains(&r.head.rel) { source_rels.push(r.head.rel.clone()); } }
+        for r in &source_rules {
+            if !source_rels.contains(&r.head.rel) {
+                source_rels.push(r.head.rel.clone());
+            }
+        }
         let mut derived_rels: Vec<String> = Vec::new();
-        for r in &derived_rules { if !derived_rels.contains(&r.head.rel) { derived_rels.push(r.head.rel.clone()); } }
-        let strata = partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
+        for r in &derived_rules {
+            if !derived_rels.contains(&r.head.rel) {
+                derived_rels.push(r.head.rel.clone());
+            }
+        }
+        let strata =
+            partition_derived_strata(&derived_rules, &derived_rels, &scc_rules, &node2vec_rules)?;
         let edges: Vec<&str> = dedup_edges(&closures);
         self.create_auto_indexes(&derived_rules, &closures)?;
 
@@ -1380,7 +1569,9 @@ impl Engine {
         // changed; extraction re-reads them on its next run).
         for k in crate::rels::rel_kinds() {
             if k.pre_extract() && k.used(prog) && k.dirty(self, &seen) && k.refresh(self)? {
-                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                for r in k.rels() {
+                    changed_source_rels.insert(r.to_string());
+                }
                 changed_facts = true;
             }
         }
@@ -1391,21 +1582,24 @@ impl Engine {
         // leaves `fn` unchanged but does change the file's content hash).
         if files_changed {
             self.refresh_builtin_rels()?;
-            for b in BUILTIN_RELS { changed_source_rels.insert(b.to_string()); }
+            for b in BUILTIN_RELS {
+                changed_source_rels.insert(b.to_string());
+            }
             // D5.5 rev-retraction sweep — same seam and rationale as the full
             // tick (see `tick`'s call site): only reachable when `_file`
             // actually moved this tick, since a rev can only disappear from
             // it as part of a file/rev delta.
             self.sweep_gone_revs()?;
         }
-        let module_dependency_before = self.module_resolution_dependency_digest(&self.self_rev.text());
+        let module_dependency_before =
+            self.module_resolution_dependency_digest(&self.self_rev.text());
         let module_outcome = if wants_module_rels {
-            crate::rels::ModuleFamily
-                .refresh_delta(self, module_full_work, &module_delta_paths)?
+            crate::rels::ModuleFamily.refresh_delta(self, module_full_work, &module_delta_paths)?
         } else {
             crate::rels::RefreshOutcome::Unchanged
         };
-        let module_dependency_after = self.module_resolution_dependency_digest(&self.self_rev.text());
+        let module_dependency_after =
+            self.module_resolution_dependency_digest(&self.self_rev.text());
         let module_dependency_changed = module_dependency_before != module_dependency_after;
         if module_outcome.moved() {
             for m in MODULE_RELS {
@@ -1444,7 +1638,10 @@ impl Engine {
             // the spine projection (else this tick's `ref`/`string` miss node spans).
             // Path-scoped: re-walk ONLY this tick's changed files; the other
             // files' node/child rows are untouched.
-            if files_changed && node_rels_used(prog) && self.refresh_node_rels_delta(&node_delta_paths)? {
+            if files_changed
+                && node_rels_used(prog)
+                && self.refresh_node_rels_delta(&node_delta_paths)?
+            {
                 for n in NODE_RELS {
                     changed_source_rels.insert(n.to_string());
                 }
@@ -1479,14 +1676,22 @@ impl Engine {
         // worktree diff, so the `changed` family re-reads whenever the program
         // joins it; the false-on-no-op result keeps the rebuild scope tight.
         for k in crate::rels::rel_kinds() {
-            if k.pre_extract() { continue; } // ran before the extract families
+            if k.pre_extract() {
+                continue;
+            } // ran before the extract families
             if k.used(prog) && k.dirty(self, &seen) && k.refresh(self)? {
-                for r in k.rels() { changed_source_rels.insert(r.to_string()); }
+                for r in k.rels() {
+                    changed_source_rels.insert(r.to_string());
+                }
                 changed_facts = true;
             }
         }
-        if daemon_rels_used(prog) { self.refresh_daemon_rels()?; }
-        if changed_source_rels.is_empty() { changed_facts = false; }
+        if daemon_rels_used(prog) {
+            self.refresh_daemon_rels()?;
+        }
+        if changed_source_rels.is_empty() {
+            changed_facts = false;
+        }
 
         // Cold start (or a derived rel that never completed a rebuild pass)
         // needs a full rebuild; otherwise rebuild only the derived rels
@@ -1502,7 +1707,9 @@ impl Engine {
         let full_reason: Option<String> = if !incomplete_derived.is_empty() {
             Some(format!("derived-missing:{}", incomplete_derived.join(",")))
         } else {
-            empty_closure_edge.as_ref().map(|edge| format!("closure-missing:{edge}"))
+            empty_closure_edge
+                .as_ref()
+                .map(|edge| format!("closure-missing:{edge}"))
         };
         let mut rebuilt: Vec<String> = Vec::new();
         self.last_derived_skipped = Vec::new();
@@ -1524,22 +1731,37 @@ impl Engine {
             dirty_edges = edges.iter().copied().collect();
         } else if changed_facts {
             affected = affected_derived(&derived_rules, &changed_source_rels);
-            let sub_rules: Vec<&Rule> = strata.pre_rules.iter().copied()
-                .filter(|r| affected.contains(&r.head.rel)).collect();
-            let sub_rels: Vec<String> = strata.pre_rels.iter()
-                .filter(|r| affected.contains(*r)).cloned().collect();
+            let sub_rules: Vec<&Rule> = strata
+                .pre_rules
+                .iter()
+                .copied()
+                .filter(|r| affected.contains(&r.head.rel))
+                .collect();
+            let sub_rels: Vec<String> = strata
+                .pre_rels
+                .iter()
+                .filter(|r| affected.contains(*r))
+                .cloned()
+                .collect();
             self.last_derived_skipped = self.rebuild_derived(&sub_rules, &sub_rels)?;
-            let aff_edges: Vec<&str> = edges.iter().copied()
-                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e)).collect();
+            let aff_edges: Vec<&str> = edges
+                .iter()
+                .copied()
+                .filter(|e| affected.contains(*e) || changed_source_rels.contains(*e))
+                .collect();
             self.rebuild_closures(&aff_edges)?;
             dirty_edges = aff_edges.iter().copied().collect();
             rebuilt = sub_rels;
         }
 
         if !quiet {
-            let what = if need_full { "ALL".to_string() }
-                       else if rebuilt.is_empty() { "none".to_string() }
-                       else { rebuilt.join(",") };
+            let what = if need_full {
+                "ALL".to_string()
+            } else if rebuilt.is_empty() {
+                "none".to_string()
+            } else {
+                rebuilt.join(",")
+            };
             let (slowest_rel, slowest_ms) = self.slowest_stmt_ms();
             let trigger = format!("file-event({npaths})");
             tracing::debug!(
@@ -1562,9 +1784,15 @@ impl Engine {
         let cond_edges = cond_edges_for(&edges, &scc_rules);
         crate::cancel::checkpoint("operators")?;
         self.refresh_cond_cache(&cond_edges, &dirty_edges)?;
-        for (r, cs) in &seed_rules { self.eval_closure_seed_rule(r, cs)?; }
-        for r in &scc_rules { self.eval_scc_rule(r)?; }
-        for r in &node2vec_rules { self.eval_node2vec_rule(r)?; }
+        for (r, cs) in &seed_rules {
+            self.eval_closure_seed_rule(r, cs)?;
+        }
+        for r in &scc_rules {
+            self.eval_scc_rule(r)?;
+        }
+        for r in &node2vec_rules {
+            self.eval_node2vec_rule(r)?;
+        }
         // Post-stratum rebuild (rules reading an operator head). The heads filled
         // just above. On a full rebuild, redo every post rel; on an incremental
         // tick, redo only those whose inputs moved — a changed source/derived rel
@@ -1576,17 +1804,27 @@ impl Engine {
             } else if changed_facts {
                 let mut seed = changed_source_rels.clone();
                 for r in scc_rules.iter().chain(node2vec_rules.iter()) {
-                    let edge = r.scc_edge().or_else(|| r.node2vec_edge())
+                    let edge = r
+                        .scc_edge()
+                        .or_else(|| r.node2vec_edge())
                         .expect("operator rule has an scc/node2vec edge");
                     if affected.contains(edge) || changed_source_rels.contains(edge) {
                         seed.insert(r.head.rel.clone());
                     }
                 }
                 let aff_post = affected_derived(&derived_rules, &seed);
-                let sub_post_rules: Vec<&Rule> = strata.post_rules.iter().copied()
-                    .filter(|r| aff_post.contains(&r.head.rel)).collect();
-                let sub_post_rels: Vec<String> = strata.post_rels.iter()
-                    .filter(|r| aff_post.contains(*r)).cloned().collect();
+                let sub_post_rules: Vec<&Rule> = strata
+                    .post_rules
+                    .iter()
+                    .copied()
+                    .filter(|r| aff_post.contains(&r.head.rel))
+                    .collect();
+                let sub_post_rels: Vec<String> = strata
+                    .post_rels
+                    .iter()
+                    .filter(|r| aff_post.contains(*r))
+                    .cloned()
+                    .collect();
                 if !sub_post_rels.is_empty() {
                     let skipped = self.rebuild_derived(&sub_post_rules, &sub_post_rels)?;
                     self.last_derived_skipped.extend(skipped);
@@ -1643,7 +1881,13 @@ impl Engine {
             // triggered by a missing completion marker/closure edge is
             // labeled "full", not mislabeled "scoped" just because `rebuilt`
             // happened to be non-empty.
-            derived_strategy: if need_full { "full" } else if rebuilt.is_empty() { "unchanged" } else { "scoped" },
+            derived_strategy: if need_full {
+                "full"
+            } else if rebuilt.is_empty() {
+                "unchanged"
+            } else {
+                "scoped"
+            },
             derived_rebuilt: &rebuilt,
             derived_skipped: &self.last_derived_skipped,
             changed_rels: &[],

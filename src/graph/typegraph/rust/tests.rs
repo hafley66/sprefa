@@ -55,7 +55,11 @@ pub fn tick(&self, db: Db) -> Result { todo!() }
 }
 ";
     let es = rust_entities("src/engine.rs", src);
-    let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+    let by = |name: &str| {
+        es.iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("missing {name}: {es:?}"))
+    };
     assert_eq!(by("Engine").kind, EntityKind::Struct);
     assert_eq!(by("Mode").kind, EntityKind::Enum);
     assert_eq!(by("Sink").kind, EntityKind::Trait);
@@ -69,9 +73,16 @@ pub fn tick(&self, db: Db) -> Result { todo!() }
     assert_eq!(run.ret, vec![TypeRef::Named("Report".into())]);
     let tick = by("tick");
     assert_eq!(tick.kind, EntityKind::Method);
-    assert_eq!(tick.parent.as_deref(), Some("src/engine.rs::struct::Engine"));
+    assert_eq!(
+        tick.parent.as_deref(),
+        Some("src/engine.rs::struct::Engine")
+    );
     let tty = tick.ty.as_ref().unwrap();
-    assert_eq!(tty.params, vec![vec![TypeRef::Named("Db".into())]], "self dropped: {tty:?}");
+    assert_eq!(
+        tty.params,
+        vec![vec![TypeRef::Named("Db".into())]],
+        "self dropped: {tty:?}"
+    );
 }
 
 #[test]
@@ -90,24 +101,68 @@ fn rust_lift_ctors_args_fields_members() {
     let cfg = dnode(&df, "new", "Cfg").id.clone();
     let wrap = dnode(&df, "new", "Wrap").id.clone();
     // struct-literal fields land in df_field by name.
-    let h_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "h").unwrap().id.clone();
+    let h_read = df
+        .nodes
+        .iter()
+        .find(|n| n.kind == "var_read" && n.var == "h")
+        .unwrap()
+        .id
+        .clone();
     assert!(has_field(&df, &cfg, "host", &h_read), "{:?}", df.fields);
-    assert!(df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"), "{:?}", df.fields);
+    assert!(
+        df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"),
+        "{:?}",
+        df.fields
+    );
     // `.host` is a member read carrying the field name.
     let member = dnode(&df, "member", "host");
-    assert!(df.edges.iter().any(|e| e.to == member.id), "member has a base edge");
+    assert!(
+        df.edges.iter().any(|e| e.to == member.id),
+        "member has a base edge"
+    );
     // tuple-struct ctor arg at slot 0.
-    let x_reads: Vec<&DfNode> = df.nodes.iter().filter(|n| n.kind == "var_read" && n.var == "x").collect();
-    assert!(x_reads.iter().any(|x| has_arg(&df, &wrap, 0, &x.id)), "{:?}", df.args);
+    let x_reads: Vec<&DfNode> = df
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "var_read" && n.var == "x")
+        .collect();
+    assert!(
+        x_reads.iter().any(|x| has_arg(&df, &wrap, 0, &x.id)),
+        "{:?}",
+        df.args
+    );
     // method receiver at slot -1: items.len().
-    let items_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "items").unwrap();
-    assert!(df.args.iter().any(|(_, p, a)| *p == -1 && a == &items_read.id), "{:?}", df.args);
+    let items_read = df
+        .nodes
+        .iter()
+        .find(|n| n.kind == "var_read" && n.var == "items")
+        .unwrap();
+    assert!(
+        df.args
+            .iter()
+            .any(|(_, p, a)| *p == -1 && a == &items_read.id),
+        "{:?}",
+        df.args
+    );
     // eat(n, x): slots 0 and 1 on the same call.
-    let n_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "n").unwrap();
-    let eat_call = df.args.iter().find(|(_, p, a)| *p == 0 && a == &n_read.id).map(|(c, _, _)| c.clone())
+    let n_read = df
+        .nodes
+        .iter()
+        .find(|n| n.kind == "var_read" && n.var == "n")
+        .unwrap();
+    let eat_call = df
+        .args
+        .iter()
+        .find(|(_, p, a)| *p == 0 && a == &n_read.id)
+        .map(|(c, _, _)| c.clone())
         .expect("eat call with n at slot 0");
-    assert!(df.args.iter().any(|(c, p, a)| c == &eat_call && *p == 1
-        && x_reads.iter().any(|x| a == &x.id)), "{:?}", df.args);
+    assert!(
+        df.args
+            .iter()
+            .any(|(c, p, a)| c == &eat_call && *p == 1 && x_reads.iter().any(|x| a == &x.id)),
+        "{:?}",
+        df.args
+    );
 }
 
 #[test]
@@ -118,11 +173,22 @@ fn rust_inline_closure_lifts_as_own_scope() {
     // capture still resolves: the shared scope links an outer read.
     let src2 = "fn go(k: i32, xs: Vec<i32>) {\n    let out = xs.map(|x| x + k);\n}\n";
     let df2 = RustTypes.extract_dataflow("f.rs", src2);
-    let k_param = df2.nodes.iter().find(|n| n.kind == "param" && n.var == "k").unwrap();
-    let k_read = df2.nodes.iter().find(|n| n.kind == "var_read" && n.var == "k").unwrap();
+    let k_param = df2
+        .nodes
+        .iter()
+        .find(|n| n.kind == "param" && n.var == "k")
+        .unwrap();
+    let k_read = df2
+        .nodes
+        .iter()
+        .find(|n| n.kind == "var_read" && n.var == "k")
+        .unwrap();
     assert!(
-        df2.edges.iter().any(|e| e.from == k_param.id && e.to == k_read.id),
-        "capture edge: {:?}", df2.edges
+        df2.edges
+            .iter()
+            .any(|e| e.from == k_param.id && e.to == k_read.id),
+        "capture edge: {:?}",
+        df2.edges
     );
 }
 
@@ -130,14 +196,28 @@ fn rust_inline_closure_lifts_as_own_scope() {
 fn rust_const_str_mints_entity_and_df_lit() {
     let src = "const HOME: &str = \"/home\";\nfn go() { let _ = HOME; }\n";
     let facts = RustTypes.extract("f.rs", src);
-    let ent = facts.entities.iter().find(|e| e.name == "HOME").expect("const entity");
+    let ent = facts
+        .entities
+        .iter()
+        .find(|e| e.name == "HOME")
+        .expect("const entity");
     assert_eq!(ent.kind, EntityKind::Const);
-    let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+    let row = facts
+        .consts
+        .iter()
+        .find(|c| c.sym == ent.sym)
+        .expect("const_value row");
     assert_eq!(row.text, "/home");
     assert_eq!(row.kind, "lit");
 
     let df = RustTypes.extract_dataflow("f.rs", "fn go() { let x = \"/home\"; }\n");
-    assert!(df.lits.iter().any(|(_, text, kind)| text == "/home" && *kind == "lit"), "{:?}", df.lits);
+    assert!(
+        df.lits
+            .iter()
+            .any(|(_, text, kind)| text == "/home" && *kind == "lit"),
+        "{:?}",
+        df.lits
+    );
 }
 
 #[test]
@@ -157,7 +237,11 @@ fn rust_bundle_matches_independent_extractors_and_honors_mask() {
     let types_only = RustTypes.extract_bundle(
         "f.rs",
         src,
-        AnalysisMask { types: true, calls: false, dataflow: false },
+        AnalysisMask {
+            types: true,
+            calls: false,
+            dataflow: false,
+        },
     );
     assert!(types_only.types.is_some());
     assert!(types_only.calls.is_none());

@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -36,8 +39,13 @@ fn git(dir: &Path, args: &[&str]) {
         .args(args)
         .output()
         .expect("git");
-    assert!(out.status.success(), "git {:?} failed:\nstdout={}\nstderr={}",
-        args, String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {:?} failed:\nstdout={}\nstderr={}",
+        args,
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 // A scan rule populates the file set (built-in `file`); the resolver then runs
@@ -57,7 +65,11 @@ fn rust_mod_and_use_edges_with_closure() {
     let d = sandbox("rust");
     fs::create_dir_all(d.join("src")).unwrap();
     // lib.rs declares two submodules; a.rs uses b; b.rs is a leaf; mod missing has no file.
-    fs::write(d.join("src/lib.rs"), "mod a;\nmod b;\nmod missing;\nfn x() {}\n").unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "mod a;\nmod b;\nmod missing;\nfn x() {}\n",
+    )
+    .unwrap();
     fs::write(d.join("src/a.rs"), "use crate::b::Thing;\nfn x() {}\n").unwrap();
     fs::write(d.join("src/b.rs"), "pub struct Thing;\nfn x() {}\n").unwrap();
 
@@ -65,19 +77,34 @@ fn rust_mod_and_use_edges_with_closure() {
     assert_eq!(code, 0, "run failed: {out}");
 
     // mod edges (filesystem inclusion)
-    assert!(out.contains("src/lib.rs\tsrc/a.rs"), "lib->a mod edge: {out}");
-    assert!(out.contains("src/lib.rs\tsrc/b.rs"), "lib->b mod edge: {out}");
+    assert!(
+        out.contains("src/lib.rs\tsrc/a.rs"),
+        "lib->a mod edge: {out}"
+    );
+    assert!(
+        out.contains("src/lib.rs\tsrc/b.rs"),
+        "lib->b mod edge: {out}"
+    );
     // use edge (cross-module dependency)
     assert!(out.contains("src/a.rs\tsrc/b.rs"), "a->b use edge: {out}");
 
     // transitive reach: lib -> a -> b means reaches(lib, b) holds
     let reaches_block = out.split("? reaches").nth(1).unwrap_or("");
-    assert!(reaches_block.contains("src/lib.rs\tsrc/b.rs"), "transitive reaches(lib,b): {out}");
-    assert!(reaches_block.contains("src/a.rs\tsrc/b.rs"), "reaches(a,b): {out}");
+    assert!(
+        reaches_block.contains("src/lib.rs\tsrc/b.rs"),
+        "transitive reaches(lib,b): {out}"
+    );
+    assert!(
+        reaches_block.contains("src/a.rs\tsrc/b.rs"),
+        "reaches(a,b): {out}"
+    );
 
     // `mod missing;` has no child file -> module_unresolved
     let unres_block = out.split("? module_unresolved").nth(1).unwrap_or("");
-    assert!(unres_block.contains("missing"), "mod missing must be unresolved: {out}");
+    assert!(
+        unres_block.contains("missing"),
+        "mod missing must be unresolved: {out}"
+    );
 }
 
 #[test]
@@ -110,9 +137,15 @@ use_at(txt, lo, hi) <- ref(_, s, _, lo, hi), string(s, txt, _).
     // Both leaves locate that one shared span (deduped). That byte range IS the
     // rewrite coordinate `--move` keys off. (`ref.file` is the content-addressed
     // FileId, not the path, so the span is what we assert on.)
-    assert!(block.contains("crate::b\t4\t12"), "brace head crate::b located at 4..12: {out}");
+    assert!(
+        block.contains("crate::b\t4\t12"),
+        "brace head crate::b located at 4..12: {out}"
+    );
     // The leaf names are NOT separately located — the head is the coordinate.
-    assert!(!block.contains("Thing\t"), "leaf name should not be a located span: {out}");
+    assert!(
+        !block.contains("Thing\t"),
+        "leaf name should not be a located span: {out}"
+    );
 }
 
 #[test]
@@ -149,7 +182,11 @@ reaches(a, b) <- closure(module_edge).
 fn ts_import_edges_via_oxc() {
     let d = sandbox("ts");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/app.ts"), "import './utils';\nimport { y } from './lib/helper';\nexport const z = 1;\n").unwrap();
+    fs::write(
+        d.join("src/app.ts"),
+        "import './utils';\nimport { y } from './lib/helper';\nexport const z = 1;\n",
+    )
+    .unwrap();
     fs::write(d.join("src/utils.ts"), "export const x = 1;\n").unwrap();
     fs::create_dir_all(d.join("src/lib")).unwrap();
     fs::write(d.join("src/lib/helper.ts"), "export const y = 2;\n").unwrap();
@@ -157,9 +194,15 @@ fn ts_import_edges_via_oxc() {
     let (code, out, _) = run(&d, PROG_XLANG, &[]);
     assert_eq!(code, 0, "run failed: {out}");
     // relative import with extension probing
-    assert!(out.contains("src/app.ts\tsrc/utils.ts"), "app->utils import edge: {out}");
+    assert!(
+        out.contains("src/app.ts\tsrc/utils.ts"),
+        "app->utils import edge: {out}"
+    );
     // nested relative import
-    assert!(out.contains("src/app.ts\tsrc/lib/helper.ts"), "app->lib/helper edge: {out}");
+    assert!(
+        out.contains("src/app.ts\tsrc/lib/helper.ts"),
+        "app->lib/helper edge: {out}"
+    );
 }
 
 #[test]
@@ -171,18 +214,34 @@ fn cross_language_union_in_one_edge_relation() {
     fs::write(d.join("rs/src/lib.rs"), "mod a;\nfn x() {}\n").unwrap();
     fs::write(d.join("rs/src/a.rs"), "fn x() {}\n").unwrap();
     // TS subgraph: app -> util
-    fs::write(d.join("ts/src/app.ts"), "import './util';\nexport const z = 1;\n").unwrap();
+    fs::write(
+        d.join("ts/src/app.ts"),
+        "import './util';\nexport const z = 1;\n",
+    )
+    .unwrap();
     fs::write(d.join("ts/src/util.ts"), "export const x = 1;\n").unwrap();
 
     let (code, out, _) = run(&d, PROG_XLANG, &[]);
     assert_eq!(code, 0, "run failed: {out}");
     // Both languages' edges live in the same module_edge relation
-    assert!(out.contains("rs/src/lib.rs\trs/src/a.rs"), "rust edge present: {out}");
-    assert!(out.contains("ts/src/app.ts\tts/src/util.ts"), "ts edge present: {out}");
+    assert!(
+        out.contains("rs/src/lib.rs\trs/src/a.rs"),
+        "rust edge present: {out}"
+    );
+    assert!(
+        out.contains("ts/src/app.ts\tts/src/util.ts"),
+        "ts edge present: {out}"
+    );
     // The single reaches closure covers both subgraphs
     let reaches_block = out.split("? reaches").nth(1).unwrap_or("");
-    assert!(reaches_block.contains("rs/src/lib.rs\trs/src/a.rs"), "rust reach: {out}");
-    assert!(reaches_block.contains("ts/src/app.ts\tts/src/util.ts"), "ts reach: {out}");
+    assert!(
+        reaches_block.contains("rs/src/lib.rs\trs/src/a.rs"),
+        "rust reach: {out}"
+    );
+    assert!(
+        reaches_block.contains("ts/src/app.ts\tts/src/util.ts"),
+        "ts reach: {out}"
+    );
 }
 
 const PROG_TS: &str = r#"
@@ -200,15 +259,24 @@ fn ts_per_package_tsconfig_paths() {
     fs::create_dir_all(d.join("packages/app/src")).unwrap();
     fs::create_dir_all(d.join("packages/lib/src")).unwrap();
     // app's own tsconfig defines a @lib/* alias (baseUrl = the packages dir).
-    fs::write(d.join("packages/app/tsconfig.json"),
-        r#"{"compilerOptions":{"baseUrl":"..","paths":{"@lib/*":["lib/src/*"]}}}"#).unwrap();
-    fs::write(d.join("packages/app/src/main.ts"), "import { u } from '@lib/util';\nexport const z = 1;\n").unwrap();
+    fs::write(
+        d.join("packages/app/tsconfig.json"),
+        r#"{"compilerOptions":{"baseUrl":"..","paths":{"@lib/*":["lib/src/*"]}}}"#,
+    )
+    .unwrap();
+    fs::write(
+        d.join("packages/app/src/main.ts"),
+        "import { u } from '@lib/util';\nexport const z = 1;\n",
+    )
+    .unwrap();
     fs::write(d.join("packages/lib/src/util.ts"), "export const u = 1;\n").unwrap();
 
     let (code, out, _) = run(&d, PROG_TS, &[]);
     assert_eq!(code, 0, "run failed: {out}");
-    assert!(out.contains("packages/app/src/main.ts\tpackages/lib/src/util.ts"),
-        "per-package tsconfig paths alias must resolve: {out}");
+    assert!(
+        out.contains("packages/app/src/main.ts\tpackages/lib/src/util.ts"),
+        "per-package tsconfig paths alias must resolve: {out}"
+    );
 }
 
 #[test]
@@ -217,25 +285,42 @@ fn ts_workspace_package_json_fallback() {
     fs::create_dir_all(d.join("packages/app/src")).unwrap();
     fs::create_dir_all(d.join("packages/shared")).unwrap();
     // No node_modules: a bare import of a workspace package resolves via package.json name.
-    fs::write(d.join("packages/shared/package.json"), r#"{"name":"shared","version":"1.0.0"}"#).unwrap();
+    fs::write(
+        d.join("packages/shared/package.json"),
+        r#"{"name":"shared","version":"1.0.0"}"#,
+    )
+    .unwrap();
     fs::write(d.join("packages/shared/index.ts"), "export const s = 1;\n").unwrap();
-    fs::write(d.join("packages/app/src/main.ts"), "import { s } from 'shared';\nexport const z = 1;\n").unwrap();
+    fs::write(
+        d.join("packages/app/src/main.ts"),
+        "import { s } from 'shared';\nexport const z = 1;\n",
+    )
+    .unwrap();
 
     let (code, out, _) = run(&d, PROG_TS, &[]);
     assert_eq!(code, 0, "run failed: {out}");
-    assert!(out.contains("packages/app/src/main.ts\tpackages/shared/index.ts"),
-        "workspace package.json fallback must resolve: {out}");
+    assert!(
+        out.contains("packages/app/src/main.ts\tpackages/shared/index.ts"),
+        "workspace package.json fallback must resolve: {out}"
+    );
 }
 
 #[test]
 fn ts_dynamic_template_import_is_unresolved_not_silent() {
     let d = sandbox("ts_dyn");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/app.ts"), "const m = await import(`./mods/${name}`);\nexport const z = 1;\n").unwrap();
+    fs::write(
+        d.join("src/app.ts"),
+        "const m = await import(`./mods/${name}`);\nexport const z = 1;\n",
+    )
+    .unwrap();
     let (code, out, _) = run(&d, PROG_TS, &[]);
     assert_eq!(code, 0, "run failed: {out}");
     let unres = out.split("? module_unresolved").nth(1).unwrap_or("");
-    assert!(unres.contains("dynamic"), "interpolated import() must be flagged dynamic, not dropped silently: {out}");
+    assert!(
+        unres.contains("dynamic"),
+        "interpolated import() must be flagged dynamic, not dropped silently: {out}"
+    );
 }
 
 #[test]
@@ -246,7 +331,11 @@ fn broken_imports_lint_via_check() {
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/lib.rs"), "mod real;\nmod ghost;\nfn x(){}\n").unwrap();
     fs::write(d.join("src/real.rs"), "fn x(){}\n").unwrap();
-    fs::write(d.join("src/app.ts"), "import './missing';\nimport './present';\nexport const z=1;\n").unwrap();
+    fs::write(
+        d.join("src/app.ts"),
+        "import './missing';\nimport './present';\nexport const z=1;\n",
+    )
+    .unwrap();
     fs::write(d.join("src/present.ts"), "export const p=1;\n").unwrap();
     let prog = r#"
 rel seen(path: file).
@@ -255,9 +344,18 @@ diag(path: p, line: l, severity: "error", code: "broken-import", msg: "unresolve
 "#;
     let (code, _out, err) = run(&d, prog, &["--check"]);
     assert_ne!(code, 0, "broken imports must fail --check");
-    assert!(err.contains("src/lib.rs:2") && err.contains("ghost"), "dangling mod ghost flagged at its line: {err}");
-    assert!(err.contains("src/app.ts:1") && err.contains("missing"), "broken TS import flagged at its line: {err}");
-    assert!(!err.contains("real") && !err.contains("present"), "resolved imports must not be flagged: {err}");
+    assert!(
+        err.contains("src/lib.rs:2") && err.contains("ghost"),
+        "dangling mod ghost flagged at its line: {err}"
+    );
+    assert!(
+        err.contains("src/app.ts:1") && err.contains("missing"),
+        "broken TS import flagged at its line: {err}"
+    );
+    assert!(
+        !err.contains("real") && !err.contains("present"),
+        "resolved imports must not be flagged: {err}"
+    );
 }
 
 #[test]
@@ -268,14 +366,20 @@ fn edge_drops_when_target_file_deleted() {
     fs::write(d.join("src/a.rs"), "fn x() {}\n").unwrap();
 
     let (_, out, _) = run(&d, PROG, &[]);
-    assert!(out.contains("src/lib.rs\tsrc/a.rs"), "cold: lib->a edge: {out}");
+    assert!(
+        out.contains("src/lib.rs\tsrc/a.rs"),
+        "cold: lib->a edge: {out}"
+    );
 
     // Delete the submodule file and tick that path. The mod decl in lib.rs still
     // exists but now resolves to nothing -> edge drops, becomes unresolved.
     fs::remove_file(d.join("src/a.rs")).unwrap();
     let _ = run(&d, PROG, &["--changed", "src/a.rs"]);
     let (_, out2, _) = run(&d, PROG, &[]);
-    assert!(!out2.contains("src/lib.rs\tsrc/a.rs"), "edge must drop when a.rs gone: {out2}");
+    assert!(
+        !out2.contains("src/lib.rs\tsrc/a.rs"),
+        "edge must drop when a.rs gone: {out2}"
+    );
 }
 
 #[test]
@@ -309,20 +413,33 @@ work_reaches(src, dst) <- closure(work_edge).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "HEAD edge keeps its rev: {out}");
+    assert!(
+        out.contains("src/lib.rs\tsrc/a.rs\t"),
+        "HEAD edge keeps its rev: {out}"
+    );
     // `WORK` resolves to HEAD's oid plus `+` (the sandbox has untracked files),
     // so the worktree row is the one whose rev carries the dirty marker.
-    assert!(work_row(&out, "src/lib.rs", "src/b.rs"), "WORK edge keeps the worktree rev: {out}");
+    assert!(
+        work_row(&out, "src/lib.rs", "src/b.rs"),
+        "WORK edge keeps the worktree rev: {out}"
+    );
     let work = out.split("? work_reaches").nth(1).unwrap_or("");
-    assert!(work.contains("src/lib.rs\tsrc/b.rs"), "filtered WORK closure includes b: {out}");
-    assert!(!work.contains("src/lib.rs\tsrc/a.rs"), "filtered WORK closure must not include HEAD-only a: {out}");
+    assert!(
+        work.contains("src/lib.rs\tsrc/b.rs"),
+        "filtered WORK closure includes b: {out}"
+    );
+    assert!(
+        !work.contains("src/lib.rs\tsrc/a.rs"),
+        "filtered WORK closure must not include HEAD-only a: {out}"
+    );
 }
 
 /// Is there an output row `src\tdst\t<rev>` whose rev carries the dirty marker,
 /// i.e. the row belonging to the resolved `WORK` alias rather than a commit?
 fn work_row(out: &str, src: &str, dst: &str) -> bool {
     let head = format!("{src}\t{dst}\t");
-    out.lines().any(|line| line.starts_with(&head) && line.trim_end().ends_with('+'))
+    out.lines()
+        .any(|line| line.starts_with(&head) && line.trim_end().ends_with('+'))
 }
 
 #[test]
@@ -349,15 +466,30 @@ seen(path, rev) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /./,
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "cold HEAD edge present: {out}");
-    assert!(work_row(&out, "src/lib.rs", "src/b.rs"), "cold WORK edge present: {out}");
+    assert!(
+        out.contains("src/lib.rs\tsrc/a.rs\t"),
+        "cold HEAD edge present: {out}"
+    );
+    assert!(
+        work_row(&out, "src/lib.rs", "src/b.rs"),
+        "cold WORK edge present: {out}"
+    );
 
     fs::write(d.join("src/lib.rs"), "mod c;\nfn x() {}\n").unwrap();
     let (code, out, err) = run(&d, prog, &["--changed", "src/lib.rs"]);
     assert_eq!(code, 0, "changed run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("src/lib.rs\tsrc/a.rs\t"), "delta keeps HEAD edge: {out}");
-    assert!(work_row(&out, "src/lib.rs", "src/c.rs"), "delta updates WORK edge: {out}");
-    assert!(!work_row(&out, "src/lib.rs", "src/b.rs"), "delta drops old WORK edge: {out}");
+    assert!(
+        out.contains("src/lib.rs\tsrc/a.rs\t"),
+        "delta keeps HEAD edge: {out}"
+    );
+    assert!(
+        work_row(&out, "src/lib.rs", "src/c.rs"),
+        "delta updates WORK edge: {out}"
+    );
+    assert!(
+        !work_row(&out, "src/lib.rs", "src/b.rs"),
+        "delta drops old WORK edge: {out}"
+    );
 }
 
 #[test]
@@ -378,8 +510,13 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev), match(path, rev, /./, line).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains(&format!("app\tcorelib\tdependencies\t{}", crate::util::NO_HEAD_REV)),
-        "Cargo package= rename dependency should be a crate_edge: {out}");
+    assert!(
+        out.contains(&format!(
+            "app\tcorelib\tdependencies\t{}",
+            crate::util::NO_HEAD_REV
+        )),
+        "Cargo package= rename dependency should be a crate_edge: {out}"
+    );
 }
 
 #[test]
@@ -387,8 +524,11 @@ fn changed_manifest_rebuilds_module_derived_rels() {
     let d = sandbox("manifest_delta");
     fs::create_dir_all(d.join("app/src")).unwrap();
     fs::create_dir_all(d.join("core/src")).unwrap();
-    fs::write(d.join("app/Cargo.toml"),
-        "[package]\nname = \"app\"\n\n[dependencies]\ncorelib = { path = \"../core\" }\n").unwrap();
+    fs::write(
+        d.join("app/Cargo.toml"),
+        "[package]\nname = \"app\"\n\n[dependencies]\ncorelib = { path = \"../core\" }\n",
+    )
+    .unwrap();
     fs::write(d.join("core/Cargo.toml"), "[package]\nname = \"corelib\"\n").unwrap();
     fs::write(d.join("app/src/lib.rs"), "fn app() {}\n").unwrap();
     fs::write(d.join("core/src/lib.rs"), "fn core() {}\n").unwrap();
@@ -402,10 +542,19 @@ dep(src, dst) <- crate_edge(src, dst, kind, rev).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("app\tcorelib"), "cold derived crate dep present: {out}");
+    assert!(
+        out.contains("app\tcorelib"),
+        "cold derived crate dep present: {out}"
+    );
 
     fs::write(d.join("app/Cargo.toml"), "[package]\nname = \"app\"\n").unwrap();
     let (code, out, err) = run(&d, prog, &["--changed", "app/Cargo.toml"]);
-    assert_eq!(code, 0, "changed manifest run failed:\nstdout={out}\nstderr={err}");
-    assert!(!out.contains("app\tcorelib"), "manifest delta must rebuild derived dep: {out}");
+    assert_eq!(
+        code, 0,
+        "changed manifest run failed:\nstdout={out}\nstderr={err}"
+    );
+    assert!(
+        !out.contains("app\tcorelib"),
+        "manifest delta must rebuild derived dep: {out}"
+    );
 }

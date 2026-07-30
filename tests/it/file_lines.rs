@@ -35,10 +35,13 @@ fn run(dir: &Path, prog_path: &str, extra: &[&str]) -> (i32, String, String) {
         .env("DL_TRACE", "debug")
         .args(extra)
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const SRC_QUERY: &str = r#"
@@ -61,8 +64,14 @@ fn file_lines_returns_real_counts() {
     assert_eq!(code, 0, "{err}");
     // `WORK` is an ALIAS; a sandbox with no git HEAD stores the zero sentinel.
     let rev = crate::util::NO_HEAD_REV;
-    assert!(out.contains(&format!("src/three.rs\t{rev}\t3")), "expected 3 lines for three.rs: {out}");
-    assert!(out.contains(&format!("src/one.rs\t{rev}\t1")), "expected 1 line for one.rs (no trailing newline): {out}");
+    assert!(
+        out.contains(&format!("src/three.rs\t{rev}\t3")),
+        "expected 3 lines for three.rs: {out}"
+    );
+    assert!(
+        out.contains(&format!("src/one.rs\t{rev}\t1")),
+        "expected 1 line for one.rs (no trailing newline): {out}"
+    );
 }
 
 #[test]
@@ -84,11 +93,18 @@ fn file_lines_second_tick_reuses_stored_count_on_unchanged_mtime() {
     // means enumerate_with_hash never fell through to a fresh read+count.
     let (code2, out2, err2) = run(&d, "p.dl", &[]);
     assert_eq!(code2, 0);
-    assert!(out2.contains(&format!("src/x.rs\t{rev}\t2")), "count must survive the fast path: {out2}");
-    assert!(err2.contains("files 0/") || err2.contains("0/1 parsed") || err2.contains("parsed"),
-        "expected an unchanged-tick signal in stderr: {err2}");
-    assert!(!err2.contains("files 1/1 parsed"),
-        "an unchanged file must not be re-parsed on the second tick: {err2}");
+    assert!(
+        out2.contains(&format!("src/x.rs\t{rev}\t2")),
+        "count must survive the fast path: {out2}"
+    );
+    assert!(
+        err2.contains("files 0/") || err2.contains("0/1 parsed") || err2.contains("parsed"),
+        "expected an unchanged-tick signal in stderr: {err2}"
+    );
+    assert!(
+        !err2.contains("files 1/1 parsed"),
+        "an unchanged file must not be re-parsed on the second tick: {err2}"
+    );
 }
 
 #[test]
@@ -104,19 +120,32 @@ fn file_size_rail_flags_over_budget_file_and_reports_aggregate() {
     // Walk up from the test binary's cwd to find the repo's `.dl/file-size.dl`
     // (integration tests run with cwd = the crate root already).
     let rail = repo_root.join(".dl/file-size.dl");
-    assert!(rail.exists(), "expected .dl/file-size.dl at {}", rail.display());
+    assert!(
+        rail.exists(),
+        "expected .dl/file-size.dl at {}",
+        rail.display()
+    );
     let rail_contents = fs::read_to_string(&rail).unwrap();
     fs::write(d.join("file-size.dl"), rail_contents).unwrap();
 
     let (code, out, err) = run(&d, "file-size.dl", &[]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("file-over-budget") && out.contains("src/big.rs"),
-        "expected an over-budget finding for src/big.rs: {out}");
-    assert!(!out.contains("src/big.rs\t1\twarning\tfile-over-budget-grandfathered"),
-        "src/big.rs is not on the grandfather list, must NOT be silenced: {out}");
-    assert!(out.contains("file-size-debt") && out.contains("unacceptable files"),
-        "expected the aggregate debt count row: {out}");
-    assert!(!out.contains("src/small.rs"), "a small file must not be flagged: {out}");
+    assert!(
+        out.contains("file-over-budget") && out.contains("src/big.rs"),
+        "expected an over-budget finding for src/big.rs: {out}"
+    );
+    assert!(
+        !out.contains("src/big.rs\t1\twarning\tfile-over-budget-grandfathered"),
+        "src/big.rs is not on the grandfather list, must NOT be silenced: {out}"
+    );
+    assert!(
+        out.contains("file-size-debt") && out.contains("unacceptable files"),
+        "expected the aggregate debt count row: {out}"
+    );
+    assert!(
+        !out.contains("src/small.rs"),
+        "a small file must not be flagged: {out}"
+    );
 }
 
 #[test]
@@ -132,6 +161,9 @@ fn file_size_rail_check_mode_exits_zero_advisory_only() {
     fs::write(d.join("file-size.dl"), rail_contents).unwrap();
 
     let (code, _, err) = run(&d, "file-size.dl", &["--check"]);
-    assert_eq!(code, 0, "the .dl rail is advisory-only (warning severity); \
-        the bash script scripts/filesize-rail.sh is the exit-2 enforcement prong: {err}");
+    assert_eq!(
+        code, 0,
+        "the .dl rail is advisory-only (warning severity); \
+        the bash script scripts/filesize-rail.sh is the exit-2 enforcement prong: {err}"
+    );
 }

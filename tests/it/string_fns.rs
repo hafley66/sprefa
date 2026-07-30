@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Derived-head split: last path segment via negative idx (unary minus).
@@ -45,16 +48,29 @@ stem(path, split(path, "/", -1)) <- f(path).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("lib.rs\tlib.rs"), "last seg of src/lib.rs: {out}");
-    assert!(out.contains("src/deep/mod.rs\tmod.rs"), "last seg of nested path: {out}");
-    assert!(out.contains("top.rs\ttop.rs"), "no-separator passthrough: {out}");
+    assert!(
+        out.contains("lib.rs\tlib.rs"),
+        "last seg of src/lib.rs: {out}"
+    );
+    assert!(
+        out.contains("src/deep/mod.rs\tmod.rs"),
+        "last seg of nested path: {out}"
+    );
+    assert!(
+        out.contains("top.rs\ttop.rs"),
+        "no-separator passthrough: {out}"
+    );
 }
 
 /// Source-head split: split a captured fn name on `_`, first and last segments.
 #[test]
 fn split_source_head_segments() {
     let d = sandbox("split_source");
-    fs::write(d.join("src/lib.rs"), "fn alpha_fn() {}\nfn beta_thing() {}\n").unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        "fn alpha_fn() {}\nfn beta_thing() {}\n",
+    )
+    .unwrap();
     let prog = r#"
 rel seg(f: file, first: text, last: text).
 seg(f, split(n, "_", 0), split(n, "_", -1)) <-
@@ -82,7 +98,10 @@ kebab(w, replace(w, "_", "-")) <- n(w).
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("foo_bar\tfoo-bar"), "single replace: {out}");
-    assert!(out.contains("a_b_c\ta-b-c"), "replace is global (all occurrences): {out}");
+    assert!(
+        out.contains("a_b_c\ta-b-c"),
+        "replace is global (all occurrences): {out}"
+    );
 }
 
 /// split on a comparison side: filter to names whose last `.` segment is a known
@@ -103,7 +122,10 @@ rust(p) <- f(p), ext = split(p, ".", -1), ext = "rs".
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("a.rs") && out.contains("c.rs"), "rust files: {out}");
+    assert!(
+        out.contains("a.rs") && out.contains("c.rs"),
+        "rust files: {out}"
+    );
     assert!(!out.contains("b.md"), "md filtered out: {out}");
 }
 
@@ -124,10 +146,19 @@ miss(s, split(s, " ", 1)) <- f(s).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    let hit = out.split("? hit =>").nth(1).unwrap().split('?').next().unwrap();
+    let hit = out
+        .split("? hit =>")
+        .nth(1)
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
     assert!(hit.contains("one_part"), "idx 0 of one_part: {hit}");
     let miss = out.split("? miss =>").nth(1).unwrap();
-    assert!(miss.contains("(0 rows)"), "idx 1 out of range -> 0 rows: {miss}");
+    assert!(
+        miss.contains("(0 rows)"),
+        "idx 1 out of range -> 0 rows: {miss}"
+    );
 }
 
 /// A function call as an ARG of a body atom is a lower-time error (same rule
@@ -189,8 +220,14 @@ pos(f, c) <- scan("WORK", "src/*.txt", f, rev),
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("\t42") && out.contains("\t7"), "positive counts kept: {out}");
-    assert!(!out.contains("\t0\n") && !out.contains("\t0\t"), "zero count filtered: {out}");
+    assert!(
+        out.contains("\t42") && out.contains("\t7"),
+        "positive counts kept: {out}"
+    );
+    assert!(
+        !out.contains("\t0\n") && !out.contains("\t0\t"),
+        "zero count filtered: {out}"
+    );
 }
 
 /// `int(..)` cannot fill a non-int column (it produces an int, not text).
@@ -206,7 +243,10 @@ bad(s, int(s)) <- n(s).
 "#;
     let (code, _out, err) = run(&d, prog);
     assert_ne!(code, 0, "int() into a text column must fail");
-    assert!(err.contains("int") && err.contains("non-int column"), "got: {err}");
+    assert!(
+        err.contains("int") && err.contains("non-int column"),
+        "got: {err}"
+    );
 }
 
 /// An unknown function name is rejected (whitelist is split/replace).
@@ -241,7 +281,10 @@ cased(w, lower(w), upper(w), lcfirst(w), ucfirst(w)) <- n(w).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("getuser\tGETUSER\tgetUser\tGetUser"), "case fns: {out}");
+    assert!(
+        out.contains("getuser\tGETUSER\tgetUser\tGetUser"),
+        "case fns: {out}"
+    );
 }
 
 /// trim + anchored strip_prefix/strip_suffix. Strip returns the input UNCHANGED
@@ -260,8 +303,14 @@ out(w, trim(w), strip_prefix(w, "use"), strip_suffix(w, "Name")) <- n(w).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("useFoo\tuseFoo\tFoo\tuseFoo"), "strip_prefix present, suffix absent: {out}");
-    assert!(out.contains("bareName\tbareName\tbareName\tbare"), "prefix absent, suffix present: {out}");
+    assert!(
+        out.contains("useFoo\tuseFoo\tFoo\tuseFoo"),
+        "strip_prefix present, suffix absent: {out}"
+    );
+    assert!(
+        out.contains("bareName\tbareName\tbareName\tbare"),
+        "prefix absent, suffix present: {out}"
+    );
     assert!(out.contains("  hi  \thi"), "trim: {out}");
 }
 
@@ -282,9 +331,18 @@ stem(w, replace_re(strip_prefix(w, "use"), "^Lazy|(Query|Mutation)$", "")) <- n(
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("useGetUserQuery\tGetUser"), "Query suffix stripped: {out}");
-    assert!(out.contains("useUpdateUserMutation\tUpdateUser"), "Mutation suffix stripped: {out}");
-    assert!(out.contains("useLazyGetUserQuery\tGetUser"), "Lazy prefix + Query suffix stripped: {out}");
+    assert!(
+        out.contains("useGetUserQuery\tGetUser"),
+        "Query suffix stripped: {out}"
+    );
+    assert!(
+        out.contains("useUpdateUserMutation\tUpdateUser"),
+        "Mutation suffix stripped: {out}"
+    );
+    assert!(
+        out.contains("useLazyGetUserQuery\tGetUser"),
+        "Lazy prefix + Query suffix stripped: {out}"
+    );
 }
 
 /// The headline composition: recover the RTKQ endpoint op name from a hook
@@ -304,8 +362,14 @@ op(h, lcfirst(replace_re(strip_prefix(h, "use"), "^Lazy|(Query|Mutation)$", ""))
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("useGetUserQuery\tgetUser"), "getUser: {out}");
-    assert!(out.contains("useUpdateUserMutation\tupdateUser"), "updateUser: {out}");
-    assert!(out.contains("useLazyListUsersQuery\tlistUsers"), "listUsers: {out}");
+    assert!(
+        out.contains("useUpdateUserMutation\tupdateUser"),
+        "updateUser: {out}"
+    );
+    assert!(
+        out.contains("useLazyListUsersQuery\tlistUsers"),
+        "listUsers: {out}"
+    );
 }
 
 /// Unary minus parses as a negative literal: `-1` in split idx, no parens
@@ -325,7 +389,13 @@ sub(s, split(s, ".", 0 - 1)) <- f(s).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    let last = out.split("? last =>").nth(1).unwrap().split('?').next().unwrap();
+    let last = out
+        .split("? last =>")
+        .nth(1)
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
     assert!(last.contains("\tc"), "unary -1 last seg: {last}");
     let sub = out.split("? sub =>").nth(1).unwrap();
     assert!(sub.contains("\tc"), "binary 0-1 last seg: {sub}");

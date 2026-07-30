@@ -39,7 +39,9 @@ pub trait AgentHarness {
     /// Skills loaded in the newest session, as (session_id, skill_name): explicit
     /// `Skill` tool calls plus dl's own prior hook injections. Default none (a
     /// harness whose store we can't read for skills).
-    fn skill_loads(&self, _repo_root: &Path) -> Vec<(String, String)> { vec![] }
+    fn skill_loads(&self, _repo_root: &Path) -> Vec<(String, String)> {
+        vec![]
+    }
 }
 
 pub fn agent_harnesses() -> Vec<Box<dyn AgentHarness>> {
@@ -78,16 +80,26 @@ pub fn cc_edits_from_text(text: &str, repo_root: &Path) -> Vec<TurnEdit> {
     let mut edits = Vec::new();
     for (i, line) in text.lines().enumerate() {
         let idx = (i + 1) as i64;
-        let Ok(rec) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        if rec.get("type").and_then(|v| v.as_str()) != Some("assistant") { continue; }
-        let Some(content) = rec.pointer("/message/content").and_then(|v| v.as_array()) else { continue };
+        let Ok(rec) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if rec.get("type").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = rec.pointer("/message/content").and_then(|v| v.as_array()) else {
+            continue;
+        };
         for c in content {
-            if c.get("type").and_then(|v| v.as_str()) != Some("tool_use") { continue; }
+            if c.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                continue;
+            }
             match c.get("name").and_then(|v| v.as_str()) {
                 Some("Edit") | Some("Write") | Some("MultiEdit") => {}
                 _ => continue,
             }
-            let Some(fp) = c.pointer("/input/file_path").and_then(|v| v.as_str()) else { continue };
+            let Some(fp) = c.pointer("/input/file_path").and_then(|v| v.as_str()) else {
+                continue;
+            };
             if let Some(rel) = relativize(repo_root, fp) {
                 edits.push(TurnEdit { idx, path: rel });
             }
@@ -107,9 +119,15 @@ fn cc_newest_transcript(repo_root: &Path) -> Option<PathBuf> {
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for ent in rd.flatten() {
         let p = ent.path();
-        if p.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-        let Ok(mt) = ent.metadata().and_then(|m| m.modified()) else { continue };
-        if newest.as_ref().map_or(true, |(t, _)| mt > *t) { newest = Some((mt, p)); }
+        if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(mt) = ent.metadata().and_then(|m| m.modified()) else {
+            continue;
+        };
+        if newest.as_ref().map_or(true, |(t, _)| mt > *t) {
+            newest = Some((mt, p));
+        }
     }
     newest.map(|(_, p)| p)
 }
@@ -119,22 +137,41 @@ fn cc_newest_transcript(repo_root: &Path) -> Option<PathBuf> {
 /// (the `additionalContext` marker lands in the transcript). Powers the built-in
 /// `skill_loaded` relation behind the hook's declarative "load once" guard.
 pub fn cc_skill_loads(repo_root: &Path) -> Vec<(String, String)> {
-    let Some(path) = cc_newest_transcript(repo_root) else { return vec![] };
-    let sid = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let Ok(text) = std::fs::read_to_string(&path) else { return vec![] };
+    let Some(path) = cc_newest_transcript(repo_root) else {
+        return vec![];
+    };
+    let sid = path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return vec![];
+    };
     let mut out = Vec::new();
     for line in text.lines() {
         // dl's own injection: the additionalContext marker is recorded verbatim.
         if line.contains("(auto-loaded by dl --hook)") {
-            if let Some(name) = marker_skill(line) { out.push((sid.clone(), name)); }
+            if let Some(name) = marker_skill(line) {
+                out.push((sid.clone(), name));
+            }
         }
         // an explicit `Skill` tool call
-        let Ok(rec) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        if rec.get("type").and_then(|v| v.as_str()) != Some("assistant") { continue; }
-        let Some(content) = rec.pointer("/message/content").and_then(|v| v.as_array()) else { continue };
+        let Ok(rec) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if rec.get("type").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(content) = rec.pointer("/message/content").and_then(|v| v.as_array()) else {
+            continue;
+        };
         for c in content {
-            if c.get("type").and_then(|v| v.as_str()) != Some("tool_use") { continue; }
-            if c.get("name").and_then(|v| v.as_str()) != Some("Skill") { continue; }
+            if c.get("type").and_then(|v| v.as_str()) != Some("tool_use") {
+                continue;
+            }
+            if c.get("name").and_then(|v| v.as_str()) != Some("Skill") {
+                continue;
+            }
             if let Some(name) = c.pointer("/input/skill").and_then(|v| v.as_str()) {
                 out.push((sid.clone(), name.to_string()));
             }
@@ -152,7 +189,9 @@ fn marker_skill(line: &str) -> Option<String> {
 }
 
 impl AgentHarness for ClaudeCodeJsonl {
-    fn name(&self) -> &'static str { "claude-code" }
+    fn name(&self) -> &'static str {
+        "claude-code"
+    }
     fn skill_loads(&self, repo_root: &Path) -> Vec<(String, String)> {
         cc_skill_loads(repo_root)
     }
@@ -160,22 +199,42 @@ impl AgentHarness for ClaudeCodeJsonl {
         // SPREFA_CLAUDE_PROJECTS overrides ~/.claude/projects (testing / non-std).
         let base = match std::env::var_os("SPREFA_CLAUDE_PROJECTS") {
             Some(p) => PathBuf::from(p),
-            None => match home() { Some(h) => h.join(".claude").join("projects"), None => return vec![] },
+            None => match home() {
+                Some(h) => h.join(".claude").join("projects"),
+                None => return vec![],
+            },
         };
         let dir = base.join(cc_slug(repo_root));
-        let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return vec![];
+        };
         let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
         for ent in rd.flatten() {
             let p = ent.path();
-            if p.extension().and_then(|e| e.to_str()) != Some("jsonl") { continue; }
-            let Ok(mt) = ent.metadata().and_then(|m| m.modified()) else { continue };
-            if newest.as_ref().map_or(true, |(t, _)| mt > *t) { newest = Some((mt, p)); }
+            if p.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(mt) = ent.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
+            if newest.as_ref().map_or(true, |(t, _)| mt > *t) {
+                newest = Some((mt, p));
+            }
         }
-        let Some((_, path)) = newest else { return vec![] };
-        let Ok(text) = std::fs::read_to_string(&path) else { return vec![] };
+        let Some((_, path)) = newest else {
+            return vec![];
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return vec![];
+        };
         let edits = cc_edits_from_text(&text, repo_root);
-        if edits.is_empty() { return vec![]; }
-        let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if edits.is_empty() {
+            return vec![];
+        }
+        let id = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
         vec![AgentSession { id, edits }]
     }
 }
@@ -197,52 +256,90 @@ pub fn oc_edits_from_conn(conn: &Connection, repo_root: &Path) -> Vec<AgentSessi
         )
         .ok();
     let Some(sid) = sid else { return vec![] };
-    let Ok(mut stmt) = conn.prepare("SELECT message_id, time_created, data FROM part WHERE session_id=?1") else { return vec![] };
+    let Ok(mut stmt) =
+        conn.prepare("SELECT message_id, time_created, data FROM part WHERE session_id=?1")
+    else {
+        return vec![];
+    };
     let Ok(rows) = stmt.query_map([&sid], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
-    }) else { return vec![] };
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    }) else {
+        return vec![];
+    };
     // (message_id, time, repo-relative path) for edit/write tool parts.
     let mut raw: Vec<(String, i64, String)> = Vec::new();
     for row in rows.flatten() {
         let (mid, t, data) = row;
-        let Ok(j) = serde_json::from_str::<serde_json::Value>(&data) else { continue };
-        if j.get("type").and_then(|v| v.as_str()) != Some("tool") { continue; }
+        let Ok(j) = serde_json::from_str::<serde_json::Value>(&data) else {
+            continue;
+        };
+        if j.get("type").and_then(|v| v.as_str()) != Some("tool") {
+            continue;
+        }
         match j.get("tool").and_then(|v| v.as_str()) {
             Some("edit") | Some("write") => {}
             _ => continue,
         }
-        let Some(fp) = j.pointer("/state/input/filePath").and_then(|v| v.as_str()) else { continue };
-        if let Some(rel) = relativize(repo_root, fp) { raw.push((mid, t, rel)); }
+        let Some(fp) = j.pointer("/state/input/filePath").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if let Some(rel) = relativize(repo_root, fp) {
+            raw.push((mid, t, rel));
+        }
     }
-    if raw.is_empty() { return vec![]; }
+    if raw.is_empty() {
+        return vec![];
+    }
     // Message turn index = rank by the message's max time_created.
     let mut msg_time: std::collections::BTreeMap<String, i64> = Default::default();
     for (mid, t, _) in &raw {
         let e = msg_time.entry(mid.clone()).or_insert(*t);
-        if *t > *e { *e = *t; }
+        if *t > *e {
+            *e = *t;
+        }
     }
     let mut msgs: Vec<(String, i64)> = msg_time.into_iter().collect();
     msgs.sort_by_key(|(_, t)| *t);
-    let rank: std::collections::HashMap<String, i64> =
-        msgs.into_iter().enumerate().map(|(i, (m, _))| (m, (i + 1) as i64)).collect();
+    let rank: std::collections::HashMap<String, i64> = msgs
+        .into_iter()
+        .enumerate()
+        .map(|(i, (m, _))| (m, (i + 1) as i64))
+        .collect();
     let edits = raw
         .into_iter()
-        .map(|(mid, _, path)| TurnEdit { idx: rank[&mid], path })
+        .map(|(mid, _, path)| TurnEdit {
+            idx: rank[&mid],
+            path,
+        })
         .collect();
     vec![AgentSession { id: sid, edits }]
 }
 
 impl AgentHarness for OpenCodeDb {
-    fn name(&self) -> &'static str { "opencode" }
+    fn name(&self) -> &'static str {
+        "opencode"
+    }
     fn sessions_for(&self, repo_root: &Path) -> Vec<AgentSession> {
         // SPREFA_OPENCODE_DB overrides the default db path (testing / non-std).
         let db = match std::env::var_os("SPREFA_OPENCODE_DB") {
             Some(p) => PathBuf::from(p),
-            None => match home() { Some(h) => h.join(".local/share/opencode/opencode.db"), None => return vec![] },
+            None => match home() {
+                Some(h) => h.join(".local/share/opencode/opencode.db"),
+                None => return vec![],
+            },
         };
-        if !db.exists() { return vec![]; }
+        if !db.exists() {
+            return vec![];
+        }
         // @rusqlite-ok: read-only open of opencode's own db, not sprefa's schema.
-        let Ok(conn) = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return vec![] };
+        let Ok(conn) = Connection::open_with_flags(&db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        else {
+            return vec![];
+        };
         oc_edits_from_conn(&conn, repo_root)
     }
 }
@@ -267,7 +364,11 @@ mod tests {
         assert_eq!(edits[1].path, "a.txt");
         assert_eq!(edits[1].idx, 3);
         let maxidx = edits.iter().map(|e| e.idx).max().unwrap();
-        let latest: Vec<&str> = edits.iter().filter(|e| e.idx == maxidx).map(|e| e.path.as_str()).collect();
+        let latest: Vec<&str> = edits
+            .iter()
+            .filter(|e| e.idx == maxidx)
+            .map(|e| e.path.as_str())
+            .collect();
         assert_eq!(latest, vec!["a.txt"]); // latest turn touched a.txt
     }
 
@@ -278,18 +379,38 @@ mod tests {
             "CREATE TABLE session(id TEXT, directory TEXT, time_updated INT);
              CREATE TABLE part(message_id TEXT, session_id TEXT, time_created INT, data TEXT);
              INSERT INTO session VALUES('s1','/repo',100);",
-        ).unwrap();
-        let mk = |tool: &str, fp: &str| format!(
-            r#"{{"type":"tool","tool":"{tool}","state":{{"input":{{"filePath":"{fp}"}}}}}}"#);
+        )
+        .unwrap();
+        let mk = |tool: &str, fp: &str| {
+            format!(
+                r#"{{"type":"tool","tool":"{tool}","state":{{"input":{{"filePath":"{fp}"}}}}}}"#
+            )
+        };
         // message m1 (older) edits b.txt; message m2 (newer) edits a.txt + c.txt.
-        conn.execute("INSERT INTO part VALUES('m1','s1',10,?1)", [mk("edit","/repo/b.txt")]).unwrap();
-        conn.execute("INSERT INTO part VALUES('m2','s1',20,?1)", [mk("edit","/repo/a.txt")]).unwrap();
-        conn.execute("INSERT INTO part VALUES('m2','s1',21,?1)", [mk("write","/repo/c.txt")]).unwrap();
+        conn.execute(
+            "INSERT INTO part VALUES('m1','s1',10,?1)",
+            [mk("edit", "/repo/b.txt")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part VALUES('m2','s1',20,?1)",
+            [mk("edit", "/repo/a.txt")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO part VALUES('m2','s1',21,?1)",
+            [mk("write", "/repo/c.txt")],
+        )
+        .unwrap();
         let sessions = oc_edits_from_conn(&conn, Path::new("/repo"));
         assert_eq!(sessions.len(), 1);
         let edits = &sessions[0].edits;
         let maxidx = edits.iter().map(|e| e.idx).max().unwrap();
-        let mut latest: Vec<&str> = edits.iter().filter(|e| e.idx == maxidx).map(|e| e.path.as_str()).collect();
+        let mut latest: Vec<&str> = edits
+            .iter()
+            .filter(|e| e.idx == maxidx)
+            .map(|e| e.path.as_str())
+            .collect();
         latest.sort();
         assert_eq!(latest, vec!["a.txt", "c.txt"]); // newest message's two files share max idx
     }

@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// `match(..., _)`: the line slot is `_`, only the named capture binds.
@@ -41,7 +44,10 @@ names(f, n) <- scan("WORK", "src/*.txt", f, rev), match(f, rev, /(?<n>\w+)/, _).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("alpha") && out.contains("beta"), "both captures bind without a line var: {out}");
+    assert!(
+        out.contains("alpha") && out.contains("beta"),
+        "both captures bind without a line var: {out}"
+    );
 }
 
 /// `cmd(..., _, v)` and `cmd(..., l, _)`: drop the line, or drop the value.
@@ -57,7 +63,10 @@ vals(f, v) <- scan("WORK", "src/*.txt", f, rev), cmd(f, rev, "cat {file}", _, v)
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("one") && out.contains("two"), "values bind with `_` line: {out}");
+    assert!(
+        out.contains("one") && out.contains("two"),
+        "values bind with `_` line: {out}"
+    );
 
     // value dropped, only the line-count rows survive (a line-existence shape)
     let prog2 = r#"
@@ -67,5 +76,8 @@ lns(f, l) <- scan("WORK", "src/*.txt", f, rev), cmd(f, rev, "cat {file}", l, _).
 "#;
     let (code2, out2, err2) = run(&d, prog2);
     assert_eq!(code2, 0, "{err2}");
-    assert!(out2.contains("\t1") && out2.contains("\t2"), "line numbers bind with `_` value: {out2}");
+    assert!(
+        out2.contains("\t1") && out2.contains("\t2"),
+        "line numbers bind with `_` value: {out2}"
+    );
 }

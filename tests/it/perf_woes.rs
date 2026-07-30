@@ -29,13 +29,16 @@ fn rail() -> String {
 /// integration test instead of leaving a stale hand-written assertion behind.
 fn contract() -> Vec<(String, String)> {
     let text = fs::read_to_string(rail()).expect("read perf-woes rail");
-    let mut rows: Vec<(String, String)> = text.lines().filter_map(|line| {
-        let line = line.trim();
-        let rest = line.strip_prefix("perf_woes_contract(\"")?;
-        let (code, rest) = rest.split_once("\", \"")?;
-        let severity = rest.strip_suffix("\").")?;
-        Some((code.to_string(), severity.to_string()))
-    }).collect();
+    let mut rows: Vec<(String, String)> = text
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let rest = line.strip_prefix("perf_woes_contract(\"")?;
+            let (code, rest) = rest.split_once("\", \"")?;
+            let severity = rest.strip_suffix("\").")?;
+            Some((code.to_string(), severity.to_string()))
+        })
+        .collect();
     rows.sort();
     rows
 }
@@ -51,7 +54,12 @@ fn sandbox(tag: &str) -> PathBuf {
 /// Returns (exit code, stdout, stderr).
 fn run(dir: &Path, companion_path: &Path) -> (i32, String, String) {
     let out = Command::new(DL)
-        .args([&rail(), companion_path.to_str().unwrap(), "--no-daemon", "--check"])
+        .args([
+            &rail(),
+            companion_path.to_str().unwrap(),
+            "--no-daemon",
+            "--check",
+        ])
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
         // This rail asserts on 1ms per-rule perf telemetry (stmt_ms). The
@@ -62,9 +70,11 @@ fn run(dir: &Path, companion_path: &Path) -> (i32, String, String) {
         .env("DL_NO_BUDGET", "1")
         .output()
         .expect("run dl over the sandbox");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Build an unfiltered triple self-join over `n` seeded rows (n^3 output
@@ -81,9 +91,7 @@ fn expensive_program(n: usize) -> (String, usize) {
     }
     lines.push("rel triple(a: text, b: text, c: text).".to_string());
     let triple_line = lines.len() + 1; // 1-based line of the next pushed line
-    lines.push(
-        "triple(a, b, c) <- seed_node(a), seed_node(b), seed_node(c).".to_string(),
-    );
+    lines.push("triple(a, b, c) <- seed_node(a), seed_node(b), seed_node(c).".to_string());
     // Tiny budgets, unioned alongside the shipped defaults (1000/10000/500000)
     // — this row is the one that actually trips.
     lines.push("rel perf_budget_ms(max: int).".to_string());
@@ -125,30 +133,47 @@ fn repro_slow_rule_and_tick_overbudget_fire_onsite() {
     // PostToolUse hook and blocked every editor/agent write in the repo),
     // so --check exits 0 — the findings still print.
     let (code2, out2, err2) = run(&dir, &expensive_path);
-    assert_eq!(code2, 0, "perf warnings never fail the check: out={out2} err={err2}");
+    assert_eq!(
+        code2, 0,
+        "perf warnings never fail the check: out={out2} err={err2}"
+    );
     let findings = format!("{out2}{err2}");
 
-    assert!(contract().contains(&("slow-rule-onsite".into(), "warning".into())),
-        "the rail fixture records slow-rule-onsite as warning");
-    assert!(findings.contains("warning[slow-rule-onsite]"),
-        "onsite per-rule WARN fires:\n{findings}");
-    assert!(findings.contains("triple"),
-        "the finding names the offending rel `triple`:\n{findings}");
+    assert!(
+        contract().contains(&("slow-rule-onsite".into(), "warning".into())),
+        "the rail fixture records slow-rule-onsite as warning"
+    );
+    assert!(
+        findings.contains("warning[slow-rule-onsite]"),
+        "onsite per-rule WARN fires:\n{findings}"
+    );
+    assert!(
+        findings.contains("triple"),
+        "the finding names the offending rel `triple`:\n{findings}"
+    );
     let expected_loc = format!("expensive.dl:{triple_line}:");
-    assert!(findings.contains(&expected_loc),
-        "the finding is positioned at the rule's own head line ({expected_loc}):\n{findings}");
+    assert!(
+        findings.contains(&expected_loc),
+        "the finding is positioned at the rule's own head line ({expected_loc}):\n{findings}"
+    );
     // `triple` has a rule head in the scanned corpus, so it must be reported
     // via the located `slow-rule-onsite` code, not the fallback `slow-rule`.
-    let triple_fallback = findings.lines().any(|line| {
-        line.contains("warning[slow-rule]:") && line.contains("`triple`")
-    });
-    assert!(!triple_fallback,
-        "`triple` has a rule head; no un-located fallback finding for it:\n{findings}");
+    let triple_fallback = findings
+        .lines()
+        .any(|line| line.contains("warning[slow-rule]:") && line.contains("`triple`"));
+    assert!(
+        !triple_fallback,
+        "`triple` has a rule head; no un-located fallback finding for it:\n{findings}"
+    );
 
-    assert!(contract().contains(&("tick-over-budget".into(), "warning".into())),
-        "the rail fixture records tick-over-budget as warning");
-    assert!(findings.contains("warning[tick-over-budget]"),
-        "the whole-tick tripwire fires as WARNING:\n{findings}");
+    assert!(
+        contract().contains(&("tick-over-budget".into(), "warning".into())),
+        "the rail fixture records tick-over-budget as warning"
+    );
+    assert!(
+        findings.contains("warning[tick-over-budget]"),
+        "the whole-tick tripwire fires as WARNING:\n{findings}"
+    );
 }
 
 /// QUIET: a cheap program with the shipped (generous) default budgets must
@@ -162,23 +187,31 @@ fn quiet_on_a_healthy_program() {
     let (code1, _out1, err1) = run(&dir, &cheap_path);
     assert_eq!(code1, 0, "first run clean: {err1}");
     let (code2, out2, err2) = run(&dir, &cheap_path);
-    assert_eq!(code2, 0, "second run clean (exit 0, no ERROR finding): {err2}");
+    assert_eq!(
+        code2, 0,
+        "second run clean (exit 0, no ERROR finding): {err2}"
+    );
     let findings = format!("{out2}{err2}");
 
     for (code, _severity) in contract() {
-        assert!(!findings.contains(&code),
-            "no `{code}` finding on a healthy program:\n{findings}");
+        assert!(
+            !findings.contains(&code),
+            "no `{code}` finding on a healthy program:\n{findings}"
+        );
     }
 }
 
 #[test]
 fn rail_contract_fixture_has_the_expected_warning_pairs() {
-    assert_eq!(contract(), vec![
-        ("perf-woes-rel-blowup".into(), "warning".into()),
-        ("slow-rule".into(), "warning".into()),
-        ("slow-rule-onsite".into(), "warning".into()),
-        ("tick-over-budget".into(), "warning".into()),
-    ]);
+    assert_eq!(
+        contract(),
+        vec![
+            ("perf-woes-rel-blowup".into(), "warning".into()),
+            ("slow-rule".into(), "warning".into()),
+            ("slow-rule-onsite".into(), "warning".into()),
+            ("tick-over-budget".into(), "warning".into()),
+        ]
+    );
 }
 
 /// RAIL-HONESTY: the rail program itself parses clean, and its own
@@ -192,18 +225,27 @@ fn rail_parses_clean_and_stays_under_its_own_budgets() {
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("parse-only the shipped rail");
-    assert_eq!(parse_out.status.code().unwrap_or(-1), 0,
-        "the shipped rail parses clean: {}", String::from_utf8_lossy(&parse_out.stderr));
+    assert_eq!(
+        parse_out.status.code().unwrap_or(-1),
+        0,
+        "the shipped rail parses clean: {}",
+        String::from_utf8_lossy(&parse_out.stderr)
+    );
 
     let dir = sandbox("honesty");
     let cheap_path = dir.join("cheap.dl");
     fs::write(&cheap_path, CHEAP_PROGRAM).unwrap();
     let (_code1, _out1, _err1) = run(&dir, &cheap_path);
     let (code2, out2, err2) = run(&dir, &cheap_path);
-    assert_eq!(code2, 0, "the rail's own rules stay under its own budgets: {err2}");
+    assert_eq!(
+        code2, 0,
+        "the rail's own rules stay under its own budgets: {err2}"
+    );
     let findings = format!("{out2}{err2}");
     for own_rel in ["dl_rule_head", "slow_rule_located", "perf_tick_total_ms"] {
-        assert!(!findings.contains(own_rel),
-            "the rail's own housekeeping rel `{own_rel}` never trips its own budget:\n{findings}");
+        assert!(
+            !findings.contains(own_rel),
+            "the rail's own housekeeping rel `{own_rel}` never trips its own budget:\n{findings}"
+        );
     }
 }

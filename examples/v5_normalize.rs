@@ -31,7 +31,7 @@
 
 use std::collections::BTreeSet;
 
-use sprefa_v5::graph::typegraph::{TypeLang, GoTypes, KotlinTypes, RustTypes, TsTypes};
+use sprefa_v5::graph::typegraph::{GoTypes, KotlinTypes, RustTypes, TsTypes, TypeLang};
 
 fn main() {
     let path = std::env::args().nth(1).expect("usage: v5_normalize <path>");
@@ -62,11 +62,21 @@ fn main() {
 
     // ── PORTED: type entities + arrow sigs ──────────────────────────────────
     for entity in &types.entities {
-        lines.insert(format!("type_node\t{}\t{}\t{}", entity.kind.tag(), entity.name, entity.line));
+        lines.insert(format!(
+            "type_node\t{}\t{}\t{}",
+            entity.kind.tag(),
+            entity.name,
+            entity.line
+        ));
         if let Some(ty) = &entity.ty {
             for (pos, refs) in ty.params.iter().enumerate() {
                 for r in refs {
-                    lines.insert(format!("type_sig\t{}\tparam\t{}\t{}", entity.line, pos, r.name()));
+                    lines.insert(format!(
+                        "type_sig\t{}\tparam\t{}\t{}",
+                        entity.line,
+                        pos,
+                        r.name()
+                    ));
                 }
             }
             for r in &ty.ret {
@@ -76,16 +86,25 @@ fn main() {
     }
     // ── DEFERRED v5-only: type edges (Resolve<TypeF>, commit 4) ─────────────
     for edge in &types.edges {
-        lines.insert(format!("type_edge\t{}\t{}\t{}", edge.from, edge.to, edge.kind));
+        lines.insert(format!(
+            "type_edge\t{}\t{}\t{}",
+            edge.from, edge.to, edge.kind
+        ));
     }
     // ── const facet (PORTED): Const entities flow as type_node (kind=const) in
     // the loop above; const_value rows join to their owner via the owner's line
     // (v5 ConstValueFact.sym -> the owning entity's declaration line). ─────────
-    let sym_line: std::collections::HashMap<&str, u32> =
-        types.entities.iter().map(|e| (e.sym.as_str(), e.line)).collect();
+    let sym_line: std::collections::HashMap<&str, u32> = types
+        .entities
+        .iter()
+        .map(|e| (e.sym.as_str(), e.line))
+        .collect();
     for c in &types.consts {
         let owner_line = sym_line.get(c.sym.as_str()).copied().unwrap_or(0);
-        lines.insert(format!("const_value\t{owner_line}\t{}\t{}\t{}", c.field, c.kind, c.text));
+        lines.insert(format!(
+            "const_value\t{owner_line}\t{}\t{}\t{}",
+            c.field, c.kind, c.text
+        ));
     }
     // ── DEFERRED v5-only: docs ──────────────────────────────────────────────
     for doc in &types.docs {
@@ -94,7 +113,12 @@ fn main() {
 
     // ── PORTED: call defs + sites ───────────────────────────────────────────
     for def in &calls.defs {
-        lines.insert(format!("call_def\t{}\t{}\t{}", def.kind.tag(), def.name, def.line));
+        lines.insert(format!(
+            "call_def\t{}\t{}\t{}",
+            def.kind.tag(),
+            def.name,
+            def.line
+        ));
     }
     for site in &calls.sites {
         lines.insert(format!("call_site\t{}\t{}", site.callee, site.line));
@@ -110,7 +134,10 @@ fn main() {
         })
         .collect();
     for (node, &byte_off) in df.nodes.iter().zip(node_bytes.iter()) {
-        lines.insert(format!("df_node\t{}\t{}\t{}", node.kind, node.var, byte_off));
+        lines.insert(format!(
+            "df_node\t{}\t{}\t{}",
+            node.kind, node.var, byte_off
+        ));
     }
     for edge in &df.edges {
         let from = node_bytes.get(edge.from as usize).copied().unwrap_or(0);

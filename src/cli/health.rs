@@ -35,7 +35,9 @@ const DUPE_MIN_ROWS: i64 = 500;
 const DUPE_MAX_PAIRS_PER_GROUP: usize = 10;
 
 pub fn run(args: &[String]) -> Result<i32> {
-    let top: usize = flag_value(args, "--top").and_then(|s| s.parse().ok()).unwrap_or(15);
+    let top: usize = flag_value(args, "--top")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15);
     let only_root = flag_value(args, "--root").map(PathBuf::from);
     let skip_dupes = args.iter().any(|a| a == "--no-dupes");
     let home = crate::daemon::daemon_home();
@@ -46,7 +48,9 @@ pub fn run(args: &[String]) -> Result<i32> {
     for rec in &records {
         if let Some(only) = &only_root {
             let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-            if canon(only) != canon(&rec.root) { continue; }
+            if canon(only) != canon(&rec.root) {
+                continue;
+            }
         }
         let db_path = home.join("roots").join(&rec.key).join("db.sqlite");
         if !db_path.is_file() {
@@ -57,9 +61,20 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
     if !orphans.is_empty() {
         let total_mb: f64 = orphans.iter().map(|(_, b)| *b as f64 / 1e6).sum();
-        println!("\norphan cleanup ({} dir(s), {:.0}MB):", orphans.len(), total_mb);
-        println!("  cd {} && rm -rf {}", home.join("roots").display(),
-            orphans.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(" "));
+        println!(
+            "\norphan cleanup ({} dir(s), {:.0}MB):",
+            orphans.len(),
+            total_mb
+        );
+        println!(
+            "  cd {} && rm -rf {}",
+            home.join("roots").display(),
+            orphans
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
     }
     Ok(0)
 }
@@ -75,15 +90,28 @@ fn report_roots_overview(
     let roots_dir = home.join("roots");
     let mut orphans: Vec<(String, u64)> = Vec::new();
     println!("\nKEY\tDB_MB\tAGE\tSTATUS");
-    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&roots_dir).into_iter().flatten().flatten()
-        .map(|e| e.path()).filter(|p| p.is_dir()).collect();
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&roots_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
     dirs.sort();
     for dir in dirs {
-        let key = dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let key = dir
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
         let bytes = dir_bytes(&dir);
         let age = dir_mtime_age(&dir);
         match by_key.get(key.as_str()) {
-            Some(rec) => println!("{key}\t{:.1}\t{age}\tregistered {}", bytes as f64 / 1e6, rec.root.display()),
+            Some(rec) => println!(
+                "{key}\t{:.1}\t{age}\tregistered {}",
+                bytes as f64 / 1e6,
+                rec.root.display()
+            ),
             None => {
                 let origin = orphan_origin(&dir.join("db.sqlite"));
                 println!("{key}\t{:.1}\t{age}\tORPHAN{origin}", bytes as f64 / 1e6);
@@ -94,7 +122,11 @@ fn report_roots_overview(
     // A registered root whose dir is gone is worth a line too (cold on next tick).
     for rec in records {
         if !roots_dir.join(&rec.key).is_dir() {
-            println!("{}\t-\t-\tregistered {} (no dir yet)", rec.key, rec.root.display());
+            println!(
+                "{}\t-\t-\tregistered {} (no dir yet)",
+                rec.key,
+                rec.root.display()
+            );
         }
     }
     Ok(orphans)
@@ -108,7 +140,9 @@ fn orphan_origin(db_path: &Path) -> String {
         return String::new();
     };
     let probe = |sql: &str| -> Option<String> {
-        conn.query_row(sql, [], |r| r.get::<_, String>(0)).ok().filter(|s| !s.is_empty())
+        conn.query_row(sql, [], |r| r.get::<_, String>(0))
+            .ok()
+            .filter(|s| !s.is_empty())
     };
     probe("SELECT root FROM _repo WHERE root != '' LIMIT 1")
         .or_else(|| probe("SELECT path FROM _program LIMIT 1"))
@@ -128,9 +162,14 @@ fn report_db(key: &str, root: &Path, db_path: &Path, top: usize, skip_dupes: boo
     println!("\n== {key} ({}) ==", root.display());
 
     let pragma = |name: &str| -> i64 {
-        conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get(0)).unwrap_or(0)
+        conn.query_row(&format!("PRAGMA {name}"), [], |r| r.get(0))
+            .unwrap_or(0)
     };
-    let (page_size, page_count, freelist) = (pragma("page_size"), pragma("page_count"), pragma("freelist_count"));
+    let (page_size, page_count, freelist) = (
+        pragma("page_size"),
+        pragma("page_count"),
+        pragma("freelist_count"),
+    );
     println!("file {:.1}MB  pages {page_count}x{page_size}  freelist {freelist} ({:.1}MB reclaimable by VACUUM)",
         file_bytes as f64 / 1e6, (freelist * page_size) as f64 / 1e6);
 
@@ -143,13 +182,17 @@ fn report_db(key: &str, root: &Path, db_path: &Path, top: usize, skip_dupes: boo
                (SELECT name, sum(pgsize) AS bytes FROM dbstat GROUP BY name) s \
              LEFT JOIN sqlite_master m ON m.name = s.name",
         )?;
-        let rows = stmt.query_map([], |r| Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, Option<String>>(1)?.unwrap_or_default(),
-            r.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            r.get::<_, i64>(3)?,
-        )))?;
-        for row in rows { objects.push(row?); }
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                r.get::<_, i64>(3)?,
+            ))
+        })?;
+        for row in rows {
+            objects.push(row?);
+        }
     }
 
     // Section 2: buckets.
@@ -185,14 +228,20 @@ fn report_db(key: &str, root: &Path, db_path: &Path, top: usize, skip_dupes: boo
             _ => {}
         }
     }
-    let mut ranked: Vec<(&str, i64, i64)> =
-        table_bytes.into_iter().map(|(t, (d, i))| (t, d, i)).collect();
+    let mut ranked: Vec<(&str, i64, i64)> = table_bytes
+        .into_iter()
+        .map(|(t, (d, i))| (t, d, i))
+        .collect();
     ranked.sort_by_key(|(_, d, i)| -(d + i));
     println!("\nTABLE\tROWS\tDATA_MB\tIDX_MB\tTOTAL_MB");
     for (tbl, data, idx) in ranked.iter().take(top) {
         let rows = count_rows(&conn, tbl).unwrap_or(-1);
-        println!("{tbl}\t{rows}\t{:.1}\t{:.1}\t{:.1}",
-            *data as f64 / 1e6, *idx as f64 / 1e6, (*data + *idx) as f64 / 1e6);
+        println!(
+            "{tbl}\t{rows}\t{:.1}\t{:.1}\t{:.1}",
+            *data as f64 / 1e6,
+            *idx as f64 / 1e6,
+            (*data + *idx) as f64 / 1e6
+        );
     }
 
     // Sections 4+5 want the program's rel names; parse failures degrade to
@@ -207,8 +256,12 @@ fn report_db(key: &str, root: &Path, db_path: &Path, top: usize, skip_dupes: boo
     // Section 6: the class-17 ratio verdict, inline (same walk as db_ratio).
     let corpus = crate::db_ratio::corpus_bytes(root);
     if corpus > 0 {
-        println!("\ndb/corpus ratio: {:.1}x  (db {:.1}MB / corpus {:.1}MB)",
-            file_bytes as f64 / corpus as f64, file_bytes as f64 / 1e6, corpus as f64 / 1e6);
+        println!(
+            "\ndb/corpus ratio: {:.1}x  (db {:.1}MB / corpus {:.1}MB)",
+            file_bytes as f64 / corpus as f64,
+            file_bytes as f64 / 1e6,
+            corpus as f64 / 1e6
+        );
     }
     Ok(())
 }
@@ -219,25 +272,36 @@ fn report_db(key: &str, root: &Path, db_path: &Path, top: usize, skip_dupes: boo
 fn report_dupes(conn: &Connection, ranked: &[(&str, i64, i64)]) -> Result<()> {
     let mut by_count: BTreeMap<i64, Vec<&str>> = BTreeMap::new();
     for (tbl, _, _) in ranked {
-        if !tbl.starts_with("rel_") { continue; }
-        let Ok(rows) = count_rows(conn, tbl) else { continue };
-        if rows >= DUPE_MIN_ROWS { by_count.entry(rows).or_default().push(tbl); }
+        if !tbl.starts_with("rel_") {
+            continue;
+        }
+        let Ok(rows) = count_rows(conn, tbl) else {
+            continue;
+        };
+        if rows >= DUPE_MIN_ROWS {
+            by_count.entry(rows).or_default().push(tbl);
+        }
     }
     let mut printed_header = false;
     for (rows, tables) in by_count.iter().filter(|(_, t)| t.len() > 1) {
         let mut pairs = 0usize;
         for i in 0..tables.len() {
             for j in (i + 1)..tables.len() {
-                if pairs >= DUPE_MAX_PAIRS_PER_GROUP { break; }
+                if pairs >= DUPE_MAX_PAIRS_PER_GROUP {
+                    break;
+                }
                 let (a, b) = (tables[i], tables[j]);
                 let (cols_a, cols_b) = (data_columns(conn, a)?, data_columns(conn, b)?);
-                if cols_a.len() != cols_b.len() { continue; }
+                if cols_a.len() != cols_b.len() {
+                    continue;
+                }
                 pairs += 1;
                 let diff = |x: &str, xc: &[String], y: &str, yc: &[String]| -> bool {
                     let sql = format!(
                         "SELECT EXISTS(SELECT 1 FROM (SELECT {} FROM {x} EXCEPT SELECT {} FROM {y}))",
                         xc.join(", "), yc.join(", "));
-                    conn.query_row(&sql, [], |r| r.get::<_, bool>(0)).unwrap_or(true)
+                    conn.query_row(&sql, [], |r| r.get::<_, bool>(0))
+                        .unwrap_or(true)
                 };
                 let identical = !diff(a, &cols_a, b, &cols_b) && !diff(b, &cols_b, a, &cols_a);
                 if !printed_header {
@@ -259,7 +323,8 @@ fn report_dupes(conn: &Connection, ranked: &[(&str, i64, i64)]) -> Result<()> {
 /// declared order — the positional shape `EXCEPT` compares.
 fn data_columns(conn: &Connection, tbl: &str) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({tbl})"))?;
-    let cols = stmt.query_map([], |r| r.get::<_, String>(1))?
+    let cols = stmt
+        .query_map([], |r| r.get::<_, String>(1))?
         .filter_map(|c| c.ok())
         .filter(|c| c != "__src")
         .collect();
@@ -270,19 +335,29 @@ fn data_columns(conn: &Connection, tbl: &str) -> Result<Vec<String>> {
 /// Best-effort: a root with no `.dl/` chain, or a program that fails to
 /// parse, degrades to silence (the db sections already printed).
 fn report_copy_rules(root: &Path) {
-    let Ok(files) = crate::resolve_programs(&[], root) else { return };
-    let Ok((prog, _diags, _display)) = crate::prepare_paths(&files) else { return };
+    let Ok(files) = crate::resolve_programs(&[], root) else {
+        return;
+    };
+    let Ok((prog, _diags, _display)) = crate::prepare_paths(&files) else {
+        return;
+    };
     // Dedup: `use` splicing can merge the same file's items into the flat
     // program more than once; one finding per (head, body, origin).
     let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut printed_header = false;
     for item in &prog.items {
         let Item::Rule(rule) = item else { continue };
-        let Some((head, body)) = copy_shape(rule) else { continue };
-        let origin = rule.origin.as_ref()
+        let Some((head, body)) = copy_shape(rule) else {
+            continue;
+        };
+        let origin = rule
+            .origin
+            .as_ref()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "<inline>".to_string());
-        if !seen.insert(format!("{head}\t{body}\t{origin}")) { continue; }
+        if !seen.insert(format!("{head}\t{body}\t{origin}")) {
+            continue;
+        }
         if !printed_header {
             println!("\nCOPY RULES (single-atom all-var rules re-storing an existing rowset)");
             printed_header = true;
@@ -296,31 +371,46 @@ fn report_copy_rules(root: &Path) {
 /// and body binding the same distinct variable set. Such a head's rowset is a
 /// (possibly column-permuted) duplicate of the body rel.
 fn copy_shape(rule: &Rule) -> Option<(&str, &str)> {
-    if rule.temporal.is_some() || rule.has_agg() { return None; }
-    let [BodyItem::Pos(atom)] = rule.body.as_slice() else { return None };
-    if atom.terms.len() != rule.head.terms.len() { return None; }
+    if rule.temporal.is_some() || rule.has_agg() {
+        return None;
+    }
+    let [BodyItem::Pos(atom)] = rule.body.as_slice() else {
+        return None;
+    };
+    if atom.terms.len() != rule.head.terms.len() {
+        return None;
+    }
     let head_vars = all_vars(&rule.head.terms)?;
     let body_vars = all_vars(&atom.terms)?;
     let distinct = |v: &[&str]| {
         let set: std::collections::BTreeSet<&&str> = v.iter().collect();
         set.len() == v.len()
     };
-    if !distinct(&head_vars) || !distinct(&body_vars) { return None; }
+    if !distinct(&head_vars) || !distinct(&body_vars) {
+        return None;
+    }
     let same_set = {
         let (mut h, mut b) = (head_vars.clone(), body_vars.clone());
         h.sort_unstable();
         b.sort_unstable();
         h == b
     };
-    if same_set { Some((rule.head.rel.as_str(), atom.rel.as_str())) } else { None }
+    if same_set {
+        Some((rule.head.rel.as_str(), atom.rel.as_str()))
+    } else {
+        None
+    }
 }
 
 /// All terms as variable names, or `None` if any term is not a plain var.
 fn all_vars(terms: &[Term]) -> Option<Vec<&str>> {
-    terms.iter().map(|t| match t {
-        Term::Var(v) => Some(v.as_str()),
-        _ => None,
-    }).collect()
+    terms
+        .iter()
+        .map(|t| match t {
+            Term::Var(v) => Some(v.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn count_rows(conn: &Connection, tbl: &str) -> Result<i64> {
@@ -334,8 +424,11 @@ fn dir_bytes(dir: &Path) -> u64 {
     while let Some(d) = stack.pop() {
         for entry in std::fs::read_dir(&d).into_iter().flatten().flatten() {
             let p = entry.path();
-            if p.is_dir() { stack.push(p); }
-            else if let Ok(m) = entry.metadata() { total += m.len(); }
+            if p.is_dir() {
+                stack.push(p);
+            } else if let Ok(m) = entry.metadata() {
+                total += m.len();
+            }
         }
     }
     total
@@ -346,8 +439,11 @@ fn dir_mtime_age(dir: &Path) -> String {
     let Some(mtime) = std::fs::metadata(dir).ok().and_then(|m| m.modified().ok()) else {
         return "-".to_string();
     };
-    let secs = SystemTime::now().duration_since(mtime).map(|d| d.as_secs())
-        .or_else(|_| mtime.duration_since(UNIX_EPOCH).map(|_| 0)).unwrap_or(0);
+    let secs = SystemTime::now()
+        .duration_since(mtime)
+        .map(|d| d.as_secs())
+        .or_else(|_| mtime.duration_since(UNIX_EPOCH).map(|_| 0))
+        .unwrap_or(0);
     match secs {
         s if s < 3600 => format!("{}m", s / 60),
         s if s < 172_800 => format!("{}h", s / 3600),
@@ -357,7 +453,10 @@ fn dir_mtime_age(dir: &Path) -> String {
 
 /// Value following `name` in `args` (e.g. `--top 30`).
 fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
 }
 
 #[cfg(test)]
@@ -366,10 +465,13 @@ mod tests {
 
     fn parse_rules(src: &str) -> Vec<Rule> {
         let prog = crate::parse::parse(crate::lex::lex(src).unwrap()).unwrap();
-        prog.items.into_iter().filter_map(|i| match i {
-            Item::Rule(r) => Some(r),
-            _ => None,
-        }).collect()
+        prog.items
+            .into_iter()
+            .filter_map(|i| match i {
+                Item::Rule(r) => Some(r),
+                _ => None,
+            })
+            .collect()
     }
 
     #[test]
@@ -384,7 +486,11 @@ mod tests {
         );
         let found: Vec<Option<(&str, &str)>> = rules.iter().map(copy_shape).collect();
         assert_eq!(found[0], Some(("copy", "base")));
-        assert_eq!(found[1], Some(("swapped", "base")), "a permutation still re-stores the rowset");
+        assert_eq!(
+            found[1],
+            Some(("swapped", "base")),
+            "a permutation still re-stores the rowset"
+        );
         assert_eq!(found[2], None, "a projection drops a column, not a copy");
         assert_eq!(found[3], None, "a constraint filters, not a copy");
         assert_eq!(found[4], None, "two atoms = a join, not a copy");

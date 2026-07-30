@@ -43,8 +43,8 @@ impl RelKind for AgentKind {
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let root = std::fs::canonicalize(&eng.root).unwrap_or_else(|_| eng.root.clone());
         let mut edits: Vec<(String, String, i64, String)> = Vec::new(); // harness, session, idx, path
-        let mut touch: Vec<(String, String, String)> = Vec::new();      // harness, session, path @ max idx
-        let mut skills: Vec<(String, String, String)> = Vec::new();     // harness, session, skill name
+        let mut touch: Vec<(String, String, String)> = Vec::new(); // harness, session, path @ max idx
+        let mut skills: Vec<(String, String, String)> = Vec::new(); // harness, session, skill name
         for h in crate::agent::agent_harnesses() {
             let hn = h.name().to_string();
             for sess in h.sessions_for(&root) {
@@ -60,9 +60,12 @@ impl RelKind for AgentKind {
                 skills.push((hn.clone(), sid, name));
             }
         }
-        edits.sort(); edits.dedup();
-        touch.sort(); touch.dedup();
-        skills.sort(); skills.dedup();
+        edits.sort();
+        edits.dedup();
+        touch.sort();
+        touch.dedup();
+        skills.sort();
+        skills.dedup();
         // Early-out: nothing refreshes unless edits OR skill loads changed.
         let existing_edits: Vec<(String, String, i64, String)> = eng.db.query_rows(
             "agent_edit",
@@ -71,26 +74,56 @@ impl RelKind for AgentKind {
                 txt_tbl("agent_edit")
             ),
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
         )?;
         let existing_skills: Vec<(String, String, String)> = eng.db.query_rows(
             "skill_loaded",
-            &format!("SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3", txt_tbl("skill_loaded")),
+            &format!(
+                "SELECT \"harness\", \"session\", \"name\" FROM {} ORDER BY 1,2,3",
+                txt_tbl("skill_loaded")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         )?;
-        if existing_edits == edits && existing_skills == skills { return Ok(false); }
-        let edit_rows: Vec<Vec<Value>> = edits.into_iter()
-            .map(|(h, s, i, p)| vec![Value::Text(h), Value::Text(s), Value::Int(i), Value::Text(p)])
+        if existing_edits == edits && existing_skills == skills {
+            return Ok(false);
+        }
+        let edit_rows: Vec<Vec<Value>> = edits
+            .into_iter()
+            .map(|(h, s, i, p)| {
+                vec![
+                    Value::Text(h),
+                    Value::Text(s),
+                    Value::Int(i),
+                    Value::Text(p),
+                ]
+            })
             .collect();
-        eng.refresh_rel("agent_edit", &["harness", "session", "idx", "path"], &edit_rows)?;
-        let touch_rows: Vec<Vec<Value>> = touch.into_iter()
+        eng.refresh_rel(
+            "agent_edit",
+            &["harness", "session", "idx", "path"],
+            &edit_rows,
+        )?;
+        let touch_rows: Vec<Vec<Value>> = touch
+            .into_iter()
             .map(|(h, s, p)| vec![Value::Text(h), Value::Text(s), Value::Text(p)])
             .collect();
         eng.refresh_rel("agent_touch", &["harness", "session", "path"], &touch_rows)?;
-        let skill_rows: Vec<Vec<Value>> = skills.into_iter()
+        let skill_rows: Vec<Vec<Value>> = skills
+            .into_iter()
             .map(|(h, s, n)| vec![Value::Text(h), Value::Text(s), Value::Text(n)])
             .collect();
         eng.refresh_rel("skill_loaded", &["harness", "session", "name"], &skill_rows)?;
@@ -121,8 +154,13 @@ fn offset_to_line_col(content: &str, off: u32) -> (i64, i64) {
     let mut line = 1i64;
     let mut line_start = 0usize;
     for (i, b) in content.as_bytes().iter().enumerate() {
-        if i >= off { break; }
-        if *b == b'\n' { line += 1; line_start = i + 1; }
+        if i >= off {
+            break;
+        }
+        if *b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
     }
     (line, (off - line_start) as i64)
 }
@@ -134,47 +172,108 @@ type DlDiagRow = (String, i64, i64, i64, i64, String, String, String);
 fn validate_dl_source(content: &str, path: &str) -> Vec<DlDiagRow> {
     let toks = match crate::lex::lex(content) {
         Ok(t) => t,
-        Err(e) => return vec![(path.into(), 1, 0, 1, 0, "error".into(), "lex".into(), e.to_string())],
+        Err(e) => {
+            return vec![(
+                path.into(),
+                1,
+                0,
+                1,
+                0,
+                "error".into(),
+                "lex".into(),
+                e.to_string(),
+            )]
+        }
     };
     let mut prog = match crate::parse::parse(toks) {
         Ok(p) => p,
-        Err(e) => return vec![(path.into(), 1, 0, 1, 0, "error".into(), "parse".into(), e.to_string())],
+        Err(e) => {
+            return vec![(
+                path.into(),
+                1,
+                0,
+                1,
+                0,
+                "error".into(),
+                "parse".into(),
+                e.to_string(),
+            )]
+        }
     };
-    let mut rows: Vec<DlDiagRow> = crate::typecheck::check_and_normalize(&mut prog, path).into_iter().map(|d| {
-        let (l0, c0) = offset_to_line_col(content, d.span.0);
-        let (l1, c1) = offset_to_line_col(content, d.span.1);
-        (path.to_string(), l0, c0, l1, c1, d.severity.as_str().to_string(), d.code, d.msg)
-    }).collect();
+    let mut rows: Vec<DlDiagRow> = crate::typecheck::check_and_normalize(&mut prog, path)
+        .into_iter()
+        .map(|d| {
+            let (l0, c0) = offset_to_line_col(content, d.span.0);
+            let (l1, c1) = offset_to_line_col(content, d.span.1);
+            (
+                path.to_string(),
+                l0,
+                c0,
+                l1,
+                c1,
+                d.severity.as_str().to_string(),
+                d.code,
+                d.msg,
+            )
+        })
+        .collect();
     // Unpinned closure query lint: `? reach(a, b)` on a closure head evaluates
     // the SQL reachability VIEW, which materializes the FULL relation (a LIMIT
     // does not short-circuit the UNION + recursive CTE) — unbounded on a dense
     // edge rel; the runtime guard (DL_CLOSURE_QUERY_MAX_EDGES) will refuse it
     // at tick time. Flag it at lint time so the author pins an endpoint first.
-    let closure_heads: std::collections::HashSet<&str> = prog.items.iter()
+    let closure_heads: std::collections::HashSet<&str> = prog
+        .items
+        .iter()
         .filter_map(|i| match i {
             crate::ast::Item::Rule(r) if r.closure_edge().is_some() => Some(r.head.rel.as_str()),
             _ => None,
-        }).collect();
+        })
+        .collect();
     for item in &prog.items {
-        let crate::ast::Item::Query(q) = item else { continue };
-        if !closure_heads.contains(q.head.rel.as_str()) || q.head.terms.len() != 2 { continue; }
-        let unpinned = q.head.terms.iter()
+        let crate::ast::Item::Query(q) = item else {
+            continue;
+        };
+        if !closure_heads.contains(q.head.rel.as_str()) || q.head.terms.len() != 2 {
+            continue;
+        }
+        let unpinned = q
+            .head
+            .terms
+            .iter()
             .all(|t| matches!(t, crate::ast::Term::Var(_) | crate::ast::Term::Wild));
-        if !unpinned { continue; }
+        if !unpinned {
+            continue;
+        }
         // Query nodes carry no span; locate the `? rel(` text directly.
-        let off = content.find(&format!("? {}(", q.head.rel))
-            .or_else(|| content.find(&format!("?{}(", q.head.rel))).unwrap_or(0) as u32;
+        let off = content
+            .find(&format!("? {}(", q.head.rel))
+            .or_else(|| content.find(&format!("?{}(", q.head.rel)))
+            .unwrap_or(0) as u32;
         let (l, c) = offset_to_line_col(content, off);
-        rows.push((path.to_string(), l, c, l, c, "warning".into(), "closure-unpinned".into(),
-            format!("unpinned query on closure head `{0}` materializes the full reachability \
+        rows.push((
+            path.to_string(),
+            l,
+            c,
+            l,
+            c,
+            "warning".into(),
+            "closure-unpinned".into(),
+            format!(
+                "unpinned query on closure head `{0}` materializes the full reachability \
                      relation (unbounded on a dense graph); pin one endpoint, e.g. \
-                     `? {0}(\"seed\", x)`, for the seeded fast path", q.head.rel)));
+                     `? {0}(\"seed\", x)`, for the seeded fast path",
+                q.head.rel
+            ),
+        ));
     }
     rows
 }
 
 impl RelKind for DlDiagKind {
-    fn rels(&self) -> &'static [&'static str] { &["dl_diag"] }
+    fn rels(&self) -> &'static [&'static str] {
+        &["dl_diag"]
+    }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl { name: "dl_diag".into(), cols: vec![
             col("path", Type::Path), col("line", Type::Int), col("col", Type::Int),
@@ -201,7 +300,9 @@ impl RelKind for DlDiagKind {
         )?;
         let mut rows: Vec<DlDiagRow> = Vec::new();
         for path in &paths {
-            let Ok(content) = std::fs::read_to_string(eng.root.join(path)) else { continue };
+            let Ok(content) = std::fs::read_to_string(eng.root.join(path)) else {
+                continue;
+            };
             rows.extend(validate_dl_source(&content, path));
         }
         rows.sort();
@@ -218,12 +319,31 @@ impl RelKind for DlDiagKind {
                 r.get::<_, i64>(4)?, r.get::<_, String>(5)?, r.get::<_, String>(6)?, r.get::<_, String>(7)?,
             )),
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter().map(|(p, l, c, el, ec, sev, code, msg)| vec![
-            Value::Text(p), Value::Int(l), Value::Int(c), Value::Int(el), Value::Int(ec),
-            Value::Text(sev), Value::Text(code), Value::Text(msg)]).collect();
-        eng.refresh_rel("dl_diag",
-            &["path", "line", "col", "end_line", "end_col", "severity", "code", "msg"], &out)?;
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(p, l, c, el, ec, sev, code, msg)| {
+                vec![
+                    Value::Text(p),
+                    Value::Int(l),
+                    Value::Int(c),
+                    Value::Int(el),
+                    Value::Int(ec),
+                    Value::Text(sev),
+                    Value::Text(code),
+                    Value::Text(msg),
+                ]
+            })
+            .collect();
+        eng.refresh_rel(
+            "dl_diag",
+            &[
+                "path", "line", "col", "end_line", "end_col", "severity", "code", "msg",
+            ],
+            &out,
+        )?;
         Ok(true)
     }
 }
@@ -241,9 +361,13 @@ impl RelKind for TypeShapeKind {
         &["type_shape"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "type_shape".into(),
-            cols: vec![col("name", Type::Text), col("hash", Type::Text)], group: "type-shape",
-            doc: "structural type-shape fingerprint per type (shape-iso experiment)", ..Default::default() }]
+        vec![RelDecl {
+            name: "type_shape".into(),
+            cols: vec![col("name", Type::Text), col("hash", Type::Text)],
+            group: "type-shape",
+            doc: "structural type-shape fingerprint per type (shape-iso experiment)",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in type-shape relation"
@@ -251,20 +375,36 @@ impl RelKind for TypeShapeKind {
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let edges: Vec<(String, String, String)> = eng.db.query_rows(
             "type_edge",
-            &format!("SELECT \"from\",\"to\",\"kind\" FROM {}", txt_tbl("type_edge")),
+            &format!(
+                "SELECT \"from\",\"to\",\"kind\" FROM {}",
+                txt_tbl("type_edge")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         )?;
         let computed: Vec<(String, String)> = typegraph::type_shape_hashes(&edges);
         let stored: Vec<(String, String)> = eng.db.query_rows(
             "type_shape",
-            &format!("SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"", txt_tbl("type_shape")),
+            &format!(
+                "SELECT \"name\",\"hash\" FROM {} ORDER BY \"name\",\"hash\"",
+                txt_tbl("type_shape")
+            ),
             &[],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )?;
-        if stored == computed { return Ok(false); }
-        let rows: Vec<Vec<Value>> = computed.into_iter()
-            .map(|(n, h)| vec![Value::Text(n), Value::Text(h)]).collect();
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(n, h)| vec![Value::Text(n), Value::Text(h)])
+            .collect();
         eng.refresh_rel("type_shape", &["name", "hash"], &rows)?;
         Ok(true)
     }
@@ -283,9 +423,17 @@ impl RelKind for TypeLggKind {
         &["type_lgg"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "type_lgg".into(),
-            cols: vec![col("a", Type::Text), col("b", Type::Text), col("vars", Type::Int)], group: "type-shape",
-            doc: "least-general generalization of two type shapes (shape-iso experiment)", ..Default::default() }]
+        vec![RelDecl {
+            name: "type_lgg".into(),
+            cols: vec![
+                col("a", Type::Text),
+                col("b", Type::Text),
+                col("vars", Type::Int),
+            ],
+            group: "type-shape",
+            doc: "least-general generalization of two type shapes (shape-iso experiment)",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in type-lgg relation"
@@ -293,20 +441,42 @@ impl RelKind for TypeLggKind {
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let edges: Vec<(String, String, String)> = eng.db.query_rows(
             "type_link",
-            &format!("SELECT \"src\",\"dst\",\"kind\" FROM {}", txt_tbl("type_link")),
+            &format!(
+                "SELECT \"src\",\"dst\",\"kind\" FROM {}",
+                txt_tbl("type_link")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         )?;
         let computed: Vec<(String, String, i64)> = typegraph::type_lgg_pairs(&edges);
         let stored: Vec<(String, String, i64)> = eng.db.query_rows(
             "type_lgg",
-            &format!("SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"", txt_tbl("type_lgg")),
+            &format!(
+                "SELECT \"a\",\"b\",\"vars\" FROM {} ORDER BY \"a\",\"b\",\"vars\"",
+                txt_tbl("type_lgg")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
         )?;
-        if stored == computed { return Ok(false); }
-        let rows: Vec<Vec<Value>> = computed.into_iter()
-            .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)]).collect();
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(a, b, v)| vec![Value::Text(a), Value::Text(b), Value::Int(v)])
+            .collect();
         eng.refresh_rel("type_lgg", &["a", "b", "vars"], &rows)?;
         Ok(true)
     }

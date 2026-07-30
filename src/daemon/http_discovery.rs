@@ -36,9 +36,11 @@ pub fn base_url() -> Result<String> {
             path.display()
         )
     })?;
-    let info: Value = serde_json::from_str(&text)
-        .with_context(|| format!("parse {}", path.display()))?;
-    let port = info.get("port").and_then(|v| v.as_u64())
+    let info: Value =
+        serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    let port = info
+        .get("port")
+        .and_then(|v| v.as_u64())
         .ok_or_else(|| anyhow::anyhow!("{} has no port field", path.display()))?;
     Ok(format!("http://127.0.0.1:{port}"))
 }

@@ -54,8 +54,14 @@ fn pattern_matches_and_captures() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "ast_yaml pattern must not error:\n{err}");
     assert!(out.contains("alpha"), "alpha capture missing:\n{out}");
-    assert!(!out.contains("beta"), "beta (has param) must not match empty-param pattern:\n{out}");
-    assert!(out.contains("(1 rows)"), "expected exactly one match:\n{out}");
+    assert!(
+        !out.contains("beta"),
+        "beta (has param) must not match empty-param pattern:\n{out}"
+    );
+    assert!(
+        out.contains("(1 rows)"),
+        "expected exactly one match:\n{out}"
+    );
 }
 
 /// `has:` (descendant) over NESTED nodes needs `stopBy: end` in ast-grep 0.38
@@ -82,9 +88,18 @@ fn has_with_stopby_finds_container() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "has: must not error:\n{err}");
-    assert!(out.contains("with_dbg"), "the fn containing dbg! must match:\n{out}");
-    assert!(!out.contains("clean"), "the fn without dbg! must not match:\n{out}");
-    assert!(out.contains("(1 rows)"), "expected exactly one match:\n{out}");
+    assert!(
+        out.contains("with_dbg"),
+        "the fn containing dbg! must match:\n{out}"
+    );
+    assert!(
+        !out.contains("clean"),
+        "the fn without dbg! must not match:\n{out}"
+    );
+    assert!(
+        out.contains("(1 rows)"),
+        "expected exactly one match:\n{out}"
+    );
 }
 
 /// The Phase D N+1 shape: `inside:` with `stopBy: end` discriminates a call
@@ -112,8 +127,17 @@ fn inside_with_stopby_discriminates_calls_in_loops() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "inside: must not error:\n{err}");
-    assert!(out.contains("(1 rows)"), "only the in-loop call matches:\n{out}");
+    assert!(
+        out.contains("(1 rows)"),
+        "only the in-loop call matches:\n{out}"
+    );
     // line 3 = helper(i) inside the for; line 5 = helper(99) after it
-    assert!(out.contains("\t3"), "in-loop call (line 3) must match:\n{out}");
-    assert!(!out.contains("\t5"), "out-of-loop call (line 5) must not match:\n{out}");
+    assert!(
+        out.contains("\t3"),
+        "in-loop call (line 3) must match:\n{out}"
+    );
+    assert!(
+        !out.contains("\t5"),
+        "out-of-loop call (line 5) must not match:\n{out}"
+    );
 }

@@ -26,10 +26,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .args(extra)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const PROBE: &str = concat!(
@@ -46,13 +49,22 @@ fn flags_broken_dl_no_git() {
     // valid program
     fs::write(d.join("ok.dl"), "rel a(x: text).\na(x) <- b(x).\n").unwrap();
     // missing comma between body atoms => parse error
-    fs::write(d.join("bad.dl"), "rel t(p: file, n: int).\nt(p, n) <- scan(\"*.dl\", p, rev) n = 1.\n").unwrap();
+    fs::write(
+        d.join("bad.dl"),
+        "rel t(p: file, n: int).\nt(p, n) <- scan(\"*.dl\", p, rev) n = 1.\n",
+    )
+    .unwrap();
     let (code, out, err) = run(&d, PROBE, &[]);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("bad.dl"), "broken file must be flagged:\n{out}");
+    assert!(
+        out.contains("bad.dl"),
+        "broken file must be flagged:\n{out}"
+    );
     assert!(out.contains("parse"), "parse code expected:\n{out}");
-    assert!(!out.contains("\tok.dl\t") && !out.lines().any(|l| l.starts_with("ok.dl\t")),
-        "valid file must not be flagged:\n{out}");
+    assert!(
+        !out.contains("\tok.dl\t") && !out.lines().any(|l| l.starts_with("ok.dl\t")),
+        "valid file must not be flagged:\n{out}"
+    );
 }
 
 /// (2) A type error (aggregation produces int into a text column) surfaces with
@@ -64,8 +76,14 @@ fn flags_type_error() {
         "rel edge(f: text, t: text).\nrel fan(f: text, n: text).\nfan(f, count(t)) <- edge(f, t).\n").unwrap();
     let (code, out, err) = run(&d, PROBE, &[]);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("typed.dl"), "typed file must be flagged:\n{out}");
-    assert!(out.contains("brand-mismatch"), "typecheck code expected:\n{out}");
+    assert!(
+        out.contains("typed.dl"),
+        "typed file must be flagged:\n{out}"
+    );
+    assert!(
+        out.contains("brand-mismatch"),
+        "typecheck code expected:\n{out}"
+    );
 }
 
 /// (3) The rail shape: `diag <- dl_diag(...)` makes a broken `.dl` a blocking
@@ -73,7 +91,11 @@ fn flags_type_error() {
 #[test]
 fn rail_blocks_on_broken_dl_under_check() {
     let d = sandbox("rail");
-    fs::write(d.join("bad.dl"), "rel t(p: file).\nt(p) <- scan(\"*.dl\" p, rev).\n").unwrap();
+    fs::write(
+        d.join("bad.dl"),
+        "rel t(p: file).\nt(p) <- scan(\"*.dl\" p, rev).\n",
+    )
+    .unwrap();
     let prog = concat!(
         "rel dl_file(p: file).\n",
         "dl_file(p) <- scan(\"**/*.dl\", p, rev).\n",
@@ -90,8 +112,10 @@ fn dl_diag_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel dl_diag(p: text).\n", &[]);
     assert_ne!(code, 0);
-    assert!(err.contains("built-in") || err.contains("dl self-diagnostics"),
-        "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in") || err.contains("dl self-diagnostics"),
+        "reserved-name error expected:\n{err}"
+    );
 }
 
 /// (new) The unpinned-closure-query lint: a `?` on a closure head with both
@@ -101,17 +125,25 @@ fn dl_diag_is_reserved() {
 #[test]
 fn warns_on_unpinned_closure_query() {
     let d = sandbox("closure_unpinned");
-    fs::write(d.join("walk.dl"),
+    fs::write(
+        d.join("walk.dl"),
         "rel e(a: text, b: text).\ne(\"x\", \"y\").\n\
          rel reach(from: text, to: text).\nreach(a, b) <- closure(e).\n\
-         ? reach(from, to).\n").unwrap();
-    fs::write(d.join("pinned.dl"),
+         ? reach(from, to).\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("pinned.dl"),
         "rel e2(a: text, b: text).\ne2(\"x\", \"y\").\n\
          rel reach2(from: text, to: text).\nreach2(a, b) <- closure(e2).\n\
-         ? reach2(\"x\", to).\n").unwrap();
+         ? reach2(\"x\", to).\n",
+    )
+    .unwrap();
     let (code, out, err) = run(&d, PROBE, &[]);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("closure-unpinned") && out.contains("walk.dl"),
-        "unpinned query flagged:\n{out}");
+    assert!(
+        out.contains("closure-unpinned") && out.contains("walk.dl"),
+        "unpinned query flagged:\n{out}"
+    );
     assert!(!out.contains("pinned.dl\t"), "pinned query silent:\n{out}");
 }

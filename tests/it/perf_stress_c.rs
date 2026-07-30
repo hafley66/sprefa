@@ -22,7 +22,9 @@ const PROG: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bench/stress_c.dl");
 fn fixture() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("DL_STRESS_C") {
         let p = PathBuf::from(p);
-        if p.is_dir() { return Some(p); }
+        if p.is_dir() {
+            return Some(p);
+        }
     }
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/.fixtures/redis");
     p.is_dir().then_some(p)
@@ -33,11 +35,16 @@ fn count_c(root: &Path) -> usize {
     let mut n = 0;
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&d) else { continue };
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() { stack.push(p); }
-            else if p.extension().is_some_and(|x| x == "c") { n += 1; }
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "c") {
+                n += 1;
+            }
         }
     }
     n
@@ -47,11 +54,14 @@ fn count_c(root: &Path) -> usize {
 fn first_c(root: &Path) -> Option<String> {
     let mut stack = vec![root.to_path_buf()];
     while let Some(d) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&d) else { continue };
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
-            if p.is_dir() { stack.push(p); }
-            else if p.extension().is_some_and(|x| x == "c") {
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "c") {
                 return p.strip_prefix(root).ok()?.to_str().map(String::from);
             }
         }
@@ -90,12 +100,17 @@ fn c_stress_cold_and_incremental_on_large_repo() {
     let t = Instant::now();
     let cold = Command::new(DL)
         .arg(PROG)
-        .arg("--db").arg(&db)
+        .arg("--db")
+        .arg(&db)
         .current_dir(&root)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let cold_ms = t.elapsed().as_secs_f64() * 1000.0;
-    assert!(cold.status.success(), "cold tick failed:\n{}",
-        String::from_utf8_lossy(&cold.stderr));
+    assert!(
+        cold.status.success(),
+        "cold tick failed:\n{}",
+        String::from_utf8_lossy(&cold.stderr)
+    );
     let cold_stderr = String::from_utf8_lossy(&cold.stderr);
     let scanned = scanned_count(&String::from_utf8_lossy(&cold.stdout));
     assert!(scanned > 0, "cold tick scanned no files:\n{cold_stderr}");
@@ -107,20 +122,32 @@ fn c_stress_cold_and_incremental_on_large_repo() {
     let t = Instant::now();
     let incr = Command::new(DL)
         .arg(PROG)
-        .arg("--db").arg(&db)
-        .arg("--changed").arg(&target)
+        .arg("--db")
+        .arg(&db)
+        .arg("--changed")
+        .arg(&target)
         .current_dir(&root)
-        .output().expect("run dl --changed");
+        .output()
+        .expect("run dl --changed");
     let incr_ms = t.elapsed().as_secs_f64() * 1000.0;
-    assert!(incr.status.success(), "incremental tick failed:\n{}",
-        String::from_utf8_lossy(&incr.stderr));
-    let ratio = if incr_ms > 0.0 { cold_ms / incr_ms } else { f64::INFINITY };
+    assert!(
+        incr.status.success(),
+        "incremental tick failed:\n{}",
+        String::from_utf8_lossy(&incr.stderr)
+    );
+    let ratio = if incr_ms > 0.0 {
+        cold_ms / incr_ms
+    } else {
+        f64::INFINITY
+    };
     eprintln!(
         "perf_stress_c: incremental {incr_ms:.0}ms (--changed {target})  cold/incr ratio {ratio:.1}x\n{}",
         String::from_utf8_lossy(&incr.stderr));
 
     // The headline assertion: incremental must beat cold (the corpus did not
     // move; only the one --changed path re-runs).
-    assert!(incr_ms < cold_ms,
-        "incremental ({incr_ms:.0}ms) not faster than cold ({cold_ms:.0}ms)");
+    assert!(
+        incr_ms < cold_ms,
+        "incremental ({incr_ms:.0}ms) not faster than cold ({cold_ms:.0}ms)"
+    );
 }

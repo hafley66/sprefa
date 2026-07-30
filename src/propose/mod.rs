@@ -39,10 +39,10 @@ use tree_sitter::{Node, Parser};
 
 mod sequence;
 mod shapes;
+pub use sequence::{call_seq_proposals, ngram_stat_proposals, symbol_shape_proposals};
 pub(crate) use shapes::statement_ranges;
 #[cfg(test)]
 pub(crate) use shapes::subtree_hash;
-pub use sequence::{call_seq_proposals, ngram_stat_proposals, symbol_shape_proposals};
 pub use shapes::{
     ast_shape_proposals, callgraph_shape_proposals, cfg_shape_proposals, ddg_shape_proposals,
     tree_shape_proposals,
@@ -81,7 +81,9 @@ pub fn extract_proposals(content: &str) -> Vec<Proposal> {
         let hi_byte = line_start.get(a + n).copied().unwrap_or(content.len());
         let params = free_vars(root, content, lo_byte, hi_byte);
         out.push(Proposal {
-            lo: a + 1, hi: a + n, occurrences: occ,
+            lo: a + 1,
+            hi: a + n,
+            occurrences: occ,
             gain: n * occ.saturating_sub(1),
             params,
         });
@@ -95,8 +97,11 @@ pub fn extract_proposals(content: &str) -> Vec<Proposal> {
 /// the duplicated text as-is; a human (or a later typed codegen pass) applies it.
 pub fn render_proposal(p: &Proposal, content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
-    let body: String = lines[p.lo - 1..p.hi].iter()
-        .map(|l| format!("    {l}")).collect::<Vec<_>>().join("\n");
+    let body: String = lines[p.lo - 1..p.hi]
+        .iter()
+        .map(|l| format!("    {l}"))
+        .collect::<Vec<_>>()
+        .join("\n");
     let dedup_note = if p.occurrences > 2 {
         format!("\n  // removes {} duplicated copies", p.occurrences - 1)
     } else {
@@ -104,8 +109,12 @@ pub fn render_proposal(p: &Proposal, content: &str) -> String {
     };
     format!(
         "// gain: {} ({} lines x {} occurrences)\nfn extracted_{}({}) {{\n{}\n}}{}",
-        p.gain, p.hi - p.lo + 1, p.occurrences,
-        p.lo, p.params.join(", "), body,
+        p.gain,
+        p.hi - p.lo + 1,
+        p.occurrences,
+        p.lo,
+        p.params.join(", "),
+        body,
         dedup_note,
     )
 }
@@ -203,15 +212,18 @@ where
         if distinct.len() < 3 {
             continue;
         }
-        let occ = idxs.iter().filter(|&&i| {
-            i + n <= items.len() && items[i..i + n] == items[a..a + n]
-        }).count();
+        let occ = idxs
+            .iter()
+            .filter(|&&i| i + n <= items.len() && items[i..i + n] == items[a..a + n])
+            .count();
         blocks.push((a, n, occ));
     }
     blocks.sort_by(|x, y| y.1.cmp(&x.1));
     let mut kept: Vec<(usize, usize, usize)> = Vec::new();
     for (a, n, occ) in blocks {
-        let subsumed = kept.iter().any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
+        let subsumed = kept
+            .iter()
+            .any(|(ka, kn, _)| *ka <= a && a + n <= *ka + *kn);
         if !subsumed {
             kept.push((a, n, occ));
         }
@@ -227,13 +239,50 @@ fn dup_blocks(lines: &[&str], seed: usize) -> Vec<(usize, usize, usize)> {
 }
 
 fn is_keyword(s: &str) -> bool {
-    matches!(s,
-        "self" | "Self" | "super" | "crate" | "return" | "if" | "else" | "for"
-        | "while" | "loop" | "match" | "let" | "mut" | "ref" | "move" | "in"
-        | "as" | "fn" | "use" | "pub" | "struct" | "enum" | "impl" | "trait"
-        | "mod" | "where" | "dyn" | "async" | "await" | "break" | "continue"
-        | "const" | "static" | "unsafe" | "extern" | "type" | "true" | "false"
-        | "Some" | "None" | "Ok" | "Err"
+    matches!(
+        s,
+        "self"
+            | "Self"
+            | "super"
+            | "crate"
+            | "return"
+            | "if"
+            | "else"
+            | "for"
+            | "while"
+            | "loop"
+            | "match"
+            | "let"
+            | "mut"
+            | "ref"
+            | "move"
+            | "in"
+            | "as"
+            | "fn"
+            | "use"
+            | "pub"
+            | "struct"
+            | "enum"
+            | "impl"
+            | "trait"
+            | "mod"
+            | "where"
+            | "dyn"
+            | "async"
+            | "await"
+            | "break"
+            | "continue"
+            | "const"
+            | "static"
+            | "unsafe"
+            | "extern"
+            | "type"
+            | "true"
+            | "false"
+            | "Some"
+            | "None"
+            | "Ok"
+            | "Err"
     )
 }
 
@@ -300,8 +349,9 @@ fn should_skip(n: Node) -> bool {
         None => return false,
     };
     match p.kind() {
-        "field_expression" => p.child_by_field_name("field")
-            .map_or(false, |f| f.start_byte() == n.start_byte() && f.end_byte() == n.end_byte()),
+        "field_expression" => p.child_by_field_name("field").map_or(false, |f| {
+            f.start_byte() == n.start_byte() && f.end_byte() == n.end_byte()
+        }),
         "scoped_identifier" | "scoped_type_identifier" | "token_tree" | "macro_invocation" => true,
         _ => false,
     }
@@ -484,27 +534,57 @@ mod tests {
         parser.set_language(&lang()).unwrap();
         let tree = parser.parse(&src, None).unwrap();
         let cases: &[(&str, &[&str])] = &[
-            ("bind_whole_match_span",
-             &["ext", "idv", "caps", "content", "where_file", "repo", "path", "where_bytes",
-               "bind_span_id"]),
-            ("bind_match_op",
-             &["binds", "regex", "mlv", "idv", "colv", "ecv", "content", "where_file",
-              "re_cache", "where_bytes", "repo", "path", "compile_dl_regex"]),
+            (
+                "bind_whole_match_span",
+                &[
+                    "ext",
+                    "idv",
+                    "caps",
+                    "content",
+                    "where_file",
+                    "repo",
+                    "path",
+                    "where_bytes",
+                    "bind_span_id",
+                ],
+            ),
+            (
+                "bind_match_op",
+                &[
+                    "binds",
+                    "regex",
+                    "mlv",
+                    "idv",
+                    "colv",
+                    "ecv",
+                    "content",
+                    "where_file",
+                    "re_cache",
+                    "where_bytes",
+                    "repo",
+                    "path",
+                    "compile_dl_regex",
+                ],
+            ),
         ];
         for (name, expected) in cases {
             let mut cur = tree.root_node().walk();
             let body = tree
                 .root_node()
                 .children(&mut cur)
-                .find(|n| n.kind() == "function_item" && {
-                    n.child_by_field_name("name")
-                        .map_or(false, |nm| text(nm, &src) == *name)
+                .find(|n| {
+                    n.kind() == "function_item" && {
+                        n.child_by_field_name("name")
+                            .map_or(false, |nm| text(nm, &src) == *name)
+                    }
                 })
                 .and_then(|n| n.child_by_field_name("body"))
                 .unwrap_or_else(|| panic!("fn {name} not found"));
             let lo = body.start_byte();
             let hi = body.end_byte();
-            let got: HashSet<String> = free_vars(tree.root_node(), &src, lo, hi).into_iter().collect();
+            let got: HashSet<String> = free_vars(tree.root_node(), &src, lo, hi)
+                .into_iter()
+                .collect();
             let exp: HashSet<String> = expected.iter().map(|s| s.to_string()).collect();
             assert_eq!(got, exp, "fn {name}: got {:?} expected {:?}", got, exp);
         }
@@ -518,7 +598,8 @@ mod tests {
         let runs = matching_runs(&items, 2);
         assert!(
             runs.iter().any(|&(s, n, occ)| s == 0 && n == 3 && occ == 2),
-            "expected (0,3,2) in {:?}", runs
+            "expected (0,3,2) in {:?}",
+            runs
         );
     }
 
@@ -585,7 +666,11 @@ mod tests {
     fn verbatim_finds_exact_dup_block() {
         let src = "fn a() {\n    let x = one();\n    let y = two();\n    let z = three();\n    foo(x);\n    bar(y);\n    baz(z);\n}\nfn b() {\n    let x = one();\n    let y = two();\n    let z = three();\n    foo(x);\n    bar(y);\n    baz(z);\n}\n";
         let p = extract_proposals(src);
-        assert!(p.iter().any(|p| p.occurrences >= 2), "exact dup found: {:?}", p);
+        assert!(
+            p.iter().any(|p| p.occurrences >= 2),
+            "exact dup found: {:?}",
+            p
+        );
     }
 
     // --- ast-shape kernel ---
@@ -611,7 +696,11 @@ mod tests {
     fn tree_shape_rejects_different_structure() {
         let src = "fn alpha() {\n    let result = compute(input);\n    map.insert(key, result);\n    return verify(result);\n}\nfn beta() {\n    if input.is_valid() {\n        handle(input);\n    }\n}\n";
         let p = tree_shape_proposals(src);
-        assert!(p.is_empty(), "structurally different blocks do not match: {:?}", p);
+        assert!(
+            p.is_empty(),
+            "structurally different blocks do not match: {:?}",
+            p
+        );
     }
 
     // --- call-seq kernel ---
@@ -620,8 +709,12 @@ mod tests {
     fn call_seq_finds_matching_symbol_pattern() {
         let src = "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n    x();\n    y();\n    z();\n}\n";
         let spans: Vec<(i32, i32, &str)> = vec![
-            (1, 4, "pkg/x()."), (2, 4, "pkg/y()."), (3, 4, "pkg/z()."),
-            (6, 4, "pkg/x()."), (7, 4, "pkg/y()."), (8, 4, "pkg/z()."),
+            (1, 4, "pkg/x()."),
+            (2, 4, "pkg/y()."),
+            (3, 4, "pkg/z()."),
+            (6, 4, "pkg/x()."),
+            (7, 4, "pkg/y()."),
+            (8, 4, "pkg/z()."),
         ];
         let p = call_seq_proposals(src, &spans);
         assert_eq!(p.len(), 1, "one matching symbol-set block: {:?}", p);
@@ -632,8 +725,12 @@ mod tests {
     fn call_seq_rejects_different_symbols() {
         let src = "fn a() {\n    x();\n    y();\n    z();\n}\nfn b() {\n    p();\n    q();\n    r();\n}\n";
         let spans: Vec<(i32, i32, &str)> = vec![
-            (1, 4, "pkg/x()."), (2, 4, "pkg/y()."), (3, 4, "pkg/z()."),
-            (6, 4, "pkg/p()."), (7, 4, "pkg/q()."), (8, 4, "pkg/r()."),
+            (1, 4, "pkg/x()."),
+            (2, 4, "pkg/y()."),
+            (3, 4, "pkg/z()."),
+            (6, 4, "pkg/p()."),
+            (7, 4, "pkg/q()."),
+            (8, 4, "pkg/r()."),
         ];
         let p = call_seq_proposals(src, &spans);
         assert!(p.is_empty(), "different symbols do not match: {:?}", p);
@@ -660,7 +757,11 @@ mod tests {
         // No window matches across the two groups.
         let src = "fn alpha(a: i32, b: i32) {\n    let x = combine(a, b);\n    let y = combine(x, a);\n    let z = combine(y, x);\n}\nfn beta() {\n    do_thing();\n    do_other();\n    do_more();\n}\n";
         let p = ddg_shape_proposals(src);
-        assert!(p.is_empty(), "different def/use counts must not match: {:?}", p);
+        assert!(
+            p.is_empty(),
+            "different def/use counts must not match: {:?}",
+            p
+        );
     }
 
     // --- callgraph-iso kernel ---
@@ -725,8 +826,20 @@ mod tests {
     #[test]
     fn min_lines_filter_drops_short_blocks() {
         let proposals = vec![
-            Proposal { lo: 1, hi: 2, occurrences: 24, gain: 46, params: vec![] },
-            Proposal { lo: 10, hi: 30, occurrences: 2, gain: 20, params: vec![] },
+            Proposal {
+                lo: 1,
+                hi: 2,
+                occurrences: 24,
+                gain: 46,
+                params: vec![],
+            },
+            Proposal {
+                lo: 10,
+                hi: 30,
+                occurrences: 2,
+                gain: 20,
+                params: vec![],
+            },
         ];
         let filtered = min_lines_filter(proposals, 5);
         assert_eq!(filtered.len(), 1);
@@ -735,12 +848,25 @@ mod tests {
 
     #[test]
     fn weighted_gain_favors_long_blocks() {
-        let short = Proposal { lo: 1, hi: 2, occurrences: 24, gain: 46, params: vec![] };
-        let long = Proposal { lo: 1, hi: 20, occurrences: 2, gain: 20, params: vec![] };
+        let short = Proposal {
+            lo: 1,
+            hi: 2,
+            occurrences: 24,
+            gain: 46,
+            params: vec![],
+        };
+        let long = Proposal {
+            lo: 1,
+            hi: 20,
+            occurrences: 2,
+            gain: 20,
+            params: vec![],
+        };
         assert!(
             weighted_gain(&long) > weighted_gain(&short),
             "long block should outweigh short: {} vs {}",
-            weighted_gain(&long), weighted_gain(&short)
+            weighted_gain(&long),
+            weighted_gain(&short)
         );
     }
 
@@ -748,8 +874,20 @@ mod tests {
     fn max_params_filter_drops_infeasible() {
         let many: Vec<String> = (0..15).map(|i| format!("p{i}")).collect();
         let proposals = vec![
-            Proposal { lo: 1, hi: 20, occurrences: 3, gain: 40, params: vec!["a".into()] },
-            Proposal { lo: 1, hi: 30, occurrences: 2, gain: 30, params: many },
+            Proposal {
+                lo: 1,
+                hi: 20,
+                occurrences: 3,
+                gain: 40,
+                params: vec!["a".into()],
+            },
+            Proposal {
+                lo: 1,
+                hi: 30,
+                occurrences: 2,
+                gain: 30,
+                params: many,
+            },
         ];
         let filtered = max_params_filter(proposals, 10);
         assert_eq!(filtered.len(), 1, "only the <=10-param proposal survives");
@@ -760,9 +898,27 @@ mod tests {
     fn feasibility_filter_combines_both() {
         let many: Vec<String> = (0..12).map(|i| format!("p{i}")).collect();
         let proposals = vec![
-            Proposal { lo: 1, hi: 2, occurrences: 5, gain: 8, params: vec![] },      // too short
-            Proposal { lo: 1, hi: 40, occurrences: 3, gain: 80, params: many },       // too many params
-            Proposal { lo: 1, hi: 20, occurrences: 3, gain: 40, params: vec!["x".into()] }, // OK
+            Proposal {
+                lo: 1,
+                hi: 2,
+                occurrences: 5,
+                gain: 8,
+                params: vec![],
+            }, // too short
+            Proposal {
+                lo: 1,
+                hi: 40,
+                occurrences: 3,
+                gain: 80,
+                params: many,
+            }, // too many params
+            Proposal {
+                lo: 1,
+                hi: 20,
+                occurrences: 3,
+                gain: 40,
+                params: vec!["x".into()],
+            }, // OK
         ];
         let filtered = feasibility_filter(proposals);
         assert_eq!(filtered.len(), 1, "only the feasible proposal survives");
@@ -826,7 +982,10 @@ mod tests {
         .unwrap();
         let tree_p = tree_shape_proposals(&src);
         let ast_p = ast_shape_proposals(&src);
-        assert!(!tree_p.is_empty(), "tree-iso should find proposals on engine.rs");
+        assert!(
+            !tree_p.is_empty(),
+            "tree-iso should find proposals on engine.rs"
+        );
         let pct = containment_pct(&tree_p, &ast_p);
         assert!(
             pct > 0.85,
@@ -890,7 +1049,10 @@ mod tests {
         }
         let sym_p = symbol_shape_proposals(&src, &spans);
         let ast_p = ast_shape_proposals(&src);
-        assert!(!sym_p.is_empty(), "symbol should find proposals on engine.rs");
+        assert!(
+            !sym_p.is_empty(),
+            "symbol should find proposals on engine.rs"
+        );
         let pct = containment_pct(&sym_p, &ast_p);
         assert!(
             pct > 0.90,

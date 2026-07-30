@@ -39,7 +39,8 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // Class-13 stale-binary rail: `daemon status` is one of the three
             // named surfaces (docs/failure-modes.md:300-327) — a status probe
             // against a stale singleton should say so, not just report green.
-            let stale_check_root = root_opt.map(Path::to_path_buf)
+            let stale_check_root = root_opt
+                .map(Path::to_path_buf)
                 .or_else(|| std::env::current_dir().ok());
             if let Some(check_root) = &stale_check_root {
                 if use_supervision() {
@@ -48,13 +49,22 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                     // build mtime (`build_id` = "version:exe_mtime_secs"),
                     // not the `dl daemon status` CLI process's own exe —
                     // under launchd those can differ.
-                    let reference = crate::daemon::status(None).ok().flatten()
-                        .and_then(|info| info.get("build_id").and_then(|v| v.as_str().map(String::from)))
+                    let reference = crate::daemon::status(None)
+                        .ok()
+                        .flatten()
+                        .and_then(|info| {
+                            info.get("build_id")
+                                .and_then(|v| v.as_str().map(String::from))
+                        })
                         .and_then(|build_id| build_id.rsplit_once(':').map(|(_, s)| s.to_string()))
                         .and_then(|secs| secs.parse::<u64>().ok())
                         .map(|secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs));
                     if let Some(mtime) = reference {
-                        crate::stale_binary::warn_if_stale_with_reference(check_root, "supervised daemon", mtime);
+                        crate::stale_binary::warn_if_stale_with_reference(
+                            check_root,
+                            "supervised daemon",
+                            mtime,
+                        );
                     }
                 } else {
                     crate::stale_binary::warn_if_stale(check_root);
@@ -84,7 +94,9 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
                 .cloned()
                 .collect();
             let init_root = root_opt.map(|p| p.to_path_buf());
-            if let (Some(root), Some(outside)) = (root_opt, program_outside_unset_root(&programs, root_opt)) {
+            if let (Some(root), Some(outside)) =
+                (root_opt, program_outside_unset_root(&programs, root_opt))
+            {
                 // @eprintln-ok: final user-facing refusal at CLI top level
                 eprintln!(
                     "dl daemon start: {outside} is outside the resolved root {} \
@@ -172,14 +184,18 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // down, register the cwd root, then push the program as a watched set.
             let path = arg(args, 1, "dl daemon load <file.dl>")?;
             crate::daemon::start_singleton()?;
-            if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
+            if let Some(r) = root_opt {
+                crate::daemon::add_root(r)?;
+            }
             print_load_response(crate::daemon::load(root_opt, path, "watched")?)?;
             Ok(0)
         }
         "load-once" => {
             let path = arg(args, 1, "dl daemon load-once <file.dl>")?;
             crate::daemon::start_singleton()?;
-            if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
+            if let Some(r) = root_opt {
+                crate::daemon::add_root(r)?;
+            }
             print_load_response(crate::daemon::load(root_opt, path, "once")?)?;
             Ok(0)
         }
@@ -231,7 +247,9 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // answers regardless of daemon state. An open row whose pid is
             // dead is direct kill evidence (same idiom as `why`, one level up:
             // process, not daemon tick).
-            let limit: usize = flag_value(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+            let limit: usize = flag_value(args, "--limit")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(50);
             print!("{}", crate::invlog::report_recent(limit));
             Ok(0)
         }
@@ -245,8 +263,11 @@ pub fn run_cmd(args: &[String]) -> Result<i32> {
             // distinction is the whole point.
             let kind = flag_value(args, "--kind");
             let root_filter = flag_value(args, "--root");
-            let limit: usize = flag_value(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(100);
-            let rows = crate::eventlog::read(&crate::daemon::daemon_home(), kind, root_filter, limit);
+            let limit: usize = flag_value(args, "--limit")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(100);
+            let rows =
+                crate::eventlog::read(&crate::daemon::daemon_home(), kind, root_filter, limit);
             for row in rows {
                 let ts_ms = row["ts"].as_i64().unwrap_or(0);
                 let kind = row["kind"].as_str().unwrap_or("");
@@ -316,7 +337,9 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
     } else {
         crate::daemon::start_singleton()?;
     }
-    if let Some(r) = root_opt { crate::daemon::add_root(r)?; }
+    if let Some(r) = root_opt {
+        crate::daemon::add_root(r)?;
+    }
     for file in &expanded.files {
         let resp = crate::daemon::load(root_opt, file, "watched")?;
         if let Some(err) = resp.error {
@@ -329,7 +352,9 @@ pub fn run_watch(args: &[String]) -> Result<i32> {
         "[watch] {} program(s) joined the daemon serving {} — hot-reloading on edit.\n\
          inspect: dl daemon rows <rel>    status: dl daemon status    stop: dl daemon stop",
         expanded.files.len(),
-        root_opt.map(|p| p.display().to_string()).unwrap_or_else(|| "the config view".to_string()),
+        root_opt
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "the config view".to_string()),
     ); // @eprintln-ok: command's output contract for a human at a TTY
     Ok(0)
 }
@@ -345,7 +370,10 @@ fn print_status() -> Result<i32> {
     }
     match crate::daemon::status(None)? {
         None => {
-            println!("daemon: not running  (home {})", crate::daemon::daemon_home().display());
+            println!(
+                "daemon: not running  (home {})",
+                crate::daemon::daemon_home().display()
+            );
             Ok(1)
         }
         Some(info) => {
@@ -363,31 +391,71 @@ fn print_status() -> Result<i32> {
             println!("  roots        {}", field("root_count"));
             if let Some(roots) = info.get("roots").and_then(|v| v.as_array()) {
                 for r in roots {
-                    let get = |k: &str| r.get(k).map(|v| match v {
-                        Value::String(s) => s.clone(), o => o.to_string(),
-                    }).unwrap_or_default();
-                    println!("    - {}  (tick {}, {}, {})",
-                        get("root"), get("tick_count"),
-                        if r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false) { "settled" } else { "active" },
-                        get("program"));
-                    let fx_failed = r.get("effects_failed").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let fx_orphaned = r.get("effects_orphaned").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let get = |k: &str| {
+                        r.get(k)
+                            .map(|v| match v {
+                                Value::String(s) => s.clone(),
+                                o => o.to_string(),
+                            })
+                            .unwrap_or_default()
+                    };
+                    println!(
+                        "    - {}  (tick {}, {}, {})",
+                        get("root"),
+                        get("tick_count"),
+                        if r.get("settled").and_then(|v| v.as_bool()).unwrap_or(false) {
+                            "settled"
+                        } else {
+                            "active"
+                        },
+                        get("program")
+                    );
+                    let fx_failed = r
+                        .get("effects_failed")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
+                    let fx_orphaned = r
+                        .get("effects_orphaned")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     if fx_failed != 0 || fx_orphaned != 0 {
-                        println!("      effects: {} failed, {} orphaned", fx_failed, fx_orphaned);
+                        println!(
+                            "      effects: {} failed, {} orphaned",
+                            fx_failed, fx_orphaned
+                        );
                     }
                 }
             }
             let activity = info.get("activity");
-            let phase = activity.and_then(|a| a.get("phase")).and_then(|v| v.as_str()).unwrap_or("idle");
+            let phase = activity
+                .and_then(|a| a.get("phase"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("idle");
             if phase == "idle" || phase.is_empty() {
                 println!("  doing        idle");
             } else {
-                let detail = activity.and_then(|a| a.get("detail")).and_then(|v| v.as_str()).unwrap_or("");
-                let elapsed = activity.and_then(|a| a.get("elapsed_ms")).and_then(|v| v.as_u64()).unwrap_or(0);
-                let tick = activity.and_then(|a| a.get("tick")).and_then(|v| v.as_u64()).unwrap_or(0);
-                let what = if detail.is_empty() { phase.to_string() } else { format!("{phase} {detail}") };
-                println!("  doing        {what}   ({}.{:0>1}s, tick {tick})",
-                    elapsed / 1000, (elapsed % 1000) / 100);
+                let detail = activity
+                    .and_then(|a| a.get("detail"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let elapsed = activity
+                    .and_then(|a| a.get("elapsed_ms"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let tick = activity
+                    .and_then(|a| a.get("tick"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let what = if detail.is_empty() {
+                    phase.to_string()
+                } else {
+                    format!("{phase} {detail}")
+                };
+                println!(
+                    "  doing        {what}   ({}.{:0>1}s, tick {tick})",
+                    elapsed / 1000,
+                    (elapsed % 1000) / 100
+                );
             }
             Ok(0)
         }
@@ -398,7 +466,10 @@ fn print_status() -> Result<i32> {
 /// Exit 1 if the daemon is not running.
 fn print_jobs() -> Result<i32> {
     if crate::daemon::status(None)?.is_none() {
-        println!("daemon: not running  (home {})", crate::daemon::daemon_home().display());
+        println!(
+            "daemon: not running  (home {})",
+            crate::daemon::daemon_home().display()
+        );
         return Ok(1);
     }
     let jobs = crate::daemon::jobs()?;
@@ -413,9 +484,15 @@ fn print_jobs() -> Result<i32> {
     };
     println!("KEY\tKIND\tSTATE\tATTEMPTS\tENQUEUED_AT\tSTARTED_AT");
     for job in &jobs {
-        println!("{}\t{}\t{}\t{}\t{}\t{}",
-            cell(job, "key"), cell(job, "kind"), cell(job, "state"),
-            cell(job, "attempts"), cell(job, "enqueued_at"), cell(job, "started_at"));
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            cell(job, "key"),
+            cell(job, "kind"),
+            cell(job, "state"),
+            cell(job, "attempts"),
+            cell(job, "enqueued_at"),
+            cell(job, "started_at")
+        );
     }
     println!("({} jobs)", jobs.len());
     Ok(0)
@@ -500,7 +577,13 @@ fn program_outside_unset_root(programs: &[String], root: Option<&Path>) -> Optio
         if !program_path.is_absolute() {
             return None;
         }
-        let canon_program = program_path.canonicalize().unwrap_or_else(|_| program_path.to_path_buf());
-        if canon_program.starts_with(root) { None } else { Some(program.clone()) }
+        let canon_program = program_path
+            .canonicalize()
+            .unwrap_or_else(|_| program_path.to_path_buf());
+        if canon_program.starts_with(root) {
+            None
+        } else {
+            Some(program.clone())
+        }
     })
 }

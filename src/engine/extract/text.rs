@@ -3,8 +3,7 @@ use super::*;
 /// `comment_node`'s declared column order, shared by the wholesale write
 /// (`refresh_rel`) and the cold-chunk append (`append_rel`) so the two paths
 /// can never drift.
-const COMMENT_NODE_COLS: [&str; 7] =
-    ["path", "line", "col", "end_line", "end_col", "text", "kind"];
+const COMMENT_NODE_COLS: [&str; 7] = ["path", "line", "col", "end_line", "end_col", "text", "kind"];
 /// `template_parts`' declared column order (see `COMMENT_NODE_COLS`).
 const TEMPLATE_PARTS_COLS: [&str; 6] = ["file", "line", "node", "idx", "kind", "text"];
 /// `unresolved`'s declared column order (see `COMMENT_NODE_COLS`).
@@ -40,7 +39,10 @@ impl Engine {
         )?;
         for row in rows {
             let p = row.1.as_str();
-            let ts = p.ends_with(".ts") || p.ends_with(".tsx") || p.ends_with(".mts") || p.ends_with(".cts");
+            let ts = p.ends_with(".ts")
+                || p.ends_with(".tsx")
+                || p.ends_with(".mts")
+                || p.ends_with(".cts");
             let md = p.ends_with(".md") || p.ends_with(".markdown");
             if ts || md || crate::cst::lang_label_for_path(p).is_some() {
                 files.push(row);
@@ -289,7 +291,13 @@ impl Engine {
             .iter()
             .flat_map(|(_repo, path, _rev, parts)| {
                 parts.iter().map(move |p| {
-                    (p.node.clone(), path.clone(), p.line, p.col, "template".to_string())
+                    (
+                        p.node.clone(),
+                        path.clone(),
+                        p.line,
+                        p.col,
+                        "template".to_string(),
+                    )
                 })
             })
             .collect();

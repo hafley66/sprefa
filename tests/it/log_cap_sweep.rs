@@ -114,13 +114,17 @@ fn boot_sweep_truncates_preexisting_oversized_external_logs() {
     }
 
     let _child = sb.spawn();
-    assert!(sb.wait_ready(), "daemon never answered ping — boot-time sweep test cannot proceed");
+    assert!(
+        sb.wait_ready(),
+        "daemon never answered ping — boot-time sweep test cannot proceed"
+    );
 
     for name in ["launchd-stdout.log", "launchd-stderr.log", "daemon.log"] {
         let path = sb.sprefa_home().join(name);
         let len = fs::metadata(&path).map(|m| m.len()).unwrap_or(u64::MAX);
         assert_eq!(
-            len, 0,
+            len,
+            0,
             "{name} must be truncated to 0 by the boot-time logcap sweep, got {len} bytes: {}",
             path.display()
         );
@@ -138,7 +142,11 @@ fn boot_sweep_truncates_preexisting_oversized_external_logs() {
 #[test]
 fn boot_sweep_leaves_under_cap_logs_alone() {
     let sb = Sandbox::new("undercap");
-    fs::write(sb.sprefa_home().join("launchd-stderr.log"), b"a few bytes only\n").unwrap();
+    fs::write(
+        sb.sprefa_home().join("launchd-stderr.log"),
+        b"a few bytes only\n",
+    )
+    .unwrap();
 
     let _child = sb.spawn();
     assert!(sb.wait_ready(), "daemon never answered ping");

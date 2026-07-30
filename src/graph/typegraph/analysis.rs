@@ -42,7 +42,9 @@ pub fn type_shape_hashes(edges: &[(String, String, String)]) -> Vec<(String, Str
     // make multiplicity count (struct{x: T, y: T} distinct from {z: T}).
     let mut adj: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (a, b) in &data_edges {
-        adj.entry((*a).to_string()).or_default().push((*b).to_string());
+        adj.entry((*a).to_string())
+            .or_default()
+            .push((*b).to_string());
     }
     for v in adj.values_mut() {
         v.sort();
@@ -52,10 +54,8 @@ pub fn type_shape_hashes(edges: &[(String, String, String)]) -> Vec<(String, Str
     let leaf_hash = *blake3::hash(b"LEAF").as_bytes();
 
     // Initial hash: every name starts as a leaf.
-    let mut cur: BTreeMap<String, [u8; 32]> = names
-        .iter()
-        .map(|n| (n.clone(), leaf_hash))
-        .collect();
+    let mut cur: BTreeMap<String, [u8; 32]> =
+        names.iter().map(|n| (n.clone(), leaf_hash)).collect();
 
     // Fixpoint: re-hash until stable or we hit the iter cap. The cap is a
     // safety net; in practice convergence is at most depth-of-the-deepest-tree
@@ -66,13 +66,21 @@ pub fn type_shape_hashes(edges: &[(String, String, String)]) -> Vec<(String, Str
         for n in &names {
             let mut h = blake3::Hasher::new();
             match adj.get(n) {
-                None => { h.update(b"LEAF"); }
-                Some(cs) if cs.is_empty() => { h.update(b"LEAF"); }
+                None => {
+                    h.update(b"LEAF");
+                }
+                Some(cs) if cs.is_empty() => {
+                    h.update(b"LEAF");
+                }
                 Some(cs) => {
                     for c in cs {
                         match cur.get(c) {
-                            Some(ch) => { h.update(ch); }
-                            None => { h.update(b"EXT"); }
+                            Some(ch) => {
+                                h.update(ch);
+                            }
+                            None => {
+                                h.update(b"EXT");
+                            }
                         }
                     }
                 }
@@ -89,9 +97,7 @@ pub fn type_shape_hashes(edges: &[(String, String, String)]) -> Vec<(String, Str
         }
     }
 
-    cur.into_iter()
-        .map(|(n, h)| (n, hex_string(&h)))
-        .collect()
+    cur.into_iter().map(|(n, h)| (n, hex_string(&h))).collect()
 }
 
 fn hex_string(bytes: &[u8; 32]) -> String {
@@ -239,7 +245,6 @@ fn lgg_var_count(
 // receiver marker. `EntityKind::Module` exists only so a module docstring (no
 // enclosing class/def) has a `type_entity` row to join.
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,7 +254,10 @@ mod tests {
     }
 
     fn shape_hash_of(hashes: &[(String, String)], name: &str) -> String {
-        hashes.iter().find(|(n, _)| n == name).map(|(_, h)| h.clone())
+        hashes
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, h)| h.clone())
             .unwrap_or_else(|| panic!("no hash for {name}: {hashes:?}"))
     }
 
@@ -258,8 +266,10 @@ mod tests {
         // Point{x: f64, y: f64} and Coord{lat: f64, lon: f64} — both hold
         // two leaves. Names differ; shape identical.
         let edges = vec![
-            edge("Point", "f64", "field"), edge("Point", "g64", "field"),
-            edge("Coord", "h64", "field"), edge("Coord", "i64", "field"),
+            edge("Point", "f64", "field"),
+            edge("Point", "g64", "field"),
+            edge("Coord", "h64", "field"),
+            edge("Coord", "i64", "field"),
         ];
         let h = type_shape_hashes(&edges);
         assert_eq!(shape_hash_of(&h, "Point"), shape_hash_of(&h, "Coord"));
@@ -271,7 +281,8 @@ mod tests {
     fn type_shape_different_arity_different_hash() {
         let edges = vec![
             edge("One", "f", "field"),
-            edge("Two", "g", "field"), edge("Two", "h", "field"),
+            edge("Two", "g", "field"),
+            edge("Two", "h", "field"),
         ];
         let h = type_shape_hashes(&edges);
         assert_ne!(shape_hash_of(&h, "One"), shape_hash_of(&h, "Two"));
@@ -307,12 +318,11 @@ mod tests {
             edge("Foo", "Drop", "impl"),
             edge("Foo", "T", "generic"),
         ];
-        let b = vec![
-            edge("Bar", "i32", "field"),
-            edge("Bar", "u32", "field"),
-        ];
-        assert_eq!(shape_hash_of(&type_shape_hashes(&a), "Foo"),
-                   shape_hash_of(&type_shape_hashes(&b), "Bar"));
+        let b = vec![edge("Bar", "i32", "field"), edge("Bar", "u32", "field")];
+        assert_eq!(
+            shape_hash_of(&type_shape_hashes(&a), "Foo"),
+            shape_hash_of(&type_shape_hashes(&b), "Bar")
+        );
     }
 
     #[test]
@@ -327,8 +337,10 @@ mod tests {
             edge("Wrapper", "Path", "field"),
             edge("Wrapper", "Leaf", "field"),
         ];
-        assert_eq!(shape_hash_of(&type_shape_hashes(&a), "Action"),
-                   shape_hash_of(&type_shape_hashes(&b), "Wrapper"));
+        assert_eq!(
+            shape_hash_of(&type_shape_hashes(&a), "Action"),
+            shape_hash_of(&type_shape_hashes(&b), "Wrapper")
+        );
     }
 
     #[test]
@@ -337,11 +349,16 @@ mod tests {
         // have 2 fields each pointing at distinct leaves (a, b vs c, d), so
         // var_count(A, A2) = 2 (two slots each generalizing to a fresh var).
         let edges = vec![
-            edge("A", "a", "field"), edge("A", "b", "field"),
-            edge("A2", "c", "field"), edge("A2", "d", "field"),
+            edge("A", "a", "field"),
+            edge("A", "b", "field"),
+            edge("A2", "c", "field"),
+            edge("A2", "d", "field"),
         ];
         let pairs = type_lgg_pairs(&edges);
-        let aa2 = pairs.iter().find(|(x, y, _)| x == "A" && y == "A2").map(|(_, _, v)| *v);
+        let aa2 = pairs
+            .iter()
+            .find(|(x, y, _)| x == "A" && y == "A2")
+            .map(|(_, _, v)| *v);
         assert_eq!(aa2, Some(2));
         // Every emitted pair has var_count >= 1 (vars == 0 is filtered).
         assert!(pairs.iter().all(|(_, _, v)| *v >= 1));
@@ -362,11 +379,15 @@ mod tests {
     fn lgg_different_arity_one_var() {
         // A has 2 fields, B has 1. Arity differs → opaque generalization.
         let edges = vec![
-            edge("A", "x", "field"), edge("A", "y", "field"),
+            edge("A", "x", "field"),
+            edge("A", "y", "field"),
             edge("B", "z", "field"),
         ];
         let pairs = type_lgg_pairs(&edges);
-        let ab = pairs.iter().find(|(p, q, _)| p == "A" && q == "B").map(|(_, _, v)| *v);
+        let ab = pairs
+            .iter()
+            .find(|(p, q, _)| p == "A" && q == "B")
+            .map(|(_, _, v)| *v);
         assert_eq!(ab, Some(1));
     }
 
@@ -375,11 +396,16 @@ mod tests {
         // A and B both have a field of the SAME type C. The C/C slot is 0 vars.
         // The other slot differs (X vs Y) → 1 var. Total = 1.
         let edges = vec![
-            edge("A", "C", "field"), edge("A", "X", "field"),
-            edge("B", "C", "field"), edge("B", "Y", "field"),
+            edge("A", "C", "field"),
+            edge("A", "X", "field"),
+            edge("B", "C", "field"),
+            edge("B", "Y", "field"),
         ];
         let pairs = type_lgg_pairs(&edges);
-        let ab = pairs.iter().find(|(p, q, _)| p == "A" && q == "B").map(|(_, _, v)| *v);
+        let ab = pairs
+            .iter()
+            .find(|(p, q, _)| p == "A" && q == "B")
+            .map(|(_, _, v)| *v);
         assert_eq!(ab, Some(1));
     }
 

@@ -21,8 +21,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -64,7 +69,11 @@ fn module_graph_resolves_kotlin_imports() {
     let d = sandbox("modgraph");
     // package decl deliberately disagrees with the directory layout
     fs::create_dir_all(d.join("src/weird")).unwrap();
-    fs::write(d.join("src/weird/Util.kt"), "package com.lib\n\nclass Util\nfun helper() = 1\n").unwrap();
+    fs::write(
+        d.join("src/weird/Util.kt"),
+        "package com.lib\n\nclass Util\nfun helper() = 1\n",
+    )
+    .unwrap();
     fs::write(d.join("src/Main.kt"),
         "package com.app\n\nimport com.lib.Util\nimport com.lib.helper\nimport java.io.File\nimport com.lib.Nope\n").unwrap();
     // scan pulls the .kt files into the engine's file set; the module graph
@@ -77,11 +86,17 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
 "#;
     let recs = run_json(&d, prog);
     let edges = recs[0]["rows"].as_array().expect("rows");
-    let resolved: Vec<(&str, &str)> = edges.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap())).collect();
+    let resolved: Vec<(&str, &str)> = edges
+        .iter()
+        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap()))
+        .collect();
     // Util + helper both resolve to the declaration's file; java.io is External
     // (absent), com.lib.Nope lands in module_unresolved.
-    assert_eq!(resolved, vec![("src/Main.kt", "src/weird/Util.kt")], "deduped edge: {resolved:?}");
+    assert_eq!(
+        resolved,
+        vec![("src/Main.kt", "src/weird/Util.kt")],
+        "deduped edge: {resolved:?}"
+    );
     let unresolved = recs[1]["rows"].as_array().expect("rows");
     assert_eq!(unresolved.len(), 1, "{unresolved:?}");
     assert_eq!(unresolved[0][1].as_str().unwrap(), "com.lib.Nope");
@@ -90,7 +105,9 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
 #[test]
 fn type_edge_covers_kotlin_files() {
     let d = sandbox("typeedge");
-    fs::write(d.join("src/Model.kt"), "\
+    fs::write(
+        d.join("src/Model.kt"),
+        "\
 package com.app
 
 interface Pricing
@@ -98,7 +115,9 @@ abstract class Repo(val store: Store) : Base(), Pricing
 class Store
 open class Base
 enum class Color { RED }
-").unwrap();
+",
+    )
+    .unwrap();
     let prog = r#"
 rel seen(path: file).
 seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line).
@@ -106,13 +125,23 @@ seen(path) <- scan("WORK", "src/**/*.kt", path, rev), match(path, rev, /./, line
 "#;
     let recs = run_json(&d, prog);
     let rows = recs[0]["rows"].as_array().expect("rows");
-    let edges: Vec<(&str, &str, &str)> = rows.iter()
-        .map(|r| (r[0].as_str().unwrap(), r[1].as_str().unwrap(), r[2].as_str().unwrap()))
+    let edges: Vec<(&str, &str, &str)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r[0].as_str().unwrap(),
+                r[1].as_str().unwrap(),
+                r[2].as_str().unwrap(),
+            )
+        })
         .collect();
     assert!(edges.contains(&("Repo", "Store", "field")), "{edges:?}");
     assert!(edges.contains(&("Repo", "Base", "impl")), "{edges:?}");
     assert!(edges.contains(&("Repo", "Pricing", "impl")), "{edges:?}");
-    assert!(edges.contains(&("Color", "Color::RED", "variant")), "{edges:?}");
+    assert!(
+        edges.contains(&("Color", "Color::RED", "variant")),
+        "{edges:?}"
+    );
 }
 
 #[test]

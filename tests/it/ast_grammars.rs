@@ -22,8 +22,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -33,26 +38,41 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
 
 /// Write one fixture, run one `ast(:lang, query)` rule, return the bound col-0
 /// strings.
-fn capture_names(tag: &str, file: &str, content: &str, glob: &str, lang: &str, query: &str) -> Vec<String> {
+fn capture_names(
+    tag: &str,
+    file: &str,
+    content: &str,
+    glob: &str,
+    lang: &str,
+    query: &str,
+) -> Vec<String> {
     let d = sandbox(tag);
     fs::write(d.join(file), content).unwrap();
-    let prog = format!(r#"
+    let prog = format!(
+        r#"
 rel hit(name: text, path: file, line: int).
 hit(name, path, line) <- scan("WORK","{glob}",path,rev),
   ast(path, rev, :{lang}, "{query}", line).
 ? hit(name, path, line).
-"#);
+"#
+    );
     let recs = run_json(&d, &prog);
-    recs[0]["rows"].as_array().expect("rows")
-        .iter().map(|r| r[0].as_str().unwrap().to_string()).collect()
+    recs[0]["rows"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .map(|r| r[0].as_str().unwrap().to_string())
+        .collect()
 }
 
 #[test]
 fn ast_python_function_defs() {
     let names = capture_names(
-        "python", "src/a.py",
+        "python",
+        "src/a.py",
         "def alpha(x):\n    return x + 1\n\ndef beta():\n    pass\n",
-        "src/**/*.py", "python",
+        "src/**/*.py",
+        "python",
         "(function_definition name: (identifier) @name)",
     );
     assert!(names.contains(&"alpha".to_string()), "found {names:?}");
@@ -62,9 +82,11 @@ fn ast_python_function_defs() {
 #[test]
 fn ast_bash_function_defs() {
     let names = capture_names(
-        "bash", "src/a.sh",
+        "bash",
+        "src/a.sh",
         "greet() {\n  echo hi\n}\n\nfunction farewell {\n  echo bye\n}\n",
-        "src/**/*.sh", "bash",
+        "src/**/*.sh",
+        "bash",
         "(function_definition name: (word) @name)",
     );
     assert!(names.contains(&"greet".to_string()), "found {names:?}");
@@ -74,9 +96,11 @@ fn ast_bash_function_defs() {
 #[test]
 fn ast_go_function_decls() {
     let names = capture_names(
-        "go", "src/a.go",
+        "go",
+        "src/a.go",
         "package main\n\nfunc Alpha() int { return 1 }\n\nfunc Beta(x int) {}\n",
-        "src/**/*.go", "go",
+        "src/**/*.go",
+        "go",
         "(function_declaration name: (identifier) @name)",
     );
     assert!(names.contains(&"Alpha".to_string()), "found {names:?}");
@@ -98,9 +122,11 @@ fn ast_hcl_block_types() {
 #[test]
 fn ast_starlark_function_defs() {
     let names = capture_names(
-        "starlark", "src/build.bzl",
+        "starlark",
+        "src/build.bzl",
         "def my_rule(name):\n    pass\n\ndef other_rule():\n    pass\n",
-        "src/**/*.bzl", "starlark",
+        "src/**/*.bzl",
+        "starlark",
         "(function_definition (identifier) @name)",
     );
     assert!(names.contains(&"my_rule".to_string()), "found {names:?}");
@@ -111,9 +137,11 @@ fn ast_starlark_function_defs() {
 fn ast_jsonnet_function_params() {
     // jsonnet bindings: `local f(x) = ...` exposes the bound name.
     let names = capture_names(
-        "jsonnet", "src/a.jsonnet",
+        "jsonnet",
+        "src/a.jsonnet",
         "local greet(name) = 'hi ' + name;\n{ msg: greet('world') }\n",
-        "src/**/*.jsonnet", "jsonnet",
+        "src/**/*.jsonnet",
+        "jsonnet",
         "(bind (ident) @name)",
     );
     assert!(names.contains(&"greet".to_string()), "found {names:?}");
@@ -123,9 +151,11 @@ fn ast_jsonnet_function_params() {
 fn ast_gotmpl_field_refs() {
     // go-template grammar is vendored + cc-built (no crates.io crate).
     let names = capture_names(
-        "gotmpl", "src/page.tmpl",
+        "gotmpl",
+        "src/page.tmpl",
         "Hello {{ .Name }}\n{{ if .Admin }}admin{{ end }}\n",
-        "src/**/*.tmpl", "gotmpl",
+        "src/**/*.tmpl",
+        "gotmpl",
         "(field (identifier) @name)",
     );
     assert!(names.contains(&"Name".to_string()), "found {names:?}");
@@ -136,9 +166,11 @@ fn ast_gotmpl_field_refs() {
 fn ast_dockerfile_from_images() {
     // dockerfile grammar is vendored + cc-built (crates.io crate pins ts 0.20).
     let names = capture_names(
-        "dockerfile", "Dockerfile",
+        "dockerfile",
+        "Dockerfile",
         "FROM alpine:3.18 AS build\nRUN echo hi\nFROM scratch\nCOPY . /app\n",
-        "Dockerfile", "dockerfile",
+        "Dockerfile",
+        "dockerfile",
         "(from_instruction (image_spec (image_name) @name))",
     );
     assert!(names.contains(&"alpine".to_string()), "found {names:?}");

@@ -107,13 +107,22 @@ pub fn run(args: &[String]) -> Result<i32> {
     let records = crate::daemon::read_roots_json();
 
     println!("daemon home: {}", home.display());
-    println!("mode: {}", if apply { "APPLY (deleting orphans)" } else { "DRY RUN (--apply to delete)" });
+    println!(
+        "mode: {}",
+        if apply {
+            "APPLY (deleting orphans)"
+        } else {
+            "DRY RUN (--apply to delete)"
+        }
+    );
 
     let mut matched = false;
     for rec in &records {
         if let Some(only) = &only_root {
             let canon = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
-            if canon(only) != canon(&rec.root) { continue; }
+            if canon(only) != canon(&rec.root) {
+                continue;
+            }
         }
         matched = true;
         let db_path = home.join("roots").join(&rec.key).join("db.sqlite");
@@ -142,12 +151,21 @@ pub fn run(args: &[String]) -> Result<i32> {
 }
 
 fn print_report(report: &SweepReport) {
-    println!("  scanned {} decl column(s) + {} FK-declared column(s) + {} known-undeclared root(s)",
-        report.decl_columns_scanned, report.fk_columns_scanned, report.undeclared_columns_scanned);
-    println!("  _strings: {} total, {} orphaned (~{:.1}MB by content bytes alone)",
-        report.strings_total, report.orphans, report.orphan_bytes as f64 / 1e6);
+    println!(
+        "  scanned {} decl column(s) + {} FK-declared column(s) + {} known-undeclared root(s)",
+        report.decl_columns_scanned, report.fk_columns_scanned, report.undeclared_columns_scanned
+    );
+    println!(
+        "  _strings: {} total, {} orphaned (~{:.1}MB by content bytes alone)",
+        report.strings_total,
+        report.orphans,
+        report.orphan_bytes as f64 / 1e6
+    );
     if report.applied {
-        println!("  deleted {} row(s) — run VACUUM separately to reclaim pages", report.orphans);
+        println!(
+            "  deleted {} row(s) — run VACUUM separately to reclaim pages",
+            report.orphans
+        );
     } else {
         println!("  (dry run: nothing deleted; re-run with --apply)");
     }
@@ -165,8 +183,13 @@ fn run_for_root(root: &Path, db_path: &Path, apply: bool) -> Result<SweepReport>
         .with_context(|| format!("resolving the program set for {}", root.display()))?;
     let (prog, _diags, _display) = crate::prepare_paths(&files)
         .with_context(|| format!("parsing the program set for {}", root.display()))?;
-    let mut decls: Vec<RelDecl> = prog.items.into_iter()
-        .filter_map(|item| match item { Item::Rel(decl) => Some(decl), _ => None })
+    let mut decls: Vec<RelDecl> = prog
+        .items
+        .into_iter()
+        .filter_map(|item| match item {
+            Item::Rel(decl) => Some(decl),
+            _ => None,
+        })
         .collect();
     decls.extend(crate::engine::all_builtin_decls());
 
@@ -182,7 +205,8 @@ fn run_for_root(root: &Path, db_path: &Path, apply: bool) -> Result<SweepReport>
 /// itself, never from the caller. Never called on a hot path; this is only
 /// ever `run_for_root`'s callee or a test's direct callee.
 pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
-    let existing_rel_tables: BTreeSet<String> = db.schema_objects(&["rel_%"])?
+    let existing_rel_tables: BTreeSet<String> = db
+        .schema_objects(&["rel_%"])?
         .into_iter()
         .filter(|(_, kind)| kind == "table")
         .map(|(name, _)| name)
@@ -193,8 +217,12 @@ pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
     let mut seen_tables: BTreeSet<String> = BTreeSet::new();
     for decl in decls {
         let table = crate::lower::tbl(&decl.name);
-        if !existing_rel_tables.contains(&table) { continue; }
-        if !seen_tables.insert(table.clone()) { continue; }
+        if !existing_rel_tables.contains(&table) {
+            continue;
+        }
+        if !seen_tables.insert(table.clone()) {
+            continue;
+        }
         for col in &decl.cols {
             if col.interned() {
                 // Storage normalization (2026-07-21): an interned cell now stores
@@ -223,13 +251,17 @@ pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
     // discovery query itself broke, not that reachability is legitimately
     // empty, so this refuses independently of whether `root_selects` overall
     // is non-empty via decl columns.
-    anyhow::ensure!(!fk_columns.is_empty(),
+    anyhow::ensure!(
+        !fk_columns.is_empty(),
         "schema-derived FK discovery (pragma_foreign_key_list) found zero columns \
          referencing _strings anywhere in this db — refusing: a discovery mechanism \
-         that silently finds nothing is exactly how this class of bug ships");
+         that silently finds nothing is exactly how this class of bug ships"
+    );
     let fk_columns_scanned = fk_columns.len();
     for (table, col) in &fk_columns {
-        root_selects.push(format!("SELECT \"{col}\" AS id FROM \"{table}\" WHERE \"{col}\" IS NOT NULL"));
+        root_selects.push(format!(
+            "SELECT \"{col}\" AS id FROM \"{table}\" WHERE \"{col}\" IS NOT NULL"
+        ));
     }
 
     let undeclared = roots::undeclared_roots(db)?;
@@ -238,7 +270,10 @@ pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
         root_selects.push(format!("SELECT {expr} AS id FROM {table}"));
     }
 
-    anyhow::ensure!(!root_selects.is_empty(), "no interned column or FK root found — refusing to sweep with an empty reachability set");
+    anyhow::ensure!(
+        !root_selects.is_empty(),
+        "no interned column or FK root found — refusing to sweep with an empty reachability set"
+    );
 
     db.transact(|| {
         db.execute_batch_on("_gc_reachable",
@@ -276,5 +311,8 @@ pub fn sweep(db: &Db, decls: &[RelDecl], apply: bool) -> Result<SweepReport> {
 
 /// Value following `name` in `args` (e.g. `--root /path`).
 fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+    args.iter()
+        .position(|a| a == name)
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
 }

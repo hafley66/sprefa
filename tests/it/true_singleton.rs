@@ -21,10 +21,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const PROG: &str = concat!(
@@ -42,7 +45,10 @@ fn fires_when_source_rel_is_empty() {
     let d = sandbox("empty");
     let (code, out, err) = run(&d, PROG);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("empty-match"), "diag must fire when hit has 0 rows:\n{out}");
+    assert!(
+        out.contains("empty-match"),
+        "diag must fire when hit has 0 rows:\n{out}"
+    );
 }
 
 #[test]
@@ -51,6 +57,12 @@ fn silent_when_source_rel_has_rows() {
     fs::write(d.join("a.rs"), "fn foo() {}\n").unwrap();
     let (code, out, err) = run(&d, PROG);
     assert_eq!(code, 0, "{err}");
-    assert!(!out.contains("empty-match"), "diag must NOT fire when hit has rows:\n{out}");
-    assert!(out.contains("(0 rows)"), "query should report 0 diag rows:\n{out}");
+    assert!(
+        !out.contains("empty-match"),
+        "diag must NOT fire when hit has rows:\n{out}"
+    );
+    assert!(
+        out.contains("(0 rows)"),
+        "query should report 0 diag rows:\n{out}"
+    );
 }

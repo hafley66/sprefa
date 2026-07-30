@@ -29,7 +29,11 @@ reaches(src, dst) <- closure(calls).
 fn file_body(i: usize, n: usize, pad: char) -> String {
     // line 1: a comment (in-place edit target, no line shift)
     // line 2: fn decl ; line 3: a call to the next fn ; line 4: close
-    let callee = if i + 1 < n { format!("    f{}();\n", i + 1) } else { String::new() };
+    let callee = if i + 1 < n {
+        format!("    f{}();\n", i + 1)
+    } else {
+        String::new()
+    };
     format!("// pad {pad}\npub fn f{i}() {{\n{callee}}}\n")
 }
 
@@ -46,7 +50,8 @@ fn build_corpus(dir: &PathBuf, n: usize) {
 fn tick_one(eng: &mut Engine, prog: &sprefa_v5::ast::Program, abs: PathBuf) -> (usize, f64) {
     let before = eng.recondensed;
     let t = Instant::now();
-    eng.tick_paths(prog, std::slice::from_ref(&abs), true).unwrap();
+    eng.tick_paths(prog, std::slice::from_ref(&abs), true)
+        .unwrap();
     (eng.recondensed - before, t.elapsed().as_secs_f64() * 1000.0)
 }
 
@@ -89,14 +94,26 @@ fn closure_recondenses_only_on_topology_change_and_is_corpus_independent() {
     let (big_same, big_topo) = run_for_n(300);
 
     // PROVE 1 (bimodal): an edit that doesn't move call edges recondenses nothing.
-    assert_eq!(small_same, 0, "same-line edit must reuse the condensation (N=30)");
-    assert_eq!(big_same, 0, "same-line edit must reuse the condensation (N=300)");
+    assert_eq!(
+        small_same, 0,
+        "same-line edit must reuse the condensation (N=30)"
+    );
+    assert_eq!(
+        big_same, 0,
+        "same-line edit must reuse the condensation (N=300)"
+    );
 
     // PROVE 2 (corpus-independent): the free case stays free as the corpus grows 10x.
     // (Counter equality across N is the corpus-independence proof; wall-time is printed.)
 
     // The topology change recondenses exactly the one affected edge graph, at any N.
-    assert_eq!(small_topo, 1, "topology edit recondenses the calls graph once (N=30)");
-    assert_eq!(big_topo, 1, "topology edit recondenses the calls graph once (N=300)");
+    assert_eq!(
+        small_topo, 1,
+        "topology edit recondenses the calls graph once (N=30)"
+    );
+    assert_eq!(
+        big_topo, 1,
+        "topology edit recondenses the calls graph once (N=300)"
+    );
     println!("=== PROVE: same-line edits recondense 0 graphs at N=30 AND N=300; topology edits recondense exactly 1 ===\n");
 }

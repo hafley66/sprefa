@@ -45,46 +45,97 @@ impl RelKind for CatalogKind {
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let mut rows_changed = false;
-        let rows: Vec<Vec<Value>> = all_builtin_decls().iter().map(|d| {
-            let cols = format!("({})",
-                d.cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>().join(", "));
-            vec![Value::Text(d.name.clone()), Value::Text(d.group.to_string()),
-                 Value::Text(cols), Value::Text(d.doc.to_string())]
-        }).collect();
+        let rows: Vec<Vec<Value>> = all_builtin_decls()
+            .iter()
+            .map(|d| {
+                let cols = format!(
+                    "({})",
+                    d.cols
+                        .iter()
+                        .map(|c| c.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                vec![
+                    Value::Text(d.name.clone()),
+                    Value::Text(d.group.to_string()),
+                    Value::Text(cols),
+                    Value::Text(d.doc.to_string()),
+                ]
+            })
+            .collect();
         rows_changed |= eng.refresh_rel("rel_catalog", &["name", "group", "cols", "doc"], &rows)?;
 
         // Per-column rows, with the enum vocabulary for a branded column as a
         // JSON array ("" for an open column). Collect-then-flush: one batched
         // refresh for the whole builtin set.
         let ty_tag = |t: Type| match t {
-            Type::Text => "text", Type::Int => "int", Type::Path => "path",
-            Type::File => "file", Type::Dir => "dir", Type::Repo => "repo", Type::Rev => "rev",
+            Type::Text => "text",
+            Type::Int => "int",
+            Type::Path => "path",
+            Type::File => "file",
+            Type::Dir => "dir",
+            Type::Repo => "repo",
+            Type::Rev => "rev",
         };
-        let col_rows: Vec<Vec<Value>> = all_builtin_decls().iter().flat_map(|d| {
-            let rel = d.name.clone();
-            d.cols.iter().enumerate().map(move |(pos, c)| {
-                let variants = c.brand.as_deref()
-                    .and_then(crate::engine::builtin_enum_variants)
-                    .map(|vs| serde_json::to_string(vs).unwrap_or_default())
-                    .unwrap_or_default();
-                vec![Value::Text(rel.clone()), Value::Int(pos as i64),
-                     Value::Text(c.name.clone()), Value::Text(ty_tag(c.ty).to_string()),
-                     Value::Text(variants)]
-            }).collect::<Vec<_>>()
-        }).collect();
-        rows_changed |= eng.refresh_rel("rel_col", &["rel", "pos", "col", "type", "variants"], &col_rows)?;
+        let col_rows: Vec<Vec<Value>> = all_builtin_decls()
+            .iter()
+            .flat_map(|d| {
+                let rel = d.name.clone();
+                d.cols
+                    .iter()
+                    .enumerate()
+                    .map(move |(pos, c)| {
+                        let variants = c
+                            .brand
+                            .as_deref()
+                            .and_then(crate::engine::builtin_enum_variants)
+                            .map(|vs| serde_json::to_string(vs).unwrap_or_default())
+                            .unwrap_or_default();
+                        vec![
+                            Value::Text(rel.clone()),
+                            Value::Int(pos as i64),
+                            Value::Text(c.name.clone()),
+                            Value::Text(ty_tag(c.ty).to_string()),
+                            Value::Text(variants),
+                        ]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        rows_changed |= eng.refresh_rel(
+            "rel_col",
+            &["rel", "pos", "col", "type", "variants"],
+            &col_rows,
+        )?;
 
-        let fn_rows: Vec<Vec<Value>> = fn_docs().iter().map(|(n, a, g, d)| {
-            vec![Value::Text(n.to_string()), Value::Int(*a as i64),
-                 Value::Text(g.to_string()), Value::Text(d.to_string())]
-        }).collect();
-        rows_changed |= eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
+        let fn_rows: Vec<Vec<Value>> = fn_docs()
+            .iter()
+            .map(|(n, a, g, d)| {
+                vec![
+                    Value::Text(n.to_string()),
+                    Value::Int(*a as i64),
+                    Value::Text(g.to_string()),
+                    Value::Text(d.to_string()),
+                ]
+            })
+            .collect();
+        rows_changed |=
+            eng.refresh_rel("fn_catalog", &["name", "arity", "group", "doc"], &fn_rows)?;
 
-        let op_rows: Vec<Vec<Value>> = op_docs().iter().map(|(op, kind, syn, d)| {
-            vec![Value::Text(op.to_string()), Value::Text(kind.to_string()),
-                 Value::Text(syn.to_string()), Value::Text(d.to_string())]
-        }).collect();
-        rows_changed |= eng.refresh_rel("op_catalog", &["op", "kind", "syntax", "doc"], &op_rows)?;
+        let op_rows: Vec<Vec<Value>> = op_docs()
+            .iter()
+            .map(|(op, kind, syn, d)| {
+                vec![
+                    Value::Text(op.to_string()),
+                    Value::Text(kind.to_string()),
+                    Value::Text(syn.to_string()),
+                    Value::Text(d.to_string()),
+                ]
+            })
+            .collect();
+        rows_changed |=
+            eng.refresh_rel("op_catalog", &["op", "kind", "syntax", "doc"], &op_rows)?;
         Ok(rows_changed)
     }
 }
@@ -119,13 +170,16 @@ impl RelKind for VerbCatalogKind {
         "the built-in `dl q` verb catalog"
     }
     fn refresh(&self, eng: &Engine) -> Result<bool> {
-        let rows: Vec<Vec<Value>> = crate::verbs::verb_specs().iter().map(|spec| {
-            vec![
-                Value::Text(spec.name.to_string()),
-                Value::Text(spec.args.to_string()),
-                Value::Text(spec.doc.to_string()),
-            ]
-        }).collect();
+        let rows: Vec<Vec<Value>> = crate::verbs::verb_specs()
+            .iter()
+            .map(|spec| {
+                vec![
+                    Value::Text(spec.name.to_string()),
+                    Value::Text(spec.args.to_string()),
+                    Value::Text(spec.doc.to_string()),
+                ]
+            })
+            .collect();
         eng.refresh_rel("verb_catalog", &["verb", "args", "doc"], &rows)?;
         Ok(true)
     }

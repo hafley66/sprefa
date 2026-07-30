@@ -88,18 +88,29 @@ fn program_edit_rebuilds_only_the_edited_subgraph() {
 
     let (code1, out1, err1) = run(&dir, PROG_V1);
     assert_eq!(code1, 0, "v1 run failed: {err1}");
-    assert!(out1.contains("alpha") && out1.contains("beta"), "v1 rows:\n{out1}");
-    assert!(err1.contains("[stmt-trace] echo_a") && err1.contains("[stmt-trace] echo_b"),
-        "blank slate builds both chains:\n{err1}");
+    assert!(
+        out1.contains("alpha") && out1.contains("beta"),
+        "v1 rows:\n{out1}"
+    );
+    assert!(
+        err1.contains("[stmt-trace] echo_a") && err1.contains("[stmt-trace] echo_b"),
+        "blank slate builds both chains:\n{err1}"
+    );
 
     let (code2, out2, err2) = run(&dir, PROG_V2);
     assert_eq!(code2, 0, "v2 run failed: {err2}");
-    assert!(err2.contains("[derived-scope] program edit scoped to"),
-        "the edit must downgrade to the scoped arm:\n{err2}");
-    assert!(err2.contains("[stmt-trace] echo_b"),
-        "the edited rel rebuilds:\n{err2}");
-    assert!(!err2.contains("[stmt-trace] echo_a"),
-        "the untouched chain must not be wiped or rewritten (the #13 storm):\n{err2}");
+    assert!(
+        err2.contains("[derived-scope] program edit scoped to"),
+        "the edit must downgrade to the scoped arm:\n{err2}"
+    );
+    assert!(
+        err2.contains("[stmt-trace] echo_b"),
+        "the edited rel rebuilds:\n{err2}"
+    );
+    assert!(
+        !err2.contains("[stmt-trace] echo_a"),
+        "the untouched chain must not be wiped or rewritten (the #13 storm):\n{err2}"
+    );
     // Correctness: the untouched table still serves its rows, the edited one
     // recomputed to the same output.
     assert!(out2.contains("alpha"), "echo_a rows intact:\n{out2}");
@@ -118,9 +129,16 @@ fn unattributable_program_edit_keeps_the_full_rebuild() {
     // owns the motion, so the conservative full rebuild runs.
     let (code2, out2, err2) = run(&dir, PROG_V3);
     assert_eq!(code2, 0, "v3 run failed: {err2}");
-    assert!(!err2.contains("[derived-scope]"),
-        "a stale drv: key is unattributable; no scoping:\n{err2}");
-    assert!(err2.contains("[stmt-trace] echo_a"),
-        "full rebuild reaches the surviving chain:\n{err2}");
-    assert!(out2.contains("alpha"), "echo_a rows survive the fallback:\n{out2}");
+    assert!(
+        !err2.contains("[derived-scope]"),
+        "a stale drv: key is unattributable; no scoping:\n{err2}"
+    );
+    assert!(
+        err2.contains("[stmt-trace] echo_a"),
+        "full rebuild reaches the surviving chain:\n{err2}"
+    );
+    assert!(
+        out2.contains("alpha"),
+        "echo_a rows survive the fallback:\n{out2}"
+    );
 }

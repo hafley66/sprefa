@@ -26,8 +26,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -61,8 +66,14 @@ reaches(a,b) <- closure(edge).
     assert_eq!(def["columns"], serde_json::json!(["name", "path", "line"]));
     assert_eq!(def["count"], 2);
     // int column stays a JSON number, not a string.
-    assert!(def["rows"][0][2].is_number(), "line col must be a number: {def}");
-    assert!(def["rows"][0][0].is_string(), "name col must be a string: {def}");
+    assert!(
+        def["rows"][0][2].is_number(),
+        "line col must be a number: {def}"
+    );
+    assert!(
+        def["rows"][0][0].is_string(),
+        "name col must be a string: {def}"
+    );
 
     let reaches = &recs[1];
     assert_eq!(reaches["query"], "reaches");
@@ -79,8 +90,13 @@ fn run_format_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--format", "json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| l.trim_start().starts_with('['))
@@ -106,20 +122,40 @@ reaches(a,b) <- closure(edge).
 ? reaches("alpha", dst).
 "#;
     let arrays = run_format_json(&d, prog);
-    assert_eq!(arrays.len(), 2, "two queries -> two json array lines: {arrays:?}");
+    assert_eq!(
+        arrays.len(),
+        2,
+        "two queries -> two json array lines: {arrays:?}"
+    );
 
     // No envelope: each element is a bare array; row objects are keyed by
     // column name directly, not nested under "rows".
-    let defs = arrays[0].as_array().expect("fn_def line must be a JSON array");
+    let defs = arrays[0]
+        .as_array()
+        .expect("fn_def line must be a JSON array");
     assert_eq!(defs.len(), 2);
-    assert!(defs[0]["line"].is_number(), "line col must be a number: {defs:?}");
-    assert!(defs[0]["name"].is_string(), "name col must be a string: {defs:?}");
-    assert!(defs.iter().any(|row| row["name"] == "alpha"), "expected alpha row: {defs:?}");
+    assert!(
+        defs[0]["line"].is_number(),
+        "line col must be a number: {defs:?}"
+    );
+    assert!(
+        defs[0]["name"].is_string(),
+        "name col must be a string: {defs:?}"
+    );
+    assert!(
+        defs.iter().any(|row| row["name"] == "alpha"),
+        "expected alpha row: {defs:?}"
+    );
 
     // Column keys mirror the query's own head terms: the pinned literal side
     // (`"alpha"`) keys off the declared column name (`a`), the free side
     // (`dst`) keys off the query's own variable name — same header rule the
     // `--query-json` NDJSON path uses.
-    let reaches = arrays[1].as_array().expect("reaches line must be a JSON array");
-    assert_eq!(reaches, &vec![serde_json::json!({"a": "alpha", "dst": "beta"})]);
+    let reaches = arrays[1]
+        .as_array()
+        .expect("reaches line must be a JSON array");
+    assert_eq!(
+        reaches,
+        &vec![serde_json::json!({"a": "alpha", "dst": "beta"})]
+    );
 }

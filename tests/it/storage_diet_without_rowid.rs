@@ -133,7 +133,10 @@ fn vouched_builtin_junction_gets_without_rowid_and_no_autoindex() {
         "? df_edge(from, to).\n",
     );
     let out = run(&d, &db, prog);
-    assert!(out.contains("row"), "expected df_edge to carry at least one row:\n{out}");
+    assert!(
+        out.contains("row"),
+        "expected df_edge to carry at least one row:\n{out}"
+    );
 
     let conn = Connection::open(&db).unwrap();
     let sql = table_sql(&conn, "rel_df_edge");
@@ -145,8 +148,13 @@ fn vouched_builtin_junction_gets_without_rowid_and_no_autoindex() {
         autoindex_names(&conn, "rel_df_edge").is_empty(),
         "WITHOUT ROWID table must carry no duplicate full-row PK autoindex"
     );
-    let rows: i64 = conn.query_row("SELECT COUNT(*) FROM rel_df_edge", [], |r| r.get(0)).unwrap();
-    assert!(rows > 0, "fixture must actually populate df_edge, not just declare it");
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM rel_df_edge", [], |r| r.get(0))
+        .unwrap();
+    assert!(
+        rows > 0,
+        "fixture must actually populate df_edge, not just declare it"
+    );
 }
 
 // The IDENTICAL column shape as `df_edge` (2 columns, all-integer via
@@ -307,5 +315,8 @@ fn without_rowid_reclaims_measurable_bytes_vs_pre_4a_shape() {
         "pre-4a control must carry exactly the one full-row PK autoindex this step removes"
     );
     assert!(autoindex_names(&post, "rel_edge_ab").is_empty());
-    assert!(delta > 0, "WITHOUT ROWID must reclaim measurable bytes over the pre-4a rowid+autoindex shape");
+    assert!(
+        delta > 0,
+        "WITHOUT ROWID must reclaim measurable bytes over the pre-4a rowid+autoindex shape"
+    );
 }

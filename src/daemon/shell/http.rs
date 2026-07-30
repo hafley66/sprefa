@@ -66,7 +66,10 @@ fn router(daemon: Arc<Daemon>, ctx: &ShellCtx, transport: &'static str) -> Route
         .route("/rpc", post(rpc))
         .route("/watch", get(watch))
         .fallback(fallback)
-        .with_state(HttpState { daemon, ctx: ctx.clone() })
+        .with_state(HttpState {
+            daemon,
+            ctx: ctx.clone(),
+        })
         .layer(Extension(Transport(transport)))
         .layer(tower_http::trace::TraceLayer::new_for_http())
 }
@@ -173,7 +176,9 @@ async fn health(State(state): State<HttpState>) -> Response {
 /// `data:` event. A lagged subscriber (slower than the 256-frame buffer) just
 /// skips the overwritten frames — same best-effort policy the old kept-open
 /// socket pump had, where a slow subscriber was dropped outright.
-async fn watch(State(state): State<HttpState>) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+async fn watch(
+    State(state): State<HttpState>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = state.ctx.broadcast_tx.subscribe();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
         .filter_map(|frame| frame.ok().map(|body| Ok(Event::default().data(body))));
@@ -186,7 +191,11 @@ async fn watch(State(state): State<HttpState>) -> Sse<impl tokio_stream::Stream<
 /// drives the cancel token (the "respond, then exit" ordering the old framed
 /// handler had) — the short delay lets the response flush before the
 /// cancel-driven exit path runs `process::exit`.
-async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Transport>, body: String) -> Response {
+async fn rpc(
+    State(state): State<HttpState>,
+    Extension(transport): Extension<Transport>,
+    body: String,
+) -> Response {
     let value: Value = match serde_json::from_str(&body) {
         Ok(v) => v,
         Err(e) => {
@@ -201,7 +210,11 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
         None => {
             return json_response(
                 StatusCode::BAD_REQUEST,
-                err_json(0, INVALID_REQUEST, "request needs a numeric `id` and a string `method`"),
+                err_json(
+                    0,
+                    INVALID_REQUEST,
+                    "request needs a numeric `id` and a string `method`",
+                ),
             )
         }
     };
@@ -231,7 +244,11 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
         armed: true,
     };
     let method = req.method.clone();
-    let root_owned = req.params.get("root").and_then(|v| v.as_str()).map(String::from);
+    let root_owned = req
+        .params
+        .get("root")
+        .and_then(|v| v.as_str())
+        .map(String::from);
     let bytes_in = body.len();
     let t = std::time::Instant::now();
     let d = state.daemon.clone();
@@ -247,8 +264,14 @@ async fn rpc(State(state): State<HttpState>, Extension(transport): Extension<Tra
     disconnect_guard.armed = false;
     let out = serde_json::to_string(&resp.to_json()).unwrap_or_else(|_| "{}".into());
     daemon::log_access(
-        transport.0, &req_id, &method, root_owned.as_deref(),
-        t.elapsed().as_millis() as u64, resp.error.is_none(), bytes_in, out.len(),
+        transport.0,
+        &req_id,
+        &method,
+        root_owned.as_deref(),
+        t.elapsed().as_millis() as u64,
+        resp.error.is_none(),
+        bytes_in,
+        out.len(),
     );
     if is_shutdown && resp.error.is_none() {
         let cancel = state.ctx.cancel.clone();
@@ -281,8 +304,8 @@ impl Drop for CancelOnDisconnect {
         let daemon = self.daemon.clone();
         let req_id = std::mem::take(&mut self.req_id);
         self.rt.spawn(async move {
-            let cancelled = tokio::task::spawn_blocking(move || daemon.jobs.cancel_req(&req_id))
-                .await;
+            let cancelled =
+                tokio::task::spawn_blocking(move || daemon.jobs.cancel_req(&req_id)).await;
             if let Ok(Err(e)) = cancelled {
                 tracing::warn!("[daemon] disconnect cancel: {e}");
             }

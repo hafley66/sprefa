@@ -15,7 +15,11 @@ fn sandbox(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("arith_{tag}"));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
-    fs::write(dir.join("src/x.rs"), "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n").unwrap();
+    fs::write(
+        dir.join("src/x.rs"),
+        "fn alpha() {}\nfn beta() {}\nfn gamma() {}\n",
+    )
+    .unwrap();
     dir
 }
 
@@ -25,10 +29,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Derived-head arithmetic lowers to SQL: line 1/2/3 -> rank 2/3/4, doubled 2/4/6.
@@ -47,10 +54,20 @@ dbl(p, line * 2) <- fns(p, line).
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    let rank = out.split("? rank =>").nth(1).unwrap().split('?').next().unwrap();
-    for n in ["\t2", "\t3", "\t4"] { assert!(rank.contains(n), "rank rows: {rank}"); }
+    let rank = out
+        .split("? rank =>")
+        .nth(1)
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
+    for n in ["\t2", "\t3", "\t4"] {
+        assert!(rank.contains(n), "rank rows: {rank}");
+    }
     let dbl = out.split("? dbl =>").nth(1).unwrap();
-    for n in ["\t2", "\t4", "\t6"] { assert!(dbl.contains(n), "dbl rows: {dbl}"); }
+    for n in ["\t2", "\t4", "\t6"] {
+        assert!(dbl.contains(n), "dbl rows: {dbl}");
+    }
 }
 
 /// Precedence and parens: `1 + line * 2` and `(line + 1) * 2` differ.
@@ -70,7 +87,13 @@ b(p, (line + 1) * 2) <- fns(p, line).
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     // line 1: a = 1 + 1*2 = 3; b = (1+1)*2 = 4
-    let a = out.split("? a =>").nth(1).unwrap().split('?').next().unwrap();
+    let a = out
+        .split("? a =>")
+        .nth(1)
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
     assert!(a.contains("\t3"), "a rows: {a}");
     let b = out.split("? b =>").nth(1).unwrap();
     assert!(b.contains("\t4"), "b rows: {b}");
@@ -88,7 +111,9 @@ above(p, line - 1) <- scan("WORK", "src/*.rs", p, rev), match(p, rev, /fn /, lin
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    for n in ["\t0", "\t1", "\t2"] { assert!(out.contains(n), "{out}"); }
+    for n in ["\t0", "\t1", "\t2"] {
+        assert!(out.contains(n), "{out}");
+    }
 }
 
 /// Arithmetic on a comparison side, including `/` as division after a value.
@@ -107,8 +132,17 @@ half(p, line / 2) <- fns(p, line), line % 2 = 0.
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    let big = out.split("? big =>").nth(1).unwrap().split('?').next().unwrap();
-    assert!(big.contains("\t3") && !big.contains("\t1") && !big.contains("\t2"), "big rows: {big}");
+    let big = out
+        .split("? big =>")
+        .nth(1)
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
+    assert!(
+        big.contains("\t3") && !big.contains("\t1") && !big.contains("\t2"),
+        "big rows: {big}"
+    );
     let half = out.split("? half =>").nth(1).unwrap();
     assert!(half.contains("\t1"), "half of line 2: {half}");
 }
@@ -135,7 +169,10 @@ gap(url, idx) <- step(url, idx), !step(url, idx + 1).
     assert_eq!(code, 0, "arithmetic in a body atom must run:\n{err}");
     assert!(out.contains("a\t3"), "a,3 has no successor:\n{out}");
     assert!(out.contains("b\t6"), "b,6 has no successor:\n{out}");
-    assert!(!out.contains("a\t1") && !out.contains("a\t2"), "rows with successors dropped:\n{out}");
+    assert!(
+        !out.contains("a\t1") && !out.contains("a\t2"),
+        "rows with successors dropped:\n{out}"
+    );
     assert!(!out.contains("b\t5"), "b,5 has a successor:\n{out}");
     assert!(out.contains("(2 rows)"), "exactly two gap rows:\n{out}");
 }

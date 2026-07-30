@@ -40,7 +40,10 @@ fn write_index(path: &Path) {
     let sym = "rust-analyzer cargo test 1.0.0 `crate`/answer().";
     let mut index = Index::new();
     index.documents = vec![
-        document("src/lib.rs", vec![occurrence(sym, SymbolRole::Definition as i32)]),
+        document(
+            "src/lib.rs",
+            vec![occurrence(sym, SymbolRole::Definition as i32)],
+        ),
         document("src/main.rs", vec![occurrence(sym, 0)]),
     ];
     scip::write_message_to_file(path, index).unwrap();
@@ -53,10 +56,13 @@ fn run(dir: &Path, prog: &str, index: &Path) -> (i32, String, String) {
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
         .env("SPREFA_SCIP_INDEX", index)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
@@ -73,9 +79,18 @@ dep(src, dst) <- scip_edge(src, dst, _).
 "#;
     let (code, out, err) = run(&d, prog, &index);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("src/lib.rs"), "definition file imported: {out}");
-    assert!(out.contains("src/main.rs"), "reference file imported: {out}");
-    assert!(out.contains("src/main.rs\tsrc/lib.rs"), "SCIP edge feeds derived relation: {out}");
+    assert!(
+        out.contains("src/lib.rs"),
+        "definition file imported: {out}"
+    );
+    assert!(
+        out.contains("src/main.rs"),
+        "reference file imported: {out}"
+    );
+    assert!(
+        out.contains("src/main.rs\tsrc/lib.rs"),
+        "SCIP edge feeds derived relation: {out}"
+    );
 }
 
 /// A fn-level call graph requires (a) the caller's def to carry a `(` in its
@@ -93,11 +108,14 @@ fn extracts_fn_level_call_edges() {
     let mut idx = Index::new();
     // callee def at line 0; caller fn def at line 2; ref to callee at line 5,
     // inside caller's body per predecessor search (most recent start <= 5 is 2).
-    idx.documents = vec![document("src/lib.rs", vec![
-        occurrence_r(callee, SymbolRole::Definition as i32, [0, 0, 0, 10]),
-        occurrence_r(caller, SymbolRole::Definition as i32, [2, 0, 2, 8]),
-        occurrence_r(callee, 0, [5, 0, 5, 8]),
-    ])];
+    idx.documents = vec![document(
+        "src/lib.rs",
+        vec![
+            occurrence_r(callee, SymbolRole::Definition as i32, [0, 0, 0, 10]),
+            occurrence_r(caller, SymbolRole::Definition as i32, [2, 0, 2, 8]),
+            occurrence_r(callee, 0, [5, 0, 5, 8]),
+        ],
+    )];
     scip::write_message_to_file(&index, idx).unwrap();
     let prog = r#"
 rel e(caller: text, callee: text).
@@ -106,10 +124,14 @@ e(caller, callee) <- scip_fn_edge(caller, callee).
 "#;
     let (code, out, err) = run(&d, prog, &index);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    let row = out.lines().find(|l| l.contains("caller()") && l.contains("callee()"))
+    let row = out
+        .lines()
+        .find(|l| l.contains("caller()") && l.contains("callee()"))
         .unwrap_or_else(|| panic!("no fn_edge row in:\nstdout={out}\nstderr={err}"));
-    assert!(row.contains("caller()") && row.contains("callee()"),
-        "fn_edge row should name both fns: {row}");
+    assert!(
+        row.contains("caller()") && row.contains("callee()"),
+        "fn_edge row should name both fns: {row}"
+    );
 }
 
 /// A reference before the first fn def in its file is module-level. With
@@ -128,11 +150,14 @@ fn ref_before_real_fn_yields_self_edge() {
     let mut idx = Index::new();
     // caller def at line 10; ref to callee at line 2 — before caller starts.
     // Predecessor search finds callee (line 0) → self-edge callee→callee.
-    idx.documents = vec![document("src/lib.rs", vec![
-        occurrence_r(callee, SymbolRole::Definition as i32, [0, 0, 0, 10]),
-        occurrence_r(caller, SymbolRole::Definition as i32, [10, 0, 10, 8]),
-        occurrence_r(callee, 0, [2, 0, 2, 8]),
-    ])];
+    idx.documents = vec![document(
+        "src/lib.rs",
+        vec![
+            occurrence_r(callee, SymbolRole::Definition as i32, [0, 0, 0, 10]),
+            occurrence_r(caller, SymbolRole::Definition as i32, [10, 0, 10, 8]),
+            occurrence_r(callee, 0, [2, 0, 2, 8]),
+        ],
+    )];
     scip::write_message_to_file(&index, idx).unwrap();
     let prog = r#"
 rel e(caller: text, callee: text).
@@ -141,7 +166,10 @@ e(caller, callee) <- scip_fn_edge(caller, callee).
 "#;
     let (code, out, err) = run(&d, prog, &index);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("callee()"), "self-edge should appear: stdout={out}\nstderr={err}");
+    assert!(
+        out.contains("callee()"),
+        "self-edge should appear: stdout={out}\nstderr={err}"
+    );
 }
 
 /// S1: `scip_occurrence` surfaces the 0-based line/col span + role that
@@ -155,15 +183,22 @@ fn imports_occurrence_spans_with_roles() {
     let index = d.join("index.scip");
     let sym = "pkg/foo().";
     let mut idx = Index::new();
-    idx.documents = vec![document("src/lib.rs", vec![
-        occurrence_r(sym, SymbolRole::Definition as i32, [3, 4, 3, 7]),
-        occurrence_r(sym, 0, [7, 8, 7, 11]),
-        occurrence_r(sym, SymbolRole::Import as i32, [1, 4, 1, 7]),
-        occurrence_r(sym, SymbolRole::WriteAccess as i32, [9, 0, 9, 3]),
-        // read+write compound: write outranks read in role_label
-        occurrence_r(sym, (SymbolRole::ReadAccess as i32) | (SymbolRole::WriteAccess as i32), [10, 0, 10, 3]),
-        occurrence_r(sym, SymbolRole::ReadAccess as i32, [11, 0, 11, 3]),
-    ])];
+    idx.documents = vec![document(
+        "src/lib.rs",
+        vec![
+            occurrence_r(sym, SymbolRole::Definition as i32, [3, 4, 3, 7]),
+            occurrence_r(sym, 0, [7, 8, 7, 11]),
+            occurrence_r(sym, SymbolRole::Import as i32, [1, 4, 1, 7]),
+            occurrence_r(sym, SymbolRole::WriteAccess as i32, [9, 0, 9, 3]),
+            // read+write compound: write outranks read in role_label
+            occurrence_r(
+                sym,
+                (SymbolRole::ReadAccess as i32) | (SymbolRole::WriteAccess as i32),
+                [10, 0, 10, 3],
+            ),
+            occurrence_r(sym, SymbolRole::ReadAccess as i32, [11, 0, 11, 3]),
+        ],
+    )];
     scip::write_message_to_file(&index, idx).unwrap();
     let prog = r#"
 ? scip_occurrence(file, symbol, line, col, end_line, end_col, role, repo).
@@ -173,22 +208,37 @@ fn imports_occurrence_spans_with_roles() {
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     // The definition occurrence: exact file/symbol/span/role prefix (repo is the
     // sandbox slug, not asserted).
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t3\t4\t3\t7\tdefinition"),
-        "definition occurrence with span+role: {out}");
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t7\t8\t7\t11\treference"),
-        "reference occurrence with span+role: {out}");
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t3\t4\t3\t7\tdefinition"),
+        "definition occurrence with span+role: {out}"
+    );
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t7\t8\t7\t11\treference"),
+        "reference occurrence with span+role: {out}"
+    );
     // Widened role vocabulary: import/write/read bits survive instead of
     // collapsing to reference; compound read+write reports write.
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t1\t4\t1\t7\timport"),
-        "import occurrence role: {out}");
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t9\t0\t9\t3\twrite"),
-        "write occurrence role: {out}");
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t10\t0\t10\t3\twrite"),
-        "compound read+write reports write: {out}");
-    assert!(out.contains("src/lib.rs\tpkg/foo().\t11\t0\t11\t3\tread"),
-        "read occurrence role: {out}");
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t1\t4\t1\t7\timport"),
+        "import occurrence role: {out}"
+    );
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t9\t0\t9\t3\twrite"),
+        "write occurrence role: {out}"
+    );
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t10\t0\t10\t3\twrite"),
+        "compound read+write reports write: {out}"
+    );
+    assert!(
+        out.contains("src/lib.rs\tpkg/foo().\t11\t0\t11\t3\tread"),
+        "read occurrence role: {out}"
+    );
     // scip_def still emits — pure addition, def rel untouched.
-    assert!(out.contains("pkg/foo().\tsrc/lib.rs"), "scip_def unchanged: {out}");
+    assert!(
+        out.contains("pkg/foo().\tsrc/lib.rs"),
+        "scip_def unchanged: {out}"
+    );
 }
 
 /// S2: the LOCAL binding name is joinable to the canonical symbol. An aliased
@@ -205,9 +255,10 @@ fn binds_aliased_import_local_name() {
     let canonical = "scip-typescript npm mod 1.0.0 `mod`/foo#";
     let mut idx = Index::new();
     // `bar` is UTF-16 cols [16, 19) on line 0.
-    idx.documents = vec![document("app.ts", vec![
-        occurrence_r(canonical, 0, [0, 16, 0, 19]),
-    ])];
+    idx.documents = vec![document(
+        "app.ts",
+        vec![occurrence_r(canonical, 0, [0, 16, 0, 19])],
+    )];
     scip::write_message_to_file(&index, idx).unwrap();
     let prog = r#"
 rel resolved(local: text, sym: text).
@@ -217,6 +268,8 @@ resolved(local, sym) <- scip_binding(_, sym, local, _, _, _).
     let (code, out, err) = run(&d, prog, &index);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     // The join on the LOCAL name "bar" resolves to the CANONICAL symbol.
-    assert!(out.contains("bar\tscip-typescript npm mod 1.0.0 `mod`/foo#"),
-        "local name bar joins to canonical foo symbol: {out}");
+    assert!(
+        out.contains("bar\tscip-typescript npm mod 1.0.0 `mod`/foo#"),
+        "local name bar joins to canonical foo symbol: {out}"
+    );
 }

@@ -21,7 +21,10 @@ use std::path::Path;
 /// `file_to_mod_path_rooted`. Returns `None` for an empty tail.
 fn mod_path_from_tail(after_root: &[&str]) -> Option<String> {
     let last = *after_root.last()?;
-    let stem = Path::new(last).file_stem().and_then(|s| s.to_str()).unwrap_or(last);
+    let stem = Path::new(last)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(last);
     // lib.rs / main.rs at the crate root is the crate itself.
     if after_root.len() == 1 && (stem == "lib" || stem == "main") {
         return Some("crate".to_string());
@@ -29,13 +32,20 @@ fn mod_path_from_tail(after_root: &[&str]) -> Option<String> {
     let mut segments = Vec::with_capacity(after_root.len() + 1);
     segments.push("crate");
     // directories always contribute; the file stem does too unless it is `mod`.
-    for dir in &after_root[..after_root.len() - 1] { segments.push(dir); }
-    if stem != "mod" { segments.push(stem); }
+    for dir in &after_root[..after_root.len() - 1] {
+        segments.push(dir);
+    }
+    if stem != "mod" {
+        segments.push(stem);
+    }
     Some(segments.join("::"))
 }
 
 fn path_components(p: &str) -> Vec<&str> {
-    Path::new(p).components().map(|c| c.as_os_str().to_str().unwrap_or("")).collect()
+    Path::new(p)
+        .components()
+        .map(|c| c.as_os_str().to_str().unwrap_or(""))
+        .collect()
 }
 
 /// Convert a file path to its Rust module path, keying off the last `src/`
@@ -187,8 +197,12 @@ pub fn rewrite_brace_leaf(
     from_mod: &str,
 ) -> Option<String> {
     let new_full = rewrite_use_path(full, old_mod, new_mod, from_mod)?;
-    if prefix.is_empty() { return Some(new_full); }
-    new_full.strip_prefix(&format!("{prefix}::")).map(str::to_string)
+    if prefix.is_empty() {
+        return Some(new_full);
+    }
+    new_full
+        .strip_prefix(&format!("{prefix}::"))
+        .map(str::to_string)
 }
 
 /// Regenerate a whole `use` statement body after a move forces at least one
@@ -204,14 +218,23 @@ pub fn regroup_use_items(items: &[(String, Option<String>)]) -> String {
         None => path.to_string(),
     };
     let [(only_path, only_alias)] = items else {
-        let segmented: Vec<Vec<&str>> = items.iter()
-            .map(|(path, _)| path.split("::").collect()).collect();
+        let segmented: Vec<Vec<&str>> = items
+            .iter()
+            .map(|(path, _)| path.split("::").collect())
+            .collect();
         let mut common = 0usize;
         while let Some(first_seg) = segmented[0].get(common) {
-            if !segmented.iter().all(|segs| segs.get(common) == Some(first_seg)) { break; }
+            if !segmented
+                .iter()
+                .all(|segs| segs.get(common) == Some(first_seg))
+            {
+                break;
+            }
             common += 1;
         }
-        let grouped: Vec<String> = segmented.iter().zip(items)
+        let grouped: Vec<String> = segmented
+            .iter()
+            .zip(items)
             .map(|(segs, (_, alias))| {
                 let rest = segs[common..].join("::");
                 with_alias(if rest.is_empty() { "self" } else { &rest }, alias)
@@ -250,7 +273,9 @@ pub fn rewrite_moved_file_use(use_path: &str, old_mod: &str, new_mod: &str) -> O
 /// its `mod.rs`, and — when the directory is a crate root — `lib.rs`/`main.rs`.
 pub fn mod_parent_candidates(path: &str) -> Vec<String> {
     let p = Path::new(path);
-    let Some(dir) = p.parent().and_then(|d| d.to_str()) else { return Vec::new() };
+    let Some(dir) = p.parent().and_then(|d| d.to_str()) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     if !dir.is_empty() {
         out.push(format!("{dir}.rs"));
@@ -305,31 +330,64 @@ mod tests {
 
     #[test]
     fn file_to_mod_path_conventions() {
-        assert_eq!(file_to_mod_path("/repo/src/lib.rs").as_deref(), Some("crate"));
-        assert_eq!(file_to_mod_path("/repo/src/main.rs").as_deref(), Some("crate"));
-        assert_eq!(file_to_mod_path("/repo/src/utils.rs").as_deref(), Some("crate::utils"));
-        assert_eq!(file_to_mod_path("/repo/src/foo/bar.rs").as_deref(), Some("crate::foo::bar"));
-        assert_eq!(file_to_mod_path("/repo/src/foo/mod.rs").as_deref(), Some("crate::foo"));
-        assert_eq!(file_to_mod_path("/repo/src/a/b/mod.rs").as_deref(), Some("crate::a::b"));
+        assert_eq!(
+            file_to_mod_path("/repo/src/lib.rs").as_deref(),
+            Some("crate")
+        );
+        assert_eq!(
+            file_to_mod_path("/repo/src/main.rs").as_deref(),
+            Some("crate")
+        );
+        assert_eq!(
+            file_to_mod_path("/repo/src/utils.rs").as_deref(),
+            Some("crate::utils")
+        );
+        assert_eq!(
+            file_to_mod_path("/repo/src/foo/bar.rs").as_deref(),
+            Some("crate::foo::bar")
+        );
+        assert_eq!(
+            file_to_mod_path("/repo/src/foo/mod.rs").as_deref(),
+            Some("crate::foo")
+        );
+        assert_eq!(
+            file_to_mod_path("/repo/src/a/b/mod.rs").as_deref(),
+            Some("crate::a::b")
+        );
         // Workspace member resolves within its own crate.
-        assert_eq!(file_to_mod_path("/repo/crates/foo/src/bar.rs").as_deref(), Some("crate::bar"));
+        assert_eq!(
+            file_to_mod_path("/repo/crates/foo/src/bar.rs").as_deref(),
+            Some("crate::bar")
+        );
         assert_eq!(file_to_mod_path("/repo/lib/utils.rs"), None);
     }
 
     #[test]
     fn rewrite_crate_prefixed_use() {
         assert_eq!(
-            rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
-                "crate::utils::Foo").as_deref(),
-            Some("crate::helpers::utils::Foo"));
+            rewrite(
+                "/repo/src/app.rs",
+                "/repo/src/utils.rs",
+                "/repo/src/helpers/utils.rs",
+                "crate::utils::Foo"
+            )
+            .as_deref(),
+            Some("crate::helpers::utils::Foo")
+        );
     }
 
     #[test]
     fn rewrite_module_itself() {
         assert_eq!(
-            rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
-                "crate::utils").as_deref(),
-            Some("crate::helpers::utils"));
+            rewrite(
+                "/repo/src/app.rs",
+                "/repo/src/utils.rs",
+                "/repo/src/helpers/utils.rs",
+                "crate::utils"
+            )
+            .as_deref(),
+            Some("crate::helpers::utils")
+        );
     }
 
     #[test]
@@ -337,38 +395,66 @@ mod tests {
         // from crate::foo::consumer; old crate::foo::bar -> new crate::baz::bar.
         // super::bar::Thing can't stay super:: across parents -> crate::baz::bar::Thing.
         assert_eq!(
-            rewrite("/repo/src/foo/consumer.rs", "/repo/src/foo/bar.rs", "/repo/src/baz/bar.rs",
-                "super::bar::Thing").as_deref(),
-            Some("crate::baz::bar::Thing"));
+            rewrite(
+                "/repo/src/foo/consumer.rs",
+                "/repo/src/foo/bar.rs",
+                "/repo/src/baz/bar.rs",
+                "super::bar::Thing"
+            )
+            .as_deref(),
+            Some("crate::baz::bar::Thing")
+        );
     }
 
     #[test]
     fn rewrite_super_stays_super_when_possible() {
         // Move stays under the same parent (crate::foo) -> super:: is preserved.
         assert_eq!(
-            rewrite("/repo/src/foo/consumer.rs", "/repo/src/foo/bar.rs", "/repo/src/foo/qux.rs",
-                "super::bar::Thing").as_deref(),
-            Some("super::qux::Thing"));
+            rewrite(
+                "/repo/src/foo/consumer.rs",
+                "/repo/src/foo/bar.rs",
+                "/repo/src/foo/qux.rs",
+                "super::bar::Thing"
+            )
+            .as_deref(),
+            Some("super::qux::Thing")
+        );
     }
 
     #[test]
     fn rewrite_self_prefixed_use() {
         assert_eq!(
-            rewrite("/repo/src/foo/mod.rs", "/repo/src/foo/bar.rs", "/repo/src/foo/baz.rs",
-                "self::bar::X").as_deref(),
-            Some("self::baz::X"));
+            rewrite(
+                "/repo/src/foo/mod.rs",
+                "/repo/src/foo/bar.rs",
+                "/repo/src/foo/baz.rs",
+                "self::bar::X"
+            )
+            .as_deref(),
+            Some("self::baz::X")
+        );
     }
 
     #[test]
     fn external_and_unrelated_return_none() {
         assert_eq!(
-            rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
-                "std::collections::HashMap"),
-            None);
+            rewrite(
+                "/repo/src/app.rs",
+                "/repo/src/utils.rs",
+                "/repo/src/helpers/utils.rs",
+                "std::collections::HashMap"
+            ),
+            None
+        );
         assert_eq!(
-            rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
-                "crate::config::Settings"),
-            None);
+            rewrite(
+                "/repo/src/app.rs",
+                "/repo/src/utils.rs",
+                "/repo/src/helpers/utils.rs",
+                "crate::config::Settings"
+            ),
+            None
+        );
     }
 
     #[test]
@@ -387,20 +473,32 @@ mod tests {
     #[test]
     fn rooted_mod_path_for_non_src_crate() {
         let roots = vec!["rust/kernel".to_string()];
-        assert_eq!(file_to_mod_path_rooted("rust/kernel/lib.rs", &roots).as_deref(), Some("crate"));
-        assert_eq!(file_to_mod_path_rooted("rust/kernel/clk.rs", &roots).as_deref(), Some("crate::clk"));
-        assert_eq!(file_to_mod_path_rooted("rust/kernel/net/phy.rs", &roots).as_deref(),
-            Some("crate::net::phy"));
-        assert_eq!(file_to_mod_path_rooted("rust/kernel/net.rs", &roots).as_deref(),
-            Some("crate::net"));
+        assert_eq!(
+            file_to_mod_path_rooted("rust/kernel/lib.rs", &roots).as_deref(),
+            Some("crate")
+        );
+        assert_eq!(
+            file_to_mod_path_rooted("rust/kernel/clk.rs", &roots).as_deref(),
+            Some("crate::clk")
+        );
+        assert_eq!(
+            file_to_mod_path_rooted("rust/kernel/net/phy.rs", &roots).as_deref(),
+            Some("crate::net::phy")
+        );
+        assert_eq!(
+            file_to_mod_path_rooted("rust/kernel/net.rs", &roots).as_deref(),
+            Some("crate::net")
+        );
     }
 
     #[test]
     fn rooted_falls_back_to_src_heuristic_off_root() {
         let roots = vec!["rust/kernel".to_string()];
         // a file under no discovered root still resolves via the `src/` rule.
-        assert_eq!(file_to_mod_path_rooted("other/src/foo.rs", &roots).as_deref(),
-            Some("crate::foo"));
+        assert_eq!(
+            file_to_mod_path_rooted("other/src/foo.rs", &roots).as_deref(),
+            Some("crate::foo")
+        );
     }
 
     #[test]
@@ -409,68 +507,114 @@ mod tests {
         // `use crate::clk::Hertz` must follow to `crate::hw::clk::Hertz`.
         let roots = vec!["rust/kernel".to_string()];
         assert_eq!(
-            rewrite_import_rooted("rust/kernel/device.rs", "rust/kernel/clk.rs",
-                "rust/kernel/hw/clk.rs", "crate::clk::Hertz", &roots).as_deref(),
-            Some("crate::hw::clk::Hertz"));
+            rewrite_import_rooted(
+                "rust/kernel/device.rs",
+                "rust/kernel/clk.rs",
+                "rust/kernel/hw/clk.rs",
+                "crate::clk::Hertz",
+                &roots
+            )
+            .as_deref(),
+            Some("crate::hw::clk::Hertz")
+        );
         // without roots, the same move can't derive a module path -> no rewrite.
         assert_eq!(
-            rewrite_import("rust/kernel/device.rs", "rust/kernel/clk.rs",
-                "rust/kernel/hw/clk.rs", "crate::clk::Hertz"),
-            None);
+            rewrite_import(
+                "rust/kernel/device.rs",
+                "rust/kernel/clk.rs",
+                "rust/kernel/hw/clk.rs",
+                "crate::clk::Hertz"
+            ),
+            None
+        );
     }
 
     #[test]
     fn brace_leaf_rewrites_inside_head() {
         // use crate::{utils::Foo, b}: leaf "utils::Foo" under head "crate"
         assert_eq!(
-            rewrite_brace_leaf("crate::utils::Foo", "crate",
-                "crate::utils", "crate::helpers::utils", "crate::app").as_deref(),
-            Some("helpers::utils::Foo"));
+            rewrite_brace_leaf(
+                "crate::utils::Foo",
+                "crate",
+                "crate::utils",
+                "crate::helpers::utils",
+                "crate::app"
+            )
+            .as_deref(),
+            Some("helpers::utils::Foo")
+        );
         // the leaf IS the moved module
         assert_eq!(
-            rewrite_brace_leaf("crate::utils", "crate",
-                "crate::utils", "crate::helpers::utils", "crate::app").as_deref(),
-            Some("helpers::utils"));
+            rewrite_brace_leaf(
+                "crate::utils",
+                "crate",
+                "crate::utils",
+                "crate::helpers::utils",
+                "crate::app"
+            )
+            .as_deref(),
+            Some("helpers::utils")
+        );
         // unaffected leaf
         assert_eq!(
-            rewrite_brace_leaf("crate::misc", "crate",
-                "crate::utils", "crate::helpers::utils", "crate::app"),
-            None);
+            rewrite_brace_leaf(
+                "crate::misc",
+                "crate",
+                "crate::utils",
+                "crate::helpers::utils",
+                "crate::app"
+            ),
+            None
+        );
         // rewrite leaves the brace head -> unexpressible in place
         assert_eq!(
-            rewrite_brace_leaf("crate::a::utils::Foo", "crate::a",
-                "crate::a::utils", "crate::b::utils", "crate::app"),
-            None);
+            rewrite_brace_leaf(
+                "crate::a::utils::Foo",
+                "crate::a",
+                "crate::a::utils",
+                "crate::b::utils",
+                "crate::app"
+            ),
+            None
+        );
     }
 
     #[test]
     fn regroup_factors_common_prefix() {
         let path = |text: &str| (text.to_string(), None);
         // one leaf collapses to a bare path
-        assert_eq!(regroup_use_items(&[path("crate::z::b::X")]), "crate::z::b::X");
+        assert_eq!(
+            regroup_use_items(&[path("crate::z::b::X")]),
+            "crate::z::b::X"
+        );
         // an exiting leaf plus a staying sibling refactor onto the shared `crate`
         assert_eq!(
             regroup_use_items(&[path("crate::z::b::X"), path("crate::a::c")]),
-            "crate::{z::b::X, a::c}");
+            "crate::{z::b::X, a::c}"
+        );
         // deeper common prefix stays factored
         assert_eq!(
             regroup_use_items(&[path("crate::a::b::X"), path("crate::a::b::Y")]),
-            "crate::a::b::{X, Y}");
+            "crate::a::b::{X, Y}"
+        );
         // no common prefix -> top-level brace group
         assert_eq!(
             regroup_use_items(&[path("std::io::Read"), path("crate::a::c")]),
-            "{std::io::Read, crate::a::c}");
+            "{std::io::Read, crate::a::c}"
+        );
         // a leaf equal to the common prefix renders as `self`
         assert_eq!(
             regroup_use_items(&[path("crate::a"), path("crate::a::c")]),
-            "crate::a::{self, c}");
+            "crate::a::{self, c}"
+        );
         // aliases ride along
         assert_eq!(
             regroup_use_items(&[
                 ("crate::z::b::X".to_string(), Some("Ex".to_string())),
                 path("crate::a::c"),
             ]),
-            "crate::{z::b::X as Ex, a::c}");
+            "crate::{z::b::X as Ex, a::c}"
+        );
     }
 
     #[test]
@@ -478,33 +622,60 @@ mod tests {
         // src/utils.rs -> src/helpers/utils.rs; its `use super::config::C`
         // anchored at the old parent must fall back to crate::
         assert_eq!(
-            rewrite_moved_file_use("super::config::C", "crate::utils", "crate::helpers::utils").as_deref(),
-            Some("crate::config::C"));
+            rewrite_moved_file_use("super::config::C", "crate::utils", "crate::helpers::utils")
+                .as_deref(),
+            Some("crate::config::C")
+        );
         // self:: tracks the module wherever it goes — no edit
         assert_eq!(
             rewrite_moved_file_use("self::sub::X", "crate::utils", "crate::helpers::utils"),
-            None);
+            None
+        );
         // a self-reference through crate:: follows the move
         assert_eq!(
-            rewrite_moved_file_use("crate::utils::helper", "crate::utils", "crate::helpers::utils").as_deref(),
-            Some("crate::helpers::utils::helper"));
+            rewrite_moved_file_use(
+                "crate::utils::helper",
+                "crate::utils",
+                "crate::helpers::utils"
+            )
+            .as_deref(),
+            Some("crate::helpers::utils::helper")
+        );
         // external paths are untouched
-        assert_eq!(rewrite_moved_file_use("std::io::Read", "crate::utils", "crate::helpers::utils"), None);
+        assert_eq!(
+            rewrite_moved_file_use("std::io::Read", "crate::utils", "crate::helpers::utils"),
+            None
+        );
     }
 
     #[test]
     fn mod_parent_candidate_order() {
-        assert_eq!(mod_parent_candidates("src/foo/bar.rs"),
-            vec!["src/foo.rs", "src/foo/mod.rs", "src/foo/lib.rs", "src/foo/main.rs"]);
-        assert_eq!(mod_parent_candidates("bar.rs"),
-            vec!["mod.rs", "lib.rs", "main.rs"]);
+        assert_eq!(
+            mod_parent_candidates("src/foo/bar.rs"),
+            vec![
+                "src/foo.rs",
+                "src/foo/mod.rs",
+                "src/foo/lib.rs",
+                "src/foo/main.rs"
+            ]
+        );
+        assert_eq!(
+            mod_parent_candidates("bar.rs"),
+            vec!["mod.rs", "lib.rs", "main.rs"]
+        );
     }
 
     #[test]
     fn glob_import_rewrite() {
         assert_eq!(
-            rewrite("/repo/src/app.rs", "/repo/src/utils.rs", "/repo/src/helpers/utils.rs",
-                "crate::utils::*").as_deref(),
-            Some("crate::helpers::utils::*"));
+            rewrite(
+                "/repo/src/app.rs",
+                "/repo/src/utils.rs",
+                "/repo/src/helpers/utils.rs",
+                "crate::utils::*"
+            )
+            .as_deref(),
+            Some("crate::helpers::utils::*")
+        );
     }
 }

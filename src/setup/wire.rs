@@ -168,7 +168,12 @@ fn wire_opencode(h: &Path, dest: &Path, journal: &mut SetupJournal) {
         );
         return;
     }
-    match journal.merge_json(None, &cfg, "/skills/paths", serde_json::Value::String(dest_s.clone())) {
+    match journal.merge_json(
+        None,
+        &cfg,
+        "/skills/paths",
+        serde_json::Value::String(dest_s.clone()),
+    ) {
         Ok(true) => println!("[dl setup] opencode skills.paths += {dest_s}"),
         Ok(false) => println!("[dl setup] opencode already reads {dest_s}"),
         Err(e) => println!("[dl setup] opencode left alone: {e}"),

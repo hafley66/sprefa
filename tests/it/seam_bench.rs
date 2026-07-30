@@ -30,8 +30,17 @@ const SEAMS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bench/seams");
 const MANIFEST: &str = env!("CARGO_MANIFEST_DIR");
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Recursively copy `src` tree into `dst` (dirs created as needed).
@@ -61,11 +70,21 @@ fn build_repo() -> PathBuf {
     let manifest = fs::read_to_string(PathBuf::from(SEAMS).join("authors.tsv")).unwrap();
     for line in manifest.lines().filter(|l| !l.trim().is_empty()) {
         let mut f = line.split('\t');
-        let (prefix, name, email) =
-            (f.next().unwrap(), f.next().unwrap(), f.next().unwrap());
+        let (prefix, name, email) = (f.next().unwrap(), f.next().unwrap(), f.next().unwrap());
         git(&dir, &["add", "--", prefix]);
-        git(&dir, &["-c", &format!("user.name={name}"), "-c", &format!("user.email={email}"),
-                    "commit", "-q", "-m", &format!("add {prefix}")]);
+        git(
+            &dir,
+            &[
+                "-c",
+                &format!("user.name={name}"),
+                "-c",
+                &format!("user.email={email}"),
+                "commit",
+                "-q",
+                "-m",
+                &format!("add {prefix}"),
+            ],
+        );
     }
     fs::canonicalize(&dir).unwrap()
 }
@@ -76,15 +95,24 @@ fn run_seam(repo: &Path, seam: &str, query: &str) -> serde_json::Value {
     static N: AtomicU64 = AtomicU64::new(0);
     let prog = PathBuf::from(SEAMS).join(format!("{seam}.dl"));
     let nonce = N.fetch_add(1, Ordering::Relaxed);
-    let db = std::env::temp_dir().join(format!("seam_bench_{seam}_{}_{nonce}.db", std::process::id()));
+    let db = std::env::temp_dir().join(format!(
+        "seam_bench_{seam}_{}_{nonce}.db",
+        std::process::id()
+    ));
     let _ = fs::remove_file(&db);
-    let out = Command::new(DL).arg(&prog)
+    let out = Command::new(DL)
+        .arg(&prog)
         .current_dir(repo)
         .args(["--db", db.to_str().unwrap(), "--query-json"])
-        .output().expect("run dl");
-    assert!(out.status.success(),
-        "{seam}: dl failed\n{}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8_lossy(&out.stdout).lines()
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "{seam}: dl failed\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str::<serde_json::Value>(l).expect("json line"))
         .find(|r| r["query"] == query)
@@ -93,28 +121,54 @@ fn run_seam(repo: &Path, seam: &str, query: &str) -> serde_json::Value {
 
 /// Project a record's rows down to its `key` columns, as a set of joined cells.
 fn project(rec: &serde_json::Value, key: &[String]) -> BTreeSet<String> {
-    let cols: Vec<String> = rec["columns"].as_array().unwrap()
-        .iter().map(|c| c.as_str().unwrap().to_string()).collect();
-    let idx: Vec<usize> = key.iter()
-        .map(|k| cols.iter().position(|c| c == k)
-            .unwrap_or_else(|| panic!("key col `{k}` not in {cols:?}")))
+    let cols: Vec<String> = rec["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_str().unwrap().to_string())
         .collect();
-    rec["rows"].as_array().unwrap().iter().map(|row| {
-        let r = row.as_array().unwrap();
-        idx.iter().map(|&i| match &r[i] {
-            serde_json::Value::String(s) => s.clone(),
-            v => v.to_string(),
-        }).collect::<Vec<_>>().join("\u{1f}")
-    }).collect()
+    let idx: Vec<usize> = key
+        .iter()
+        .map(|k| {
+            cols.iter()
+                .position(|c| c == k)
+                .unwrap_or_else(|| panic!("key col `{k}` not in {cols:?}"))
+        })
+        .collect();
+    rec["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            let r = row.as_array().unwrap();
+            idx.iter()
+                .map(|&i| match &r[i] {
+                    serde_json::Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\u{1f}")
+        })
+        .collect()
 }
 
 fn gold_set(entry: &serde_json::Value) -> BTreeSet<String> {
-    entry["gold"].as_array().unwrap().iter().map(|row| {
-        row.as_array().unwrap().iter().map(|c| match c {
-            serde_json::Value::String(s) => s.clone(),
-            v => v.to_string(),
-        }).collect::<Vec<_>>().join("\u{1f}")
-    }).collect()
+    entry["gold"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|c| match c {
+                    serde_json::Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join("\u{1f}")
+        })
+        .collect()
 }
 
 /// Run every seam in gold.json, score it, print a report, and require that the
@@ -125,30 +179,56 @@ fn gold_set(entry: &serde_json::Value) -> BTreeSet<String> {
 fn seams_score_exact_on_planted_corpus() {
     let repo = build_repo();
     let gold: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(PathBuf::from(SEAMS).join("gold.json")).unwrap()).unwrap();
+        serde_json::from_str(&fs::read_to_string(PathBuf::from(SEAMS).join("gold.json")).unwrap())
+            .unwrap();
 
     eprintln!("\n  seam              P     R    F1   pred/gold");
     eprintln!("  ----------------------------------------------");
     let mut failures = Vec::new();
     for (seam, entry) in gold.as_object().unwrap() {
         let query = entry["query"].as_str().unwrap();
-        let key: Vec<String> = entry["key"].as_array().unwrap()
-            .iter().map(|c| c.as_str().unwrap().to_string()).collect();
+        let key: Vec<String> = entry["key"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c.as_str().unwrap().to_string())
+            .collect();
         let rec = run_seam(&repo, seam, query);
         let pred = project(&rec, &key);
         let gset = gold_set(entry);
         let hit = pred.intersection(&gset).count() as f64;
-        let p = if pred.is_empty() { 0.0 } else { hit / pred.len() as f64 };
-        let r = if gset.is_empty() { 0.0 } else { hit / gset.len() as f64 };
-        let f1 = if p + r == 0.0 { 0.0 } else { 2.0 * p * r / (p + r) };
-        eprintln!("  {seam:<16} {p:.2}  {r:.2}  {f1:.2}   {}/{}", pred.len(), gset.len());
+        let p = if pred.is_empty() {
+            0.0
+        } else {
+            hit / pred.len() as f64
+        };
+        let r = if gset.is_empty() {
+            0.0
+        } else {
+            hit / gset.len() as f64
+        };
+        let f1 = if p + r == 0.0 {
+            0.0
+        } else {
+            2.0 * p * r / (p + r)
+        };
+        eprintln!(
+            "  {seam:<16} {p:.2}  {r:.2}  {f1:.2}   {}/{}",
+            pred.len(),
+            gset.len()
+        );
         if (p - 1.0).abs() > 1e-9 || (r - 1.0).abs() > 1e-9 {
             failures.push(format!(
-                "{seam}: P={p:.2} R={r:.2}\n    pred {pred:?}\n    gold {gset:?}"));
+                "{seam}: P={p:.2} R={r:.2}\n    pred {pred:?}\n    gold {gset:?}"
+            ));
         }
     }
     eprintln!();
-    assert!(failures.is_empty(), "seam(s) not exact:\n  {}", failures.join("\n  "));
+    assert!(
+        failures.is_empty(),
+        "seam(s) not exact:\n  {}",
+        failures.join("\n  ")
+    );
 }
 
 /// Tier 2: scale + latency on a REAL checkout. Correctness lives in the planted
@@ -166,8 +246,11 @@ fn seams_scale_on_real_repo() {
     // The default (this crate's own checkout) always exists and always carries
     // a `.git`; only a bad SPREFA_SEAM_ROOT override can violate this, and
     // that should fail loudly rather than silently pass.
-    assert!(root.join(".git").exists() || root.exists(),
-        "no real repo at {} (check SPREFA_SEAM_ROOT)", root.display());
+    assert!(
+        root.join(".git").exists() || root.exists(),
+        "no real repo at {} (check SPREFA_SEAM_ROOT)",
+        root.display()
+    );
     eprintln!("\n  scale on {}", root.display());
     eprintln!("  seam            rows     ms");
     eprintln!("  ------------------------------");

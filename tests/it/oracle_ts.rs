@@ -21,7 +21,11 @@ use crate::oracle_parity;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn bin_on_path(name: &str) -> bool {
-    Command::new("which").arg(name).output().map(|o| o.status.success()).unwrap_or(false)
+    Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Locate a way to run `scip-typescript index`: an explicit override, a bare
@@ -36,7 +40,11 @@ fn find_scip_ts() -> Option<Vec<String>> {
         return Some(vec!["scip-typescript".into()]);
     }
     if bin_on_path("npx") {
-        return Some(vec!["npx".into(), "--yes".into(), "@sourcegraph/scip-typescript".into()]);
+        return Some(vec![
+            "npx".into(),
+            "--yes".into(),
+            "@sourcegraph/scip-typescript".into(),
+        ]);
     }
     None
 }
@@ -47,7 +55,8 @@ fn find_scip_ts() -> Option<Vec<String>> {
 #[test]
 #[ignore = "needs scip-typescript on PATH or npx (set SPREFA_SCIP_TYPESCRIPT)"]
 fn ts_call_resolution_parity_vs_scip() {
-    let scip_ts = find_scip_ts().expect("needs scip-typescript on PATH or npx (set SPREFA_SCIP_TYPESCRIPT)");
+    let scip_ts =
+        find_scip_ts().expect("needs scip-typescript on PATH or npx (set SPREFA_SCIP_TYPESCRIPT)");
 
     // Copy the fixture into a scratch dir dl will scan; the SCIP index is
     // written OUTSIDE that dir so the engine's scip importer never sees an
@@ -65,13 +74,17 @@ fn ts_call_resolution_parity_vs_scip() {
     cmd.args(["index", "--output"]).arg(&scip_out);
     cmd.current_dir(&tmp);
     let run = cmd.output().expect("run scip-typescript index");
-    assert!(scip_out.is_file(), "scip-typescript produced no index: {}",
-        String::from_utf8_lossy(&run.stderr));
+    assert!(
+        scip_out.is_file(),
+        "scip-typescript produced no index: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
 
     let prog = format!(
         "rel seen(path: file).\nseen(path) <- scan(\"WORK\", \"src/**/*.ts\", path, rev).\n{}",
-        oracle_parity::SITE_PICK_TAIL);
+        oracle_parity::SITE_PICK_TAIL
+    );
     std::fs::write(tmp.join("parity.dl"), &prog).unwrap();
     let out = Command::new(DL)
         .arg(tmp.join("parity.dl"))
@@ -79,20 +92,34 @@ fn ts_call_resolution_parity_vs_scip() {
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .env_remove("SPREFA_SCIP_INDEX")
         .current_dir(&tmp)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     let stats = oracle_parity::score_parity(&index, &tmp, "src/", &stdout);
     assert!(stats.total_sites > 0, "no call sites extracted:\n{stdout}");
-    assert!(stats.denom() > 0, "no scip-confirmable call sites; oracle can't score");
+    assert!(
+        stats.denom() > 0,
+        "no scip-confirmable call sites; oracle can't score"
+    );
 
-    eprintln!("[oracle:ts-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
-        stats.confirmed, stats.wrong, stats.bare, stats.multi);
-    eprintln!("[oracle:ts-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
-        stats.parity() * 100.0, stats.precision());
-    for ex in &stats.wrong_examples { eprintln!("[oracle:ts-parity] wrong: {ex}"); }
+    eprintln!(
+        "[oracle:ts-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
+        stats.confirmed, stats.wrong, stats.bare, stats.multi
+    );
+    eprintln!(
+        "[oracle:ts-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
+        stats.parity() * 100.0,
+        stats.precision()
+    );
+    for ex in &stats.wrong_examples {
+        eprintln!("[oracle:ts-parity] wrong: {ex}");
+    }
     assert!(stats.confirmed > 0, "zero confirmed resolutions");
-    assert!(stats.precision() >= 0.95,
+    assert!(
+        stats.precision() >= 0.95,
         "resolver is buying coverage with wrong joins: precision {:.3} < 0.95; {:?}",
-        stats.precision(), stats.wrong_examples);
+        stats.precision(),
+        stats.wrong_examples
+    );
 }

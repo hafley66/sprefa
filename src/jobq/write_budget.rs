@@ -72,7 +72,10 @@ impl WriteBudget {
         WriteBudget {
             bytes_per_window: bytes_per_window.max(1),
             job_estimate_bytes: job_estimate_bytes.max(1),
-            state: Mutex::new(WindowState { window_start: now_secs(), spent: 0 }),
+            state: Mutex::new(WindowState {
+                window_start: now_secs(),
+                spent: 0,
+            }),
         }
     }
 
@@ -129,13 +132,19 @@ mod tests {
         assert_eq!(budget.deferral_until(now), None, "fresh window admits");
         budget.record_job();
         budget.record_job();
-        assert_eq!(budget.deferral_until(now), None, "two of three spent still admits");
+        assert_eq!(
+            budget.deferral_until(now),
+            None,
+            "two of three spent still admits"
+        );
         budget.record_job();
         let deferred = budget.deferral_until(now);
         assert!(deferred.is_some(), "spent budget defers");
         let resume = deferred.unwrap();
-        assert!(resume > now && resume <= now + WINDOW_SECS,
-            "deferral lands at the next window boundary ({resume} vs now {now})");
+        assert!(
+            resume > now && resume <= now + WINDOW_SECS,
+            "deferral lands at the next window boundary ({resume} vs now {now})"
+        );
     }
 
     #[test]
@@ -146,8 +155,11 @@ mod tests {
             let mut st = budget.state.lock().unwrap();
             st.window_start -= 2 * WINDOW_SECS; // age the window artificially
         }
-        assert_eq!(budget.deferral_until(now_secs()), None,
-            "a rolled window starts with zero spend");
+        assert_eq!(
+            budget.deferral_until(now_secs()),
+            None,
+            "a rolled window starts with zero spend"
+        );
     }
 
     #[test]

@@ -54,12 +54,17 @@ fn fresh_engine(dir: &Path) -> (Engine, sprefa_v5::ast::Program) {
 }
 
 fn append_flag(dir: &Path, token: &str) {
-    let mut flag = fs::OpenOptions::new().append(true).open(dir.join("flag.txt")).unwrap();
+    let mut flag = fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join("flag.txt"))
+        .unwrap();
     writeln!(flag, "{token}").unwrap();
 }
 
 fn wal_bytes(dir: &Path) -> u64 {
-    fs::metadata(dir.join("db-wal")).map(|meta| meta.len()).unwrap_or(0)
+    fs::metadata(dir.join("db-wal"))
+        .map(|meta| meta.len())
+        .unwrap_or(0)
 }
 
 /// THE fail-pre-fix receipt. A tick whose changed input re-derives
@@ -74,11 +79,16 @@ fn unchanged_rederive_writes_zero_wal_bytes() {
     let (mut eng, prog) = fresh_engine(&d);
 
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.count_rows("word_pair").unwrap(), 160_000, "cold tick derives the pair table");
+    assert_eq!(
+        eng.count_rows("word_pair").unwrap(),
+        160_000,
+        "cold tick derives the pair table"
+    );
     assert_eq!(eng.count_rows("marker").unwrap(), 1);
 
     // Zero the WAL so tick 2's write churn is the only thing in it.
-    eng.query_sql("PRAGMA wal_checkpoint(TRUNCATE)", &[]).unwrap();
+    eng.query_sql("PRAGMA wal_checkpoint(TRUNCATE)", &[])
+        .unwrap();
     assert_eq!(wal_bytes(&d), 0, "checkpoint TRUNCATE must zero the WAL");
 
     // The storm input: flag.txt moves (flag_word gains a row), but marker
@@ -86,7 +96,11 @@ fn unchanged_rederive_writes_zero_wal_bytes() {
     append_flag(&d, "f_more");
     eng.tick(&prog, true).unwrap();
 
-    assert_eq!(eng.count_rows("word_pair").unwrap(), 160_000, "identical re-derivation kept the rows");
+    assert_eq!(
+        eng.count_rows("word_pair").unwrap(),
+        160_000,
+        "identical re-derivation kept the rows"
+    );
     assert_eq!(eng.count_rows("marker").unwrap(), 1);
 
     let churn = wal_bytes(&d);
@@ -116,30 +130,49 @@ fn skip_is_attributed_and_changed_inputs_still_rewrite() {
 
     // Cold tick: live tables are empty, so nothing can be skipped.
     eng.tick(&prog, true).unwrap();
-    assert!(eng.last_derived_skipped.is_empty(),
+    assert!(
+        eng.last_derived_skipped.is_empty(),
         "a cold tick fills empty tables, nothing is skippable, got {:?}",
-        eng.last_derived_skipped);
+        eng.last_derived_skipped
+    );
 
     // No-op re-derive: both affected rels run and both skip the write.
     append_flag(&d, "f_more");
     eng.tick(&prog, true).unwrap();
     let mut rebuilt = eng.last_derived_rebuilt.clone();
     rebuilt.sort();
-    assert_eq!(rebuilt, vec!["marker".to_string(), "word_pair".to_string()],
-        "the flag edit reaches both derived rels");
+    assert_eq!(
+        rebuilt,
+        vec!["marker".to_string(), "word_pair".to_string()],
+        "the flag edit reaches both derived rels"
+    );
     let mut skipped = eng.last_derived_skipped.clone();
     skipped.sort();
-    assert_eq!(skipped, vec!["marker".to_string(), "word_pair".to_string()],
-        "identical re-derivations must be attributed as skipped");
+    assert_eq!(
+        skipped,
+        vec!["marker".to_string(), "word_pair".to_string()],
+        "identical re-derivations must be attributed as skipped"
+    );
 
     // A change that MOVES the derived contents still lands: no f_ token left
     // means marker (and so word_pair) derive to empty.
     fs::write(d.join("flag.txt"), "nothing here\n").unwrap();
     eng.tick(&prog, true).unwrap();
-    assert!(eng.last_derived_skipped.is_empty(),
-        "a moved rowset must rewrite, not skip, got {:?}", eng.last_derived_skipped);
-    assert_eq!(eng.count_rows("marker").unwrap(), 0, "marker re-derived to empty");
-    assert_eq!(eng.count_rows("word_pair").unwrap(), 0, "word_pair re-derived to empty");
+    assert!(
+        eng.last_derived_skipped.is_empty(),
+        "a moved rowset must rewrite, not skip, got {:?}",
+        eng.last_derived_skipped
+    );
+    assert_eq!(
+        eng.count_rows("marker").unwrap(),
+        0,
+        "marker re-derived to empty"
+    );
+    assert_eq!(
+        eng.count_rows("word_pair").unwrap(),
+        0,
+        "word_pair re-derived to empty"
+    );
 }
 
 /// tick_paths (the watcher path) shares `rebuild_derived`, so the same edit
@@ -156,7 +189,10 @@ fn tick_paths_shares_the_skip() {
     eng.tick_paths(&prog, &changed, true).unwrap();
     let mut skipped = eng.last_derived_skipped.clone();
     skipped.sort();
-    assert_eq!(skipped, vec!["marker".to_string(), "word_pair".to_string()],
-        "the incremental path must skip identical re-derivations too");
+    assert_eq!(
+        skipped,
+        vec!["marker".to_string(), "word_pair".to_string()],
+        "the incremental path must skip identical re-derivations too"
+    );
     assert_eq!(eng.count_rows("word_pair").unwrap(), 160_000);
 }

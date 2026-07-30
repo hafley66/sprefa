@@ -223,9 +223,20 @@ pub(super) fn assert_diff_plans(db: &Db) -> Result<(), StageError> {
     )
 }
 
-fn assert_plan(db: &Db, label: &'static str, sql: &str, required: &[&str]) -> Result<(), StageError> {
+fn assert_plan(
+    db: &Db,
+    label: &'static str,
+    sql: &str,
+    required: &[&str],
+) -> Result<(), StageError> {
     let explain = format!("EXPLAIN QUERY PLAN {sql}");
-    let details: Vec<String> = db.query_rows("_explain", &explain, &[], |row| Ok(row.get::<_, String>(3)?))?;
+    let details: Vec<String> =
+        db.query_rows(
+            "_explain",
+            &explain,
+            &[],
+            |row| Ok(row.get::<_, String>(3)?),
+        )?;
     let upper: Vec<String> = details
         .iter()
         .map(|line| line.to_ascii_uppercase())

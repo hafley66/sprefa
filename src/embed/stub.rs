@@ -35,8 +35,8 @@ fn embed_one(text: &str) -> Vec<f32> {
         .filter(|t| !t.is_empty())
     {
         let h = blake3::hash(tok.to_ascii_lowercase().as_bytes());
-        let bucket = (u64::from_le_bytes(h.as_bytes()[0..8].try_into().unwrap())
-            % DIM as u64) as usize;
+        let bucket =
+            (u64::from_le_bytes(h.as_bytes()[0..8].try_into().unwrap()) % DIM as u64) as usize;
         v[bucket] += 1.0;
     }
     l2_normalize(&mut v);

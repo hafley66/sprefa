@@ -24,10 +24,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn check(dir: &Path, prog: &str) -> (i32, String) {
@@ -36,11 +39,16 @@ fn check(dir: &Path, prog: &str) -> (i32, String) {
         .args(["--check", dir.join("p.dl").to_str().unwrap()])
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl --check");
-    (out.status.code().unwrap_or(-1),
-     format!("{}{}",
-         String::from_utf8_lossy(&out.stdout),
-         String::from_utf8_lossy(&out.stderr)))
+        .output()
+        .expect("run dl --check");
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
 }
 
 /// Extract the single-column value rows printed under `? rel =>`.
@@ -49,8 +57,12 @@ fn payload_rows(out: &str, rel: &str) -> Vec<String> {
     let mut rows = Vec::new();
     for line in block.lines().skip(1) {
         let l = line.trim();
-        if l.is_empty() || l.starts_with('(') { continue; }
-        if l.starts_with('?') { break; }
+        if l.is_empty() || l.starts_with('(') {
+            continue;
+        }
+        if l.starts_with('?') {
+            break;
+        }
         rows.push(l.to_string());
     }
     rows
@@ -84,23 +96,32 @@ order_json(order_id, json_object("id", order_id, "items", json(items))) <-
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
     // Every payload row parses as valid json AND nests the array as json (not a
     // string). Rows print as `order_id<TAB>payload`; take the payload column.
-    let rows: Vec<String> = payload_rows(&out, "order_json").iter()
+    let rows: Vec<String> = payload_rows(&out, "order_json")
+        .iter()
         .filter_map(|l| l.split('\t').nth(1).map(|s| s.to_string()))
         .collect();
     assert!(!rows.is_empty(), "no json rows in:\n{out}");
     let mut saw_a = false;
     for row in &rows {
-        let v: serde_json::Value = serde_json::from_str(row)
-            .unwrap_or_else(|e| panic!("invalid json `{row}`: {e}"));
+        let v: serde_json::Value =
+            serde_json::from_str(row).unwrap_or_else(|e| panic!("invalid json `{row}`: {e}"));
         assert!(v.get("id").is_some(), "object has id: {row}");
         let items = v.get("items").expect("items key");
-        assert!(items.is_array(), "items nested as a JSON array, not a string: {row}");
+        assert!(
+            items.is_array(),
+            "items nested as a JSON array, not a string: {row}"
+        );
         if v["id"] == serde_json::json!("A") {
             saw_a = true;
-            let mut names: Vec<String> = items.as_array().unwrap().iter()
-                .map(|x| x.as_str().unwrap().to_string()).collect();
+            let mut names: Vec<String> = items
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|x| x.as_str().unwrap().to_string())
+                .collect();
             let mut expect = vec!["gadget".to_string(), "widget".to_string()];
-            names.sort(); expect.sort();
+            names.sort();
+            expect.sort();
             assert_eq!(names, expect, "order A collects both items");
         }
     }
@@ -128,10 +149,16 @@ arr(g, json_group_array(name)) <- item(g, name).
     assert_eq!(c2, 0);
     let r1 = payload_rows(&out1, "arr");
     let r2 = payload_rows(&out2, "arr");
-    assert_eq!(r1, r2, "aggregate output must be byte-identical across runs");
+    assert_eq!(
+        r1, r2,
+        "aggregate output must be byte-identical across runs"
+    );
     // And the array is sorted (deterministic order), not insertion order.
-    assert!(r1.iter().any(|l| l.contains(r#"["alpha","bravo","charlie","delta"]"#)),
-        "array is ORDER BY-sorted: {r1:?}");
+    assert!(
+        r1.iter()
+            .any(|l| l.contains(r#"["alpha","bravo","charlie","delta"]"#)),
+        "array is ORDER BY-sorted: {r1:?}"
+    );
 }
 
 /// A json aggregate lands a text json string; heading an int column is a
@@ -194,17 +221,25 @@ fn example_json_out_runs() {
         .arg(&ex)
         .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(&d)
-        .output().expect("run example");
+        .output()
+        .expect("run example");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code().unwrap_or(-1), 0, "example failed:\n{stdout}\n{stderr}");
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "example failed:\n{stdout}\n{stderr}"
+    );
     // The catalog_json row is one big JSON array of per-group objects.
     let cat = payload_rows(&stdout, "catalog_json");
     assert_eq!(cat.len(), 1, "one catalog_json row:\n{stdout}");
     let v: serde_json::Value = serde_json::from_str(&cat[0])
         .unwrap_or_else(|e| panic!("catalog_json invalid: {e}\n{}", cat[0]));
     assert!(v.is_array(), "catalog_json is a JSON array");
-    let core = v.as_array().unwrap().iter()
+    let core = v
+        .as_array()
+        .unwrap()
+        .iter()
         .find(|o| o["group"] == serde_json::json!("core"))
         .expect("a core group object");
     assert!(core["rels"].is_array(), "rels nested as an array");

@@ -38,9 +38,11 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .current_dir(dir)
         .output()
         .expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const SEEN_TS: &str = r#"
@@ -53,18 +55,28 @@ seen(path) <- scan("WORK", "src/**/*.ts", path, rev).
 #[test]
 fn template_built_route_splits_into_ordered_pieces() {
     let dir = sandbox("route");
-    fs::write(dir.join("src/routes.ts"),
+    fs::write(
+        dir.join("src/routes.ts"),
         "// routes module\n\
-         export const userPostsRoute = `GET /users/${userId}/posts`;\n").unwrap();
+         export const userPostsRoute = `GET /users/${userId}/posts`;\n",
+    )
+    .unwrap();
     let prog = format!("{SEEN_TS}? template_parts(file, line, node, idx, kind, text).\n");
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
 
-    let mut rows: Vec<(String, i64, String, i64, String, String)> = data_rows(&out).into_iter()
+    let mut rows: Vec<(String, i64, String, i64, String, String)> = data_rows(&out)
+        .into_iter()
         .map(|cols| {
             assert_eq!(cols.len(), 6, "row shape: {cols:?}");
-            (cols[0].clone(), cols[1].parse().unwrap(), cols[2].clone(),
-             cols[3].parse().unwrap(), cols[4].clone(), cols[5].clone())
+            (
+                cols[0].clone(),
+                cols[1].parse().unwrap(),
+                cols[2].clone(),
+                cols[3].parse().unwrap(),
+                cols[4].clone(),
+                cols[5].clone(),
+            )
         })
         .collect();
     assert_eq!(rows.len(), 3, "{out}");
@@ -76,13 +88,25 @@ fn template_built_route_splits_into_ordered_pieces() {
     assert!(node_id.ends_with(":template"), "{node_id}");
     assert!(node_id.starts_with("src/routes.ts:"), "{node_id}");
     for r in &rows {
-        assert_eq!(r.2, node_id, "every piece of one occurrence shares node: {out}");
+        assert_eq!(
+            r.2, node_id,
+            "every piece of one occurrence shares node: {out}"
+        );
         assert_eq!(r.0, "src/routes.ts");
         assert_eq!(r.1, 2, "1-based line of the template literal: {out}");
     }
-    assert_eq!((rows[0].3, rows[0].4.as_str(), rows[0].5.as_str()), (0, "static", "GET /users/"));
-    assert_eq!((rows[1].3, rows[1].4.as_str(), rows[1].5.as_str()), (1, "expr", "userId"));
-    assert_eq!((rows[2].3, rows[2].4.as_str(), rows[2].5.as_str()), (2, "static", "/posts"));
+    assert_eq!(
+        (rows[0].3, rows[0].4.as_str(), rows[0].5.as_str()),
+        (0, "static", "GET /users/")
+    );
+    assert_eq!(
+        (rows[1].3, rows[1].4.as_str(), rows[1].5.as_str()),
+        (1, "expr", "userId")
+    );
+    assert_eq!(
+        (rows[2].3, rows[2].4.as_str(), rows[2].5.as_str()),
+        (2, "static", "/posts")
+    );
 }
 
 /// ACCEPT (the mapping use case): a template-built piece joins a rel of known
@@ -90,9 +114,12 @@ fn template_built_route_splits_into_ordered_pieces() {
 #[test]
 fn template_static_piece_joins_known_route_table() {
     let dir = sandbox("join");
-    fs::write(dir.join("src/routes.ts"),
+    fs::write(
+        dir.join("src/routes.ts"),
         "export const userPostsRoute = `GET /users/${userId}/posts`;\n\
-         export const orphanRoute = `DELETE /widgets/${widgetId}`;\n").unwrap();
+         export const orphanRoute = `DELETE /widgets/${widgetId}`;\n",
+    )
+    .unwrap();
     let prog = format!(
         "{SEEN_TS}\
          rel known_route(prefix: text).\n\
@@ -120,8 +147,11 @@ fn template_static_piece_joins_known_route_table() {
 #[test]
 fn template_node_joins_df_lit_and_df_edge() {
     let dir = sandbox("df_join");
-    fs::write(dir.join("src/greet.ts"),
-        "const name = \"world\";\nconst greeting = `hi ${name}`;\n").unwrap();
+    fs::write(
+        dir.join("src/greet.ts"),
+        "const name = \"world\";\nconst greeting = `hi ${name}`;\n",
+    )
+    .unwrap();
 
     // every piece of the `hi ${name}` occurrence joins ITS OWN df_lit row
     // (the raw source, hole intact, kind = "template").
@@ -137,7 +167,9 @@ fn template_node_joins_df_lit_and_df_edge() {
     assert_eq!(code, 0, "stderr:\n{err}");
     let lit_join = data_rows(&out);
     assert!(
-        lit_join.iter().any(|r| r[0] == "src/greet.ts" && r[4] == "template" && r[3].contains("${name}")),
+        lit_join
+            .iter()
+            .any(|r| r[0] == "src/greet.ts" && r[4] == "template" && r[3].contains("${name}")),
         "{out}"
     );
 
@@ -155,7 +187,9 @@ fn template_node_joins_df_lit_and_df_edge() {
     assert_eq!(code, 0, "stderr:\n{err}");
     let edge_join = data_rows(&out);
     assert!(
-        edge_join.iter().any(|r| r[0] == "src/greet.ts" && r[3] == "var_read"),
+        edge_join
+            .iter()
+            .any(|r| r[0] == "src/greet.ts" && r[3] == "var_read"),
         "the template's node must be a df_edge target for the interpolated var: {out}"
     );
 }
@@ -168,8 +202,12 @@ fn rel_decl_of_template_parts_bails() {
     let prog = "rel template_parts(file: text, line: int, node: text, idx: int, kind: text, text: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("reserved-name") && err.contains("relation `template_parts`")
-        && err.contains("pick another name"), "{err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `template_parts`")
+            && err.contains("pick another name"),
+        "{err}"
+    );
 }
 
 /// REJECT: querying `template_parts` at the wrong arity surfaces the named
@@ -184,11 +222,18 @@ fn rel_decl_of_template_parts_bails() {
 #[test]
 fn wrong_arity_query_surfaces_named_diagnostic() {
     let dir = sandbox("arity");
-    fs::write(dir.join("src/routes.ts"),
-        "export const userPostsRoute = `GET /users/${userId}/posts`;\n").unwrap();
-    let prog = format!("{SEEN_TS}? template_parts(sourcePath, sourceLine, occurrenceNode, pieceIndex).\n");
+    fs::write(
+        dir.join("src/routes.ts"),
+        "export const userPostsRoute = `GET /users/${userId}/posts`;\n",
+    )
+    .unwrap();
+    let prog =
+        format!("{SEEN_TS}? template_parts(sourcePath, sourceLine, occurrenceNode, pieceIndex).\n");
     let (_code, out, err) = run(&dir, &prog);
-    assert!(err.contains("template_parts") && err.contains("expects 6 cols, got 4"), "{err}");
+    assert!(
+        err.contains("template_parts") && err.contains("expects 6 cols, got 4"),
+        "{err}"
+    );
     // never a silent no-op: no "? template_parts => ..." header/rows printed.
     assert!(!out.contains("? template_parts"), "{out}");
 }

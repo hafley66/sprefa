@@ -38,7 +38,10 @@ const REL_COLS: &[(&str, &[&str])] = &[
     ("call_edge", &["caller", "callee", "kind"]),
     ("call_edge_rev", &["caller", "callee", "kind", "rev"]),
     ("call_def", &["repo", "sym", "kind", "file", "line", "end"]),
-    ("call_def_rev", &["repo", "sym", "kind", "file", "line", "end", "rev"]),
+    (
+        "call_def_rev",
+        &["repo", "sym", "kind", "file", "line", "end", "rev"],
+    ),
     ("call_name", &["sym", "name"]),
 ];
 
@@ -72,12 +75,21 @@ fn value_to_string(v: &Value) -> String {
 fn dump_call_rels(engine: &Engine) -> BTreeMap<&'static str, Vec<String>> {
     let mut dump = BTreeMap::new();
     for &(rel, cols) in REL_COLS {
-        let select = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!("SELECT {select} FROM rel_{rel}_txt");
         let rows = engine.query_sql(&sql, &[]).unwrap();
         let mut lines: Vec<String> = rows
             .into_iter()
-            .map(|row| row.iter().map(cell_to_string).collect::<Vec<_>>().join("\t"))
+            .map(|row| {
+                row.iter()
+                    .map(cell_to_string)
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
             .collect();
         lines.sort();
         dump.insert(rel, lines);
@@ -89,12 +101,21 @@ fn dump_call_rels(engine: &Engine) -> BTreeMap<&'static str, Vec<String>> {
 fn dump_call_rels_base(engine: &Engine) -> BTreeMap<&'static str, Vec<String>> {
     let mut dump = BTreeMap::new();
     for &(rel, cols) in REL_COLS {
-        let select = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!("SELECT {select} FROM rel_{rel}");
         let rows = engine.query_sql(&sql, &[]).unwrap();
         let mut lines: Vec<String> = rows
             .into_iter()
-            .map(|row| row.iter().map(cell_to_string).collect::<Vec<_>>().join("\t"))
+            .map(|row| {
+                row.iter()
+                    .map(cell_to_string)
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
             .collect();
         lines.sort();
         dump.insert(rel, lines);
@@ -120,10 +141,19 @@ fn assert_matches_oracle(
         if got == want {
             continue;
         }
-        let detail = match got.iter().zip(want.iter()).enumerate().find(|(_, (g, w))| g != w) {
+        let detail = match got
+            .iter()
+            .zip(want.iter())
+            .enumerate()
+            .find(|(_, (g, w))| g != w)
+        {
             Some((i, (g, w))) => format!("row {i}: incremental {g:?}, oracle {w:?}"),
             None if got.len() > want.len() => {
-                format!("extra incremental row {}: {:?}", want.len(), got[want.len()])
+                format!(
+                    "extra incremental row {}: {:?}",
+                    want.len(),
+                    got[want.len()]
+                )
             }
             None => format!("missing oracle row {}: {:?}", got.len(), want[got.len()]),
         };
@@ -150,17 +180,35 @@ fn assert_memo_matches_rel(
             .unwrap_or_else(|| panic!("{scenario}: router memo for `{rel}` should be populated"));
         let mut memo_lines: Vec<String> = memo_rows
             .iter()
-            .map(|row| row.iter().map(value_to_string).collect::<Vec<_>>().join("\t"))
+            .map(|row| {
+                row.iter()
+                    .map(value_to_string)
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
             .collect();
         memo_lines.sort();
         let rel_lines = &rels[rel];
         if memo_lines != *rel_lines {
-            let detail = match memo_lines.iter().zip(rel_lines.iter()).enumerate().find(|(_, (g, w))| g != w) {
+            let detail = match memo_lines
+                .iter()
+                .zip(rel_lines.iter())
+                .enumerate()
+                .find(|(_, (g, w))| g != w)
+            {
                 Some((i, (g, w))) => format!("row {i}: memo {g:?}, rel {w:?}"),
                 None if memo_lines.len() > rel_lines.len() => {
-                    format!("extra memo row {}: {:?}", rel_lines.len(), memo_lines[rel_lines.len()])
+                    format!(
+                        "extra memo row {}: {:?}",
+                        rel_lines.len(),
+                        memo_lines[rel_lines.len()]
+                    )
                 }
-                None => format!("missing rel row {}: {:?}", memo_lines.len(), rel_lines[memo_lines.len()]),
+                None => format!(
+                    "missing rel row {}: {:?}",
+                    memo_lines.len(),
+                    rel_lines[memo_lines.len()]
+                ),
             };
             panic!(
                 "{scenario}: router memo for `{rel}` diverges from public rel \
@@ -236,25 +284,45 @@ impl SyntheticTree {
             next_fn_id: 0,
         }
     }
-
 }
 
 fn seed_tree() -> SyntheticTree {
     let mut tree = SyntheticTree::empty();
     apply_op(&mut tree, &Op::AddFile);
-    apply_op(&mut tree, &Op::AddFn { file_idx: 0, callee_idx: 100 });
+    apply_op(
+        &mut tree,
+        &Op::AddFn {
+            file_idx: 0,
+            callee_idx: 100,
+        },
+    );
     tree
 }
 
 #[derive(Clone, Debug)]
 enum Op {
     AddFile,
-    DeleteFile { file_idx: usize },
-    AddFn { file_idx: usize, callee_idx: usize },
-    DeleteFn { fn_idx: usize },
-    RetargetCall { fn_idx: usize, call_idx: usize, new_callee_idx: usize },
-    RenameFn { fn_idx: usize },
-    NoOpTouch { file_idx: usize },
+    DeleteFile {
+        file_idx: usize,
+    },
+    AddFn {
+        file_idx: usize,
+        callee_idx: usize,
+    },
+    DeleteFn {
+        fn_idx: usize,
+    },
+    RetargetCall {
+        fn_idx: usize,
+        call_idx: usize,
+        new_callee_idx: usize,
+    },
+    RenameFn {
+        fn_idx: usize,
+    },
+    NoOpTouch {
+        file_idx: usize,
+    },
 }
 
 fn render_func(tree: &SyntheticTree, fn_id: FnId) -> String {
@@ -280,7 +348,8 @@ fn render_file(tree: &SyntheticTree, file: &File) -> String {
 
 fn write_tree_to_disk(tree: &SyntheticTree, dir: &Path) {
     let src_dir = dir.join("src");
-    let keep: std::collections::HashSet<&str> = tree.files.iter().map(|f| f.name.as_str()).collect();
+    let keep: std::collections::HashSet<&str> =
+        tree.files.iter().map(|f| f.name.as_str()).collect();
     for entry in fs::read_dir(&src_dir).unwrap() {
         let entry = entry.unwrap();
         let path = entry.path();
@@ -302,7 +371,11 @@ fn apply_op(tree: &mut SyntheticTree, op: &Op) {
         Op::AddFile => {
             let name = format!("m{}.rs", tree.next_file_id);
             tree.next_file_id += 1;
-            tree.files.push(File { name, fns: Vec::new(), touch: 0 });
+            tree.files.push(File {
+                name,
+                fns: Vec::new(),
+                touch: 0,
+            });
         }
         Op::DeleteFile { file_idx } => {
             if file_idx >= tree.files.len() {
@@ -317,7 +390,10 @@ fn apply_op(tree: &mut SyntheticTree, op: &Op) {
                 func.calls.retain(|c| !removed_ids.contains(c));
             }
         }
-        Op::AddFn { file_idx, callee_idx } => {
+        Op::AddFn {
+            file_idx,
+            callee_idx,
+        } => {
             if file_idx >= tree.files.len() {
                 return;
             }
@@ -349,7 +425,11 @@ fn apply_op(tree: &mut SyntheticTree, op: &Op) {
                 func.calls.retain(|c| *c != id);
             }
         }
-        Op::RetargetCall { fn_idx, call_idx, new_callee_idx } => {
+        Op::RetargetCall {
+            fn_idx,
+            call_idx,
+            new_callee_idx,
+        } => {
             if fn_idx >= tree.funcs.len() || new_callee_idx >= tree.funcs.len() {
                 return;
             }
@@ -445,10 +525,18 @@ fn run_fixpoint_property(script: &[Op]) {
     let base_before = dump_call_rels_base(&engine);
 
     let rerun = engine.call_router_rerun_names(&HashSet::new());
-    assert!(rerun.is_empty(), "empty changed-set must rerun no warm families: {rerun:?}");
+    assert!(
+        rerun.is_empty(),
+        "empty changed-set must rerun no warm families: {rerun:?}"
+    );
 
-    let rerun = engine.flip_call_rels_via_router_test(&HashSet::new()).unwrap();
-    assert!(rerun.is_empty(), "empty changed-set flip must rerun nothing: {rerun:?}");
+    let rerun = engine
+        .flip_call_rels_via_router_test(&HashSet::new())
+        .unwrap();
+    assert!(
+        rerun.is_empty(),
+        "empty changed-set flip must rerun nothing: {rerun:?}"
+    );
 
     let after = dump_call_rels(&engine);
     let base_after = dump_call_rels_base(&engine);
@@ -518,7 +606,13 @@ fn empty_input_rel_still_reruns_the_family_after_insert() {
     // Step 2: add f1 to the surviving m1.rs. `_call_def` goes empty -> populated.
     // The family reruns only if the footprint recorded at step 1 still names
     // `_call_def` despite it having had no rows to scan.
-    apply_op(&mut tree, &Op::AddFn { file_idx: 0, callee_idx: 0 });
+    apply_op(
+        &mut tree,
+        &Op::AddFn {
+            file_idx: 0,
+            callee_idx: 0,
+        },
+    );
     write_tree_to_disk(&tree, dir.path());
     engine.tick(&prog, true).unwrap();
 

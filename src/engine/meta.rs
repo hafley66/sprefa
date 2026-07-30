@@ -165,17 +165,21 @@ impl Engine {
                 "_carry_%",
             ])?;
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "view") {
-                self.db.exec_on("_meta", &format!("DROP VIEW IF EXISTS \"{name}\""))?;
+                self.db
+                    .exec_on("_meta", &format!("DROP VIEW IF EXISTS \"{name}\""))?;
             }
             for (name, _) in objects.iter().filter(|(_, kind)| kind == "table") {
-                self.db.exec_on("_meta", &format!("DROP TABLE IF EXISTS \"{name}\""))?;
+                self.db
+                    .exec_on("_meta", &format!("DROP TABLE IF EXISTS \"{name}\""))?;
             }
             if self.column_exists("_reldigest", "rel")? {
                 self.db.exec_on("_reldigest", "DELETE FROM _reldigest")?;
             }
-            self.db.exec_on("_extract_digest", "DROP TABLE IF EXISTS _extract_digest")?;
+            self.db
+                .exec_on("_extract_digest", "DROP TABLE IF EXISTS _extract_digest")?;
             if self.column_exists("_derived_complete", "rel")? {
-                self.db.exec_on("_derived_complete", "DELETE FROM _derived_complete")?;
+                self.db
+                    .exec_on("_derived_complete", "DELETE FROM _derived_complete")?;
             }
             if self.column_exists("_shapes", "shape")? {
                 self.db.exec_on("_shapes", "DELETE FROM _shapes")?;
@@ -183,7 +187,8 @@ impl Engine {
             if self.column_exists("_stmt_ms", "rel")? {
                 self.db.exec_on("_stmt_ms", "DELETE FROM _stmt_ms")?;
             }
-            self.db.exec_on("_pragma", &format!("PRAGMA user_version = {SCHEMA_EPOCH}"))?;
+            self.db
+                .exec_on("_pragma", &format!("PRAGMA user_version = {SCHEMA_EPOCH}"))?;
         }
         // Intern-key migration (2026-07-11): `_strings.id` / `_where_bytes.string_id`
         // move from TEXT (decimal StringId::Display) to INTEGER (StringId::sqlite,
@@ -647,9 +652,11 @@ impl Engine {
         // the column — then drop the column itself on a db that still has it.
         // Idempotent: a db already migrated (or freshly created off the DDL
         // above, which no longer declares either) hits neither statement.
-        self.db.exec_on("_strings", "DROP INDEX IF EXISTS _strings_norm_idx")?;
+        self.db
+            .exec_on("_strings", "DROP INDEX IF EXISTS _strings_norm_idx")?;
         if self.column_exists("_strings", "norm")? {
-            self.db.exec_on("_strings", "ALTER TABLE _strings DROP COLUMN norm")?;
+            self.db
+                .exec_on("_strings", "ALTER TABLE _strings DROP COLUMN norm")?;
         }
         // `_sym_dict` now exists: load the dense-surrogate allocator from it
         // BEFORE any tick runs `sprf_sym_intern`, so a warm db keeps stable ids
@@ -1014,14 +1021,12 @@ impl Engine {
     }
 
     pub(crate) fn load_rel_digest(&self, rel: &str) -> Result<Option<[u8; 32]>> {
-        let hex: Option<String> = self
-            .db
-            .query_opt(
-                "_reldigest",
-                "SELECT digest FROM _reldigest WHERE rel = ?1",
-                &[rel.into()],
-                |r| Ok(r.get::<_, String>(0)?),
-            )?;
+        let hex: Option<String> = self.db.query_opt(
+            "_reldigest",
+            "SELECT digest FROM _reldigest WHERE rel = ?1",
+            &[rel.into()],
+            |r| Ok(r.get::<_, String>(0)?),
+        )?;
         Ok(hex.and_then(|h| hex_to_32(&h).ok()))
     }
 
@@ -1146,7 +1151,12 @@ impl Engine {
         if !stale.is_empty() {
             attributable = false; // a rel lost all its rules; not a current head
         }
-        Ok(DerivedShapeDiff { moved, attributable, pending, stale })
+        Ok(DerivedShapeDiff {
+            moved,
+            attributable,
+            pending,
+            stale,
+        })
     }
 
     /// All `_reldigest` rows under a key prefix, prefix stripped. One query,
@@ -1181,7 +1191,10 @@ impl Engine {
             .map(|(k, d)| {
                 vec![
                     k.clone().into(),
-                    d.iter().map(|b| format!("{b:02x}")).collect::<String>().into(),
+                    d.iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                        .into(),
                 ]
             })
             .collect();
@@ -1202,10 +1215,12 @@ impl Engine {
         }
         self.db.exec_in_chunks(
             "_reldigest",
-            |n| format!(
-                "DELETE FROM _reldigest WHERE rel IN ({})",
-                crate::db::holes(n)
-            ),
+            |n| {
+                format!(
+                    "DELETE FROM _reldigest WHERE rel IN ({})",
+                    crate::db::holes(n)
+                )
+            },
             &[],
             &keys.iter().map(|k| k.as_str().into()).collect::<Vec<_>>(),
         )?;
@@ -1492,14 +1507,12 @@ impl Engine {
     /// The current `@next` generation (`_carry_meta.tx`). 0 on a fresh db.
 
     pub(crate) fn current_tx(&self) -> Result<i64> {
-        Ok(self
-            .db
-            .query_one(
-                "_carry_meta",
-                "SELECT tx FROM _carry_meta WHERE k = 'tx'",
-                &[],
-                |r| Ok(r.get::<_, i64>(0)?),
-            )?)
+        Ok(self.db.query_one(
+            "_carry_meta",
+            "SELECT tx FROM _carry_meta WHERE k = 'tx'",
+            &[],
+            |r| Ok(r.get::<_, i64>(0)?),
+        )?)
     }
 
     /// Advance the carry clock to `tx` (called once per tick after staging).
@@ -1614,7 +1627,8 @@ impl Engine {
         }
         // One flush per source-rel spine insert: O(source rels this tick), not
         // per row.
-        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")
+        self.db
+            .flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")
     }
 
     /// Batch located string occurrences into `_where_bytes`. Each row says
@@ -1665,7 +1679,8 @@ impl Engine {
         }
         // One flush per staged where-bytes batch (source located-slice text):
         // O(source batches this tick), not per row.
-        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
+        self.db
+            .flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
         let rows: Vec<Vec<Value>> = by_id.into_values().collect();
         self.db.insert_rows(
             "_where_bytes",

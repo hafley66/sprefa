@@ -60,7 +60,12 @@ fn sections(out: &str) -> Vec<String> {
 fn rows(sec: &str) -> Vec<Vec<String>> {
     sec.lines()
         .filter(|l| !l.starts_with("? ") && l.contains('\t') && !l.contains("(0 rows)"))
-        .map(|l| l.trim_start().split('\t').map(|s| s.trim_end().to_string()).collect())
+        .map(|l| {
+            l.trim_start()
+                .split('\t')
+                .map(|s| s.trim_end().to_string())
+                .collect()
+        })
         .collect()
 }
 
@@ -69,7 +74,12 @@ fn node_id(nodes: &[Vec<String>], kind: &str, var: &str, out: &str) -> String {
         .iter()
         .filter(|r| r.len() >= 4 && r[1] == kind && r[2] == var)
         .collect();
-    assert_eq!(hits.len(), 1, "expected one {kind}/{var} node, got {}:\n{out}", hits.len());
+    assert_eq!(
+        hits.len(),
+        1,
+        "expected one {kind}/{var} node, got {}:\n{out}",
+        hits.len()
+    );
     hits[0][0].clone()
 }
 
@@ -109,8 +119,14 @@ fn unmodeled_external_call_propagates_every_arg() {
     let benign = node_id(&nodes, "param", "benign", &out);
     let s = node_id(&nodes, "let_bind", "s", &out);
     // The blanket over-approximation: both args reach the result's consumer.
-    assert!(reach.contains(&(secret.clone(), s.clone())), "secret must reach s unmodeled:\n{out}");
-    assert!(reach.contains(&(benign.clone(), s.clone())), "benign must reach s unmodeled:\n{out}");
+    assert!(
+        reach.contains(&(secret.clone(), s.clone())),
+        "secret must reach s unmodeled:\n{out}"
+    );
+    assert!(
+        reach.contains(&(benign.clone(), s.clone())),
+        "benign must reach s unmodeled:\n{out}"
+    );
 }
 
 #[test]
@@ -126,9 +142,15 @@ fn flow_summary_cuts_unsummarized_slots() {
     let benign = node_id(&nodes, "param", "benign", &out);
     let s = node_id(&nodes, "let_bind", "s", &out);
     // The kept slot still flows ...
-    assert!(reach.contains(&(benign.clone(), s.clone())), "benign (slot 1) must still reach s:\n{out}");
+    assert!(
+        reach.contains(&(benign.clone(), s.clone())),
+        "benign (slot 1) must still reach s:\n{out}"
+    );
     // ... and the DECISIVE negative: the unsummarized slot is cut.
-    assert!(!reach.contains(&(secret.clone(), s.clone())), "secret (slot 0) must NOT reach s under the model:\n{out}");
+    assert!(
+        !reach.contains(&(secret.clone(), s.clone())),
+        "secret (slot 0) must NOT reach s under the model:\n{out}"
+    );
 }
 
 #[test]
@@ -142,8 +164,14 @@ fn flow_sanitizer_cuts_all_arg_flow() {
     let secret = node_id(&nodes, "param", "secret", &out);
     let benign = node_id(&nodes, "param", "benign", &out);
     let s = node_id(&nodes, "let_bind", "s", &out);
-    assert!(!reach.contains(&(secret.clone(), s.clone())), "secret must NOT reach s past a sanitizer:\n{out}");
-    assert!(!reach.contains(&(benign.clone(), s.clone())), "benign must NOT reach s past a sanitizer:\n{out}");
+    assert!(
+        !reach.contains(&(secret.clone(), s.clone())),
+        "secret must NOT reach s past a sanitizer:\n{out}"
+    );
+    assert!(
+        !reach.contains(&(benign.clone(), s.clone())),
+        "benign must NOT reach s past a sanitizer:\n{out}"
+    );
 }
 
 /// PER-CALL-SITE GATE (run per language). One caller invokes TWO callees:
@@ -166,7 +194,11 @@ fn call_sites_do_not_cross_talk_per_language() {
                   fun g(r: Int): Int { val s = r; return s }\n\
                   fun caller(secret: Int, benign: Int) {\n    val x = f(secret)\n    val y = g(benign)\n    val u = x\n    val w = y\n}\n";
 
-    for (lang, ext, srcfile) in [("rust", "rs", rust), ("ts", "ts", ts), ("kotlin", "kt", kotlin)] {
+    for (lang, ext, srcfile) in [
+        ("rust", "rs", rust),
+        ("ts", "ts", ts),
+        ("kotlin", "kt", kotlin),
+    ] {
         let d = sandbox(&format!("persite_{lang}"));
         fs::write(d.join(format!("src/lib.{ext}")), srcfile).unwrap();
         let prog = SUMMARY_PROG_BASE.replace("src/**/*.rs", &format!("src/**/*.{ext}"));
@@ -181,16 +213,40 @@ fn call_sites_do_not_cross_talk_per_language() {
         let w = node_id(&nodes, "let_bind", "w", &out);
 
         // Positives: each call site still crosses into ITS callee and back.
-        assert!(reach.contains(&(secret.clone(), p.clone())), "[{lang}] secret must reach f's p:\n{out}");
-        assert!(reach.contains(&(benign.clone(), r.clone())), "[{lang}] benign must reach g's r:\n{out}");
-        assert!(reach.contains(&(secret.clone(), u.clone())), "[{lang}] secret must round-trip f into u:\n{out}");
-        assert!(reach.contains(&(benign.clone(), w.clone())), "[{lang}] benign must round-trip g into w:\n{out}");
+        assert!(
+            reach.contains(&(secret.clone(), p.clone())),
+            "[{lang}] secret must reach f's p:\n{out}"
+        );
+        assert!(
+            reach.contains(&(benign.clone(), r.clone())),
+            "[{lang}] benign must reach g's r:\n{out}"
+        );
+        assert!(
+            reach.contains(&(secret.clone(), u.clone())),
+            "[{lang}] secret must round-trip f into u:\n{out}"
+        );
+        assert!(
+            reach.contains(&(benign.clone(), w.clone())),
+            "[{lang}] benign must round-trip g into w:\n{out}"
+        );
         // DECISIVE negatives: no cross-callee forward leak ...
-        assert!(!reach.contains(&(secret.clone(), r.clone())), "[{lang}] secret must NOT leak into g's r:\n{out}");
-        assert!(!reach.contains(&(benign.clone(), p.clone())), "[{lang}] benign must NOT leak into f's p:\n{out}");
+        assert!(
+            !reach.contains(&(secret.clone(), r.clone())),
+            "[{lang}] secret must NOT leak into g's r:\n{out}"
+        );
+        assert!(
+            !reach.contains(&(benign.clone(), p.clone())),
+            "[{lang}] benign must NOT leak into f's p:\n{out}"
+        );
         // ... and no cross-callee return leak.
-        assert!(!reach.contains(&(secret.clone(), w.clone())), "[{lang}] f's return must NOT land in y/w:\n{out}");
-        assert!(!reach.contains(&(benign.clone(), u.clone())), "[{lang}] g's return must NOT land in x/u:\n{out}");
+        assert!(
+            !reach.contains(&(secret.clone(), w.clone())),
+            "[{lang}] f's return must NOT land in y/w:\n{out}"
+        );
+        assert!(
+            !reach.contains(&(benign.clone(), u.clone())),
+            "[{lang}] g's return must NOT land in x/u:\n{out}"
+        );
     }
 }
 
@@ -203,7 +259,8 @@ fn call_sites_do_not_cross_talk_per_language() {
 fn collection_lambda_hops_are_fact_driven_per_language() {
     let rust = "fn go(xs: Vec<i32>) {\n    let out = xs.map(|x| x + 1);\n    let sink = out;\n}\n";
     let ts = "function go(xs: number[]): void {\n    const out = xs.map((x) => x + 1);\n    const sink = out;\n}\n";
-    let kotlin = "fun go(xs: List<Int>) {\n    val out = xs.map { it + 1 }\n    val sink = out\n}\n";
+    let kotlin =
+        "fun go(xs: List<Int>) {\n    val out = xs.map { it + 1 }\n    val sink = out\n}\n";
 
     for (lang, ext, srcfile, lam_var) in [
         ("rust", "rs", rust, "x"),
@@ -226,9 +283,13 @@ fn collection_lambda_hops_are_fact_driven_per_language() {
         assert_eq!(code, 0, "[{lang}] must not error:\n{err}");
         let (reach, nodes) = reach_and_nodes(&out);
         let xs = node_id(&nodes, "param", "xs", &out);
-        let lam_param = nodes.iter()
-            .find(|r| r.len() >= 4 && r[1] == "param" && r[2] == lam_var && r[3].contains("::closure::"))
-            .unwrap_or_else(|| panic!("[{lang}] lifted lambda param:\n{out}"))[0].clone();
+        let lam_param = nodes
+            .iter()
+            .find(|r| {
+                r.len() >= 4 && r[1] == "param" && r[2] == lam_var && r[3].contains("::closure::")
+            })
+            .unwrap_or_else(|| panic!("[{lang}] lifted lambda param:\n{out}"))[0]
+            .clone();
         let sink = node_id(&nodes, "let_bind", "sink", &out);
         assert!(
             reach.contains(&(xs.clone(), lam_param.clone())),
@@ -248,9 +309,13 @@ fn collection_lambda_hops_are_fact_driven_per_language() {
         assert_eq!(code2, 0, "[{lang}] must not error:\n{err2}");
         let (reach2, nodes2) = reach_and_nodes(&out2);
         let xs2 = node_id(&nodes2, "param", "xs", &out2);
-        let lam_param2 = nodes2.iter()
-            .find(|r| r.len() >= 4 && r[1] == "param" && r[2] == lam_var && r[3].contains("::closure::"))
-            .unwrap_or_else(|| panic!("[{lang}] lifted lambda param:\n{out2}"))[0].clone();
+        let lam_param2 = nodes2
+            .iter()
+            .find(|r| {
+                r.len() >= 4 && r[1] == "param" && r[2] == lam_var && r[3].contains("::closure::")
+            })
+            .unwrap_or_else(|| panic!("[{lang}] lifted lambda param:\n{out2}"))[0]
+            .clone();
         assert!(
             !reach2.contains(&(xs2, lam_param2)),
             "[{lang}] without the preset xs must NOT reach the lambda param:\n{out2}"
@@ -296,13 +361,30 @@ src(p) <- scan("WORK", "src/**/*.ts", p, rev).
     let extra_read = node_id(&nodes, "member", "extra", &out);
 
     let has = |val: &str, fld: &str, tgt: &str| {
-        flows.iter().any(|r| r.len() >= 4 && r[0] == val && r[1] == fld && r[3] == tgt)
+        flows
+            .iter()
+            .any(|r| r.len() >= 4 && r[0] == val && r[1] == fld && r[3] == tgt)
     };
     // Positive: each stored value reaches the read of ITS field.
-    assert!(has(&v, "title", &title_read), "v must reach the title read:\n{out}");
-    assert!(has(&w, "extra", &extra_read), "w must reach the extra read:\n{out}");
+    assert!(
+        has(&v, "title", &title_read),
+        "v must reach the title read:\n{out}"
+    );
+    assert!(
+        has(&w, "extra", &extra_read),
+        "w must reach the extra read:\n{out}"
+    );
     // DECISIVE negatives: no cross-field conflation in the view.
-    assert!(!has(&v, "extra", &extra_read), "v must NOT reach the extra read:\n{out}");
-    assert!(!has(&v, "title", &extra_read), "v/title must not target the extra read:\n{out}");
-    assert!(!has(&w, "title", &title_read), "w must NOT reach the title read:\n{out}");
+    assert!(
+        !has(&v, "extra", &extra_read),
+        "v must NOT reach the extra read:\n{out}"
+    );
+    assert!(
+        !has(&v, "title", &extra_read),
+        "v/title must not target the extra read:\n{out}"
+    );
+    assert!(
+        !has(&w, "title", &title_read),
+        "w must NOT reach the title read:\n{out}"
+    );
 }

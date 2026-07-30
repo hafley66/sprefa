@@ -48,12 +48,21 @@ pub fn port_decl<'a>(prog: &'a ast::Program, name: &str) -> Option<&'a ast::Port
 /// or a failed attach — a cold in-process engine, hermetic, right for CI.
 pub enum Pump {
     Local(Box<crate::engine::Engine>),
-    Daemon { client: crate::daemon_client::DaemonClient, next_id: u64, root: PathBuf },
+    Daemon {
+        client: crate::daemon_client::DaemonClient,
+        next_id: u64,
+        root: PathBuf,
+    },
 }
 
 impl Pump {
     fn rpc(&mut self, method: &str, mut params: serde_json::Value) -> Result<crate::rpc::Response> {
-        let Pump::Daemon { client, next_id, root } = self else {
+        let Pump::Daemon {
+            client,
+            next_id,
+            root,
+        } = self
+        else {
             anyhow::bail!("rpc on a local pump");
         };
         // Name the served root so the singleton routes to this program's engine.
@@ -68,8 +77,14 @@ impl Pump {
     }
 
     /// Inject one request, tick, drain: the per-frame pump.
-    fn handle(&mut self, prog: &ast::Program, ports: &(String, String),
-              id: &str, method: &str, params: &str) -> Result<Vec<(String, String)>> {
+    fn handle(
+        &mut self,
+        prog: &ast::Program,
+        ports: &(String, String),
+        id: &str,
+        method: &str,
+        params: &str,
+    ) -> Result<Vec<(String, String)>> {
         let (in_rel, out_rel) = ports;
         match self {
             Pump::Local(eng) => {
@@ -78,16 +93,30 @@ impl Pump {
                 eng.drain_rpc(out_rel, in_rel)
             }
             Pump::Daemon { .. } => {
-                let resp = self.rpc("mcp_request", serde_json::json!({
-                    "in_rel": in_rel, "out_rel": out_rel,
-                    "id": id, "method": method, "params": params,
-                }))?;
-                let rows = resp.result.as_ref().and_then(|r| r.get("rows"))
-                    .and_then(|r| r.as_array()).cloned().unwrap_or_default();
-                Ok(rows.iter().filter_map(|row| {
-                    let r = row.as_array()?;
-                    Some((r.first()?.as_str()?.to_string(), r.get(1)?.as_str()?.to_string()))
-                }).collect())
+                let resp = self.rpc(
+                    "mcp_request",
+                    serde_json::json!({
+                        "in_rel": in_rel, "out_rel": out_rel,
+                        "id": id, "method": method, "params": params,
+                    }),
+                )?;
+                let rows = resp
+                    .result
+                    .as_ref()
+                    .and_then(|r| r.get("rows"))
+                    .and_then(|r| r.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                Ok(rows
+                    .iter()
+                    .filter_map(|row| {
+                        let r = row.as_array()?;
+                        Some((
+                            r.first()?.as_str()?.to_string(),
+                            r.get(1)?.as_str()?.to_string(),
+                        ))
+                    })
+                    .collect())
             }
         }
     }
@@ -95,20 +124,29 @@ impl Pump {
     /// `dl.what` tool: the anchor resolver output, as `{columns, rows, total,
     /// notes}`. Local reads the cold engine directly; Daemon rides the warm
     /// `what` RPC.
-    fn tool_what(&mut self, anchor: &str, limit: Option<usize>, offset: Option<usize>)
-        -> Result<serde_json::Value>
-    {
+    fn tool_what(
+        &mut self,
+        anchor: &str,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<serde_json::Value> {
         match self {
             Pump::Local(eng) => {
                 // A fresh probe-forced engine, so the graph is warm regardless of
                 // what the served program references (and never disturbing it).
                 let warm = crate::anchor::warm_engine(eng.root.clone(), None)?;
-                Ok(query_out_json(&crate::anchor::what(&warm, anchor, limit, offset)))
+                Ok(query_out_json(&crate::anchor::what(
+                    &warm, anchor, limit, offset,
+                )))
             }
             Pump::Daemon { .. } => {
                 let mut params = serde_json::json!({ "anchor": anchor });
-                if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
-                if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+                if let Some(l) = limit {
+                    params["limit"] = serde_json::json!(l);
+                }
+                if let Some(o) = offset {
+                    params["offset"] = serde_json::json!(o);
+                }
                 Ok(self.rpc("what", params)?.result.unwrap_or_default())
             }
         }
@@ -117,18 +155,28 @@ impl Pump {
     /// `dl.verb` tool: the `dl q` runner output, as `{columns, rows, total,
     /// notes}`. Local spins its own scratch engine (never disturbing this
     /// program's tables); Daemon rides the `q` RPC (a scratch engine server-side).
-    fn tool_verb(&mut self, verb: &str, target: &str, limit: Option<usize>, offset: Option<usize>)
-        -> Result<serde_json::Value>
-    {
+    fn tool_verb(
+        &mut self,
+        verb: &str,
+        target: &str,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<serde_json::Value> {
         match self {
             Pump::Local(eng) => {
                 let root = eng.root.clone();
-                Ok(query_out_json(&crate::verbs::run_inproc(root, None, verb, target, limit, offset)?))
+                Ok(query_out_json(&crate::verbs::run_inproc(
+                    root, None, verb, target, limit, offset,
+                )?))
             }
             Pump::Daemon { .. } => {
                 let mut params = serde_json::json!({ "verb": verb, "target": target });
-                if let Some(l) = limit { params["limit"] = serde_json::json!(l); }
-                if let Some(o) = offset { params["offset"] = serde_json::json!(o); }
+                if let Some(l) = limit {
+                    params["limit"] = serde_json::json!(l);
+                }
+                if let Some(o) = offset {
+                    params["offset"] = serde_json::json!(o);
+                }
                 Ok(self.rpc("q", params)?.result.unwrap_or_default())
             }
         }
@@ -157,10 +205,19 @@ impl Pump {
                 Ok(serde_json::json!({ "columns": columns, "rows": rows, "total": total }))
             }
             Pump::Daemon { .. } => {
-                let result = self.rpc("query_rel", serde_json::json!({ "rel": rel }))?
-                    .result.unwrap_or_default();
-                let columns = result.get("columns").cloned().unwrap_or_else(|| serde_json::json!([]));
-                let all = result.get("rows").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                let result = self
+                    .rpc("query_rel", serde_json::json!({ "rel": rel }))?
+                    .result
+                    .unwrap_or_default();
+                let columns = result
+                    .get("columns")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([]));
+                let all = result
+                    .get("rows")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
                 let total = all.len();
                 let rows: Vec<serde_json::Value> = all.into_iter().take(cap).collect();
                 Ok(serde_json::json!({ "columns": columns, "rows": rows, "total": total }))
@@ -173,7 +230,10 @@ impl Pump {
         match self {
             Pump::Local(eng) => eng.retire_rpc(in_rel, ids),
             Pump::Daemon { .. } => {
-                self.rpc("mcp_retire", serde_json::json!({ "in_rel": in_rel, "ids": ids }))?;
+                self.rpc(
+                    "mcp_retire",
+                    serde_json::json!({ "in_rel": in_rel, "ids": ids }),
+                )?;
                 Ok(())
             }
         }
@@ -201,11 +261,16 @@ pub fn rpc_ports(prog: &ast::Program) -> Result<(String, String)> {
         (0, _) | (_, 0) => anyhow::bail!(
             "--mcp needs one @in(rpc) and one @out(rpc) port rel; found {} in, {} out. \
              Declare e.g. `rel req(id: int, method: text, params: text) @in(rpc).` and \
-             `rel resp(id: int, result: text) @out(rpc).`", ins.len(), outs.len()),
+             `rel resp(id: int, result: text) @out(rpc).`",
+            ins.len(),
+            outs.len()
+        ),
         _ => anyhow::bail!(
             "--mcp found multiple rpc ports (in: {}; out: {}); named port instances \
              aren't supported yet — declare exactly one @in(rpc) and one @out(rpc)",
-            ins.join(", "), outs.join(", ")),
+            ins.join(", "),
+            outs.join(", ")
+        ),
     }
 }
 
@@ -327,7 +392,10 @@ fn program_tool_list(
     id: &str,
 ) -> Result<Vec<serde_json::Value>> {
     let (in_rel, _) = ports;
-    let params = msg.get("params").map(|p| p.to_string()).unwrap_or_else(|| "null".into());
+    let params = msg
+        .get("params")
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "null".into());
     let rows = pump.handle(prog, ports, id, "tools/list", &params)?;
     let mut tools = Vec::new();
     let mut answered = false;
@@ -373,7 +441,10 @@ fn builtin_tool_call(
     id: &str,
 ) -> Result<Option<serde_json::Value>> {
     let params = msg.get("params");
-    let name = params.and_then(|p| p.get("name")).and_then(|n| n.as_str()).unwrap_or_default();
+    let name = params
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())
+        .unwrap_or_default();
     let args = params
         .and_then(|p| p.get("arguments"))
         .cloned()
@@ -394,8 +465,13 @@ fn builtin_tool_call(
                 return Ok(Some(tool_error(id, "dl.verb requires string `target`")));
             };
             if crate::verbs::find(verb).is_none() {
-                return Ok(Some(tool_error(id,
-                    &format!("unknown verb {verb:?}; available: {}", crate::verbs::verb_list()))));
+                return Ok(Some(tool_error(
+                    id,
+                    &format!(
+                        "unknown verb {verb:?}; available: {}",
+                        crate::verbs::verb_list()
+                    ),
+                )));
             }
             pump.tool_verb(verb, target, u(args.get("limit")), u(args.get("offset")))?
         }
@@ -421,7 +497,11 @@ pub fn handle_msg(
     msg: &serde_json::Value,
 ) -> Result<Vec<serde_json::Value>> {
     let (in_rel, _) = ports;
-    let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or_default().to_string();
+    let method = msg
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or_default()
+        .to_string();
     let Some(idv) = msg.get("id") else {
         // No id = a notification (MCP's notifications/initialized etc.):
         // nothing to answer, and rung 1 doesn't feed them into the engine.
@@ -448,7 +528,10 @@ pub fn handle_msg(
             return Ok(vec![resp]);
         }
     }
-    let params = msg.get("params").map(|p| p.to_string()).unwrap_or_else(|| "null".into());
+    let params = msg
+        .get("params")
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| "null".into());
     let rows = pump.handle(prog, ports, &id, &method, &params)?;
     let mut out = Vec::new();
     let mut answered = false;
@@ -510,24 +593,36 @@ fn local_pump(prog: &ast::Program, db_path: Option<&str>, root: PathBuf) -> Resu
 pub fn run_mcp(programs: &[String], db_path: Option<&str>, root: PathBuf) -> Result<()> {
     let files = crate::resolve_programs(programs, &root)?;
     let (mut prog, type_diags, _) = crate::prepare_paths(&files)?;
-    prog.items.retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
-    let n_err = type_diags.iter().filter(|d| d.severity == ast::Severity::Error).count();
+    prog.items
+        .retain(|i| !matches!(i, ast::Item::Query(_) | ast::Item::Gen(_)));
+    let n_err = type_diags
+        .iter()
+        .filter(|d| d.severity == ast::Severity::Error)
+        .count();
     if n_err > 0 {
-        for d in type_diags.iter().filter(|d| d.severity == ast::Severity::Error) {
+        for d in type_diags
+            .iter()
+            .filter(|d| d.severity == ast::Severity::Error)
+        {
             let msg = &d.msg;
             tracing::warn!(msg = %msg, "dl --mcp: program error: {msg}");
         }
         anyhow::bail!("{n_err} program error(s)");
     }
     let ports = rpc_ports(&prog)?;
-    let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1 {
+    let mut pump = if crate::daemon::enabled_for(&root) && db_path.is_none() && programs.len() <= 1
+    {
         let attach = || -> Result<Pump> {
             crate::daemon::ensure_daemon(&root, programs.first().map(|s| s.as_str()))?;
             // Register + cold-tick this root before the first mcp_request, so the
             // port drift-guard reads the served program (auto-add would race it).
             crate::daemon::add_root(&root)?;
             let client = crate::daemon::connect()?;
-            Ok(Pump::Daemon { client, next_id: 1, root: root.clone() })
+            Ok(Pump::Daemon {
+                client,
+                next_id: 1,
+                root: root.clone(),
+            })
         };
         match attach() {
             Ok(p) => p,

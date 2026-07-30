@@ -14,7 +14,10 @@ fn main() {
     let patterns = validated_patterns();
     let kernels = all_kernels();
 
-    println!("== reward oracle: {} validated consolidation patterns ==\n", patterns.len());
+    println!(
+        "== reward oracle: {} validated consolidation patterns ==\n",
+        patterns.len()
+    );
     for (name, desc, _) in &patterns {
         println!("  {name}: {desc}");
     }
@@ -37,7 +40,14 @@ fn main() {
             if caught {
                 hits += 1;
             }
-            print!("{:>12}", format!("{} ({})", if caught { "HIT" } else { "miss" }, proposals.len()));
+            print!(
+                "{:>12}",
+                format!(
+                    "{} ({})",
+                    if caught { "HIT" } else { "miss" },
+                    proposals.len()
+                )
+            );
         }
         let recall = hits as f64 / patterns.len() as f64 * 100.0;
         println!("{:>9.0}%", recall);
@@ -59,7 +69,9 @@ fn all_kernels() -> Vec<(&'static str, KernelFn)> {
         ("tree", |s| sprefa_v5::propose::tree_shape_proposals(s)),
         ("cfg", |s| sprefa_v5::propose::cfg_shape_proposals(s)),
         ("ddg", |s| sprefa_v5::propose::ddg_shape_proposals(s)),
-        ("cgraph", |s| sprefa_v5::propose::callgraph_shape_proposals(s)),
+        ("cgraph", |s| {
+            sprefa_v5::propose::callgraph_shape_proposals(s)
+        }),
         ("ngram", |s| sprefa_v5::propose::ngram_stat_proposals(s)),
     ]
 }
@@ -100,7 +112,8 @@ fn validated_patterns() -> Vec<(&'static str, &'static str, String)> {
         results.push((next_id, ext.clone()));
     }
 }
-"#.to_string(),
+"#
+            .to_string(),
         ),
         // Iter 3: bind_captures — 3-site verbatim short-block triplication.
         // Three arms had identical 4-line per-capture binding loops.
@@ -130,7 +143,8 @@ fn validated_patterns() -> Vec<(&'static str, &'static str, String)> {
         process(ext);
     }
 }
-"#.to_string(),
+"#
+            .to_string(),
         ),
     ]
 }

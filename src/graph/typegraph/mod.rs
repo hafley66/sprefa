@@ -63,7 +63,10 @@ impl EntityKind {
     /// Functions, methods, and lambdas carry an arrow type; everything else is a
     /// data type.
     pub fn is_callable(self) -> bool {
-        matches!(self, EntityKind::Function | EntityKind::Method | EntityKind::Lambda)
+        matches!(
+            self,
+            EntityKind::Function | EntityKind::Method | EntityKind::Lambda
+        )
     }
 }
 
@@ -175,7 +178,10 @@ pub struct DocTag {
 
 /// The first non-empty line of a doc block — the Tier-0 summary.
 pub fn doc_summary(text: &str) -> &str {
-    text.lines().map(|l| l.trim()).find(|l| !l.is_empty()).unwrap_or("")
+    text.lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
 }
 
 /// Strip a `/** ... */` (or `/* ... */` / `/*! ... */`) block down to its
@@ -184,17 +190,26 @@ pub fn doc_summary(text: &str) -> &str {
 /// (JSDoc) locators, and by the `comment_node` classifier (`crate::cst`).
 pub(crate) fn clean_block_comment(raw: &str) -> String {
     let inner = raw.trim();
-    let inner = inner.strip_prefix("/**")
+    let inner = inner
+        .strip_prefix("/**")
         .or_else(|| inner.strip_prefix("/*!"))
-        .or_else(|| inner.strip_prefix("/*")).unwrap_or(inner);
+        .or_else(|| inner.strip_prefix("/*"))
+        .unwrap_or(inner);
     let inner = inner.strip_suffix("*/").unwrap_or(inner);
-    let mut lines: Vec<String> = inner.lines().map(|l| {
-        let t = l.trim_start();
-        let t = t.strip_prefix('*').unwrap_or(t);
-        t.strip_prefix(' ').unwrap_or(t).to_string()
-    }).collect();
-    while lines.first().is_some_and(|s| s.trim().is_empty()) { lines.remove(0); }
-    while lines.last().is_some_and(|s| s.trim().is_empty()) { lines.pop(); }
+    let mut lines: Vec<String> = inner
+        .lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let t = t.strip_prefix('*').unwrap_or(t);
+            t.strip_prefix(' ').unwrap_or(t).to_string()
+        })
+        .collect();
+    while lines.first().is_some_and(|s| s.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|s| s.trim().is_empty()) {
+        lines.pop();
+    }
     lines.join("\n")
 }
 
@@ -206,22 +221,43 @@ fn parse_jsdoc_tags(text: &str) -> Vec<DocTag> {
     let mut out = Vec::new();
     for line in text.lines() {
         let l = line.trim_start();
-        let Some(rest) = l.strip_prefix('@') else { continue };
+        let Some(rest) = l.strip_prefix('@') else {
+            continue;
+        };
         let mut it = rest.splitn(2, char::is_whitespace);
         let tag = it.next().unwrap_or("").to_string();
         let mut body = it.next().unwrap_or("").trim_start();
         if body.starts_with('{') {
-            if let Some(end) = body.find('}') { body = body[end + 1..].trim_start(); }
+            if let Some(end) = body.find('}') {
+                body = body[end + 1..].trim_start();
+            }
         }
-        let named = matches!(tag.as_str(),
-            "param" | "arg" | "argument" | "property" | "prop" | "throws" | "exception" | "typeparam" | "tparam");
+        let named = matches!(
+            tag.as_str(),
+            "param"
+                | "arg"
+                | "argument"
+                | "property"
+                | "prop"
+                | "throws"
+                | "exception"
+                | "typeparam"
+                | "tparam"
+        );
         let (arg, desc) = if named {
             let mut bi = body.splitn(2, char::is_whitespace);
-            (bi.next().unwrap_or("").to_string(), bi.next().unwrap_or("").trim().to_string())
+            (
+                bi.next().unwrap_or("").to_string(),
+                bi.next().unwrap_or("").trim().to_string(),
+            )
         } else {
             (String::new(), body.trim().to_string())
         };
-        out.push(DocTag { tag, arg, text: desc });
+        out.push(DocTag {
+            tag,
+            arg,
+            text: desc,
+        });
     }
     out
 }
@@ -235,7 +271,11 @@ fn parse_rust_sections(text: &str) -> Vec<DocTag> {
     let mut cur: Option<(String, Vec<&str>)> = None;
     let flush = |cur: Option<(String, Vec<&str>)>, out: &mut Vec<DocTag>| {
         if let Some((name, body)) = cur {
-            out.push(DocTag { tag: "section".into(), arg: name, text: body.join("\n").trim().to_string() });
+            out.push(DocTag {
+                tag: "section".into(),
+                arg: name,
+                text: body.join("\n").trim().to_string(),
+            });
         }
     };
     for line in text.lines() {
@@ -263,19 +303,19 @@ pub struct CallFacts {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallDef {
-    pub sym: String,        // file::function::name (free) or file::method::Parent.name
-    pub name: String,       // bare callable name, for callee resolution (not written)
+    pub sym: String,  // file::function::name (free) or file::method::Parent.name
+    pub name: String, // bare callable name, for callee resolution (not written)
     pub kind: CallKind,
     pub file: String,
     pub line: u32,
-    pub end: u32,           // body span end (1-based line), for callsite containment
+    pub end: u32, // body span end (1-based line), for callsite containment
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallSite {
-    pub caller_sym: Option<String>,   // filled by the engine's span-containment pass
-    pub callee: String,               // trailing segment (bare name) for resolution
-    pub callee_path: Option<String>,  // full qualified path when >1 segment (e.g. sprefa_v5::cli::run)
+    pub caller_sym: Option<String>, // filled by the engine's span-containment pass
+    pub callee: String,             // trailing segment (bare name) for resolution
+    pub callee_path: Option<String>, // full qualified path when >1 segment (e.g. sprefa_v5::cli::run)
     pub file: String,
     pub line: u32,
 }
@@ -349,9 +389,9 @@ pub struct DataflowFacts {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LoopFact {
     pub file: String,
-    pub start: u32,        // start line of the loop header
-    pub end: u32,          // close line of the loop body (span end)
-    pub var: String,       // loop variable name, "" when none (while/loop)
+    pub start: u32,         // start line of the loop header
+    pub end: u32,           // close line of the loop body (span end)
+    pub var: String,        // loop variable name, "" when none (while/loop)
     pub collection: String, // textual form of the iterated collection, "" when none
     pub fn_sym: String,
 }
@@ -364,8 +404,8 @@ pub struct LoopFact {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NestFact {
     pub call_id: NodeIdx,
-    pub loop_id: String,    // "{file}:{start}", joins back to loop_over by (file, start)
-    pub depth: u32,         // 1 = outermost enclosing loop
+    pub loop_id: String, // "{file}:{start}", joins back to loop_over by (file, start)
+    pub depth: u32,      // 1 = outermost enclosing loop
     pub collection: String, // the inner loop's collection text ("" until extractors fill it)
 }
 
@@ -377,8 +417,8 @@ pub struct DfNode {
     /// transient join key that ties the node to its edges/args/fields/lits and
     /// never leaves extraction. Formerly `format!("{file}:{line}:{col}:{kind}")`.
     pub id: NodeIdx,
-    pub kind: String,   // param | let_bind | var_read | var_write | lit | call_res | new | member | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
-    pub var: String,    // variable name when the node is var-related, else ""
+    pub kind: String, // param | let_bind | var_read | var_write | lit | call_res | new | member | ret | borrow | binop | unop | loop | if | match | block | closure | try | expr
+    pub var: String,  // variable name when the node is var-related, else ""
     pub fn_sym: String, // enclosing def sym (file::function::name), joins call_def
     pub file: String,
     pub line: u32,
@@ -444,16 +484,22 @@ pub trait TypeLang: Sync {
     /// the lazy-indexer wiring (`CALL_RELS`) is live end to end with zero rows;
     /// each front-end overrides this as its extractor lands. One parse can feed
     /// both `extract` and `extract_calls`, but that join is a follow-up.
-    fn extract_calls(&self, _file: &str, _content: &str) -> CallFacts { CallFacts::default() }
+    fn extract_calls(&self, _file: &str, _content: &str) -> CallFacts {
+        CallFacts::default()
+    }
     /// Intra-procedural dataflow lift (see `DataflowFacts`). Default empty so the
     /// lazy `DATAFLOW_RELS` wiring is live end to end with zero rows; each
     /// front-end overrides as its extractor lands.
-    fn extract_dataflow(&self, _file: &str, _content: &str) -> DataflowFacts { DataflowFacts::default() }
+    fn extract_dataflow(&self, _file: &str, _content: &str) -> DataflowFacts {
+        DataflowFacts::default()
+    }
 
     /// Whether `extract_bundle` actually shares one parse across projections.
     /// The engine uses this to avoid routing languages through the bundle seam
     /// when their default implementation would still parse once per family.
-    fn supports_analysis_bundle(&self) -> bool { false }
+    fn supports_analysis_bundle(&self) -> bool {
+        false
+    }
 
     /// Experimental one-parse/many-projection seam. Languages can override
     /// this when their three extractors share a parse representation.
@@ -474,7 +520,11 @@ pub struct AnalysisMask {
 }
 
 impl AnalysisMask {
-    pub const ALL: Self = Self { types: true, calls: true, dataflow: true };
+    pub const ALL: Self = Self {
+        types: true,
+        calls: true,
+        dataflow: true,
+    };
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -542,7 +592,6 @@ fn line_col(starts: &[usize], offset: usize) -> (u32, u32) {
     (line, (offset.saturating_sub(line_start)) as u32)
 }
 
-
 // --- per-language modules (2026-07-18 decomposition-normalization split) ----
 // Pure code motion out of the former single typegraph.rs (8,965 lines): each
 // module owns exactly one parser crate (rust -> syn, ts -> oxc,
@@ -561,13 +610,19 @@ mod ts;
 pub use analysis::{type_lgg_pairs, type_shape_hashes};
 pub use kotlin::kotlin_edges;
 pub use rust::edges;
-pub use ts::{TemplatePart, UnresolvedRef, ts_comments, ts_edges, ts_template_parts, ts_unresolved_refs};
+pub use ts::{
+    ts_comments, ts_edges, ts_template_parts, ts_unresolved_refs, TemplatePart, UnresolvedRef,
+};
 
 // --- shared cross-language test helpers (used by rust/kotlin/ts/go test
 // modules) -----------------------------------------------------------
 #[cfg(test)]
 pub(crate) fn has(got: &[TypeEdge], from: &str, to: &str, kind: &'static str) -> bool {
-    got.contains(&TypeEdge { from: from.into(), to: to.into(), kind })
+    got.contains(&TypeEdge {
+        from: from.into(),
+        to: to.into(),
+        kind,
+    })
 }
 
 #[cfg(test)]
@@ -580,12 +635,16 @@ pub(crate) fn dnode<'a>(df: &'a DataflowFacts, kind: &str, var: &str) -> &'a DfN
 
 #[cfg(test)]
 pub(crate) fn has_arg(df: &DataflowFacts, call: &NodeIdx, pos: i64, arg: &NodeIdx) -> bool {
-    df.args.iter().any(|(c, p, a)| c == call && *p == pos && a == arg)
+    df.args
+        .iter()
+        .any(|(c, p, a)| c == call && *p == pos && a == arg)
 }
 
 #[cfg(test)]
 pub(crate) fn has_field(df: &DataflowFacts, id: &NodeIdx, field: &str, value: &NodeIdx) -> bool {
-    df.fields.iter().any(|(i, f, v)| i == id && f == field && v == value)
+    df.fields
+        .iter()
+        .any(|(i, f, v)| i == id && f == field && v == value)
 }
 
 /// Shared gate for the lambda lift: the `closure` value node sits at the
@@ -593,23 +652,38 @@ pub(crate) fn has_field(df: &DataflowFacts, id: &NodeIdx, field: &str, value: &N
 /// scope holds a positional `param` plus a `ret` fed by the body.
 #[cfg(test)]
 pub(crate) fn assert_lambda_lifted(df: &DataflowFacts, lam_slot: i64, param_var: &str) {
-    let clo = df.nodes.iter().find(|n| n.kind == "closure").expect("closure node");
+    let clo = df
+        .nodes
+        .iter()
+        .find(|n| n.kind == "closure")
+        .expect("closure node");
     let lam_sym = clo.var.clone();
-    assert!(lam_sym.contains("::closure::"), "closure var carries the lifted sym: {clo:?}");
+    assert!(
+        lam_sym.contains("::closure::"),
+        "closure var carries the lifted sym: {clo:?}"
+    );
     // the closure VALUE lives in the enclosing fn, not its own scope.
     assert_ne!(clo.fn_sym, lam_sym, "{clo:?}");
     assert!(
-        df.args.iter().any(|(_, p, a)| *p == lam_slot && a == &clo.id),
-        "closure at arg slot {lam_slot}: {:?}", df.args
+        df.args
+            .iter()
+            .any(|(_, p, a)| *p == lam_slot && a == &clo.id),
+        "closure at arg slot {lam_slot}: {:?}",
+        df.args
     );
-    let param = df.nodes.iter()
+    let param = df
+        .nodes
+        .iter()
         .find(|n| n.kind == "param" && n.var == param_var && n.fn_sym == lam_sym)
         .unwrap_or_else(|| panic!("param {param_var} under {lam_sym}: {:?}", df.nodes));
     assert!(
         df.param_pos.iter().any(|(i, p)| i == &param.id && *p == 0),
-        "lambda param at slot 0: {:?}", df.param_pos
+        "lambda param at slot 0: {:?}",
+        df.param_pos
     );
-    let ret = df.nodes.iter()
+    let ret = df
+        .nodes
+        .iter()
         .find(|n| n.kind == "ret" && n.fn_sym == lam_sym)
         .unwrap_or_else(|| panic!("ret under {lam_sym}: {:?}", df.nodes));
     // body value reaches the ret node (param -> binop -> ret here).
@@ -630,12 +704,19 @@ mod tests {
             let syms: std::collections::HashSet<&str> = es.iter().map(|e| e.sym.as_str()).collect();
             for e in es {
                 if let Some(p) = &e.parent {
-                    assert!(syms.contains(p.as_str()), "[{lang}] dangling parent {p} on {}: {es:?}", e.sym);
+                    assert!(
+                        syms.contains(p.as_str()),
+                        "[{lang}] dangling parent {p} on {}: {es:?}",
+                        e.sym
+                    );
                 }
             }
         };
         let find = |es: &[TypeEntity], n: &str| {
-            es.iter().find(|e| e.name == n).unwrap_or_else(|| panic!("missing {n}: {es:?}")).clone()
+            es.iter()
+                .find(|e| e.name == n)
+                .unwrap_or_else(|| panic!("missing {n}: {es:?}"))
+                .clone()
         };
 
         // Rust: struct + enum owners each get an impl method; trait present as a
@@ -650,9 +731,18 @@ impl E { fn em(&self) {} }
 ";
         let re = RustTypes.extract("src/lib.rs", rust).entities;
         check(&re, "rust");
-        assert_eq!(find(&re, "sm").parent.as_deref(), Some("src/lib.rs::struct::S"));
-        assert_eq!(find(&re, "em").parent.as_deref(), Some("src/lib.rs::enum::E"));
-        assert!(re.iter().any(|e| e.sym == "src/lib.rs::trait::T"), "trait entity: {re:?}");
+        assert_eq!(
+            find(&re, "sm").parent.as_deref(),
+            Some("src/lib.rs::struct::S")
+        );
+        assert_eq!(
+            find(&re, "em").parent.as_deref(),
+            Some("src/lib.rs::enum::E")
+        );
+        assert!(
+            re.iter().any(|e| e.sym == "src/lib.rs::trait::T"),
+            "trait entity: {re:?}"
+        );
 
         // TS: interface + class; a class method parents to the class sym.
         let ts = "\
@@ -662,7 +752,10 @@ export class C { m(): void {} }
         let te = TsTypes.extract("src/m.ts", ts).entities;
         check(&te, "ts");
         assert_eq!(find(&te, "m").parent.as_deref(), Some("src/m.ts::class::C"));
-        assert!(te.iter().any(|e| e.sym == "src/m.ts::interface::I"), "interface entity: {te:?}");
+        assert!(
+            te.iter().any(|e| e.sym == "src/m.ts::interface::I"),
+            "interface entity: {te:?}"
+        );
 
         // Kotlin: class + interface top-level entities (member fns are flat,
         // `parent = None`, so `check` asserts zero dangling parents). An
@@ -675,8 +768,14 @@ interface Itf { fun im() }
 ";
         let ke = KotlinTypes.extract("src/K.kt", kt).entities;
         check(&ke, "kotlin");
-        assert!(ke.iter().any(|e| e.sym == "src/K.kt::class::K"), "class entity: {ke:?}");
-        assert!(ke.iter().any(|e| e.sym == "src/K.kt::interface::Itf"), "interface entity: {ke:?}");
+        assert!(
+            ke.iter().any(|e| e.sym == "src/K.kt::class::K"),
+            "class entity: {ke:?}"
+        );
+        assert!(
+            ke.iter().any(|e| e.sym == "src/K.kt::interface::Itf"),
+            "interface entity: {ke:?}"
+        );
     }
 }
 
@@ -775,7 +874,9 @@ fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
     for n in nodes {
         // `new` nodes count too: a constructor in a loop allocates per
         // iteration, the exact cost shape nest exists to surface.
-        if n.kind != "call_res" && n.kind != "new" { continue; }
+        if n.kind != "call_res" && n.kind != "new" {
+            continue;
+        }
         // A lifted lambda's sym is `<enclosing fn>::closure::<pos>` (chained for
         // nesting), so a call inside a closure inside a loop still counts: the
         // loop's fn either matches exactly or is a `::closure::` ancestor.
@@ -784,7 +885,8 @@ fn compute_nests(nodes: &[DfNode], loops: &[LoopFact]) -> Vec<NestFact> {
                 || (n.fn_sym.starts_with(&l.fn_sym)
                     && n.fn_sym[l.fn_sym.len()..].starts_with("::closure::"))
         };
-        let mut enclosing: Vec<&LoopFact> = loops.iter()
+        let mut enclosing: Vec<&LoopFact> = loops
+            .iter()
             .filter(|l| in_fn(l) && n.line >= l.start && n.line <= l.end)
             .collect();
         enclosing.sort_by_key(|l| l.start);

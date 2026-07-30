@@ -33,7 +33,9 @@ static PROFILE: OnceLock<bool> = OnceLock::new();
 /// Force profile mode on (the `--profile` flag). Call before the first
 /// `profiling()` read; after that the mode is fixed for the process.
 pub fn set_profile(on: bool) {
-    if on { let _ = PROFILE.set(true); }
+    if on {
+        let _ = PROFILE.set(true);
+    }
 }
 
 pub fn profiling() -> bool {
@@ -44,8 +46,12 @@ pub fn profiling() -> bool {
 /// (default 25ms); statements under it still count into the tick aggregate.
 fn slow_sql() -> Duration {
     static MS: OnceLock<u64> = OnceLock::new();
-    Duration::from_millis(*MS.get_or_init(|| std::env::var("DL_PROFILE_SQL_MS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(25)))
+    Duration::from_millis(*MS.get_or_init(|| {
+        std::env::var("DL_PROFILE_SQL_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(25)
+    }))
 }
 
 static SQL_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -72,7 +78,11 @@ fn profile_hook(sql: &str, dur: Duration) {
     if dur >= slow_sql() {
         let compact: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
         let head: String = compact.chars().take(160).collect();
-        let ellipsis = if compact.chars().count() > 160 { "…" } else { "" };
+        let ellipsis = if compact.chars().count() > 160 {
+            "…"
+        } else {
+            ""
+        };
         let ms = dur.as_secs_f64() * 1000.0;
         tracing::debug!(ms, head = %head, ellipsis = %ellipsis, "[sql {ms:.1}ms] {head}{ellipsis}");
     }
@@ -233,14 +243,21 @@ impl Drop for SqliteMemoryBudget {
 }
 
 fn positive_env_u64(name: &str) -> Option<u64> {
-    std::env::var(name).ok()?.trim().parse().ok().filter(|n| *n > 0)
+    std::env::var(name)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|n| *n > 0)
 }
 
 fn reserve_process_budget(reserved: &AtomicU64, total: u64, requested: u64) -> u64 {
     let mut used = reserved.load(Ordering::Relaxed);
     loop {
         let grant = requested.min(total.saturating_sub(used));
-        if grant == 0 { return 0; }
+        if grant == 0 {
+            return 0;
+        }
         match reserved.compare_exchange_weak(
             used,
             used + grant,
@@ -271,14 +288,19 @@ fn sqlite_memory_budget() -> SqliteMemoryBudget {
 
     // Mapped pages count against process footprint too. Keep mmap disabled by
     // default; DL_MMAP_MB explicitly grants a process-wide mapping budget.
-    let total_mmap_bytes = positive_env_u64("DL_MMAP_MB").unwrap_or(0).saturating_mul(1024 * 1024);
+    let total_mmap_bytes = positive_env_u64("DL_MMAP_MB")
+        .unwrap_or(0)
+        .saturating_mul(1024 * 1024);
     let mmap_bytes = reserve_process_budget(
         &SQLITE_MMAP_RESERVED_BYTES,
         total_mmap_bytes,
         total_mmap_bytes,
     );
 
-    SqliteMemoryBudget { cache_kib, mmap_bytes }
+    SqliteMemoryBudget {
+        cache_kib,
+        mmap_bytes,
+    }
 }
 
 pub fn open(path: Option<&str>) -> Result<Db> {
@@ -310,7 +332,8 @@ pub fn open(path: Option<&str>) -> Result<Db> {
         "PRAGMA cache_size=-{configured_cache_kib}; \
          PRAGMA mmap_size={}; \
          PRAGMA temp_store=FILE;",
-        memory.mmap_bytes))?;
+        memory.mmap_bytes
+    ))?;
     // P2 (--check perf defect ledger): a loud, best-effort heads-up when
     // another live process already holds a write lock on this same db —
     // almost always a resident daemon. A one-shot `--check`/`dl` run that
@@ -349,16 +372,23 @@ pub fn open(path: Option<&str>) -> Result<Db> {
     {
         let pending = pending_syms.clone();
         let alloc = sym_alloc.clone();
-        conn.create_scalar_function("sprf_sym_intern", 1,
+        conn.create_scalar_function(
+            "sprf_sym_intern",
+            1,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             move |ctx| {
-                let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+                let Some(text) = ctx.get::<Option<String>>(0)? else {
+                    return Ok(None);
+                };
                 if text.is_empty() {
                     // Empty-string sentinel: dense id 0, never interned or dicted.
                     return Ok(Some(0));
                 }
                 let hash = crate::spine::StringId::of(&text).sqlite();
-                pending.lock().expect("pending symbol queue poisoned").push(text.clone());
+                pending
+                    .lock()
+                    .expect("pending symbol queue poisoned")
+                    .push(text.clone());
                 // Return the DENSE surrogate, not the hash, so the interned cell
                 // this value lands in stores a ~5-byte varint (vs 8 for a random
                 // hash) and shares one id space with every other write path. The
@@ -366,16 +396,25 @@ pub fn open(path: Option<&str>) -> Result<Db> {
                 // called from `ensure_meta`).
                 let dense = alloc.lock().expect("sym allocator poisoned").dense_of(hash);
                 Ok(Some(dense))
-            })?;
+            },
+        )?;
     }
-    if profiling() { conn.profile(Some(profile_hook)); }
+    if profiling() {
+        conn.profile(Some(profile_hook));
+    }
     if let Some(p) = path {
         let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-        let journal_mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap_or_default();
+        let journal_mode: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap_or_default();
         crate::verdict::verdict(
             "run-header",
             &format!("[db] opened {p} ({size} bytes, journal={journal_mode})"),
-            &[("path", p), ("bytes", &size.to_string()), ("journal_mode", &journal_mode)],
+            &[
+                ("path", p),
+                ("bytes", &size.to_string()),
+                ("journal_mode", &journal_mode),
+            ],
         );
     }
     Ok(Db {
@@ -421,7 +460,9 @@ pub fn open_read_only(path: &str) -> Result<Connection> {
         1,
         rusqlite::functions::FunctionFlags::SQLITE_UTF8,
         |ctx| {
-            let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+            let Some(text) = ctx.get::<Option<String>>(0)? else {
+                return Ok(None);
+            };
             Ok(Some(crate::spine::StringId::of(&text).sqlite()))
         },
     )?;
@@ -460,11 +501,16 @@ fn install_busy_verdict_handler(conn: &Connection) -> Result<()> {
                 crate::verdict::verdict(
                     "sqlite-busy",
                     &format!("[sqlite] busy retry {elapsed_ms}ms (attempt {count})"),
-                    &[("elapsed_ms", &elapsed_ms.to_string()), ("attempt", &count.to_string())],
+                    &[
+                        ("elapsed_ms", &elapsed_ms.to_string()),
+                        ("attempt", &count.to_string()),
+                    ],
                 );
             }
         }
-        if elapsed_ms >= 5000 { return false; }
+        if elapsed_ms >= 5000 {
+            return false;
+        }
         std::thread::sleep(Duration::from_millis(20));
         true
     }))?;
@@ -485,7 +531,9 @@ fn register_regexp(conn: &Connection) -> Result<()> {
         |ctx| {
             let (Some(pattern), Some(value)) =
                 (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
-            else { return Ok(None); };
+            else {
+                return Ok(None);
+            };
             let re = compiled_regex(&pattern)
                 .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
             Ok(Some(re.is_match(&value)))
@@ -501,7 +549,9 @@ fn compiled_regex(pattern: &str) -> Result<regex::Regex, regex::Error> {
     static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = cache.lock().unwrap();
-    if let Some(re) = map.get(pattern) { return Ok(re.clone()); }
+    if let Some(re) = map.get(pattern) {
+        return Ok(re.clone());
+    }
     let re = regex::Regex::new(pattern)?;
     map.insert(pattern.to_string(), re.clone());
     Ok(re)
@@ -524,12 +574,18 @@ fn register_split(conn: &Connection) -> Result<()> {
                 ctx.get::<Option<String>>(0)?,
                 ctx.get::<Option<String>>(1)?,
                 ctx.get::<Option<i64>>(2)?,
-            ) else { return Ok(None); };
-            if sep.is_empty() { return Ok(None); }
+            ) else {
+                return Ok(None);
+            };
+            if sep.is_empty() {
+                return Ok(None);
+            }
             let parts: Vec<&str> = text.split(&sep).collect();
             let n = parts.len() as i64;
             let i = if idx >= 0 { idx } else { idx + n };
-            if i < 0 || i >= n { return Ok(None); }
+            if i < 0 || i >= n {
+                return Ok(None);
+            }
             Ok(Some(parts[i as usize].to_string()))
         },
     )?;
@@ -543,7 +599,11 @@ fn map_first(s: &str, up: bool) -> String {
     match it.next() {
         None => String::new(),
         Some(f) => {
-            let head: String = if up { f.to_uppercase().collect() } else { f.to_lowercase().collect() };
+            let head: String = if up {
+                f.to_uppercase().collect()
+            } else {
+                f.to_lowercase().collect()
+            };
             head + it.as_str()
         }
     }
@@ -564,31 +624,43 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
     // parameter type Null at index 0" — the 2026-07-18 cold-extract poison-job
     // incident (failure-modes class 18 follow-on): one NULL fed to sprf_norm
     // failed a 109s ColdExtract job on every retry.
-    conn.create_scalar_function("sprf_lower", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_lowercase())))?;
-    conn.create_scalar_function("sprf_upper", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_uppercase())))?;
-    conn.create_scalar_function("sprf_lcfirst", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, false))))?;
-    conn.create_scalar_function("sprf_ucfirst", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, true))))?;
-    conn.create_scalar_function("sprf_trim", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| s.trim().to_string())))?;
+    conn.create_scalar_function("sprf_lower", 1, det, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_lowercase()))
+    })?;
+    conn.create_scalar_function("sprf_upper", 1, det, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| s.to_uppercase()))
+    })?;
+    conn.create_scalar_function("sprf_lcfirst", 1, det, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, false)))
+    })?;
+    conn.create_scalar_function("sprf_ucfirst", 1, det, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| map_first(&s, true)))
+    })?;
+    conn.create_scalar_function("sprf_trim", 1, det, |ctx| {
+        Ok(ctx.get::<Option<String>>(0)?.map(|s| s.trim().to_string()))
+    })?;
     // Same normalization the ref-spine folds into `_strings.norm` / the
     // `string(id,text,norm)` rel: ASCII-alnum only, lowercased. Exposed as a
     // scalar so `norm(a) = norm(b)` is a punctuation/case-blind compare, and
     // arbitrary text joins against `string.norm`.
-    conn.create_scalar_function("sprf_norm", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?.map(|s| crate::spine::normalize(&s))))?;
+    conn.create_scalar_function("sprf_norm", 1, det, |ctx| {
+        Ok(ctx
+            .get::<Option<String>>(0)?
+            .map(|s| crate::spine::normalize(&s)))
+    })?;
 
     conn.create_scalar_function("sprf_strip_prefix", 2, det, |ctx| {
         let (Some(s), Some(p)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
-        else { return Ok(None); };
+        else {
+            return Ok(None);
+        };
         Ok(Some(s.strip_prefix(&p).map(str::to_string).unwrap_or(s)))
     })?;
     conn.create_scalar_function("sprf_strip_suffix", 2, det, |ctx| {
         let (Some(s), Some(p)) = (ctx.get::<Option<String>>(0)?, ctx.get::<Option<String>>(1)?)
-        else { return Ok(None); };
+        else {
+            return Ok(None);
+        };
         Ok(Some(s.strip_suffix(&p).map(str::to_string).unwrap_or(s)))
     })?;
 
@@ -596,15 +668,23 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
     // sym column compare against a runtime-computed text by hashing the TEXT
     // side (one hash per candidate row, zero `_strings` lookups) instead of
     // decoding the sym side.
-    conn.create_scalar_function("sprf_sym", 1, det,
-        |ctx| Ok(ctx.get::<Option<String>>(0)?
-            .map(|s| crate::spine::StringId::of(&s).sqlite())))?;
+    conn.create_scalar_function("sprf_sym", 1, det, |ctx| {
+        Ok(ctx
+            .get::<Option<String>>(0)?
+            .map(|s| crate::spine::StringId::of(&s).sqlite()))
+    })?;
 
     // Line count of a text value (newline count + 1, 0 for empty) — feeds the
     // file-size rail (`lines(content)`).
     conn.create_scalar_function("sprf_lines", 1, det, |ctx| {
-        let Some(s) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
-        Ok(Some(if s.is_empty() { 0i64 } else { s.lines().count() as i64 }))
+        let Some(s) = ctx.get::<Option<String>>(0)? else {
+            return Ok(None);
+        };
+        Ok(Some(if s.is_empty() {
+            0i64
+        } else {
+            s.lines().count() as i64
+        }))
     })?;
 
     conn.create_scalar_function("sprf_replace_re", 3, det, |ctx| {
@@ -612,7 +692,9 @@ fn register_string_fns(conn: &Connection) -> Result<()> {
             ctx.get::<Option<String>>(0)?,
             ctx.get::<Option<String>>(1)?,
             ctx.get::<Option<String>>(2)?,
-        ) else { return Ok(None); };
+        ) else {
+            return Ok(None);
+        };
         let re = compiled_regex(&pattern)
             .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
         Ok(Some(re.replace_all(&s, repl.as_str()).into_owned()))
@@ -634,12 +716,18 @@ pub enum SqlVal {
 impl SqlVal {
     /// Borrow the text payload, if this cell is text.
     pub fn as_text(&self) -> Option<&str> {
-        match self { SqlVal::Text(s) => Some(s), _ => None }
+        match self {
+            SqlVal::Text(s) => Some(s),
+            _ => None,
+        }
     }
 
     /// Borrow the integer payload, if this cell is an integer.
     pub fn as_int(&self) -> Option<i64> {
-        match self { SqlVal::Int(i) => Some(*i), _ => None }
+        match self {
+            SqlVal::Int(i) => Some(*i),
+            _ => None,
+        }
     }
 
     /// The param mapping engine/rpc.rs::query_sql and daemon_read.rs::json_rows
@@ -670,7 +758,8 @@ impl SqlVal {
             SqlVal::Null => serde_json::Value::Null,
             SqlVal::Int(i) => serde_json::Value::Number((*i).into()),
             SqlVal::Real(r) => serde_json::Value::Number(
-                serde_json::Number::from_f64(*r).unwrap_or_else(|| 0.into())),
+                serde_json::Number::from_f64(*r).unwrap_or_else(|| 0.into()),
+            ),
             SqlVal::Text(s) => serde_json::Value::String(s.clone()),
             SqlVal::Blob(_) => serde_json::Value::String("<blob NB>".to_string()),
         }
@@ -690,43 +779,63 @@ impl SqlVal {
 }
 
 impl From<&str> for SqlVal {
-    fn from(value: &str) -> Self { SqlVal::Text(value.to_string()) }
+    fn from(value: &str) -> Self {
+        SqlVal::Text(value.to_string())
+    }
 }
 
 impl From<String> for SqlVal {
-    fn from(value: String) -> Self { SqlVal::Text(value) }
+    fn from(value: String) -> Self {
+        SqlVal::Text(value)
+    }
 }
 
 impl From<&String> for SqlVal {
-    fn from(value: &String) -> Self { SqlVal::Text(value.clone()) }
+    fn from(value: &String) -> Self {
+        SqlVal::Text(value.clone())
+    }
 }
 
 impl From<i64> for SqlVal {
-    fn from(value: i64) -> Self { SqlVal::Int(value) }
+    fn from(value: i64) -> Self {
+        SqlVal::Int(value)
+    }
 }
 
 impl From<i32> for SqlVal {
-    fn from(value: i32) -> Self { SqlVal::Int(i64::from(value)) }
+    fn from(value: i32) -> Self {
+        SqlVal::Int(i64::from(value))
+    }
 }
 
 impl From<u32> for SqlVal {
-    fn from(value: u32) -> Self { SqlVal::Int(i64::from(value)) }
+    fn from(value: u32) -> Self {
+        SqlVal::Int(i64::from(value))
+    }
 }
 
 impl From<usize> for SqlVal {
-    fn from(value: usize) -> Self { SqlVal::Int(value as i64) }
+    fn from(value: usize) -> Self {
+        SqlVal::Int(value as i64)
+    }
 }
 
 impl From<f64> for SqlVal {
-    fn from(value: f64) -> Self { SqlVal::Real(value) }
+    fn from(value: f64) -> Self {
+        SqlVal::Real(value)
+    }
 }
 
 impl From<&[u8]> for SqlVal {
-    fn from(value: &[u8]) -> Self { SqlVal::Blob(value.to_vec()) }
+    fn from(value: &[u8]) -> Self {
+        SqlVal::Blob(value.to_vec())
+    }
 }
 
 impl From<Vec<u8>> for SqlVal {
-    fn from(value: Vec<u8>) -> Self { SqlVal::Blob(value) }
+    fn from(value: Vec<u8>) -> Self {
+        SqlVal::Blob(value)
+    }
 }
 
 impl<T: Into<SqlVal>> From<Option<T>> for SqlVal {
@@ -806,7 +915,9 @@ impl rusqlite::types::FromSql for SqlVal {
             rusqlite::types::ValueRef::Null => SqlVal::Null,
             rusqlite::types::ValueRef::Integer(i) => SqlVal::Int(i),
             rusqlite::types::ValueRef::Real(r) => SqlVal::Real(r),
-            rusqlite::types::ValueRef::Text(t) => SqlVal::Text(String::from_utf8_lossy(t).into_owned()),
+            rusqlite::types::ValueRef::Text(t) => {
+                SqlVal::Text(String::from_utf8_lossy(t).into_owned())
+            }
             rusqlite::types::ValueRef::Blob(b) => SqlVal::Blob(b.to_vec()),
         })
     }
@@ -836,7 +947,11 @@ fn map_row<T>(result: Result<T>, rel: &str, head: &str) -> rusqlite::Result<T> {
 fn stmt_head(sql: &str) -> String {
     let compact: String = sql.split_whitespace().collect::<Vec<_>>().join(" ");
     let head: String = compact.chars().take(80).collect();
-    let ellipsis = if compact.chars().count() > 80 { "…" } else { "" };
+    let ellipsis = if compact.chars().count() > 80 {
+        "…"
+    } else {
+        ""
+    };
     format!("{head}{ellipsis}")
 }
 
@@ -848,7 +963,10 @@ fn sql_err(rel: &str, sql: &str, e: rusqlite::Error) -> anyhow::Error {
 
 /// "?, ?, …" n times — IN-list rendering for the *_in_chunks helpers.
 pub fn holes(n: usize) -> String {
-    std::iter::repeat("?").take(n).collect::<Vec<_>>().join(", ")
+    std::iter::repeat("?")
+        .take(n)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn to_sql_params(params: &[SqlVal]) -> Vec<&dyn ToSql> {
@@ -858,11 +976,15 @@ fn to_sql_params(params: &[SqlVal]) -> Vec<&dyn ToSql> {
 impl Db {
     /// Escape hatch for not-yet-migrated call sites. Deleted in the final
     /// burn-down commit once every call site routes through a named seam method.
-    pub fn conn(&self) -> &Connection { &self.conn }
+    pub fn conn(&self) -> &Connection {
+        &self.conn
+    }
 
     /// Whether this connection is outside a transaction, without exposing the
     /// raw connection through the storage seam.
-    pub fn is_autocommit(&self) -> bool { self.conn.is_autocommit() }
+    pub fn is_autocommit(&self) -> bool {
+        self.conn.is_autocommit()
+    }
 
     pub fn flush_pending_syms(&self) -> Result<usize> {
         self.flush_pending_syms_keyed("INSERT _strings")
@@ -878,10 +1000,19 @@ impl Db {
     /// loop. The plain `INSERT _strings` key stays reserved for a genuine
     /// unlabeled per-row flush, which must still scream.
     pub fn flush_pending_syms_keyed(&self, bump_key: &str) -> Result<usize> {
-        let texts = std::mem::take(&mut *self.pending_syms.lock().expect("pending symbol queue poisoned"));
-        if texts.is_empty() { return Ok(0); }
+        let texts = std::mem::take(
+            &mut *self
+                .pending_syms
+                .lock()
+                .expect("pending symbol queue poisoned"),
+        );
+        if texts.is_empty() {
+            return Ok(0);
+        }
         let mut sink = crate::spine::SymSink::new();
-        for text in texts { sink.sym(&text); }
+        for text in texts {
+            sink.sym(&text);
+        }
         self.flush_syms_keyed(&mut sink, bump_key)
     }
 
@@ -899,14 +1030,18 @@ impl Db {
     /// `bump` runs before its statement executes, so the `BEGIN` that opens the
     /// next transaction still observes autocommit here and clears first.
     fn invalidate_inflight_strings_if_settled(&self) {
-        if self.inflight_strings.borrow().is_empty() { return; }
+        if self.inflight_strings.borrow().is_empty() {
+            return;
+        }
         if self.is_autocommit() {
             self.inflight_strings.borrow_mut().clear();
         }
     }
 
     /// Reset the per-tick statement counter.
-    pub fn tick_begin(&self) { self.counts.borrow_mut().clear(); }
+    pub fn tick_begin(&self) {
+        self.counts.borrow_mut().clear();
+    }
 
     /// If any one statement ran past the threshold this tick, scream: a per-row
     /// loop slipped through the plural API. Returns the (label, count) it flagged.
@@ -915,7 +1050,11 @@ impl Db {
     pub fn tick_end(&self) -> Option<(String, u32)> {
         if profiling() {
             let (n, ms) = sql_stats_take();
-            tracing::debug!(n, ms, "[profile] sql: {n} statements, {ms:.1}ms inside sqlite");
+            tracing::debug!(
+                n,
+                ms,
+                "[profile] sql: {n} statements, {ms:.1}ms inside sqlite"
+            );
             let counts = self.counts.borrow();
             let mut top: Vec<(&String, &u32)> = counts.iter().filter(|(_, n)| **n > 1).collect();
             top.sort_by(|a, b| b.1.cmp(a.1));
@@ -945,9 +1084,7 @@ impl Db {
         // and it still screams.
         let (key, &n) = counts
             .iter()
-            .filter(|(key, _)| {
-                !key.starts_with("SELECT ") && !key.starts_with("INSERT _strings (")
-            })
+            .filter(|(key, _)| !key.starts_with("SELECT ") && !key.starts_with("INSERT _strings ("))
             .max_by_key(|(_, n)| **n)?;
         if n > N1_THRESHOLD {
             tracing::warn!(key = %key, n, "[n+1] '{key}' ran {n}x this tick — collect the set and call Db::insert_rows once");
@@ -973,8 +1110,7 @@ impl Db {
     /// context and the N+1 counter key.
     pub fn exec_on(&self, rel: &str, sql: &str) -> Result<usize> {
         self.bump(rel);
-        self.conn.execute(sql, [])
-            .map_err(|e| sql_err(rel, sql, e))
+        self.conn.execute(sql, []).map_err(|e| sql_err(rel, sql, e))
     }
 
     /// Fixpoint executor: one lowered statement per derived rule. Bumps the
@@ -988,7 +1124,9 @@ impl Db {
         // any fixed-length prefix (same INSERT head, different SELECT body),
         // while a per-row loop repeats one statement verbatim.
         self.bump(sql);
-        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute([]))
+        self.conn
+            .prepare_cached(sql)
+            .and_then(|mut stmt| stmt.execute([]))
             .map_err(|e| sql_err(rel, sql, e))
     }
 
@@ -996,7 +1134,9 @@ impl Db {
     /// Kept until the final burn-down commit removes all remaining callers.
     pub fn exec(&self, sql: &str) -> Result<usize> {
         self.bump(sql);
-        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute([]))
+        self.conn
+            .prepare_cached(sql)
+            .and_then(|mut stmt| stmt.execute([]))
             .map_err(|e| sql_err("_exec", sql, e))
     }
 
@@ -1004,15 +1144,24 @@ impl Db {
     pub fn exec_params(&self, rel: &str, sql: &str, params: &[SqlVal]) -> Result<usize> {
         self.bump(rel);
         let refs = to_sql_params(params);
-        self.conn.prepare_cached(sql).and_then(|mut stmt| stmt.execute(refs.as_slice()))
+        self.conn
+            .prepare_cached(sql)
+            .and_then(|mut stmt| stmt.execute(refs.as_slice()))
             .map_err(|e| sql_err(rel, sql, e))
     }
 
     /// UPDATE/DELETE … WHERE k IN (<holes>), chunked like query_in_chunks; sums
     /// rows-affected; one logical bump.
-    pub fn exec_in_chunks(&self, rel: &str, sql: impl Fn(usize) -> String,
-                          head: &[SqlVal], keys: &[SqlVal]) -> Result<usize> {
-        if keys.is_empty() { return Ok(0); }
+    pub fn exec_in_chunks(
+        &self,
+        rel: &str,
+        sql: impl Fn(usize) -> String,
+        head: &[SqlVal],
+        keys: &[SqlVal],
+    ) -> Result<usize> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
         self.bump(rel);
         let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
         let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
@@ -1024,44 +1173,61 @@ impl Db {
             params.extend(chunk.iter().map(Into::into));
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
             n_stmts += 1;
-            total += self.conn.execute(&sql, refs.as_slice())
+            total += self
+                .conn
+                .execute(&sql, refs.as_slice())
                 .map_err(|e| sql_err(rel, &sql, e))?;
         }
         // Event trail: ONE row per batch call (same discipline as
         // `insert_rows_keyed`) — `keys` is the input key-set size, `rows` the
         // rows-affected sum, `statements` the chunk count.
-        crate::eventlog::emit("db_write", None, serde_json::json!({
-            "table": rel, "keys": keys.len(), "rows": total, "statements": n_stmts,
-        }));
+        crate::eventlog::emit(
+            "db_write",
+            None,
+            serde_json::json!({
+                "table": rel, "keys": keys.len(), "rows": total, "statements": n_stmts,
+            }),
+        );
         Ok(total)
     }
 
     /// prepare; bind params; query_row. Prepare/query errors -> sql_err(rel, sql).
     /// read-closure errors -> context "row map on {rel}: {head}". Exactly one row
     /// required: QueryReturnedNoRows propagates, context-wrapped like the rest.
-    pub fn query_one<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
+    pub fn query_one<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        read: impl FnOnce(&Row<'_>) -> Result<T>,
+    ) -> Result<T> {
         self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        stmt.query_row(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }).map_err(|e| sql_err(rel, sql, e))
+        stmt.query_row(refs.as_slice(), |row| map_row(read(row), rel, &head))
+            .map_err(|e| sql_err(rel, sql, e))
     }
 
     /// Same as query_one; zero-or-one row. Absorbs every `OptionalExtension` site.
-    pub fn query_opt<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
+    pub fn query_opt<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        read: impl FnOnce(&Row<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
         self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        match stmt.query_row(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }) {
+        match stmt.query_row(refs.as_slice(), |row| map_row(read(row), rel, &head)) {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(sql_err(rel, sql, e)),
@@ -1069,28 +1235,43 @@ impl Db {
     }
 
     /// prepare; query; map each row; collect with `?` — NEVER filter_map(ok).
-    pub fn query_rows<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                         mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
+    pub fn query_rows<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        mut read: impl FnMut(&Row<'_>) -> Result<T>,
+    ) -> Result<Vec<T>> {
         self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        let rows = stmt.query_map(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }).map_err(|e| sql_err(rel, sql, e))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| map_row(read(row), rel, &head))
+            .map_err(|e| sql_err(rel, sql, e))?;
         rows.map(|r| r.map_err(|e| sql_err(rel, sql, e))).collect()
     }
 
     /// Streaming fold for scans that must not materialize a Vec.
-    pub fn for_each_row(&self, rel: &str, sql: &str, params: &[SqlVal],
-                        mut f: impl FnMut(&Row<'_>) -> Result<()>) -> Result<()> {
+    pub fn for_each_row(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        mut f: impl FnMut(&Row<'_>) -> Result<()>,
+    ) -> Result<()> {
         self.bump(&format!("SELECT {rel}"));
         let refs = to_sql_params(params);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
         let head = stmt_head(sql);
-        let mut rows = stmt.query(refs.as_slice())
+        let mut rows = stmt
+            .query(refs.as_slice())
             .map_err(|e| sql_err(rel, sql, e))?;
         while let Some(row) = rows.next().map_err(|e| sql_err(rel, sql, e))? {
             f(row).with_context(|| format!("row map on {rel}: {head}"))?;
@@ -1101,8 +1282,12 @@ impl Db {
     /// Rows as seam values — the rpc.rs::query_sql / daemon_read.rs::json_rows /
     /// string_rows shape. Callers map each cell with SqlVal::to_json or
     /// to_lossy_string.
-    pub fn query_values(&self, rel: &str, sql: &str, params: &[SqlVal])
-        -> Result<Vec<Vec<SqlVal>>> {
+    pub fn query_values(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+    ) -> Result<Vec<Vec<SqlVal>>> {
         self.query_rows(rel, sql, params, |row| {
             let ncol = row.as_ref().column_count();
             let mut cells = Vec::with_capacity(ncol);
@@ -1114,10 +1299,17 @@ impl Db {
     }
 
     /// SELECT … WHERE k IN (<n holes>), chunked so head.len() + n <= PARAM_BUDGET.
-    pub fn query_in_chunks<T>(&self, rel: &str, sql: impl Fn(usize) -> String,
-                              head: &[SqlVal], keys: &[SqlVal],
-                              mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
-        if keys.is_empty() { return Ok(Vec::new()); }
+    pub fn query_in_chunks<T>(
+        &self,
+        rel: &str,
+        sql: impl Fn(usize) -> String,
+        head: &[SqlVal],
+        keys: &[SqlVal],
+        mut read: impl FnMut(&Row<'_>) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
         self.bump(&format!("SELECT {rel}"));
         let head_params: Vec<rusqlite::types::Value> = head.iter().map(Into::into).collect();
         let chunk_size = PARAM_BUDGET.saturating_sub(head.len()).max(1);
@@ -1127,13 +1319,14 @@ impl Db {
             let mut params: Vec<rusqlite::types::Value> = head_params.clone();
             params.extend(chunk.iter().map(Into::into));
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
-            let mut stmt = self.conn.prepare(&sql)
-                .map_err(|e| sql_err(rel, &sql, e))?;
+            let mut stmt = self.conn.prepare(&sql).map_err(|e| sql_err(rel, &sql, e))?;
             let head_str = stmt_head(&sql);
-            let rows = stmt.query_map(refs.as_slice(), |row| {
-                map_row(read(row), rel, &head_str)
-            }).map_err(|e| sql_err(rel, &sql, e))?;
-            for row in rows { out.push(row.map_err(|e| sql_err(rel, &sql, e))?); }
+            let rows = stmt
+                .query_map(refs.as_slice(), |row| map_row(read(row), rel, &head_str))
+                .map_err(|e| sql_err(rel, &sql, e))?;
+            for row in rows {
+                out.push(row.map_err(|e| sql_err(rel, &sql, e))?);
+            }
         }
         Ok(out)
     }
@@ -1148,10 +1341,26 @@ impl Db {
                 let cell: SqlVal = row.get(col_index)?;
                 let tag_bytes: &[u8] = match cell {
                     SqlVal::Null => b"n",
-                    SqlVal::Int(i) => { hasher.update(b"i"); hasher.update(&i.to_le_bytes()); b"" }
-                    SqlVal::Real(r) => { hasher.update(b"r"); hasher.update(&r.to_le_bytes()); b"" }
-                    SqlVal::Text(ref s) => { hasher.update(b"t"); hasher.update(s.as_bytes()); b"" }
-                    SqlVal::Blob(ref b) => { hasher.update(b"b"); hasher.update(b); b"" }
+                    SqlVal::Int(i) => {
+                        hasher.update(b"i");
+                        hasher.update(&i.to_le_bytes());
+                        b""
+                    }
+                    SqlVal::Real(r) => {
+                        hasher.update(b"r");
+                        hasher.update(&r.to_le_bytes());
+                        b""
+                    }
+                    SqlVal::Text(ref s) => {
+                        hasher.update(b"t");
+                        hasher.update(s.as_bytes());
+                        b""
+                    }
+                    SqlVal::Blob(ref b) => {
+                        hasher.update(b"b");
+                        hasher.update(b);
+                        b""
+                    }
                 };
                 hasher.update(tag_bytes);
                 hasher.update(&[0x00]);
@@ -1168,34 +1377,58 @@ impl Db {
 
     /// Chunked multi-row INSERT INTO table (cols) VALUES … ON CONFLICT(key_cols)
     /// DO UPDATE SET update_cols = excluded.* (empty update_cols -> DO NOTHING).
-    pub fn upsert_rows(&self, table: &str, cols: &[&str], key_cols: &[&str],
-                       update_cols: &[&str], rows: &[Vec<SqlVal>]) -> Result<usize> {
-        if rows.is_empty() { return Ok(0); }
+    pub fn upsert_rows(
+        &self,
+        table: &str,
+        cols: &[&str],
+        key_cols: &[&str],
+        update_cols: &[&str],
+        rows: &[Vec<SqlVal>],
+    ) -> Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
         let ncol = cols.len();
         anyhow::ensure!(ncol > 0, "upsert_rows requires at least one column");
-        let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
-        let key_list = key_cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let collist = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let key_list = key_cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let on_conflict = if update_cols.is_empty() {
             "DO NOTHING".to_string()
         } else {
-            let updates = update_cols.iter()
+            let updates = update_cols
+                .iter()
                 .map(|c| format!("\"{c}\" = excluded.\"{c}\""))
-                .collect::<Vec<_>>().join(", ");
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("DO UPDATE SET {updates}")
         };
         let key = format!("UPSERT {table}");
         self.bump(&key);
         let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
         let owns_tx = rows.len() > chunk_rows && self.conn.is_autocommit();
-        if owns_tx { self.conn.execute_batch("BEGIN").map_err(|e| sql_err(table, "BEGIN", e))?; }
+        if owns_tx {
+            self.conn
+                .execute_batch("BEGIN")
+                .map_err(|e| sql_err(table, "BEGIN", e))?;
+        }
         let mut total = 0;
         let tuple = format!("({})", vec!["?"; ncol].join(","));
         for chunk in rows.chunks(chunk_rows) {
             let values = vec![tuple.clone(); chunk.len()].join(", ");
             let sql = format!(
                 "INSERT INTO {table} ({collist}) VALUES {values} \
-                 ON CONFLICT({key_list}) {on_conflict}");
-            let params: Vec<rusqlite::types::Value> = chunk.iter().flatten().map(Into::into).collect();
+                 ON CONFLICT({key_list}) {on_conflict}"
+            );
+            let params: Vec<rusqlite::types::Value> =
+                chunk.iter().flatten().map(Into::into).collect();
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
             match self.conn.execute(&sql, refs.as_slice()) {
                 Ok(n) => total += n,
@@ -1208,26 +1441,35 @@ impl Db {
                 }
             }
         }
-        if owns_tx { self.conn.execute_batch("COMMIT").map_err(|e| sql_err(table, "COMMIT", e))?; }
+        if owns_tx {
+            self.conn
+                .execute_batch("COMMIT")
+                .map_err(|e| sql_err(table, "COMMIT", e))?;
+        }
         Ok(total)
     }
 
     /// Structural + on-disk stats for a rel's backing table.
     pub fn rel_stats(&self, rel: &str) -> Result<serde_json::Value> {
         let table = crate::lower::tbl(rel);
-        let rows: i64 = self.query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| Ok(r.get(0)?))?;
+        let rows: i64 =
+            self.query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| {
+                Ok(r.get(0)?)
+            })?;
         let mut ncol = 0i64;
         let mut pk: Vec<(i64, String)> = Vec::new();
-        let col_info: Vec<(String, i64)> = self.query_rows(
-            &table,
-            &format!("PRAGMA table_info({table})"),
-            &[],
-            |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?)),
-        )?;
+        let col_info: Vec<(String, i64)> =
+            self.query_rows(&table, &format!("PRAGMA table_info({table})"), &[], |r| {
+                Ok((r.get::<_, String>(1)?, r.get::<_, i64>(5)?))
+            })?;
         for (name, pk_pos) in col_info {
-            if name == "__src" { continue; }
+            if name == "__src" {
+                continue;
+            }
             ncol += 1;
-            if pk_pos > 0 { pk.push((pk_pos, name)); }
+            if pk_pos > 0 {
+                pk.push((pk_pos, name));
+            }
         }
         pk.sort_by_key(|(pos, _)| *pos);
         let pk: Vec<String> = pk.into_iter().map(|(_, c)| c).collect();
@@ -1240,14 +1482,24 @@ impl Db {
         )?;
         let mut bytes = serde_json::Map::new();
         let obj_bytes = |name: &str| -> Result<Option<i64>> {
-            self.query_one("dbstat", "SELECT sum(pgsize) FROM dbstat WHERE name = ?1",
-                &[name.into()], |r| Ok(r.get::<_, Option<i64>>(0)?))
+            self.query_one(
+                "dbstat",
+                "SELECT sum(pgsize) FROM dbstat WHERE name = ?1",
+                &[name.into()],
+                |r| Ok(r.get::<_, Option<i64>>(0)?),
+            )
         };
-        if let Some(b) = obj_bytes(&table)? { bytes.insert(table.clone(), b.into()); }
+        if let Some(b) = obj_bytes(&table)? {
+            bytes.insert(table.clone(), b.into());
+        }
         let pk_autoindex = format!("sqlite_autoindex_{table}_1");
-        if let Some(b) = obj_bytes(&pk_autoindex)? { bytes.insert(pk_autoindex, b.into()); }
+        if let Some(b) = obj_bytes(&pk_autoindex)? {
+            bytes.insert(pk_autoindex, b.into());
+        }
         for ix in &indexes {
-            if let Some(b) = obj_bytes(ix)? { bytes.insert(ix.clone(), b.into()); }
+            if let Some(b) = obj_bytes(ix)? {
+                bytes.insert(ix.clone(), b.into());
+            }
         }
         Ok(serde_json::json!({
             "rel": rel,
@@ -1280,14 +1532,16 @@ impl Db {
     /// first object the script creates or drops.
     pub fn execute_batch_on(&self, rel: &str, sql: &str) -> Result<()> {
         self.bump(rel);
-        self.conn.execute_batch(sql)
+        self.conn
+            .execute_batch(sql)
             .map_err(|e| sql_err(rel, sql, e))
     }
 
     /// Deprecated wrapper: old call sites supply only SQL.
     pub fn execute_batch(&self, sql: &str) -> Result<()> {
         self.bump(sql);
-        self.conn.execute_batch(sql)
+        self.conn
+            .execute_batch(sql)
             .map_err(|e| sql_err("_ddl", sql, e))
     }
 
@@ -1298,12 +1552,15 @@ impl Db {
             "SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2",
             &[table.into(), column.into()],
             |_| Ok(()),
-        ).map(|o| o.is_some())
+        )
+        .map(|o| o.is_some())
     }
 
     /// column_exists -> Ok(false); else exec(table, alter_ddl) -> Ok(true).
     pub fn ensure_column(&self, table: &str, column: &str, alter_ddl: &str) -> Result<bool> {
-        if self.column_exists(table, column)? { return Ok(false); }
+        if self.column_exists(table, column)? {
+            return Ok(false);
+        }
         self.exec_on(table, alter_ddl)?;
         Ok(true)
     }
@@ -1323,13 +1580,17 @@ impl Db {
     /// (name, type) FROM sqlite_master WHERE type IN ('table','view') AND name
     /// LIKE any(patterns).
     pub fn schema_objects(&self, name_like: &[&str]) -> Result<Vec<(String, String)>> {
-        if name_like.is_empty() { return Ok(Vec::new()); }
+        if name_like.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut sql = String::from(
             "SELECT name, type FROM sqlite_master \
-             WHERE type IN ('table','view') AND ("
+             WHERE type IN ('table','view') AND (",
         );
         let mut parts = Vec::new();
-        for _ in name_like { parts.push("name LIKE ?".to_string()); }
+        for _ in name_like {
+            parts.push("name LIKE ?".to_string());
+        }
         sql.push_str(&parts.join(" OR "));
         sql.push_str(") ORDER BY name");
         let params: Vec<SqlVal> = name_like.iter().map(|p| (*p).into()).collect();
@@ -1412,9 +1673,13 @@ impl Db {
             return self.insert_rows(table, cols, rows);
         }
         let sidx: Vec<(String, String)> = self.secondary_indexes(table)?;
-        for (name, _) in &sidx { self.exec_on(table, &format!("DROP INDEX \"{name}\""))?; }
+        for (name, _) in &sidx {
+            self.exec_on(table, &format!("DROP INDEX \"{name}\""))?;
+        }
         let res = self.insert_rows(table, cols, rows);
-        for (_, sql) in &sidx { self.exec_on(table, sql)?; }
+        for (_, sql) in &sidx {
+            self.exec_on(table, sql)?;
+        }
         res
     }
 
@@ -1438,25 +1703,39 @@ impl Db {
         cols: &[&str],
         rows: &[Vec<Value>],
     ) -> Result<usize> {
-        if rows.is_empty() { return Ok(0); }
+        if rows.is_empty() {
+            return Ok(0);
+        }
         let ncol = cols.len();
-        let collist = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let collist = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         self.bump(bump_key);
         let chunk_rows = (PARAM_BUDGET / ncol.max(1)).max(1);
         let multi = rows.len() > chunk_rows;
         let owns_tx = multi && self.conn.is_autocommit();
-        if owns_tx { self.conn.execute_batch("BEGIN").map_err(|e| sql_err(table, "BEGIN", e))?; }
+        if owns_tx {
+            self.conn
+                .execute_batch("BEGIN")
+                .map_err(|e| sql_err(table, "BEGIN", e))?;
+        }
         let mut total = 0;
         let mut n_stmts = 0usize;
         for chunk in rows.chunks(chunk_rows) {
             let tuple = format!("({})", vec!["?"; ncol].join(","));
             let values = vec![tuple; chunk.len()].join(", ");
             let sql = format!("INSERT OR IGNORE INTO {table} ({collist}) VALUES {values}");
-            let params: Vec<rusqlite::types::Value> = chunk.iter().flatten().map(|v| match v {
-                Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
-                Value::Int(n) => rusqlite::types::Value::Integer(*n),
-                Value::Null => rusqlite::types::Value::Null,
-            }).collect();
+            let params: Vec<rusqlite::types::Value> = chunk
+                .iter()
+                .flatten()
+                .map(|v| match v {
+                    Value::Text(s) => rusqlite::types::Value::Text(s.clone()),
+                    Value::Int(n) => rusqlite::types::Value::Integer(*n),
+                    Value::Null => rusqlite::types::Value::Null,
+                })
+                .collect();
             let refs: Vec<&dyn ToSql> = params.iter().map(|v| v as &dyn ToSql).collect();
             n_stmts += 1;
             match self.conn.execute(&sql, refs.as_slice()) {
@@ -1470,7 +1749,11 @@ impl Db {
                 }
             }
         }
-        if owns_tx { self.conn.execute_batch("COMMIT").map_err(|e| sql_err(table, "COMMIT", e))?; }
+        if owns_tx {
+            self.conn
+                .execute_batch("COMMIT")
+                .map_err(|e| sql_err(table, "COMMIT", e))?;
+        }
         // `_sym_probe` is the transient scratch table the sym-surrogate resolve
         // DELETEs and re-fills every call (src/db.rs `resolve_sym_surrogates`);
         // its insert is never a real corpus change, so it must not register as a
@@ -1479,10 +1762,7 @@ impl Db {
         // rows on a settled tick and legitimately bumps only when a NEW sym is
         // minted.) Storage normalization, 2026-07-21.
         if total > 0 && table != "_write_ledger" && table != "_sym_probe" {
-            let rel = table
-                .strip_prefix("rel_")
-                .unwrap_or(table)
-                .to_string();
+            let rel = table.strip_prefix("rel_").unwrap_or(table).to_string();
             self.write_ledger.borrow_mut().push((rel, total));
         }
         // Event trail: ONE row per batch call, never per row inserted. `rows`
@@ -1493,9 +1773,13 @@ impl Db {
         // not root-scoped (one `Db` per served root's connection, but the
         // type itself carries no path), so this rides process-wide
         // (root=None) and the reader correlates by pid/time.
-        crate::eventlog::emit("db_write", None, serde_json::json!({
-            "table": table, "rows": rows.len(), "rows_affected": total, "statements": n_stmts,
-        }));
+        crate::eventlog::emit(
+            "db_write",
+            None,
+            serde_json::json!({
+                "table": table, "rows": rows.len(), "rows_affected": total, "statements": n_stmts,
+            }),
+        );
         Ok(total)
     }
 
@@ -1570,7 +1854,11 @@ impl Db {
             return Ok(0);
         }
         self.ensure_sym_alloc_loaded()?;
-        Ok(self.sym_alloc.lock().expect("sym allocator poisoned").dense_of(hash))
+        Ok(self
+            .sym_alloc
+            .lock()
+            .expect("sym allocator poisoned")
+            .dense_of(hash))
     }
 
     /// Map each distinct interned StringId hash to its dense `_sym_dict`
@@ -1616,20 +1904,29 @@ impl Db {
     /// rel materialize) reports under its own label — `INSERT _strings
     /// (encode/rel)`, `... (spine/source)` — instead of the plain
     /// `INSERT _strings` key the scream watches for a genuine per-row leak.
-    pub fn flush_syms_keyed(&self, sink: &mut crate::spine::SymSink, bump_key: &str) -> Result<usize> {
+    pub fn flush_syms_keyed(
+        &self,
+        sink: &mut crate::spine::SymSink,
+        bump_key: &str,
+    ) -> Result<usize> {
         use std::collections::BTreeMap;
         let pending = sink.drain();
-        if pending.is_empty() { return Ok(0); }
+        if pending.is_empty() {
+            return Ok(0);
+        }
         let mut by_id: BTreeMap<i64, String> = BTreeMap::new();
         for (id, text) in pending {
             let cell = id.sqlite();
             match by_id.entry(cell) {
-                std::collections::btree_map::Entry::Vacant(e) => { e.insert(text); }
+                std::collections::btree_map::Entry::Vacant(e) => {
+                    e.insert(text);
+                }
                 std::collections::btree_map::Entry::Occupied(e) => {
                     if *e.get() != text {
                         anyhow::bail!(
                             "StringId collision at intern time: {:?} and {:?} both hash to {cell}",
-                            e.get(), text
+                            e.get(),
+                            text
                         );
                     }
                 }
@@ -1649,14 +1946,18 @@ impl Db {
         }
         let already_persisted = self.persisted_strings.borrow();
         let already_inflight = self.inflight_strings.borrow();
-        let to_send: Vec<(i64, String)> = by_id.into_iter()
+        let to_send: Vec<(i64, String)> = by_id
+            .into_iter()
             .filter(|(id, _)| !already_persisted.contains(id) && !already_inflight.contains(id))
             .collect();
         drop(already_persisted);
         drop(already_inflight);
-        if to_send.is_empty() { return Ok(0); }
+        if to_send.is_empty() {
+            return Ok(0);
+        }
         let attempted_ids: Vec<i64> = to_send.iter().map(|(id, _)| *id).collect();
-        let rows: Vec<Vec<Value>> = to_send.into_iter()
+        let rows: Vec<Vec<Value>> = to_send
+            .into_iter()
             .map(|(id, text)| vec![Value::Int(id), Value::Text(text)])
             .collect();
 
@@ -1705,7 +2006,12 @@ impl Db {
             }
         };
         if !dict_rows.is_empty() {
-            self.insert_rows_keyed("_sym_dict", "INSERT _sym_dict", &["id", "sym_hash"], &dict_rows)?;
+            self.insert_rows_keyed(
+                "_sym_dict",
+                "INSERT _sym_dict",
+                &["id", "sym_hash"],
+                &dict_rows,
+            )?;
         }
         if was_autocommit {
             let mut persisted = self.persisted_strings.borrow_mut();
@@ -1726,7 +2032,9 @@ impl Db {
 
 /// Read-only connection owner for daemon_read. Counted into the process-wide
 /// profile hook; not part of per-tick N+1 counting (a read RPC has no tick).
-pub struct ReadDb { conn: Connection }
+pub struct ReadDb {
+    conn: Connection,
+}
 
 impl ReadDb {
     /// Was db::open_read_only: READ_ONLY|NO_MUTEX flags, 1s busy_timeout, the
@@ -1746,54 +2054,80 @@ impl ReadDb {
             1,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             |ctx| {
-                let Some(text) = ctx.get::<Option<String>>(0)? else { return Ok(None); };
+                let Some(text) = ctx.get::<Option<String>>(0)? else {
+                    return Ok(None);
+                };
                 Ok(Some(crate::spine::StringId::of(&text).sqlite()))
             },
         )?;
-        if profiling() { conn.profile(Some(profile_hook)); }
+        if profiling() {
+            conn.profile(Some(profile_hook));
+        }
         Ok(ReadDb { conn })
     }
 
-    pub fn query_one<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<T> {
+    pub fn query_one<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        read: impl FnOnce(&Row<'_>) -> Result<T>,
+    ) -> Result<T> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        stmt.query_row(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }).map_err(|e| sql_err(rel, sql, e))
+        stmt.query_row(refs.as_slice(), |row| map_row(read(row), rel, &head))
+            .map_err(|e| sql_err(rel, sql, e))
     }
 
-    pub fn query_opt<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                        read: impl FnOnce(&Row<'_>) -> Result<T>) -> Result<Option<T>> {
+    pub fn query_opt<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        read: impl FnOnce(&Row<'_>) -> Result<T>,
+    ) -> Result<Option<T>> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        match stmt.query_row(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }) {
+        match stmt.query_row(refs.as_slice(), |row| map_row(read(row), rel, &head)) {
             Ok(v) => Ok(Some(v)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(sql_err(rel, sql, e)),
         }
     }
 
-    pub fn query_rows<T>(&self, rel: &str, sql: &str, params: &[SqlVal],
-                         mut read: impl FnMut(&Row<'_>) -> Result<T>) -> Result<Vec<T>> {
+    pub fn query_rows<T>(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+        mut read: impl FnMut(&Row<'_>) -> Result<T>,
+    ) -> Result<Vec<T>> {
         let refs = to_sql_params(params);
         let head = stmt_head(sql);
-        let mut stmt = self.conn.prepare_cached(sql)
+        let mut stmt = self
+            .conn
+            .prepare_cached(sql)
             .map_err(|e| sql_err(rel, sql, e))?;
-        let rows = stmt.query_map(refs.as_slice(), |row| {
-            map_row(read(row), rel, &head)
-        }).map_err(|e| sql_err(rel, sql, e))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| map_row(read(row), rel, &head))
+            .map_err(|e| sql_err(rel, sql, e))?;
         rows.map(|r| r.map_err(|e| sql_err(rel, sql, e))).collect()
     }
 
-    pub fn query_values(&self, rel: &str, sql: &str, params: &[SqlVal])
-        -> Result<Vec<Vec<SqlVal>>> {
+    pub fn query_values(
+        &self,
+        rel: &str,
+        sql: &str,
+        params: &[SqlVal],
+    ) -> Result<Vec<Vec<SqlVal>>> {
         self.query_rows(rel, sql, params, |row| {
             let ncol = row.as_ref().column_count();
             let mut cells = Vec::with_capacity(ncol);
@@ -1839,17 +2173,29 @@ mod tests {
     fn scalar_fns_propagate_null() {
         let db = open(None).unwrap();
         for expr in [
-            "sprf_lower(NULL)", "sprf_upper(NULL)", "sprf_lcfirst(NULL)",
-            "sprf_ucfirst(NULL)", "sprf_trim(NULL)", "sprf_norm(NULL)",
-            "sprf_strip_prefix(NULL, 'p')", "sprf_strip_prefix('s', NULL)",
-            "sprf_strip_suffix(NULL, 'p')", "sprf_sym(NULL)",
-            "sprf_sym_intern(NULL)", "sprf_lines(NULL)",
-            "sprf_replace_re(NULL, 'a', 'b')", "sprf_replace_re('s', NULL, 'b')",
-            "sprf_split(NULL, ',', 0)", "sprf_split('a,b', NULL, 0)",
-            "NULL REGEXP 'a'", "'a' REGEXP NULL",
+            "sprf_lower(NULL)",
+            "sprf_upper(NULL)",
+            "sprf_lcfirst(NULL)",
+            "sprf_ucfirst(NULL)",
+            "sprf_trim(NULL)",
+            "sprf_norm(NULL)",
+            "sprf_strip_prefix(NULL, 'p')",
+            "sprf_strip_prefix('s', NULL)",
+            "sprf_strip_suffix(NULL, 'p')",
+            "sprf_sym(NULL)",
+            "sprf_sym_intern(NULL)",
+            "sprf_lines(NULL)",
+            "sprf_replace_re(NULL, 'a', 'b')",
+            "sprf_replace_re('s', NULL, 'b')",
+            "sprf_split(NULL, ',', 0)",
+            "sprf_split('a,b', NULL, 0)",
+            "NULL REGEXP 'a'",
+            "'a' REGEXP NULL",
         ] {
             let got: Option<String> = db
-                .query_one("_scalar", &format!("SELECT {expr}"), &[], |r| Ok(r.get::<_, Option<String>>(0)?))
+                .query_one("_scalar", &format!("SELECT {expr}"), &[], |r| {
+                    Ok(r.get::<_, Option<String>>(0)?)
+                })
                 .unwrap_or_else(|e| panic!("{expr} errored instead of NULL: {e}"));
             assert_eq!(got, None, "{expr} must be NULL");
         }
@@ -1859,21 +2205,30 @@ mod tests {
     fn sqlite_temp_work_is_file_backed() {
         let db = open(None).unwrap();
         let temp_store: i64 = db.pragma_i64("temp_store").unwrap();
-        assert_eq!(temp_store, 1, "TEMP tables and sorts must not consume unbounded heap");
+        assert_eq!(
+            temp_store, 1,
+            "TEMP tables and sorts must not consume unbounded heap"
+        );
     }
 
     #[test]
     fn insert_rows_chunks_by_param_budget() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)")
+            .unwrap();
         let rows: Vec<Vec<Value>> = (0..33_000)
             .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
             .collect();
         db.tick_begin();
         let n = db.insert_rows("t", &["a", "b"], &rows).unwrap();
         assert_eq!(n, 33_000);
-        assert!(db.tick_end().is_none(), "chunked insert must not trip the n+1 counter");
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert!(
+            db.tick_end().is_none(),
+            "chunked insert must not trip the n+1 counter"
+        );
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, 33_000);
     }
 
@@ -1898,7 +2253,8 @@ mod tests {
         for i in 0..n {
             let mut sink = crate::spine::SymSink::new();
             sink.sym(&format!("pass-{i}-str"));
-            db.flush_syms_keyed(&mut sink, "INSERT _strings (fixpoint/pass)").unwrap();
+            db.flush_syms_keyed(&mut sink, "INSERT _strings (fixpoint/pass)")
+                .unwrap();
         }
         assert!(
             db.tick_end().is_none(),
@@ -1924,20 +2280,27 @@ mod tests {
     #[test]
     fn multi_chunk_insert_owns_transaction_when_autocommit() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
         assert!(db.is_autocommit());
         assert_eq!(db.insert_rows("t", &["a"], &rows).unwrap(), rows.len());
-        assert!(db.is_autocommit(), "helper-owned transaction must be committed");
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert!(
+            db.is_autocommit(),
+            "helper-owned transaction must be committed"
+        );
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, rows.len() as i64);
     }
 
     #[test]
     fn multi_chunk_insert_composes_with_begin_immediate() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
         db.begin_immediate().unwrap();
@@ -1945,41 +2308,64 @@ mod tests {
         assert!(!db.is_autocommit(), "caller must still own the transaction");
         db.commit().unwrap();
 
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, rows.len() as i64);
     }
 
     #[test]
     fn failed_second_chunk_leaves_outer_transaction_for_caller_rollback() {
         let db = open(None).unwrap();
-        db.exec_on("marker", "CREATE TABLE marker (value TEXT)").unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("marker", "CREATE TABLE marker (value TEXT)")
+            .unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
         db.exec_on(
             "t",
             "CREATE TRIGGER fail_second_chunk BEFORE INSERT ON t \
              WHEN NEW.a = 32000 BEGIN SELECT RAISE(ABORT, 'second chunk failed'); END",
-        ).unwrap();
+        )
+        .unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
         db.begin_immediate().unwrap();
-        db.exec_on("marker", "INSERT INTO marker VALUES ('before helper')").unwrap();
+        db.exec_on("marker", "INSERT INTO marker VALUES ('before helper')")
+            .unwrap();
         let err = db.insert_rows("t", &["a"], &rows).unwrap_err();
         assert!(err.to_string().contains("second chunk failed"));
         assert!(!db.is_autocommit(), "helper must not roll back its caller");
-        let marker_in_tx: i64 = db.query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| Ok(r.get(0)?)).unwrap();
+        let marker_in_tx: i64 = db
+            .query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(marker_in_tx, 1);
 
         db.rollback().unwrap();
-        let marker_after: i64 = db.query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| Ok(r.get(0)?)).unwrap();
-        let rows_after: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
-        assert_eq!(marker_after, 0, "caller rollback must include its earlier unrelated write");
-        assert_eq!(rows_after, 0, "caller rollback must include the helper's first chunk");
+        let marker_after: i64 = db
+            .query_one("marker", "SELECT COUNT(*) FROM marker", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
+        let rows_after: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
+        assert_eq!(
+            marker_after, 0,
+            "caller rollback must include its earlier unrelated write"
+        );
+        assert_eq!(
+            rows_after, 0,
+            "caller rollback must include the helper's first chunk"
+        );
     }
 
     #[test]
     fn insert_rows_never_commits_caller_transaction() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
         let rows: Vec<Vec<Value>> = (0..32_001).map(|i| vec![Value::Int(i)]).collect();
 
         db.begin_immediate().unwrap();
@@ -1987,15 +2373,21 @@ mod tests {
         assert!(!db.is_autocommit());
         db.rollback().unwrap();
 
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
-        assert_eq!(count, 0, "caller rollback must undo every helper-written chunk");
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "caller rollback must undo every helper-written chunk"
+        );
     }
 
     fn create_strings_table(db: &Db) {
         db.exec_on(
             "_strings",
             "CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL)",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     #[test]
@@ -2005,7 +2397,11 @@ mod tests {
 
         let mut first = crate::spine::SymSink::new();
         first.sym("RedundantWriteVolume");
-        assert_eq!(db.flush_syms(&mut first).unwrap(), 1, "first flush actually inserts the row");
+        assert_eq!(
+            db.flush_syms(&mut first).unwrap(),
+            1,
+            "first flush actually inserts the row"
+        );
 
         // Same text, same content-derived id: a fresh SymSink standing in for
         // the next tick's re-offer of the same working set. `flush_syms` must
@@ -2021,7 +2417,11 @@ mod tests {
             "a cache-hit flush must never reach insert_rows/SQL at all"
         );
 
-        let count: i64 = db.query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(count, 1, "the string is still durably present exactly once");
     }
 
@@ -2036,10 +2436,15 @@ mod tests {
         assert_eq!(db.flush_syms(&mut sink).unwrap(), 1);
         db.rollback().unwrap();
 
-        let count_after_rollback: i64 = db.query_one(
-            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
-        ).unwrap();
-        assert_eq!(count_after_rollback, 0, "the row must not survive the caller's rollback");
+        let count_after_rollback: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
+        assert_eq!(
+            count_after_rollback, 0,
+            "the row must not survive the caller's rollback"
+        );
 
         // Because the flush happened inside a still-open caller transaction,
         // `flush_syms` must NOT have marked the id persisted. If it had, this
@@ -2049,11 +2454,17 @@ mod tests {
         // from it is trusted to resolve. Re-offering must still land it.
         let mut retry = crate::spine::SymSink::new();
         retry.sym("RolledBackIntern");
-        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer after the rollback, not skip it");
+        assert_eq!(
+            db.flush_syms(&mut retry).unwrap(),
+            1,
+            "must re-offer after the rollback, not skip it"
+        );
 
-        let count_after_retry: i64 = db.query_one(
-            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
-        ).unwrap();
+        let count_after_retry: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(count_after_retry, 1);
     }
 
@@ -2073,19 +2484,34 @@ mod tests {
         db.tick_begin();
         let mut first = crate::spine::SymSink::new();
         first.sym("SharedAcrossTwoHelpers");
-        assert_eq!(db.flush_syms(&mut first).unwrap(), 1, "first flush writes the row (uncommitted)");
+        assert_eq!(
+            db.flush_syms(&mut first).unwrap(),
+            1,
+            "first flush writes the row (uncommitted)"
+        );
 
         let mut second = crate::spine::SymSink::new();
         second.sym("SharedAcrossTwoHelpers");
-        assert_eq!(db.flush_syms(&mut second).unwrap(), 0, "second flush must skip the already-inflight id");
+        assert_eq!(
+            db.flush_syms(&mut second).unwrap(),
+            0,
+            "second flush must skip the already-inflight id"
+        );
         assert!(
             db.tick_end().is_none(),
             "an inflight-hit flush must never reach insert_rows/SQL a second time"
         );
 
         db.commit().unwrap();
-        let count: i64 = db.query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?)).unwrap();
-        assert_eq!(count, 1, "the string is durably present exactly once after commit");
+        let count: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "the string is durably present exactly once after commit"
+        );
     }
 
     /// Sibling of `flush_syms_does_not_cache_ids_from_a_caller_owned_transaction_that_rolls_back`:
@@ -2104,17 +2530,30 @@ mod tests {
         assert_eq!(db.flush_syms(&mut first).unwrap(), 1);
         let mut second = crate::spine::SymSink::new();
         second.sym("InflightThenRolledBack");
-        assert_eq!(db.flush_syms(&mut second).unwrap(), 0, "second flush skips the inflight id pre-rollback");
+        assert_eq!(
+            db.flush_syms(&mut second).unwrap(),
+            0,
+            "second flush skips the inflight id pre-rollback"
+        );
         db.rollback().unwrap();
 
-        let count_after_rollback: i64 = db.query_one(
-            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
-        ).unwrap();
-        assert_eq!(count_after_rollback, 0, "the row must not survive the caller's rollback");
+        let count_after_rollback: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
+        assert_eq!(
+            count_after_rollback, 0,
+            "the row must not survive the caller's rollback"
+        );
 
         let mut retry = crate::spine::SymSink::new();
         retry.sym("InflightThenRolledBack");
-        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer after the rollback, not skip it");
+        assert_eq!(
+            db.flush_syms(&mut retry).unwrap(),
+            1,
+            "must re-offer after the rollback, not skip it"
+        );
     }
 
     #[test]
@@ -2133,12 +2572,18 @@ mod tests {
         db.begin_immediate().unwrap();
         let mut retry = crate::spine::SymSink::new();
         retry.sym("RolledBackThenRetriedInsideTx");
-        assert_eq!(db.flush_syms(&mut retry).unwrap(), 1, "must re-offer the rolled-back id");
+        assert_eq!(
+            db.flush_syms(&mut retry).unwrap(),
+            1,
+            "must re-offer the rolled-back id"
+        );
         db.commit().unwrap();
 
-        let count: i64 = db.query_one(
-            "_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?),
-        ).unwrap();
+        let count: i64 = db
+            .query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(count, 1, "the id must be durable after the committed retry");
     }
 
@@ -2150,7 +2595,11 @@ mod tests {
         let id = crate::spine::StringId::of("alpha");
         let mut prime = crate::spine::SymSink::new();
         prime.sym("alpha");
-        assert_eq!(db.flush_syms(&mut prime).unwrap(), 1, "alpha's id is now in persisted_strings");
+        assert_eq!(
+            db.flush_syms(&mut prime).unwrap(),
+            1,
+            "alpha's id is now in persisted_strings"
+        );
 
         // A same-id, different-text pending pair — what a real `StringId`
         // hash collision would hand `flush_syms`, fabricated via
@@ -2165,7 +2614,10 @@ mod tests {
         sink.push_raw(id, "alpha");
         sink.push_raw(id, "collides-with-alpha");
         let err = db.flush_syms(&mut sink).unwrap_err();
-        assert!(err.to_string().contains("StringId collision"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("StringId collision"),
+            "unexpected error: {err}"
+        );
     }
 
     // Build a table shaped like a df rel: a wide full-row PRIMARY KEY over an
@@ -2173,16 +2625,31 @@ mod tests {
     // given text width, so dbstat sizes are non-trivial (multi-page).
     fn wide_rel(db: &Db, rel: &str, n: i64, text_width: usize) {
         let table = crate::lower::tbl(rel);
-        db.exec_on(&table, &format!(
+        db.exec_on(
+            &table,
+            &format!(
             "CREATE TABLE {table} (\"id\" INTEGER, \"fn\" TEXT, \"file\" TEXT, \"line\" INTEGER, \
-             __src TEXT DEFAULT '', PRIMARY KEY (\"id\", \"fn\", \"file\", \"line\"))")).unwrap();
-        db.exec_on(&table, &format!("CREATE INDEX \"idx_{rel}_fn\" ON {table}(\"fn\")")).unwrap();
+             __src TEXT DEFAULT '', PRIMARY KEY (\"id\", \"fn\", \"file\", \"line\"))"),
+        )
+        .unwrap();
+        db.exec_on(
+            &table,
+            &format!("CREATE INDEX \"idx_{rel}_fn\" ON {table}(\"fn\")"),
+        )
+        .unwrap();
         let pad = "x".repeat(text_width);
-        let rows: Vec<Vec<Value>> = (0..n).map(|i| vec![
-            Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
-            Value::Text(format!("src/mod_{}.rs", i % 40)), Value::Int(i % 500),
-        ]).collect();
-        db.insert_rows(&table, &["id", "fn", "file", "line"], &rows).unwrap();
+        let rows: Vec<Vec<Value>> = (0..n)
+            .map(|i| {
+                vec![
+                    Value::Int(i),
+                    Value::Text(format!("fn_{i}_{pad}")),
+                    Value::Text(format!("src/mod_{}.rs", i % 40)),
+                    Value::Int(i % 500),
+                ]
+            })
+            .collect();
+        db.insert_rows(&table, &["id", "fn", "file", "line"], &rows)
+            .unwrap();
     }
 
     #[test]
@@ -2201,9 +2668,11 @@ mod tests {
         let bytes = stats["bytes"].as_object().unwrap();
         let table = bytes["rel_fatpk"].as_i64().unwrap();
         let pk = bytes["sqlite_autoindex_rel_fatpk_1"].as_i64().unwrap();
-        assert!(pk >= table,
+        assert!(
+            pk >= table,
             "a full-row PK autoindex duplicates every column, so it should be >= the table heap; \
-             pk={pk} table={table} (dbstat)");
+             pk={pk} table={table} (dbstat)"
+        );
     }
 
     #[test]
@@ -2213,51 +2682,94 @@ mod tests {
         let table = crate::lower::tbl("reloadme");
         let before = db.rel_stats("reloadme").unwrap()["indexes"].clone();
         let pad = "y".repeat(16);
-        let rows: Vec<Vec<Value>> = (0..5000).map(|i| vec![
-            Value::Int(i), Value::Text(format!("fn_{i}_{pad}")),
-            Value::Text("src/x.rs".into()), Value::Int(i),
-        ]).collect();
-        db.reload_rel(&table, &["id", "fn", "file", "line"], &rows).unwrap();
+        let rows: Vec<Vec<Value>> = (0..5000)
+            .map(|i| {
+                vec![
+                    Value::Int(i),
+                    Value::Text(format!("fn_{i}_{pad}")),
+                    Value::Text("src/x.rs".into()),
+                    Value::Int(i),
+                ]
+            })
+            .collect();
+        db.reload_rel(&table, &["id", "fn", "file", "line"], &rows)
+            .unwrap();
         let after = db.rel_stats("reloadme").unwrap()["indexes"].clone();
-        assert_eq!(before, after, "secondary indexes must survive a reload_rel drop/rebuild");
-        let count: i64 = db.query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(
+            before, after,
+            "secondary indexes must survive a reload_rel drop/rebuild"
+        );
+        let count: i64 = db
+            .query_one(&table, &format!("SELECT count(*) FROM {table}"), &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(count, 5000);
     }
 
     #[test]
     fn insert_rows_or_ignore_holds_across_chunks() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
         let mut rows: Vec<Vec<Value>> = (0..40_000).map(|i| vec![Value::Int(i)]).collect();
         rows.push(vec![Value::Int(7)]);
         let n = db.insert_rows("t", &["a"], &rows).unwrap();
         assert_eq!(n, 40_000, "duplicate ignored, everything else lands");
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, 40_000);
     }
 
     #[test]
     fn bundled_sqlite_accepts_order_by_inside_aggregate() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (g TEXT, k TEXT, v INTEGER)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (g TEXT, k TEXT, v INTEGER)")
+            .unwrap();
         let rows = vec![
-            vec![Value::Text("a".into()), Value::Text("z".into()), Value::Int(1)],
-            vec![Value::Text("a".into()), Value::Text("x".into()), Value::Int(2)],
-            vec![Value::Text("a".into()), Value::Text("y".into()), Value::Int(3)],
+            vec![
+                Value::Text("a".into()),
+                Value::Text("z".into()),
+                Value::Int(1),
+            ],
+            vec![
+                Value::Text("a".into()),
+                Value::Text("x".into()),
+                Value::Int(2),
+            ],
+            vec![
+                Value::Text("a".into()),
+                Value::Text("y".into()),
+                Value::Int(3),
+            ],
         ];
         db.insert_rows("t", &["g", "k", "v"], &rows).unwrap();
-        let arr: String = db.query_one("t",
-            "SELECT json_group_array(k ORDER BY k) FROM t GROUP BY g", &[], |r| Ok(r.get(0)?)).unwrap();
+        let arr: String = db
+            .query_one(
+                "t",
+                "SELECT json_group_array(k ORDER BY k) FROM t GROUP BY g",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
+            .unwrap();
         assert_eq!(arr, r#"["x","y","z"]"#);
-        let obj: String = db.query_one("t",
-            "SELECT json_group_object(k, v ORDER BY k) FROM t GROUP BY g", &[], |r| Ok(r.get(0)?)).unwrap();
+        let obj: String = db
+            .query_one(
+                "t",
+                "SELECT json_group_object(k, v ORDER BY k) FROM t GROUP BY g",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
+            .unwrap();
         assert_eq!(obj, r#"{"x":2,"y":3,"z":1}"#);
     }
 
     #[test]
     fn prepare_and_query_map_works() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)")
+            .unwrap();
         let rows: Vec<Vec<Value>> = (0..5)
             .map(|i| vec![Value::Int(i), Value::Text(format!("r{i}"))])
             .collect();
@@ -2282,7 +2794,11 @@ mod tests {
         let rows: Vec<Vec<Value>> = (0..7).map(|i| vec![Value::Int(i)]).collect();
         db.insert_rows("t", &["a"], &rows).unwrap();
         db.tick_begin();
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get::<_, i64>(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| {
+                Ok(r.get::<_, i64>(0)?)
+            })
+            .unwrap();
         assert!(db.tick_end().is_none());
         assert_eq!(count, 7);
     }
@@ -2297,8 +2813,12 @@ mod tests {
         )
         .unwrap();
         assert!(db.tick_end().is_none());
-        let na: i64 = db.query_one("a", "SELECT COUNT(*) FROM a", &[], |r| Ok(r.get(0)?)).unwrap();
-        let nb: i64 = db.query_one("b", "SELECT COUNT(*) FROM b", &[], |r| Ok(r.get(0)?)).unwrap();
+        let na: i64 = db
+            .query_one("a", "SELECT COUNT(*) FROM a", &[], |r| Ok(r.get(0)?))
+            .unwrap();
+        let nb: i64 = db
+            .query_one("b", "SELECT COUNT(*) FROM b", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(na, 0);
         assert_eq!(nb, 0);
     }
@@ -2306,33 +2826,62 @@ mod tests {
     #[test]
     fn sql_val_round_trip_and_conversions() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (i INTEGER, r REAL, t TEXT, b BLOB, n INTEGER)").unwrap();
-        db.exec_params("t",
+        db.exec_on(
+            "t",
+            "CREATE TABLE t (i INTEGER, r REAL, t TEXT, b BLOB, n INTEGER)",
+        )
+        .unwrap();
+        db.exec_params(
+            "t",
             "INSERT INTO t VALUES (?, ?, ?, ?, ?)",
-            &[42i64.into(), 3.14.into(), "hello".into(), vec![1u8, 2, 3].into(), SqlVal::Null],
-        ).unwrap();
+            &[
+                42i64.into(),
+                3.14.into(),
+                "hello".into(),
+                vec![1u8, 2, 3].into(),
+                SqlVal::Null,
+            ],
+        )
+        .unwrap();
 
-        let vals = db.query_values("t", "SELECT i, r, t, b, n FROM t", &[]).unwrap();
+        let vals = db
+            .query_values("t", "SELECT i, r, t, b, n FROM t", &[])
+            .unwrap();
         assert_eq!(vals.len(), 1);
-        assert_eq!(vals[0], vec![
-            SqlVal::Int(42),
-            SqlVal::Real(3.14),
-            SqlVal::Text("hello".into()),
-            SqlVal::Blob(vec![1, 2, 3]),
-            SqlVal::Null,
-        ]);
+        assert_eq!(
+            vals[0],
+            vec![
+                SqlVal::Int(42),
+                SqlVal::Real(3.14),
+                SqlVal::Text("hello".into()),
+                SqlVal::Blob(vec![1, 2, 3]),
+                SqlVal::Null,
+            ]
+        );
 
-        let one: i64 = db.query_one("t", "SELECT i FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let one: i64 = db
+            .query_one("t", "SELECT i FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(one, 42);
 
-        let opt: Option<i64> = db.query_opt("t", "SELECT i FROM t WHERE i = ?", &[99i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        let opt: Option<i64> = db
+            .query_opt("t", "SELECT i FROM t WHERE i = ?", &[99i64.into()], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(opt, None);
 
-        let rows: Vec<i64> = db.query_rows("t", "SELECT i FROM t ORDER BY i", &[], |r| Ok(r.get(0)?)).unwrap();
+        let rows: Vec<i64> = db
+            .query_rows("t", "SELECT i FROM t ORDER BY i", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(rows, vec![42]);
 
         let mut sum = 0i64;
-        db.for_each_row("t", "SELECT i FROM t", &[], |r| { sum += r.get::<_, i64>(0)?; Ok(()) }).unwrap();
+        db.for_each_row("t", "SELECT i FROM t", &[], |r| {
+            sum += r.get::<_, i64>(0)?;
+            Ok(())
+        })
+        .unwrap();
         assert_eq!(sum, 42);
     }
 
@@ -2340,58 +2889,94 @@ mod tests {
     fn query_opt_absorbs_optional_extension() {
         let db = open(None).unwrap();
         db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
-        let present: Option<i64> = db.query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        let present: Option<i64> = db
+            .query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(present, None);
-        db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()]).unwrap();
-        let present: Option<i64> = db.query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| Ok(r.get(0)?)).unwrap();
+        db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()])
+            .unwrap();
+        let present: Option<i64> = db
+            .query_opt("t", "SELECT a FROM t WHERE a = ?", &[1i64.into()], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(present, Some(1));
     }
 
     #[test]
     fn exec_in_chunks_sums_affected_rows() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)")
+            .unwrap();
         let keys: Vec<SqlVal> = (0..10).map(|i| SqlVal::Int(i)).collect();
-        for key in &keys { db.exec_params("t", "INSERT INTO t VALUES (?, 0)", &[key.clone()]).unwrap(); }
-        let affected = db.exec_in_chunks(
-            "t",
-            |n| format!("UPDATE t SET v = 1 WHERE k IN ({})", holes(n)),
-            &[],
-            &keys,
-        ).unwrap();
+        for key in &keys {
+            db.exec_params("t", "INSERT INTO t VALUES (?, 0)", &[key.clone()])
+                .unwrap();
+        }
+        let affected = db
+            .exec_in_chunks(
+                "t",
+                |n| format!("UPDATE t SET v = 1 WHERE k IN ({})", holes(n)),
+                &[],
+                &keys,
+            )
+            .unwrap();
         assert_eq!(affected, 10);
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t WHERE v = 1", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t WHERE v = 1", &[], |r| {
+                Ok(r.get(0)?)
+            })
+            .unwrap();
         assert_eq!(count, 10);
     }
 
     #[test]
     fn query_in_chunks_collects_chunked_results() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY)")
+            .unwrap();
         let keys: Vec<SqlVal> = (0..10).map(|i| SqlVal::Int(i)).collect();
-        for key in &keys { db.exec_params("t", "INSERT INTO t VALUES (?)", &[key.clone()]).unwrap(); }
-        let results: Vec<i64> = db.query_in_chunks(
-            "t",
-            |n| format!("SELECT k FROM t WHERE k IN ({}) ORDER BY k", holes(n)),
-            &[],
-            &keys,
-            |r| Ok(r.get(0)?),
-        ).unwrap();
+        for key in &keys {
+            db.exec_params("t", "INSERT INTO t VALUES (?)", &[key.clone()])
+                .unwrap();
+        }
+        let results: Vec<i64> = db
+            .query_in_chunks(
+                "t",
+                |n| format!("SELECT k FROM t WHERE k IN ({}) ORDER BY k", holes(n)),
+                &[],
+                &keys,
+                |r| Ok(r.get(0)?),
+            )
+            .unwrap();
         assert_eq!(results, (0..10).collect::<Vec<_>>());
     }
 
     #[test]
     fn upsert_rows_insert_and_update() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (k INTEGER PRIMARY KEY, v INTEGER)")
+            .unwrap();
         let rows: Vec<Vec<SqlVal>> = vec![
             vec![1i64.into(), 10i64.into()],
             vec![2i64.into(), 20i64.into()],
         ];
-        assert_eq!(db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows).unwrap(), 2);
+        assert_eq!(
+            db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows)
+                .unwrap(),
+            2
+        );
         let rows2: Vec<Vec<SqlVal>> = vec![vec![1i64.into(), 100i64.into()]];
-        assert_eq!(db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows2).unwrap(), 1);
-        let v: i64 = db.query_one("t", "SELECT v FROM t WHERE k = 1", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert_eq!(
+            db.upsert_rows("t", &["k", "v"], &["k"], &["v"], &rows2)
+                .unwrap(),
+            1
+        );
+        let v: i64 = db
+            .query_one("t", "SELECT v FROM t WHERE k = 1", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(v, 100);
     }
 
@@ -2399,16 +2984,28 @@ mod tests {
     fn ensure_column_idempotent() {
         let db = open(None).unwrap();
         db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
-        assert!(db.ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT").unwrap());
-        assert!(!db.ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT").unwrap());
-        let cols: i64 = db.query_one("t", "SELECT COUNT(*) FROM pragma_table_info('t')", &[], |r| Ok(r.get(0)?)).unwrap();
+        assert!(db
+            .ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT")
+            .unwrap());
+        assert!(!db
+            .ensure_column("t", "b", "ALTER TABLE t ADD COLUMN b TEXT")
+            .unwrap());
+        let cols: i64 = db
+            .query_one(
+                "t",
+                "SELECT COUNT(*) FROM pragma_table_info('t')",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
+            .unwrap();
         assert_eq!(cols, 2);
     }
 
     #[test]
     fn column_exists_and_secondary_indexes() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)")
+            .unwrap();
         db.exec_on("t", "CREATE INDEX idx_t_b ON t(b)").unwrap();
         assert!(db.column_exists("t", "a").unwrap());
         assert!(!db.column_exists("t", "c").unwrap());
@@ -2422,7 +3019,8 @@ mod tests {
         let db = open(None).unwrap();
         db.exec_on("a", "CREATE TABLE alpha (x INTEGER)").unwrap();
         db.exec_on("b", "CREATE TABLE beta (x INTEGER)").unwrap();
-        db.exec_on("g", "CREATE VIEW gamma AS SELECT * FROM alpha").unwrap();
+        db.exec_on("g", "CREATE VIEW gamma AS SELECT * FROM alpha")
+            .unwrap();
         let objs = db.schema_objects(&["alph%", "gamm%"]).unwrap();
         assert_eq!(objs.len(), 2);
     }
@@ -2437,38 +3035,69 @@ mod tests {
     #[test]
     fn digest_rows_xor_fold() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)").unwrap();
-        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[1i64.into(), "x".into()]).unwrap();
-        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[2i64.into(), "y".into()]).unwrap();
-        let d1 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
-        let d2 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER, b TEXT)")
+            .unwrap();
+        db.exec_params(
+            "t",
+            "INSERT INTO t VALUES (?, ?)",
+            &[1i64.into(), "x".into()],
+        )
+        .unwrap();
+        db.exec_params(
+            "t",
+            "INSERT INTO t VALUES (?, ?)",
+            &[2i64.into(), "y".into()],
+        )
+        .unwrap();
+        let d1 = db
+            .digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[])
+            .unwrap();
+        let d2 = db
+            .digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[])
+            .unwrap();
         assert_eq!(d1, d2);
         // Different content gives a different digest.
-        db.exec_params("t", "INSERT INTO t VALUES (?, ?)", &[3i64.into(), "z".into()]).unwrap();
-        let d3 = db.digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[]).unwrap();
+        db.exec_params(
+            "t",
+            "INSERT INTO t VALUES (?, ?)",
+            &[3i64.into(), "z".into()],
+        )
+        .unwrap();
+        let d3 = db
+            .digest_rows("t", "SELECT a, b FROM t ORDER BY a", &[])
+            .unwrap();
         assert_ne!(d1, d3);
     }
 
     #[test]
     fn transact_commits_ok_and_rolls_back_err() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)").unwrap();
-        let got = db.transact(|| {
-            db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()])?;
-            Ok(42i64)
-        }).unwrap();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER PRIMARY KEY)")
+            .unwrap();
+        let got = db
+            .transact(|| {
+                db.exec_params("t", "INSERT INTO t VALUES (?)", &[1i64.into()])?;
+                Ok(42i64)
+            })
+            .unwrap();
         assert_eq!(got, 42);
         assert!(db.is_autocommit());
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, 1);
 
-        let err = db.transact(|| -> Result<()> {
-            db.exec_params("t", "INSERT INTO t VALUES (?)", &[2i64.into()])?;
-            anyhow::bail!("boom")
-        }).unwrap_err();
+        let err = db
+            .transact(|| -> Result<()> {
+                db.exec_params("t", "INSERT INTO t VALUES (?)", &[2i64.into()])?;
+                anyhow::bail!("boom")
+            })
+            .unwrap_err();
         assert!(err.to_string().contains("boom"));
         assert!(db.is_autocommit());
-        let count: i64 = db.query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let count: i64 = db
+            .query_one("t", "SELECT COUNT(*) FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -2477,11 +3106,17 @@ mod tests {
     #[test]
     fn sql_error_includes_rel_and_statement_head() {
         let db = open(None).unwrap();
-        db.exec_on("t", "CREATE TABLE t (a INTEGER NOT NULL)").unwrap();
-        let err = db.exec_params("t", "INSERT INTO t VALUES (?)", &[SqlVal::Null]).unwrap_err();
+        db.exec_on("t", "CREATE TABLE t (a INTEGER NOT NULL)")
+            .unwrap();
+        let err = db
+            .exec_params("t", "INSERT INTO t VALUES (?)", &[SqlVal::Null])
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("t"), "error must name the table: {msg}");
-        assert!(msg.contains("INSERT INTO t VALUES"), "error must include statement head: {msg}");
+        assert!(
+            msg.contains("INSERT INTO t VALUES"),
+            "error must include statement head: {msg}"
+        );
     }
 
     #[test]
@@ -2491,10 +3126,13 @@ mod tests {
         {
             let db = open(Some(&path)).unwrap();
             db.exec_on("t", "CREATE TABLE t (a INTEGER)").unwrap();
-            db.exec_params("t", "INSERT INTO t VALUES (?)", &[7i64.into()]).unwrap();
+            db.exec_params("t", "INSERT INTO t VALUES (?)", &[7i64.into()])
+                .unwrap();
         }
         let rdb = ReadDb::open(&path).unwrap();
-        let a: i64 = rdb.query_one("t", "SELECT a FROM t", &[], |r| Ok(r.get(0)?)).unwrap();
+        let a: i64 = rdb
+            .query_one("t", "SELECT a FROM t", &[], |r| Ok(r.get(0)?))
+            .unwrap();
         assert_eq!(a, 7);
         let vals = rdb.query_values("t", "SELECT a FROM t", &[]).unwrap();
         assert_eq!(vals[0][0], SqlVal::Int(7));

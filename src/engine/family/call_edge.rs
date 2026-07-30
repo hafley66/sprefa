@@ -56,8 +56,12 @@ impl Family for CallEdge {
         for (site_id, row) in &resolutions {
             let callee = as_int(&row[0]);
             let kind = as_int(&row[1]);
-            let Some(&(owner_id, caller)) = caller_of_site.get(site_id) else { continue };
-            let Some(&rev) = rev_by_owner.get(&owner_id) else { continue };
+            let Some(&(owner_id, caller)) = caller_of_site.get(site_id) else {
+                continue;
+            };
+            let Some(&rev) = rev_by_owner.get(&owner_id) else {
+                continue;
+            };
             *support.entry([caller, callee, kind, rev]).or_default() += 1;
         }
 
@@ -65,7 +69,11 @@ impl Family for CallEdge {
         let mut emitted: HashSet<[i64; 3]> = HashSet::new();
         for &[caller, callee, kind, _rev] in support.keys() {
             if emitted.insert([caller, callee, kind]) {
-                out.rows.push(vec![Value::Int(caller), Value::Int(callee), Value::Int(kind)]);
+                out.rows.push(vec![
+                    Value::Int(caller),
+                    Value::Int(callee),
+                    Value::Int(kind),
+                ]);
             }
         }
         Ok(())

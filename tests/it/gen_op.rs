@@ -23,20 +23,27 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
 fn file_form_renders_rows_in_deterministic_order() {
     let d = sandbox("file");
-    let (code, _, err) = run(&d, concat!(
-        "rel edge(a: text, n: int).\n",
-        "edge(\"beta\", 1).\n",
-        "edge(\"alpha\", 3).\n",
-        "gen(\"out/report.md\", \"| {a} | {n} |\") <- edge(a, n).\n"));
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel edge(a: text, n: int).\n",
+            "edge(\"beta\", 1).\n",
+            "edge(\"alpha\", 3).\n",
+            "gen(\"out/report.md\", \"| {a} | {n} |\") <- edge(a, n).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     let got = fs::read_to_string(d.join("out/report.md")).unwrap();
     assert_eq!(got, "| alpha | 3 |\n| beta | 1 |\n");
@@ -45,11 +52,15 @@ fn file_form_renders_rows_in_deterministic_order() {
 #[test]
 fn path_template_groups_rows_per_file() {
     let d = sandbox("group");
-    let (code, _, err) = run(&d, concat!(
-        "rel kv(f: text, v: text).\n",
-        "kv(\"x\", \"1\").\n",
-        "kv(\"y\", \"2\").\n",
-        "gen(\"out/{f}.txt\", \"{v}\") <- kv(f, v).\n"));
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel kv(f: text, v: text).\n",
+            "kv(\"x\", \"1\").\n",
+            "kv(\"y\", \"2\").\n",
+            "gen(\"out/{f}.txt\", \"{v}\") <- kv(f, v).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert_eq!(fs::read_to_string(d.join("out/x.txt")).unwrap(), "1\n");
     assert_eq!(fs::read_to_string(d.join("out/y.txt")).unwrap(), "2\n");
@@ -63,7 +74,8 @@ fn matching_bytes_skip_the_write() {
     let prog = concat!(
         "rel edge(a: text).\n",
         "edge(\"only\").\n",
-        "gen(\"out/r.txt\", \"{a}\") <- edge(a).\n");
+        "gen(\"out/r.txt\", \"{a}\") <- edge(a).\n"
+    );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     let target = d.join("out/r.txt");
@@ -87,11 +99,17 @@ fn two_file_rules_same_path_bail_loudly() {
         "rel ys(y: text).\n",
         "ys(\"b\").\n",
         "gen(\"out/r.txt\", \"x {x}\") <- xs(x).\n",
-        "gen(\"out/r.txt\", \"y {y}\") <- ys(y).\n");
+        "gen(\"out/r.txt\", \"y {y}\") <- ys(y).\n"
+    );
     let (code, _, err) = run(&d, prog);
-    assert_eq!(code, 1, "duplicate file-emit path must be a loud error: {err}");
-    assert!(err.contains("two gen rules write the same file"),
-        "error must name the collision: {err}");
+    assert_eq!(
+        code, 1,
+        "duplicate file-emit path must be a loud error: {err}"
+    );
+    assert!(
+        err.contains("two gen rules write the same file"),
+        "error must name the collision: {err}"
+    );
 }
 
 /// Disjoint paths from two gen rules stay legal — the claim is per rendered
@@ -105,7 +123,8 @@ fn two_file_rules_disjoint_paths_ok() {
         "rel ys(y: text).\n",
         "ys(\"b\").\n",
         "gen(\"out/x.txt\", \"{x}\") <- xs(x).\n",
-        "gen(\"out/y.txt\", \"{y}\") <- ys(y).\n");
+        "gen(\"out/y.txt\", \"{y}\") <- ys(y).\n"
+    );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     assert_eq!(fs::read_to_string(d.join("out/x.txt")).unwrap(), "a\n");
@@ -119,17 +138,23 @@ fn two_file_rules_disjoint_paths_ok() {
 #[test]
 fn append_mode_concatenates_rules_in_program_order() {
     let d = sandbox("append");
-    let (code, _, err) = run(&d, concat!(
-        "rel row(a: text, n: int).\n",
-        "row(\"beta\", 1).\n",
-        "row(\"alpha\", 3).\n",
-        "gen(:append, \"out/t.md\", \"| name | n |\") <- true().\n",
-        "gen(:append, \"out/t.md\", \"|---|---|\") <- true().\n",
-        "gen(:append, \"out/t.md\", \"| {a} | {n} |\") <- row(a, n).\n"));
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel row(a: text, n: int).\n",
+            "row(\"beta\", 1).\n",
+            "row(\"alpha\", 3).\n",
+            "gen(:append, \"out/t.md\", \"| name | n |\") <- true().\n",
+            "gen(:append, \"out/t.md\", \"|---|---|\") <- true().\n",
+            "gen(:append, \"out/t.md\", \"| {a} | {n} |\") <- row(a, n).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     let got = fs::read_to_string(d.join("out/t.md")).unwrap();
-    assert_eq!(got, "| name | n |\n|---|---|\n| alpha | 3 |\n| beta | 1 |\n",
-        "header, separator, then alpha-sorted rows: {got:?}");
+    assert_eq!(
+        got, "| name | n |\n|---|---|\n| alpha | 3 |\n| beta | 1 |\n",
+        "header, separator, then alpha-sorted rows: {got:?}"
+    );
 }
 
 /// A constant append line (no template holes) is allowed: a fully-generated
@@ -149,14 +174,23 @@ fn append_constant_line_emits_once() {
 #[test]
 fn append_and_plain_file_same_path_bail() {
     let d = sandbox("append_mix");
-    let (code, _, err) = run(&d, concat!(
-        "rel xs(x: text).\n",
-        "xs(\"a\").\n",
-        "gen(\"out/m.md\", \"plain {x}\") <- xs(x).\n",
-        "gen(:append, \"out/m.md\", \"appended {x}\") <- xs(x).\n"));
-    assert_eq!(code, 1, "mixing plain + append on one file must bail: {err}");
-    assert!(err.contains("both a plain gen rule and gen(:append"),
-        "error names the form clash: {err}");
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel xs(x: text).\n",
+            "xs(\"a\").\n",
+            "gen(\"out/m.md\", \"plain {x}\") <- xs(x).\n",
+            "gen(:append, \"out/m.md\", \"appended {x}\") <- xs(x).\n"
+        ),
+    );
+    assert_eq!(
+        code, 1,
+        "mixing plain + append on one file must bail: {err}"
+    );
+    assert!(
+        err.contains("both a plain gen rule and gen(:append"),
+        "error names the form clash: {err}"
+    );
 }
 
 #[test]
@@ -166,14 +200,20 @@ fn escaping_path_is_rejected() {
     let prog = concat!(
         "rel edge(a: text).\n",
         "edge(\"x\").\n",
-        "gen(\"../oops.txt\", \"{a}\") <- edge(a).\n");
+        "gen(\"../oops.txt\", \"{a}\") <- edge(a).\n"
+    );
     fs::write(d.join("inner/p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(d.join("inner/p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(d.join("inner"))
-        .output().expect("run dl");
-    assert_eq!(out.status.code().unwrap_or(-1), 1, "path escape must be a loud error");
+        .output()
+        .expect("run dl");
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        1,
+        "path escape must be a loud error"
+    );
     assert!(!d.join("oops.txt").exists());
 }
 
@@ -183,8 +223,11 @@ fn escaping_path_is_rejected() {
 #[test]
 fn two_gen_rules_splice_one_file_in_one_write() {
     let d = sandbox("two_rules");
-    fs::write(d.join("doc.md"),
-        "<!-- BEGIN: a -->\nstale\n<!-- END: -->\n<!-- BEGIN: b -->\nstale\n<!-- END: -->\n").unwrap();
+    fs::write(
+        d.join("doc.md"),
+        "<!-- BEGIN: a -->\nstale\n<!-- END: -->\n<!-- BEGIN: b -->\nstale\n<!-- END: -->\n",
+    )
+    .unwrap();
     let prog = concat!(
         "rel block(p: file, l0: int, l1: int, name: text).\n",
         "block(p, l0, l1, name) <- scan(\"WORK\", \"*.md\", p, rev), ",
@@ -194,19 +237,25 @@ fn two_gen_rules_splice_one_file_in_one_write() {
         "rel ys(y: text).\n",
         "ys(\"y1\").\n",
         "gen(p, l0, l1, \"- {x}\") <- block(p, l0, l1, \"a\"), xs(x).\n",
-        "gen(p, l0, l1, \"* {y}\") <- block(p, l0, l1, \"b\"), ys(y).\n");
+        "gen(p, l0, l1, \"* {y}\") <- block(p, l0, l1, \"b\"), ys(y).\n"
+    );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     let got = fs::read_to_string(d.join("doc.md")).unwrap();
-    assert_eq!(got,
-        "<!-- BEGIN: a -->\n- x1\n- x2\n<!-- END: -->\n<!-- BEGIN: b -->\n* y1\n<!-- END: -->\n");
+    assert_eq!(
+        got,
+        "<!-- BEGIN: a -->\n- x1\n- x2\n<!-- END: -->\n<!-- BEGIN: b -->\n* y1\n<!-- END: -->\n"
+    );
 
     let target = d.join("doc.md");
     let mut perms = fs::metadata(&target).unwrap().permissions();
     perms.set_readonly(true);
     fs::set_permissions(&target, perms).unwrap();
     let (code, _, err) = run(&d, prog);
-    assert_eq!(code, 0, "warm two-rule splice must converge without writing: {err}");
+    assert_eq!(
+        code, 0,
+        "warm two-rule splice must converge without writing: {err}"
+    );
 }
 
 /// The marker-splice loop: comment regions give the coordinates, gen rewrites
@@ -215,8 +264,11 @@ fn two_gen_rules_splice_one_file_in_one_write() {
 #[test]
 fn splice_form_rewrites_between_markers_and_converges() {
     let d = sandbox("splice");
-    fs::write(d.join("README.md"),
-        "# Title\n<!-- BEGIN: items -->\nstale line\n<!-- END: -->\ntail\n").unwrap();
+    fs::write(
+        d.join("README.md"),
+        "# Title\n<!-- BEGIN: items -->\nstale line\n<!-- END: -->\ntail\n",
+    )
+    .unwrap();
     let prog = concat!(
         "rel block(p: file, l0: int, l1: int, name: text).\n",
         "block(p, l0, l1, name) <- scan(\"WORK\", \"*.md\", p, rev), ",
@@ -224,12 +276,15 @@ fn splice_form_rewrites_between_markers_and_converges() {
         "rel item(x: text).\n",
         "item(\"alpha\").\n",
         "item(\"beta\").\n",
-        "gen(p, l0, l1, \"- {x}\") <- block(p, l0, l1, \"items\"), item(x).\n");
+        "gen(p, l0, l1, \"- {x}\") <- block(p, l0, l1, \"items\"), item(x).\n"
+    );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
     let got = fs::read_to_string(d.join("README.md")).unwrap();
-    assert_eq!(got,
-        "# Title\n<!-- BEGIN: items -->\n- alpha\n- beta\n<!-- END: -->\ntail\n");
+    assert_eq!(
+        got,
+        "# Title\n<!-- BEGIN: items -->\n- alpha\n- beta\n<!-- END: -->\ntail\n"
+    );
 
     // Converged: the regenerated content matches, so the file is untouched.
     let target = d.join("README.md");
@@ -356,7 +411,10 @@ fn match_id_feeds_cursor_replace_end_to_end() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     let got = fs::read_to_string(d.join("data.txt")).unwrap();
-    assert_eq!(got, "xxREPLACEDxx", "match id -> ref lo,hi -> cursor :replace");
+    assert_eq!(
+        got, "xxREPLACEDxx",
+        "match id -> ref lo,hi -> cursor :replace"
+    );
 }
 
 /// Same loop with :wrap to prove the offsets are the true [lo, hi) of the match
@@ -374,7 +432,10 @@ fn match_id_feeds_cursor_wrap_end_to_end() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     let got = fs::read_to_string(d.join("data.txt")).unwrap();
-    assert_eq!(got, "xx<w>TARGET<w>xx", "match id -> ref lo,hi -> cursor :wrap");
+    assert_eq!(
+        got, "xx<w>TARGET<w>xx",
+        "match id -> ref lo,hi -> cursor :wrap"
+    );
 }
 
 // ─── overlap gate (multi-edit safety) ──────────────────────────────────
@@ -398,9 +459,15 @@ fn cursor_overlapping_windows_bail_loudly() {
     );
     let (code, _, err) = run(&d, prog);
     assert_ne!(code, 0, "overlapping cursor regions must bail");
-    assert!(err.contains("overlap"), "expected overlap message, got: {err}");
-    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABCDEFGH",
-        "the overlap gate must fire before any write");
+    assert!(
+        err.contains("overlap"),
+        "expected overlap message, got: {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(d.join("data.txt")).unwrap(),
+        "ABCDEFGH",
+        "the overlap gate must fire before any write"
+    );
 }
 
 /// Adjacent (touching) windows — [1,3) and [3,6), hi == next lo — must NOT
@@ -435,7 +502,10 @@ fn splice_overlapping_windows_bail_loudly() {
     );
     let (code, _, err) = run(&d, prog);
     assert_ne!(code, 0, "overlapping splice regions must bail");
-    assert!(err.contains("overlap"), "expected overlap message, got: {err}");
+    assert!(
+        err.contains("overlap"),
+        "expected overlap message, got: {err}"
+    );
 }
 
 // ─── named mode aliases (:insert_after/:insert_before/:delete) ──────────
@@ -455,7 +525,10 @@ fn insert_after_aliases_append() {
     );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABC<<A>>DEF");
+    assert_eq!(
+        fs::read_to_string(d.join("data.txt")).unwrap(),
+        "ABC<<A>>DEF"
+    );
 }
 
 /// `:insert_before` is `:prepend` — payload at `lo`. [3,6) of "ABCDEF" yields
@@ -471,7 +544,10 @@ fn insert_before_aliases_prepend() {
     );
     let (code, _, err) = run(&d, prog);
     assert_eq!(code, 0, "{err}");
-    assert_eq!(fs::read_to_string(d.join("data.txt")).unwrap(), "ABC<<P>>DEF");
+    assert_eq!(
+        fs::read_to_string(d.join("data.txt")).unwrap(),
+        "ABC<<P>>DEF"
+    );
 }
 
 /// `:delete` removes [lo, hi) and takes NO template. [2,5) of "ABCDEF" (CDE)
@@ -512,24 +588,33 @@ fn delete_with_template_is_a_parse_error() {
 #[test]
 fn gen_template_mustache_escape_emits_literal_braces() {
     let d = sandbox("mustache");
-    let (code, out, err) = run(&d, concat!(
-        "rel row(name: text, code: text).\n",
-        "row(\"a\", \"alpha\").\n",
-        "row(\"b\", \"bravo\").\n",
-        // The dl template is `lit {{name}}  interp {code}`. The `{{name}}` is
-        // the mustache escape — `{{` and `}}` collapse to literal `{` and `}`,
-        // emitting the literal text `{name}` (NOT a hole). The single-braced
-        // `{code}` IS a hole — fills from the body binding.
-        // This is a Rust string literal, so `{{` is two literal `{` chars
-        // passed verbatim to dl — NOT a Rust format-string escape.
-        "gen(\"out.txt\", \"lit {{name}}  interp {code}\") <- row(name, code).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel row(name: text, code: text).\n",
+            "row(\"a\", \"alpha\").\n",
+            "row(\"b\", \"bravo\").\n",
+            // The dl template is `lit {{name}}  interp {code}`. The `{{name}}` is
+            // the mustache escape — `{{` and `}}` collapse to literal `{` and `}`,
+            // emitting the literal text `{name}` (NOT a hole). The single-braced
+            // `{code}` IS a hole — fills from the body binding.
+            // This is a Rust string literal, so `{{` is two literal `{` chars
+            // passed verbatim to dl — NOT a Rust format-string escape.
+            "gen(\"out.txt\", \"lit {{name}}  interp {code}\") <- row(name, code).\n",
+        ),
+    );
     assert_eq!(code, 0, "mustache template rendered: {err}");
     let body = fs::read_to_string(d.join("out.txt")).unwrap();
     // Each row carries the LITERAL `{name}` (the `{{...}}` collapsed to `{...}`)
     // AND the interpolated `code` value. `.contains` arg is a plain &str.
-    assert!(body.contains("lit {name}  interp alpha"), "row a: literal + interp: {body}");
-    assert!(body.contains("lit {name}  interp bravo"), "row b: literal + interp: {body}");
+    assert!(
+        body.contains("lit {name}  interp alpha"),
+        "row a: literal + interp: {body}"
+    );
+    assert!(
+        body.contains("lit {name}  interp bravo"),
+        "row b: literal + interp: {body}"
+    );
     // `out` is empty: gen wrote to a file, not stdout.
     assert!(out.is_empty(), "no stdout noise from a gen rule: {out}");
 }
@@ -543,41 +628,59 @@ fn gen_template_mustache_escape_emits_literal_braces() {
 fn zone_form_replaces_between_named_markers_and_keeps_them() {
     let d = sandbox("zone");
     // Two zones with two different comment prefixes; both must be found + rewritten.
-    fs::write(d.join("page.html"), "\
+    fs::write(
+        d.join("page.html"),
+        "\
 <!-- BEGIN: nav -->\n\
 <li>old nav A</li>\n\
 <!-- END: -->\n\
 <p>unchanged surrounding text</p>\n\
 <!-- BEGIN: js -->\n\
 // old js\n\
-<!-- END: -->\n").unwrap();
-    let (code, _, err) = run(&d, concat!(
-        "rel nav(label: text).\n",
-        "nav(\"Home\").  nav(\"About\").  nav(\"Docs\").\n",
-        "rel js(line: text).\n",
-        // A JS template literal in the gen output: the `${name}` MUST survive
-        // verbatim (not interpolated by dl). Written as a raw string r\"...\".
-        "js(r\"const greet = (n) => `hello ${n}`;\").\n",
-        "js(\"window.greet = greet;\").\n",
-        "gen(:zone, \"page.html\", \"nav\", \"  <li>{label}</li>\") <- nav(label).\n",
-        "gen(:zone, \"page.html\", \"js\", \"  {line}\") <- js(line).\n",
-    ));
+<!-- END: -->\n",
+    )
+    .unwrap();
+    let (code, _, err) = run(
+        &d,
+        concat!(
+            "rel nav(label: text).\n",
+            "nav(\"Home\").  nav(\"About\").  nav(\"Docs\").\n",
+            "rel js(line: text).\n",
+            // A JS template literal in the gen output: the `${name}` MUST survive
+            // verbatim (not interpolated by dl). Written as a raw string r\"...\".
+            "js(r\"const greet = (n) => `hello ${n}`;\").\n",
+            "js(\"window.greet = greet;\").\n",
+            "gen(:zone, \"page.html\", \"nav\", \"  <li>{label}</li>\") <- nav(label).\n",
+            "gen(:zone, \"page.html\", \"js\", \"  {line}\") <- js(line).\n",
+        ),
+    );
     assert_eq!(code, 0, "zone gen ran: {err}");
     let body = fs::read_to_string(d.join("page.html")).unwrap();
     // Markers stay (both `<!-- BEGIN: nav -->` and `<!-- END: -->`).
-    assert!(body.contains("<!-- BEGIN: nav -->") && body.contains("<!-- END: -->"),
-        "markers preserved: {body}");
+    assert!(
+        body.contains("<!-- BEGIN: nav -->") && body.contains("<!-- END: -->"),
+        "markers preserved: {body}"
+    );
     // Old content gone; new rows present.
-    assert!(!body.contains("old nav A"), "old zone content replaced: {body}");
-    assert!(body.contains("<li>Home</li>") && body.contains("<li>About</li>"),
-        "new nav rows interpolated from body: {body}");
+    assert!(
+        !body.contains("old nav A"),
+        "old zone content replaced: {body}"
+    );
+    assert!(
+        body.contains("<li>Home</li>") && body.contains("<li>About</li>"),
+        "new nav rows interpolated from body: {body}"
+    );
     // Surrounding text outside any zone is untouched.
-    assert!(body.contains("<p>unchanged surrounding text</p>"),
-        "non-zone text preserved: {body}");
+    assert!(
+        body.contains("<p>unchanged surrounding text</p>"),
+        "non-zone text preserved: {body}"
+    );
     // The JS template literal `${n}` survived verbatim (raw string did its job).
     // The `.contains` arg is a plain &str (not a format string), so `${n}` is literal.
-    assert!(body.contains("const greet = (n) => `hello ${n}`;"),
-        "JS template literal intact in the gen output: {body}");
+    assert!(
+        body.contains("const greet = (n) => `hello ${n}`;"),
+        "JS template literal intact in the gen output: {body}"
+    );
 }
 
 /// `gen(:zone, ...)` on a name that's not in the file bails loudly. A typo
@@ -585,14 +688,25 @@ fn zone_form_replaces_between_named_markers_and_keeps_them() {
 #[test]
 fn zone_unknown_name_bails_loudly() {
     let d = sandbox("zone_missing");
-    fs::write(d.join("page.html"), "<html>\n  <body>nothing here</body>\n</html>\n").unwrap();
-    let (code, _out, err) = run(&d, "gen(:zone, \"page.html\", \"does-not-exist\", \"x\") <- true().\n");
+    fs::write(
+        d.join("page.html"),
+        "<html>\n  <body>nothing here</body>\n</html>\n",
+    )
+    .unwrap();
+    let (code, _out, err) = run(
+        &d,
+        "gen(:zone, \"page.html\", \"does-not-exist\", \"x\") <- true().\n",
+    );
     assert_ne!(code, 0, "missing zone name must bail");
-    assert!(err.contains("does-not-exist") && err.contains("BEGIN:"),
-        "error names the missing zone + the expected marker: {err}");
+    assert!(
+        err.contains("does-not-exist") && err.contains("BEGIN:"),
+        "error names the missing zone + the expected marker: {err}"
+    );
     // File untouched on the bail.
-    assert_eq!(fs::read_to_string(d.join("page.html")).unwrap(),
-        "<html>\n  <body>nothing here</body>\n</html>\n");
+    assert_eq!(
+        fs::read_to_string(d.join("page.html")).unwrap(),
+        "<html>\n  <body>nothing here</body>\n</html>\n"
+    );
 }
 
 /// `gen(:zone, ...)` is IDEMPOTENT across ticks: a second run with the same
@@ -611,9 +725,15 @@ fn zone_converges_on_second_run() {
     let (c2, _, e2) = run(&d, prog);
     assert_eq!(c2, 0, "second run: {e2}");
     let after2 = fs::read_to_string(d.join("p.html")).unwrap();
-    assert_eq!(after1, after2, "second run byte-identical (converged):\nfirst:  {after1}\nsecond: {after2}");
+    assert_eq!(
+        after1, after2,
+        "second run byte-identical (converged):\nfirst:  {after1}\nsecond: {after2}"
+    );
     // The second run is a no-op write — `[gen] wrote` must NOT re-fire.
-    assert!(!e2.contains("[gen] wrote"), "second run skipped the write (bytes match): {e2}");
+    assert!(
+        !e2.contains("[gen] wrote"),
+        "second run skipped the write (bytes match): {e2}"
+    );
 }
 
 /// Raw strings `r"..."` (and the backtick form) skip `${NAME}` interp and `\`
@@ -624,26 +744,38 @@ fn zone_converges_on_second_run() {
 #[test]
 fn raw_string_keeps_dollar_brace_and_backslash_verbatim() {
     let d = sandbox("raw_string");
-    let (code, out, err) = run(&d, concat!(
-        // Three raw strings exercise the cases that would collide with dl
-        // interp: a `${name}` (JS template literal), a backslash + dollar (would
-        // be a `\$` escape in a plain string), and a CSS-like `{{class}}` (no
-        // interp either way, but documents the raw form's no-touch guarantee).
-        // These are Rust STRING LITERALS (not format strings), so `${name}` and
-        // `{{cls}}` are literal text — passed verbatim into the dl source.
-        "rel s(name: text, body: text).\n",
-        "s(\"js\",     r\"`hello ${name}`\").\n",
-        "s(\"escape\", r\"\\$not-interp\").\n",
-        "s(\"braces\", r\".{{cls}} { color: red; }\").\n",
-        "? s(name, body).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            // Three raw strings exercise the cases that would collide with dl
+            // interp: a `${name}` (JS template literal), a backslash + dollar (would
+            // be a `\$` escape in a plain string), and a CSS-like `{{class}}` (no
+            // interp either way, but documents the raw form's no-touch guarantee).
+            // These are Rust STRING LITERALS (not format strings), so `${name}` and
+            // `{{cls}}` are literal text — passed verbatim into the dl source.
+            "rel s(name: text, body: text).\n",
+            "s(\"js\",     r\"`hello ${name}`\").\n",
+            "s(\"escape\", r\"\\$not-interp\").\n",
+            "s(\"braces\", r\".{{cls}} { color: red; }\").\n",
+            "? s(name, body).\n",
+        ),
+    );
     assert_eq!(code, 0, "raw strings parsed + queried: {err}");
     // Each body is the literal source text — `${name}`, `\$`, `{{` all survive.
     // The `.contains` args are plain &str literals, so `${name}` / `{{` are
     // literal text (not Rust format-string holes).
-    assert!(out.contains("`hello ${name}`"),       "JS template literal kept verbatim: {out}");
-    assert!(out.contains("\\$not-interp"),          "backslash + dollar kept verbatim: {out}");
-    assert!(out.contains(".{{cls}} { color: red; }"), "double-brace kept verbatim: {out}");
+    assert!(
+        out.contains("`hello ${name}`"),
+        "JS template literal kept verbatim: {out}"
+    );
+    assert!(
+        out.contains("\\$not-interp"),
+        "backslash + dollar kept verbatim: {out}"
+    );
+    assert!(
+        out.contains(".{{cls}} { color: red; }"),
+        "double-brace kept verbatim: {out}"
+    );
 }
 
 /// `$${name}` in a plain `"..."` string escapes a literal `${name}` (collapses
@@ -653,21 +785,28 @@ fn raw_string_keeps_dollar_brace_and_backslash_verbatim() {
 #[test]
 fn dollar_dollar_brace_escapes_literal_dollar_brace() {
     let d = sandbox("dollar_dollar_brace");
-    let (code, out, err) = run(&d, concat!(
-        "rel s(name: text, body: text).\n",
-        // `$${js}` → literal `${js}` (the dl interp is blocked).
-        "s(\"escaped\",   \"$${js}\").\n",
-        // `$$$VAR` → still `$$$VAR` (ast-grep variadic prefix; the third `$`
-        // opens the metavar, the first two survive as literal dollars).
-        "s(\"variadic\",  \"$$$VAR\").\n",
-        "? s(name, body).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel s(name: text, body: text).\n",
+            // `$${js}` → literal `${js}` (the dl interp is blocked).
+            "s(\"escaped\",   \"$${js}\").\n",
+            // `$$$VAR` → still `$$$VAR` (ast-grep variadic prefix; the third `$`
+            // opens the metavar, the first two survive as literal dollars).
+            "s(\"variadic\",  \"$$$VAR\").\n",
+            "? s(name, body).\n",
+        ),
+    );
     assert_eq!(code, 0, "$$-escape parsed + queried: {err}");
     // The `.contains` arg is a plain &str (not a format string), so `${js}` is
     // literal text. The assert MESSAGE is a format string, so its literal
     // `${js}` text needs `${{js}}` (Rust format-string brace escape).
-    assert!(out.contains("escaped\t${js}"),
-        "$${{js}} -> literal ${{js}}: {out}");
-    assert!(out.contains("variadic\t$$$VAR"),
-        "$$$VAR untouched (ast-grep variadic): {out}");
+    assert!(
+        out.contains("escaped\t${js}"),
+        "$${{js}} -> literal ${{js}}: {out}"
+    );
+    assert!(
+        out.contains("variadic\t$$$VAR"),
+        "$$$VAR untouched (ast-grep variadic): {out}"
+    );
 }

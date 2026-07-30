@@ -81,7 +81,9 @@ impl Session {
         self.send(serde_json::json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}));
         self.send(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
         for _ in 0..20 {
-            if let Ok(Some(_)) = self.child.try_wait() { return; }
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = self.child.kill();
@@ -95,18 +97,28 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
         let mut len = 0usize;
         loop {
             let mut line = String::new();
-            if r.read_line(&mut line).unwrap_or(0) == 0 { return; }
+            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
             let trimmed = line.trim_end();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
                 len = rest.trim().parse().unwrap_or(0);
             }
         }
-        if len == 0 { continue; }
+        if len == 0 {
+            continue;
+        }
         let mut buf = vec![0u8; len];
-        if r.read_exact(&mut buf).is_err() { return; }
+        if r.read_exact(&mut buf).is_err() {
+            return;
+        }
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) {
-            if tx.send(v).is_err() { return; }
+            if tx.send(v).is_err() {
+                return;
+            }
         }
     }
 }
@@ -114,7 +126,9 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
 fn drain_stderr(child: &mut Child) -> String {
     let _ = child.kill();
     let mut s = String::new();
-    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut s); }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut s);
+    }
     s
 }
 
@@ -149,7 +163,8 @@ fn hierarchy_program() -> String {
         "te(name) <- type_entity(_, _, name, _, _, _, _).\n",
         "rel cs(callee: text).\n",
         "cs(callee) <- call_site(_, _, callee, _, _).\n",
-    ).to_string()
+    )
+    .to_string()
 }
 
 /// Fixture (1): a free function `helper` and its one caller `caller`.
@@ -163,13 +178,17 @@ fn hierarchy_program() -> String {
 /// ```
 fn write_call_fixture(root: &Path) -> PathBuf {
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/lib.rs"), concat!(
-        "fn helper() {}\n",
-        "\n",
-        "fn caller() {\n",
-        "    helper();\n",
-        "}\n",
-    )).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        concat!(
+            "fn helper() {}\n",
+            "\n",
+            "fn caller() {\n",
+            "    helper();\n",
+            "}\n",
+        ),
+    )
+    .unwrap();
     let prog = root.join("p.dl");
     fs::write(&prog, hierarchy_program()).unwrap();
     prog
@@ -186,13 +205,17 @@ fn write_call_fixture(root: &Path) -> PathBuf {
 /// ```
 fn write_type_fixture(root: &Path) -> PathBuf {
     fs::create_dir_all(root.join("src")).unwrap();
-    fs::write(root.join("src/lib.rs"), concat!(
-        "trait Speaker {}\n",
-        "\n",
-        "struct Dog;\n",
-        "\n",
-        "impl Speaker for Dog {}\n",
-    )).unwrap();
+    fs::write(
+        root.join("src/lib.rs"),
+        concat!(
+            "trait Speaker {}\n",
+            "\n",
+            "struct Dog;\n",
+            "\n",
+            "impl Speaker for Dog {}\n",
+        ),
+    )
+    .unwrap();
     let prog = root.join("p.dl");
     fs::write(&prog, hierarchy_program()).unwrap();
     prog
@@ -208,16 +231,31 @@ fn call_hierarchy_prepare_resolves_function() {
     initialize(&mut s, &root);
 
     // Cursor inside "helper" on its declaration line (line 0, chars 3..9).
-    let result = s.request(2, "textDocument/prepareCallHierarchy",
-        position_params(&root.join("src/lib.rs"), 0, 5));
-    let items = result.as_array().unwrap_or_else(|| panic!(
-        "expected a CallHierarchyItem array, got: {result}\nstderr: {}",
-        drain_stderr(&mut s.child)));
+    let result = s.request(
+        2,
+        "textDocument/prepareCallHierarchy",
+        position_params(&root.join("src/lib.rs"), 0, 5),
+    );
+    let items = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a CallHierarchyItem array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
     assert_eq!(items.len(), 1, "exactly one item resolves: {result}");
-    assert_eq!(items[0].get("name").and_then(|n| n.as_str()), Some("helper"));
-    assert_eq!(items[0].get("kind").and_then(|k| k.as_u64()), Some(12),
-        "helper is a Function symbol (kind 12): {result}");
-    assert!(items[0].get("data").is_some(), "data carries the HierarchyItem for the follow-up requests: {result}");
+    assert_eq!(
+        items[0].get("name").and_then(|n| n.as_str()),
+        Some("helper")
+    );
+    assert_eq!(
+        items[0].get("kind").and_then(|k| k.as_u64()),
+        Some(12),
+        "helper is a Function symbol (kind 12): {result}"
+    );
+    assert!(
+        items[0].get("data").is_some(),
+        "data carries the HierarchyItem for the follow-up requests: {result}"
+    );
 
     s.shutdown();
 }
@@ -232,25 +270,58 @@ fn call_hierarchy_incoming_finds_caller() {
     let mut s = Session::spawn(&prog, &root, &root.join("h.db"));
     initialize(&mut s, &root);
 
-    let prepared = s.request(2, "textDocument/prepareCallHierarchy",
-        position_params(&root.join("src/lib.rs"), 0, 5));
-    let item = prepared.as_array().and_then(|a| a.first()).cloned()
-        .unwrap_or_else(|| panic!("prepare on helper failed: {prepared}\nstderr: {}", drain_stderr(&mut s.child)));
+    let prepared = s.request(
+        2,
+        "textDocument/prepareCallHierarchy",
+        position_params(&root.join("src/lib.rs"), 0, 5),
+    );
+    let item = prepared
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "prepare on helper failed: {prepared}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
 
-    let result = s.request(3, "callHierarchy/incomingCalls", serde_json::json!({"item": item}));
-    let calls = result.as_array().unwrap_or_else(|| panic!(
-        "expected a CallHierarchyIncomingCall array, got: {result}\nstderr: {}",
-        drain_stderr(&mut s.child)));
+    let result = s.request(
+        3,
+        "callHierarchy/incomingCalls",
+        serde_json::json!({"item": item}),
+    );
+    let calls = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a CallHierarchyIncomingCall array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
     assert_eq!(calls.len(), 1, "exactly one caller: {result}");
-    let from_name = calls[0].get("from").and_then(|f| f.get("name")).and_then(|n| n.as_str());
-    assert_eq!(from_name, Some("caller"), "caller() is the incoming call: {result}");
-    let from_lines: Vec<u64> = calls[0].get("fromRanges").and_then(|r| r.as_array())
+    let from_name = calls[0]
+        .get("from")
+        .and_then(|f| f.get("name"))
+        .and_then(|n| n.as_str());
+    assert_eq!(
+        from_name,
+        Some("caller"),
+        "caller() is the incoming call: {result}"
+    );
+    let from_lines: Vec<u64> = calls[0]
+        .get("fromRanges")
+        .and_then(|r| r.as_array())
         .unwrap_or_else(|| panic!("fromRanges missing: {result}"))
         .iter()
-        .filter_map(|r| r.get("start").and_then(|p| p.get("line")).and_then(|l| l.as_u64()))
+        .filter_map(|r| {
+            r.get("start")
+                .and_then(|p| p.get("line"))
+                .and_then(|l| l.as_u64())
+        })
         .collect();
-    assert!(from_lines.contains(&3),
-        "the call site is on line 3 (`    helper();`): {from_lines:?} / {result}");
+    assert!(
+        from_lines.contains(&3),
+        "the call site is on line 3 (`    helper();`): {from_lines:?} / {result}"
+    );
 
     s.shutdown();
 }
@@ -266,25 +337,58 @@ fn call_hierarchy_outgoing_finds_callee() {
     initialize(&mut s, &root);
 
     // Cursor inside "caller" on its declaration line (line 2, chars 3..9).
-    let prepared = s.request(2, "textDocument/prepareCallHierarchy",
-        position_params(&root.join("src/lib.rs"), 2, 5));
-    let item = prepared.as_array().and_then(|a| a.first()).cloned()
-        .unwrap_or_else(|| panic!("prepare on caller failed: {prepared}\nstderr: {}", drain_stderr(&mut s.child)));
+    let prepared = s.request(
+        2,
+        "textDocument/prepareCallHierarchy",
+        position_params(&root.join("src/lib.rs"), 2, 5),
+    );
+    let item = prepared
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "prepare on caller failed: {prepared}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
 
-    let result = s.request(3, "callHierarchy/outgoingCalls", serde_json::json!({"item": item}));
-    let calls = result.as_array().unwrap_or_else(|| panic!(
-        "expected a CallHierarchyOutgoingCall array, got: {result}\nstderr: {}",
-        drain_stderr(&mut s.child)));
+    let result = s.request(
+        3,
+        "callHierarchy/outgoingCalls",
+        serde_json::json!({"item": item}),
+    );
+    let calls = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a CallHierarchyOutgoingCall array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
     assert_eq!(calls.len(), 1, "exactly one callee: {result}");
-    let to_name = calls[0].get("to").and_then(|t| t.get("name")).and_then(|n| n.as_str());
-    assert_eq!(to_name, Some("helper"), "helper() is the outgoing call: {result}");
-    let from_lines: Vec<u64> = calls[0].get("fromRanges").and_then(|r| r.as_array())
+    let to_name = calls[0]
+        .get("to")
+        .and_then(|t| t.get("name"))
+        .and_then(|n| n.as_str());
+    assert_eq!(
+        to_name,
+        Some("helper"),
+        "helper() is the outgoing call: {result}"
+    );
+    let from_lines: Vec<u64> = calls[0]
+        .get("fromRanges")
+        .and_then(|r| r.as_array())
         .unwrap_or_else(|| panic!("fromRanges missing: {result}"))
         .iter()
-        .filter_map(|r| r.get("start").and_then(|p| p.get("line")).and_then(|l| l.as_u64()))
+        .filter_map(|r| {
+            r.get("start")
+                .and_then(|p| p.get("line"))
+                .and_then(|l| l.as_u64())
+        })
         .collect();
-    assert!(from_lines.contains(&3),
-        "the call site is on line 3 inside caller's own body: {from_lines:?} / {result}");
+    assert!(
+        from_lines.contains(&3),
+        "the call site is on line 3 inside caller's own body: {from_lines:?} / {result}"
+    );
 
     s.shutdown();
 }
@@ -300,18 +404,40 @@ fn type_hierarchy_supertypes_finds_implemented_trait() {
     initialize(&mut s, &root);
 
     // Cursor inside "Dog" on its declaration line (line 2, chars 7..10).
-    let prepared = s.request(2, "textDocument/prepareTypeHierarchy",
-        position_params(&root.join("src/lib.rs"), 2, 8));
-    let item = prepared.as_array().and_then(|a| a.first()).cloned()
-        .unwrap_or_else(|| panic!("prepare on Dog failed: {prepared}\nstderr: {}", drain_stderr(&mut s.child)));
+    let prepared = s.request(
+        2,
+        "textDocument/prepareTypeHierarchy",
+        position_params(&root.join("src/lib.rs"), 2, 8),
+    );
+    let item = prepared
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "prepare on Dog failed: {prepared}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
     assert_eq!(item.get("name").and_then(|n| n.as_str()), Some("Dog"));
 
-    let result = s.request(3, "typeHierarchy/supertypes", serde_json::json!({"item": item}));
-    let supers = result.as_array().unwrap_or_else(|| panic!(
-        "expected a TypeHierarchyItem array, got: {result}\nstderr: {}",
-        drain_stderr(&mut s.child)));
-    assert!(supers.iter().any(|sup| sup.get("name").and_then(|n| n.as_str()) == Some("Speaker")),
-        "Speaker is a supertype of Dog: {result}");
+    let result = s.request(
+        3,
+        "typeHierarchy/supertypes",
+        serde_json::json!({"item": item}),
+    );
+    let supers = result.as_array().unwrap_or_else(|| {
+        panic!(
+            "expected a TypeHierarchyItem array, got: {result}\nstderr: {}",
+            drain_stderr(&mut s.child)
+        )
+    });
+    assert!(
+        supers
+            .iter()
+            .any(|sup| sup.get("name").and_then(|n| n.as_str()) == Some("Speaker")),
+        "Speaker is a supertype of Dog: {result}"
+    );
 
     s.shutdown();
 }
@@ -326,8 +452,11 @@ fn call_hierarchy_prepare_null_off_whitespace() {
     initialize(&mut s, &root);
 
     // Line 1 is blank in the call fixture.
-    let result = s.request(2, "textDocument/prepareCallHierarchy",
-        position_params(&root.join("src/lib.rs"), 1, 0));
+    let result = s.request(
+        2,
+        "textDocument/prepareCallHierarchy",
+        position_params(&root.join("src/lib.rs"), 1, 0),
+    );
     assert!(result.is_null(), "a blank line resolves to null: {result}");
 
     s.shutdown();

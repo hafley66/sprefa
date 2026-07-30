@@ -42,7 +42,12 @@ pub fn scope(probe: CancelProbe) -> ScopeGuard {
 /// Whether the probe (if any) reports this thread's job cancelled at `stage`.
 /// `false` when no scope is installed.
 pub fn cancelled(stage: &str) -> bool {
-    PROBE.with(|p| p.borrow().as_ref().map(|probe| probe(stage)).unwrap_or(false))
+    PROBE.with(|p| {
+        p.borrow()
+            .as_ref()
+            .map(|probe| probe(stage))
+            .unwrap_or(false)
+    })
 }
 
 /// Stage-boundary check: bail when the surrounding job's request is gone.
@@ -79,14 +84,23 @@ mod tests {
 
     #[test]
     fn checkpoint_is_a_noop_without_a_scope_and_bails_inside_one() {
-        assert!(checkpoint("anywhere").is_ok(), "no scope installed => no-op");
+        assert!(
+            checkpoint("anywhere").is_ok(),
+            "no scope installed => no-op"
+        );
         {
             let _guard = scope(Arc::new(|stage: &str| stage == "derived"));
             assert!(checkpoint("reconcile").is_ok(), "probe is stage-selective");
             let err = checkpoint("derived").unwrap_err();
-            assert!(err.to_string().contains("cancelled at derived"), "got: {err}");
+            assert!(
+                err.to_string().contains("cancelled at derived"),
+                "got: {err}"
+            );
         }
-        assert!(checkpoint("derived").is_ok(), "guard drop restores the empty state");
+        assert!(
+            checkpoint("derived").is_ok(),
+            "guard drop restores the empty state"
+        );
     }
 
     #[test]
@@ -97,7 +111,10 @@ mod tests {
             let _inner = scope(Arc::new(|_stage: &str| false));
             assert!(checkpoint("x").is_ok(), "inner scope shadows the outer");
         }
-        assert!(checkpoint("x").is_err(), "outer probe restored on inner drop");
+        assert!(
+            checkpoint("x").is_err(),
+            "outer probe restored on inner drop"
+        );
     }
 }
 
@@ -157,7 +174,9 @@ reach_b(word) <- src_a(_, word).
         // The tick mutates the process-global activity slot (`set`, and the
         // checkpoint's abort-path `end_tick`), so hold the crate-wide
         // test-globals lock like every other slot-mutating test.
-        let _slot = crate::perflog::TEST_GLOBALS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _slot = crate::perflog::TEST_GLOBALS_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = sandbox("component");
         fs::write(dir.join("src/a.rs"), "// alpha_one\n").unwrap();
         let (mut eng, prog) = fresh_engine(&dir);
@@ -172,7 +191,9 @@ reach_b(word) <- src_a(_, word).
         // becomes observable mid-tick.
         fs::write(dir.join("src/a.rs"), "// alpha_seventeen\n").unwrap();
         {
-            let _guard = scope(std::sync::Arc::new(|stage: &str| stage == "derived-component"));
+            let _guard = scope(std::sync::Arc::new(|stage: &str| {
+                stage == "derived-component"
+            }));
             let err = eng.tick(&prog, true).unwrap_err();
             assert!(
                 err.to_string().contains("cancelled at derived-component"),
@@ -182,8 +203,16 @@ reach_b(word) <- src_a(_, word).
 
         // No half-written state: the abort landed BEFORE any unmark/wipe, so
         // both rels keep their OLD rows and their completion markers.
-        assert_eq!(rel_vals(&eng, "reach_a"), vec!["one"], "old rows survive the abort");
-        assert_eq!(rel_vals(&eng, "reach_b"), vec!["one"], "old rows survive the abort");
+        assert_eq!(
+            rel_vals(&eng, "reach_a"),
+            vec!["one"],
+            "old rows survive the abort"
+        );
+        assert_eq!(
+            rel_vals(&eng, "reach_b"),
+            vec!["one"],
+            "old rows survive the abort"
+        );
         let done = complete_set(&eng);
         assert!(
             done.contains("reach_a") && done.contains("reach_b"),

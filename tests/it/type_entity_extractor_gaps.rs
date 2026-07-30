@@ -65,7 +65,10 @@ fn rust_trait_default_method_gets_type_entity_row() {
         out.contains("greet\tmethod\ttype_entity_extractor_gaps_rust_trait_default::src/lib.rs::trait::Greeter"),
         "default method row missing: {out}"
     );
-    assert!(!out.contains("\nname\t") && !out.contains("name\tmethod"), "bare signature must NOT mint a row: {out}");
+    assert!(
+        !out.contains("\nname\t") && !out.contains("name\tmethod"),
+        "bare signature must NOT mint a row: {out}"
+    );
 }
 
 const KOTLIN_PROG: &str = r#"
@@ -99,6 +102,12 @@ fn kotlin_object_declarations_get_type_entity_rows() {
 
     let (code, out, err) = run(&d, KOTLIN_PROG);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("Singleton\tclass"), "top-level object row missing: {out}");
-    assert!(out.contains("Factory\tclass"), "companion object row missing: {out}");
+    assert!(
+        out.contains("Singleton\tclass"),
+        "top-level object row missing: {out}"
+    );
+    assert!(
+        out.contains("Factory\tclass"),
+        "companion object row missing: {out}"
+    );
 }

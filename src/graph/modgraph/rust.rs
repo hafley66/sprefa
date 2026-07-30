@@ -124,7 +124,12 @@ impl ModuleResolver for RustResolver {
                 let module_bindings = if leaf.collapsed {
                     vec![]
                 } else {
-                    let source = leaf.full.rsplit("::").next().unwrap_or(&leaf.full).to_string();
+                    let source = leaf
+                        .full
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(&leaf.full)
+                        .to_string();
                     let local = leaf.alias.clone().unwrap_or_else(|| source.clone());
                     let kind = if reexport { "reexport" } else { "named" };
                     vec![(local, source, kind)]
@@ -254,7 +259,9 @@ pub fn expand_use_leaves(body: &str) -> Vec<UseLeaf> {
             // The contiguous leaf is the path before any ` as ` alias.
             let mut parts = seg.split(" as ");
             let leaf = parts.next().unwrap_or(seg).trim_end();
-            let alias = parts.next().map(|a| a.trim().trim_start_matches("r#").to_string());
+            let alias = parts
+                .next()
+                .map(|a| a.trim().trim_start_matches("r#").to_string());
             let collapsed = leaf == "self" || leaf == "*" || leaf.is_empty();
             let full = if collapsed {
                 prefix.to_string()
@@ -329,7 +336,9 @@ impl RustCrates {
             } else {
                 format!("{dir}/src")
             };
-            name_to_src.entry(name.clone()).or_insert_with(|| src.clone());
+            name_to_src
+                .entry(name.clone())
+                .or_insert_with(|| src.clone());
             roots.push((src, name.clone()));
             // `renamed = { package = "real" }`: code uses `renamed`, crate is `real`.
             for (code, real) in rns {
@@ -502,4 +511,3 @@ pub fn crate_edges(manifests: &HashMap<String, String>) -> Vec<CrateEdge> {
     }
     out.into_iter().collect()
 }
-

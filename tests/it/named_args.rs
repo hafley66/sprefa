@@ -40,14 +40,17 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn named_args_bind_and_pin_columns_in_a_body_atom() {
     let d = sandbox("body");
-    let (code, out, err) = run(&d, concat!(
-        "rel person(name: text, age: int, city: text).\n",
-        "rel sfp(n: text).\n",
-        "person(\"ann\", 30, \"nyc\").\n",
-        "person(\"bob\", 25, \"sf\").\n",
-        "sfp(n) <- person(name: n, city: \"sf\").\n",
-        "? sfp(n).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int, city: text).\n",
+            "rel sfp(n: text).\n",
+            "person(\"ann\", 30, \"nyc\").\n",
+            "person(\"bob\", 25, \"sf\").\n",
+            "sfp(n) <- person(name: n, city: \"sf\").\n",
+            "? sfp(n).\n",
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("bob"), "sf person is bob:\n{out}");
     assert!(!out.contains("ann"), "ann is in nyc, not selected:\n{out}");
@@ -58,12 +61,15 @@ fn named_args_bind_and_pin_columns_in_a_body_atom() {
 #[test]
 fn named_args_work_in_a_query_head() {
     let d = sandbox("query");
-    let (code, out, err) = run(&d, concat!(
-        "rel person(name: text, age: int, city: text).\n",
-        "person(\"ann\", 30, \"nyc\").\n",
-        "person(\"bob\", 25, \"sf\").\n",
-        "? person(city: \"nyc\").\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int, city: text).\n",
+            "person(\"ann\", 30, \"nyc\").\n",
+            "person(\"bob\", 25, \"sf\").\n",
+            "? person(city: \"nyc\").\n",
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("ann"), "nyc person is ann:\n{out}");
     assert!(!out.contains("bob"), "bob is in sf:\n{out}");
@@ -75,15 +81,21 @@ fn named_args_work_in_a_query_head() {
 #[test]
 fn named_args_resolve_before_the_rel_decl() {
     let d = sandbox("forward");
-    let (code, out, err) = run(&d, concat!(
-        "q(n) <- person(name: n, city: \"sf\").\n",
-        "rel q(n: text).\n",
-        "rel person(name: text, age: int, city: text).\n",
-        "person(\"bob\", 25, \"sf\").\n",
-        "? q(n).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "q(n) <- person(name: n, city: \"sf\").\n",
+            "rel q(n: text).\n",
+            "rel person(name: text, age: int, city: text).\n",
+            "person(\"bob\", 25, \"sf\").\n",
+            "? q(n).\n",
+        ),
+    );
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("bob"), "forward-referenced schema still resolves:\n{out}");
+    assert!(
+        out.contains("bob"),
+        "forward-referenced schema still resolves:\n{out}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -93,16 +105,22 @@ fn named_args_resolve_before_the_rel_decl() {
 #[test]
 fn a_bare_name_puns_to_its_own_column() {
     let d = sandbox("pun");
-    let (code, out, err) = run(&d, concat!(
-        "rel person(name: text, age: int, city: text).\n",
-        "rel adult(name: text).\n",
-        "person(\"ann\", 30, \"nyc\").\n",
-        "person(\"bob\", 25, \"sf\").\n",
-        "adult(name) <- person(name, city: \"sf\").\n",
-        "? adult(name).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int, city: text).\n",
+            "rel adult(name: text).\n",
+            "person(\"ann\", 30, \"nyc\").\n",
+            "person(\"bob\", 25, \"sf\").\n",
+            "adult(name) <- person(name, city: \"sf\").\n",
+            "? adult(name).\n",
+        ),
+    );
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("bob"), "punned `name` binds the name column:\n{out}");
+    assert!(
+        out.contains("bob"),
+        "punned `name` binds the name column:\n{out}"
+    );
     assert!(!out.contains("ann"), "ann is nyc:\n{out}");
     let _ = fs::remove_dir_all(&d);
 }
@@ -114,14 +132,17 @@ fn bare_literal_in_named_mode_binds_by_position() {
     let d = sandbox("barelit");
     // `5` is a nameless positional: it fills the next column left open by the
     // named arg (`name`), i.e. `age`. So the body filters age = 5.
-    let (code, out, err) = run(&d, concat!(
-        "rel person(name: text, age: int).\n",
-        "person(\"alice\", 5).\n",
-        "person(\"bob\", 9).\n",
-        "rel q(n: text).\n",
-        "q(n) <- person(name: n, 5).\n",
-        "? q(n).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int).\n",
+            "person(\"alice\", 5).\n",
+            "person(\"bob\", 9).\n",
+            "rel q(n: text).\n",
+            "q(n) <- person(name: n, 5).\n",
+            "? q(n).\n",
+        ),
+    );
     assert_eq!(code, 0, "positional literal binds by slot:\n{err}");
     assert!(out.contains("alice"), "age 5 matches alice:\n{out}");
     assert!(!out.contains("bob"), "age 9 must not match:\n{out}");
@@ -133,13 +154,19 @@ fn bare_literal_in_named_mode_binds_by_position() {
 #[test]
 fn too_many_positional_literals_errors() {
     let d = sandbox("toomany");
-    let (code, _out, err) = run(&d, concat!(
-        "rel pt(x: int, y: int).\n",
-        "pt(x: 1, 2, 3).\n",   // x named, then two literals for one open column (y)
-        "? pt(x, y).\n",
-    ));
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel pt(x: int, y: int).\n",
+            "pt(x: 1, 2, 3).\n", // x named, then two literals for one open column (y)
+            "? pt(x, y).\n",
+        ),
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("too many positional"), "clear over-fill error:\n{err}");
+    assert!(
+        err.contains("too many positional"),
+        "clear over-fill error:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -147,13 +174,19 @@ fn too_many_positional_literals_errors() {
 #[test]
 fn unknown_named_column_is_a_clear_error() {
     let d = sandbox("unknown");
-    let (code, _out, err) = run(&d, concat!(
-        "rel person(name: text, age: int).\n",
-        "q(n) <- person(nam: n).\n",
-        "? q(n).\n",
-    ));
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int).\n",
+            "q(n) <- person(nam: n).\n",
+            "? q(n).\n",
+        ),
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("unknown column `nam`"), "names the bad column:\n{err}");
+    assert!(
+        err.contains("unknown column `nam`"),
+        "names the bad column:\n{err}"
+    );
     assert!(err.contains("name, age"), "lists the real columns:\n{err}");
     let _ = fs::remove_dir_all(&d);
 }
@@ -162,12 +195,15 @@ fn unknown_named_column_is_a_clear_error() {
 #[test]
 fn double_set_column_is_an_error() {
     let d = sandbox("double");
-    let (code, _out, err) = run(&d, concat!(
-        "rel person(name: text, age: int).\n",
-        // `name` puns to column `name`; `name: n` also targets it → collision.
-        "q(x) <- person(name, name: x).\n",
-        "? q(x).\n",
-    ));
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int).\n",
+            // `name` puns to column `name`; `name: n` also targets it → collision.
+            "q(x) <- person(name, name: x).\n",
+            "? q(x).\n",
+        ),
+    );
     assert_ne!(code, 0);
     assert!(err.contains("set twice"), "flags the collision:\n{err}");
     let _ = fs::remove_dir_all(&d);
@@ -178,18 +214,24 @@ fn double_set_column_is_an_error() {
 #[test]
 fn named_args_in_a_rule_head_resolve() {
     let d = sandbox("head");
-    let (code, out, err) = run(&d, concat!(
-        "rel person(name: text, age: int).\n",
-        "person(name: \"x\", age: 1).\n",
-        // out of column order, and a head that names only one column (age -> NULL)
-        "person(age: 2, name: \"y\").\n",
-        "person(name: \"z\").\n",
-        "? person(a, b).\n",
-    ));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel person(name: text, age: int).\n",
+            "person(name: \"x\", age: 1).\n",
+            // out of column order, and a head that names only one column (age -> NULL)
+            "person(age: 2, name: \"y\").\n",
+            "person(name: \"z\").\n",
+            "? person(a, b).\n",
+        ),
+    );
     assert_eq!(code, 0, "named head args resolve:\n{err}");
     assert!(out.contains("x\t1"), "in-order named head:\n{out}");
     assert!(out.contains("y\t2"), "out-of-order named head:\n{out}");
-    assert!(out.contains("z\t"), "partial head pads the rest to NULL:\n{out}");
+    assert!(
+        out.contains("z\t"),
+        "partial head pads the rest to NULL:\n{out}"
+    );
     let _ = fs::remove_dir_all(&d);
 }
 
@@ -198,14 +240,20 @@ fn named_args_in_a_rule_head_resolve() {
 #[test]
 fn named_args_with_aggregate_head_are_rejected() {
     let d = sandbox("head_agg");
-    let (code, _out, err) = run(&d, concat!(
-        "rel edge(f: text, t: text).\n",
-        "edge(\"a\", \"b\").\n",
-        "rel fan(f: text, n: int).\n",
-        "fan(f: f, count(t)) <- edge(f, t).\n",
-        "? fan(f, n).\n",
-    ));
+    let (code, _out, err) = run(
+        &d,
+        concat!(
+            "rel edge(f: text, t: text).\n",
+            "edge(\"a\", \"b\").\n",
+            "rel fan(f: text, n: int).\n",
+            "fan(f: f, count(t)) <- edge(f, t).\n",
+            "? fan(f, n).\n",
+        ),
+    );
     assert_ne!(code, 0);
-    assert!(err.contains("mix named args with an aggregate"), "clear rejection:\n{err}");
+    assert!(
+        err.contains("mix named args with an aggregate"),
+        "clear rejection:\n{err}"
+    );
     let _ = fs::remove_dir_all(&d);
 }

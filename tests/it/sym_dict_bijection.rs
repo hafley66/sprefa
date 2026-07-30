@@ -104,7 +104,10 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
         call_def_syms >= 4,
         "expected >=4 call_def syms (leaf/helper/run/other), got {call_def_syms}"
     );
-    assert!(type_syms >= 1, "expected >=1 type_entity sym, got {type_syms}");
+    assert!(
+        type_syms >= 1,
+        "expected >=1 type_entity sym, got {type_syms}"
+    );
 
     // 1. `_sym_dict` is a dense bijection, seeded above the coord-id range.
     let dict_rows = count(&eng, "SELECT COUNT(*) FROM _sym_dict");
@@ -142,12 +145,18 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
         ("type_edge", "\"from\""),
         ("type_edge", "\"to\""),
         ("call_name", "sym"),
-        ("word", "w"),       // SQL ground-fact write path
-        ("echo_word", "w"),  // SQL derived-rule write path
+        ("word", "w"),      // SQL ground-fact write path
+        ("echo_word", "w"), // SQL derived-rule write path
     ];
     for (rel, col) in cases {
-        let dense = count(&eng, &format!("SELECT COUNT(DISTINCT {col}) FROM rel_{rel}"));
-        let text = count(&eng, &format!("SELECT COUNT(DISTINCT {col}) FROM rel_{rel}_txt"));
+        let dense = count(
+            &eng,
+            &format!("SELECT COUNT(DISTINCT {col}) FROM rel_{rel}"),
+        );
+        let text = count(
+            &eng,
+            &format!("SELECT COUNT(DISTINCT {col}) FROM rel_{rel}_txt"),
+        );
         assert_eq!(
             dense, text,
             "bijection broken on {rel}.{col}: {dense} distinct dense ids vs {text} distinct texts"
@@ -199,7 +208,10 @@ fn sym_dict_is_a_dense_bijection_and_preserves_every_join() {
     //    call/type cross-family join (case 4). This case pins that
     //    `sprf_sym_intern` agrees with itself across fact and derived lowering.
     let word_rows = count(&eng, "SELECT COUNT(*) FROM rel_word");
-    assert!(word_rows >= 2, "fixture: word should have 2 fact rows, got {word_rows}");
+    assert!(
+        word_rows >= 2,
+        "fixture: word should have 2 fact rows, got {word_rows}"
+    );
     let dense_word_join = count(
         &eng,
         "SELECT COUNT(*) FROM rel_word w JOIN rel_echo_word e ON w.w = e.w",

@@ -34,10 +34,10 @@ pub use stub::Stub;
 
 pub mod node2vec;
 
-#[cfg(feature = "embed-fastembed")]
-mod fastembed_be;
 #[cfg(feature = "embed-candle")]
 mod candle_be;
+#[cfg(feature = "embed-fastembed")]
+mod fastembed_be;
 
 /// Backends compiled into THIS binary, for `make` error messages and tooling.
 pub fn available() -> &'static [&'static str] {
@@ -62,7 +62,10 @@ pub fn make(explicit: Option<&str>) -> Result<Box<dyn Embedder>> {
         Some("stub") => Ok(Box::new(Stub::default())),
         Some("fastembed") => mk_fastembed(),
         Some("candle") => mk_candle(),
-        Some(o) => bail!("unknown embed backend '{o}'; this build has {:?}", available()),
+        Some(o) => bail!(
+            "unknown embed backend '{o}'; this build has {:?}",
+            available()
+        ),
         None => default_backend(),
     }
 }

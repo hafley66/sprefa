@@ -13,10 +13,21 @@ use std::collections::BTreeSet;
 fn matrix_row(label: &str) -> BTreeSet<String> {
     let mut found = None;
     for line in sprefa_v5::setup::SKILL_MD.lines() {
-        let Some((lhs, rhs)) = line.split_once(':') else { continue; };
-        if lhs.trim() != label { continue; }
-        assert!(found.is_none(), "matrix label `{label}` appears more than once in the skill");
-        found = Some(rhs.split_whitespace().map(String::from).collect::<BTreeSet<_>>());
+        let Some((lhs, rhs)) = line.split_once(':') else {
+            continue;
+        };
+        if lhs.trim() != label {
+            continue;
+        }
+        assert!(
+            found.is_none(),
+            "matrix label `{label}` appears more than once in the skill"
+        );
+        found = Some(
+            rhs.split_whitespace()
+                .map(String::from)
+                .collect::<BTreeSet<_>>(),
+        );
     }
     found.unwrap_or_else(|| panic!("no `{label}:` language-matrix line in the skill"))
 }
@@ -24,15 +35,25 @@ fn matrix_row(label: &str) -> BTreeSet<String> {
 #[test]
 fn skill_match_ast_matrix_matches_the_grammar_table() {
     let listed = matrix_row("match_ast, ast_yaml");
-    let actual: BTreeSet<String> = sprefa_v5::sg::sg_langs().into_iter().map(String::from).collect();
-    assert_eq!(listed, actual,
-        "skill `match_ast, ast_yaml` matrix is stale vs SG_LANG_TABLE (sg::sg_langs())");
+    let actual: BTreeSet<String> = sprefa_v5::sg::sg_langs()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        listed, actual,
+        "skill `match_ast, ast_yaml` matrix is stale vs SG_LANG_TABLE (sg::sg_langs())"
+    );
 }
 
 #[test]
 fn skill_ast_matrix_matches_the_grammar_table() {
     let listed = matrix_row("ast");
-    let actual: BTreeSet<String> = sprefa_v5::engine::ast_langs().into_iter().map(String::from).collect();
-    assert_eq!(listed, actual,
-        "skill `ast` matrix is stale vs AST_LANG_TABLE (engine::ast_langs())");
+    let actual: BTreeSet<String> = sprefa_v5::engine::ast_langs()
+        .into_iter()
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        listed, actual,
+        "skill `ast` matrix is stale vs AST_LANG_TABLE (engine::ast_langs())"
+    );
 }

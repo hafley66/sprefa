@@ -21,10 +21,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// (1) Two functions with 6 identical body lines: the verbatim kernel (seed=6)
@@ -43,8 +46,14 @@ fn propose_extract_finds_verbatim_dup() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("src/dup.rs"), "path must appear in output:\n{out}");
-    assert!(out.contains("one"), "free var 'one' must be a param:\n{out}");
+    assert!(
+        out.contains("src/dup.rs"),
+        "path must appear in output:\n{out}"
+    );
+    assert!(
+        out.contains("one"),
+        "free var 'one' must be a param:\n{out}"
+    );
 }
 
 /// (2) A file with no duplication: the relation is empty (no rows, no error).
@@ -61,7 +70,10 @@ fn propose_extract_empty_on_unique_code() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("(0 rows)"), "no proposals expected on unique code:\n{out}");
+    assert!(
+        out.contains("(0 rows)"),
+        "no proposals expected on unique code:\n{out}"
+    );
 }
 
 /// (3) `propose_extract` is a reserved name.
@@ -70,7 +82,10 @@ fn propose_extract_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel propose_extract(p: text).\n");
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }
 
 /// (4) `propose_clone(kernel, path, lo, hi, param)` runs all 9 kernels.
@@ -101,5 +116,8 @@ fn propose_clone_is_reserved() {
     let d = sandbox("clone_reserved");
     let (code, _out, err) = run(&d, "rel propose_clone(k: text, p: text).\n");
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }

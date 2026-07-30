@@ -24,10 +24,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// (1) An `fs:` literal in a body atom resolves to canonical text and pins the
@@ -50,9 +53,18 @@ hit(fs:src/x.rs) <- seen(fs:src/x.rs).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "fs literal join must succeed: {err}");
-    assert!(out.contains("src/x.rs"), "fs:src/x.rs must pin the join: {out}");
-    assert!(out.contains("(1 rows)"), "exactly the one pinned file: {out}");
-    assert!(!out.contains("src/y.rs"), "the literal pins to x.rs only: {out}");
+    assert!(
+        out.contains("src/x.rs"),
+        "fs:src/x.rs must pin the join: {out}"
+    );
+    assert!(
+        out.contains("(1 rows)"),
+        "exactly the one pinned file: {out}"
+    );
+    assert!(
+        !out.contains("src/y.rs"),
+        "the literal pins to x.rs only: {out}"
+    );
 }
 
 /// (2) A `~/` anchor resolves to the scan root, so `fs:~/src/x.rs` is the same
@@ -71,8 +83,10 @@ hit(fs:~/src/x.rs) <- seen(fs:~/src/x.rs).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "~ anchor must resolve: {err}");
-    assert!(out.contains("src/x.rs") && out.contains("(1 rows)"),
-        "fs:~/src/x.rs must resolve to src/x.rs: {out}");
+    assert!(
+        out.contains("src/x.rs") && out.contains("(1 rows)"),
+        "fs:~/src/x.rs must resolve to src/x.rs: {out}"
+    );
 }
 
 /// (3) A concrete `fs:` literal whose normalized path climbs above the scan root
@@ -91,7 +105,10 @@ hit(fs:../outside.rs) <- seen(fs:../outside.rs).
 "#;
     let (code, _, err) = run(&d, prog, &["--check"]);
     assert_ne!(code, 0, "escaping the root must fail --check: {err}");
-    assert!(err.contains("path-escapes-root"), "expected path-escapes-root code: {err}");
+    assert!(
+        err.contains("path-escapes-root"),
+        "expected path-escapes-root code: {err}"
+    );
 }
 
 /// (4) A variable bound at two columns with unrelated brands is a
@@ -113,7 +130,10 @@ bad(x) <- a(x), b(x).
 "#;
     let (code, _, err) = run(&d, prog, &["--check"]);
     assert_ne!(code, 0, "brand mismatch must fail --check: {err}");
-    assert!(err.contains("brand-mismatch"), "expected brand-mismatch code: {err}");
+    assert!(
+        err.contains("brand-mismatch"),
+        "expected brand-mismatch code: {err}"
+    );
 }
 
 /// (5) A branded/path variable flowing into a plain `text` column is a coerce
@@ -136,7 +156,10 @@ note(p) <- seen(p).
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "coerce is a warning, run must succeed: {err}");
     assert!(out.contains("src/x.rs"), "the row still flows: {out}");
-    assert!(!err.contains("coerce-text-path"), "coerce warning suppressed by default: {err}");
+    assert!(
+        !err.contains("coerce-text-path"),
+        "coerce warning suppressed by default: {err}"
+    );
 
     // Opt-in: `DL_COERCE_WARN=1` surfaces the warning (still a warn, not an error).
     fs::write(d.join("p.dl"), prog).unwrap();
@@ -145,11 +168,22 @@ note(p) <- seen(p).
         .args(["--db", d.join("db2").to_str().unwrap()])
         .current_dir(d)
         .env("DL_COERCE_WARN", "1")
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let err2 = String::from_utf8_lossy(&out2.stderr);
-    assert_eq!(out2.status.code().unwrap_or(-1), 0, "still runs under opt-in: {err2}");
-    assert!(err2.contains("coerce-text-path"), "coerce warning prints under DL_COERCE_WARN: {err2}");
-    assert!(!err2.contains("error[coerce"), "coerce must be a warn, not an error: {err2}");
+    assert_eq!(
+        out2.status.code().unwrap_or(-1),
+        0,
+        "still runs under opt-in: {err2}"
+    );
+    assert!(
+        err2.contains("coerce-text-path"),
+        "coerce warning prints under DL_COERCE_WARN: {err2}"
+    );
+    assert!(
+        !err2.contains("error[coerce"),
+        "coerce must be a warn, not an error: {err2}"
+    );
 }
 
 /// (6) `scan(.., glob:src/**/*.rs, ..)` is byte-identical to the quoted form
@@ -183,7 +217,13 @@ seen(p) <- scan("WORK", glob:src/**/*.rs, p, rev).
     let (cg, og, eg) = run(&d, globbed, &[]);
     assert_eq!(cq, 0);
     assert_eq!(cg, 0, "glob literal scan must run: {eg}");
-    assert_eq!(oq, og, "glob:src/**/*.rs must produce byte-identical output to the quoted form");
-    assert!(og.contains("src/x.rs") && og.contains("src/y.rs"), "src files matched: {og}");
+    assert_eq!(
+        oq, og,
+        "glob:src/**/*.rs must produce byte-identical output to the quoted form"
+    );
+    assert!(
+        og.contains("src/x.rs") && og.contains("src/y.rs"),
+        "src files matched: {og}"
+    );
     assert!(!og.contains("top.rs"), "top.rs must not match src/**: {og}");
 }

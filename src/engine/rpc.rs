@@ -21,7 +21,10 @@ impl Engine {
     /// instrumentation; returns 0 when the table is empty, errors if absent.
     pub fn count_rows(&self, rel: &str) -> Result<i64> {
         let table = txt_tbl(rel);
-        self.db.query_one(rel, &format!("SELECT COUNT(*) FROM {}", table), &[], |r| Ok(r.get(0)?))
+        self.db
+            .query_one(rel, &format!("SELECT COUNT(*) FROM {}", table), &[], |r| {
+                Ok(r.get(0)?)
+            })
     }
 
     pub fn query_sql(
@@ -29,7 +32,8 @@ impl Engine {
         sql: &str,
         params: &[serde_json::Value],
     ) -> Result<Vec<Vec<serde_json::Value>>> {
-        let sqlval_params: Vec<crate::db::SqlVal> = params.iter().map(crate::db::SqlVal::from_json).collect();
+        let sqlval_params: Vec<crate::db::SqlVal> =
+            params.iter().map(crate::db::SqlVal::from_json).collect();
         let raw_rows = self.db.query_values("_query_sql", sql, &sqlval_params)?;
         Ok(raw_rows
             .iter()
@@ -45,7 +49,9 @@ impl Engine {
         let table = txt_tbl("module_import");
         let rows = self.db.query_rows(
             "module_import",
-            &format!("SELECT \"file\", \"specifier\" FROM {table} WHERE \"kind\" IN ('use', 'import')"),
+            &format!(
+                "SELECT \"file\", \"specifier\" FROM {table} WHERE \"kind\" IN ('use', 'import')"
+            ),
             &[],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )?;
@@ -115,7 +121,11 @@ impl Engine {
                 msg: text(7),
                 hint: {
                     let h = text(8);
-                    if h.is_empty() { None } else { Some(h) }
+                    if h.is_empty() {
+                        None
+                    } else {
+                        Some(h)
+                    }
                 },
             });
         }
@@ -367,7 +377,8 @@ impl Engine {
                 &[],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )?;
-            self.db.exec_on(out_rel, &format!("DELETE FROM {}", tbl(out_rel)))?;
+            self.db
+                .exec_on(out_rel, &format!("DELETE FROM {}", tbl(out_rel)))?;
             rows
         };
         let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
@@ -418,7 +429,10 @@ impl Engine {
             return Vec::new();
         }
         let table = txt_tbl(rel);
-        let raw_rows = match self.db.query_values(rel, &format!("SELECT * FROM {table}"), &[]) {
+        let raw_rows = match self
+            .db
+            .query_values(rel, &format!("SELECT * FROM {table}"), &[])
+        {
             Ok(rows) => rows,
             Err(_) => return Vec::new(),
         };
@@ -437,7 +451,13 @@ impl Engine {
             "repo",
             &format!("SELECT slug, root, url FROM {table} ORDER BY slug"),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         ) {
             Ok(rows) => rows,
             Err(_) => return Vec::new(),

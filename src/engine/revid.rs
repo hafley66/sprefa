@@ -47,12 +47,20 @@ impl RevId {
     /// A committed rev, resolved from an explicit rev literal (a sha, tag,
     /// branch, or `HEAD`). Read through git, never the filesystem.
     pub(crate) fn commit(oid: impl Into<String>) -> Self {
-        Self { oid: oid.into(), dirty: false, from_alias: false }
+        Self {
+            oid: oid.into(),
+            dirty: false,
+            from_alias: false,
+        }
     }
 
     /// The working tree of a repo whose HEAD is `oid`.
     pub(crate) fn worktree(oid: impl Into<String>, dirty: bool) -> Self {
-        Self { oid: oid.into(), dirty, from_alias: true }
+        Self {
+            oid: oid.into(),
+            dirty,
+            from_alias: true,
+        }
     }
 
     /// The working tree of a directory with no HEAD.
@@ -103,7 +111,11 @@ impl RevId {
             None => (text, false),
         };
         if oid.len() == 40 && oid.chars().all(|ch| ch.is_ascii_hexdigit()) {
-            Some(Self { oid: oid.to_string(), dirty, from_alias: false })
+            Some(Self {
+                oid: oid.to_string(),
+                dirty,
+                from_alias: false,
+            })
         } else {
             None
         }
@@ -168,7 +180,8 @@ impl WorktreeRev {
             return Ok(hit.clone());
         }
         let resolved = Self::probe(repo_root)?;
-        self.cached.insert(repo_root.to_path_buf(), resolved.clone());
+        self.cached
+            .insert(repo_root.to_path_buf(), resolved.clone());
         Ok(resolved)
     }
 
@@ -233,7 +246,10 @@ fn probe_dirty(repo_root: &Path) -> Result<bool> {
         .arg(repo_root)
         .args(["ls-files", "--others", "--exclude-standard"])
         .output()?;
-    Ok(!untracked.stdout.iter().all(|byte| byte.is_ascii_whitespace()))
+    Ok(!untracked
+        .stdout
+        .iter()
+        .all(|byte| byte.is_ascii_whitespace()))
 }
 
 #[cfg(test)]
@@ -264,7 +280,10 @@ mod tests {
     fn zero_sentinel_round_trips() {
         let rev = RevId::no_head();
         assert_eq!(rev.text(), format!("{NO_HEAD_OID}+"));
-        assert_eq!(RevId::parse(&rev.text()).unwrap().git_oid().as_str(), NO_HEAD_OID);
+        assert_eq!(
+            RevId::parse(&rev.text()).unwrap().git_oid().as_str(),
+            NO_HEAD_OID
+        );
         assert!(rev.is_worktree());
     }
 

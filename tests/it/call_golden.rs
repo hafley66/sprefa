@@ -32,9 +32,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn init_git(d: &Path) {
@@ -135,7 +143,10 @@ const REL_COLS: &[(&str, &[&str])] = &[
     ("call_edge", &["caller", "callee", "kind"]),
     ("call_edge_rev", &["caller", "callee", "kind", "rev"]),
     ("call_def", &["repo", "sym", "kind", "file", "line", "end"]),
-    ("call_def_rev", &["repo", "sym", "kind", "file", "line", "end", "rev"]),
+    (
+        "call_def_rev",
+        &["repo", "sym", "kind", "file", "line", "end", "rev"],
+    ),
     ("call_name", &["sym", "name"]),
 ];
 
@@ -146,7 +157,8 @@ fn fixtures_dir() -> PathBuf {
 /// Replace the two unstable tokens with fixed placeholders. Applied per-cell,
 /// before joining a row, identically by the producer and the consumer.
 fn normalize(cell: &str, head_sha: &str, root_name: &str) -> String {
-    cell.replace(head_sha, "<BASE>").replace(root_name, "<ROOT>")
+    cell.replace(head_sha, "<BASE>")
+        .replace(root_name, "<ROOT>")
 }
 
 fn cell_to_string(v: &serde_json::Value) -> String {
@@ -171,11 +183,20 @@ fn build_and_dump(tag: &str) -> BTreeMap<&'static str, Vec<String>> {
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "base"]);
     let head_sha_out = Command::new("git")
-        .arg("-C").arg(&dir).args(["rev-parse", "HEAD"])
-        .output().expect("git rev-parse HEAD");
+        .arg("-C")
+        .arg(&dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .expect("git rev-parse HEAD");
     assert!(head_sha_out.status.success(), "git rev-parse HEAD failed");
-    let head_sha = String::from_utf8_lossy(&head_sha_out.stdout).trim().to_string();
-    assert_eq!(head_sha.len(), 40, "HEAD sha must be a 40-char commit sha: {head_sha:?}");
+    let head_sha = String::from_utf8_lossy(&head_sha_out.stdout)
+        .trim()
+        .to_string();
+    assert_eq!(
+        head_sha.len(),
+        40,
+        "HEAD sha must be a 40-char commit sha: {head_sha:?}"
+    );
 
     // WORK diverges from the commit.
     fs::write(dir.join("src/a.rs"), WORK_SRC).unwrap();
@@ -188,11 +209,17 @@ fn build_and_dump(tag: &str) -> BTreeMap<&'static str, Vec<String>> {
     // Same convergence loop as graph_diff_rev.rs: the diff_pair fact lands
     // tick 1, the data-driven scans + call extraction land tick 2, derived
     // rows converge after. Tick to a fixpoint, the daemon's steady state.
-    for _ in 0..4 { eng.tick(&prog, true).unwrap(); }
+    for _ in 0..4 {
+        eng.tick(&prog, true).unwrap();
+    }
 
     let mut dump: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
     for &(rel, cols) in REL_COLS {
-        let select = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!("SELECT {select} FROM rel_{rel}_txt");
         let rows = eng.query_sql(&sql, &[]).unwrap();
         let mut lines: Vec<String> = rows
@@ -237,7 +264,12 @@ fn golden_diff(rel: &str, got: &[String], golden: &[String], label: &str) -> Opt
     if got == golden {
         return None;
     }
-    let detail = match got.iter().zip(golden.iter()).enumerate().find(|(_, (g, w))| g != w) {
+    let detail = match got
+        .iter()
+        .zip(golden.iter())
+        .enumerate()
+        .find(|(_, (g, w))| g != w)
+    {
         Some((i, (g, w))) => format!("row {i}: got {g:?}, want {w:?}"),
         None if got.len() > golden.len() => {
             format!("extra got row {}: {:?}", golden.len(), got[golden.len()])
@@ -262,10 +294,17 @@ fn regen_call_goldens() {
     fs::create_dir_all(&dir).unwrap();
     for &(rel, _) in REL_COLS {
         let lines = dump.get(rel).expect("dump covers every rel in REL_COLS");
-        assert!(!lines.is_empty(), "rel `{rel}` produced zero rows; a vacuous golden is worse than none");
+        assert!(
+            !lines.is_empty(),
+            "rel `{rel}` produced zero rows; a vacuous golden is worse than none"
+        );
         let content = format!("{}\n", lines.join("\n"));
         fs::write(golden_path(rel), content).unwrap();
-        println!("wrote {} rows to {}", lines.len(), golden_path(rel).display());
+        println!(
+            "wrote {} rows to {}",
+            lines.len(),
+            golden_path(rel).display()
+        );
     }
 }
 

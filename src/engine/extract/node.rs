@@ -297,7 +297,8 @@ impl Engine {
         mut sink: spine::SymSink,
         wb_by_id: BTreeMap<String, Vec<Value>>,
     ) -> Result<()> {
-        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
+        self.db
+            .flush_syms_keyed(&mut sink, "INSERT _strings (spine/source)")?;
         if !wb_by_id.is_empty() {
             let wb_rows: Vec<Vec<Value>> = wb_by_id.into_values().collect();
             self.db.insert_rows(

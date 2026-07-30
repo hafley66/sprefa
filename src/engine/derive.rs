@@ -454,11 +454,19 @@ impl Engine {
                 let mirror_eligible = !no_skip
                     && !recursive
                     && comp_rels.len() == 1
-                    && self.rels.get(&comp_rels[0]).is_some_and(|meta| !meta.cols.is_empty());
+                    && self
+                        .rels
+                        .get(&comp_rels[0])
+                        .is_some_and(|meta| !meta.cols.is_empty());
                 if mirror_eligible {
                     let head_rel = comp_rels[0].clone();
                     match self.eval_component_mirror(
-                        &head_rel, &comp_rules, derived_rules, &mut timed, &stmt_ms)? {
+                        &head_rel,
+                        &comp_rules,
+                        derived_rules,
+                        &mut timed,
+                        &stmt_ms,
+                    )? {
                         None => {
                             // ENSURE the completion marker without ever
                             // unmarking: on a blank db a rel can reach an
@@ -487,10 +495,14 @@ impl Engine {
                                     bail!("test-injected crash while rebuilding component `{fail_rel}`");
                                 }
                             }
-                            timed(&head_rel, &format!(
+                            timed(
+                                &head_rel,
+                                &format!(
                                 "INSERT INTO {} ({cols_csv}) SELECT {cols_csv} FROM {mirror_table}",
-                                tbl(&head_rel)))?;
-                            self.db.exec_on(&mirror_table, &format!("DROP TABLE {mirror_table}"))?;
+                                tbl(&head_rel)),
+                            )?;
+                            self.db
+                                .exec_on(&mirror_table, &format!("DROP TABLE {mirror_table}"))?;
                             self.mark_derived_complete(&comp_rels)?;
                             continue;
                         }
@@ -603,7 +615,11 @@ impl Engine {
             .collect();
         let pk_cols: Vec<String> = match &meta.key {
             Some(key) => key.iter().map(|c| format!("\"{c}\"")).collect(),
-            None => meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect(),
+            None => meta
+                .cols
+                .iter()
+                .map(|c| format!("\"{}\"", c.name))
+                .collect(),
         };
         let cols_csv = meta
             .cols
@@ -616,7 +632,8 @@ impl Engine {
         // a daemon connection, and a program edit can change the column set
         // between ticks. (This also sweeps a mirror orphaned by a crash
         // injected inside the rewrite bracket.)
-        self.db.exec_on(&mirror, &format!("DROP TABLE IF EXISTS {mirror}"))?;
+        self.db
+            .exec_on(&mirror, &format!("DROP TABLE IF EXISTS {mirror}"))?;
         self.db.exec_on(
             &mirror,
             &format!(
@@ -628,14 +645,16 @@ impl Engine {
         crate::activity::detail(format!("derived: {head_rel}"));
         let resolved_work = self.self_rev_text();
         for &ri in comp_rules {
-            let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+            let rule =
+                crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
             let sql = crate::lower::lower_rule_to(&rule, &self.rels, &mirror, &[])?;
             timed(head_rel, &sql)?;
         }
         // Pass boundary: strings these rules minted must be durable before a
         // refill copies their sym ids into the live table, and the
         // "empty intern queue on return" invariant holds for this path too.
-        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
+        self.db
+            .flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
         let t_compare = std::time::Instant::now();
         let live = tbl(head_rel);
         let mirror_rows: i64 = self.db.query_one(
@@ -696,7 +715,8 @@ impl Engine {
         let stmts: Vec<(&str, String)> = comp_rules
             .iter()
             .map(|&ri| {
-                let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+                let rule =
+                    crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
                 let sql = lower_rule(&rule, &self.rels)?;
                 Ok((derived_rules[ri].head.rel.as_str(), sql))
             })
@@ -712,7 +732,8 @@ impl Engine {
             // One pass, one flush: drain any strings these rules minted (literal
             // or `+` concat heads) so a later component / the final query decodes
             // them. Empty for the common pass-through-id rule (no bump).
-            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
+            self.db
+                .flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
             return Ok(());
         }
         // Native graph walks are strict recognizers. A miss falls through
@@ -722,7 +743,8 @@ impl Engine {
             // Native walks carry pass-through node ids (no minted strings), but
             // flush once on the way out to keep the invariant "run_component
             // returns with an empty intern queue" uniform across every path.
-            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
+            self.db
+                .flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
             return Ok(());
         }
         // Defense twin of typecheck's `recursive-null-pad`: a NULL-padded
@@ -782,7 +804,8 @@ impl Engine {
                 // the next pass re-runs `stmts` and decodes them (a `+` concat
                 // head reading the row it produced last pass). One flush per
                 // pass, not per statement — O(fixpoint depth), not per row.
-                self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
+                self.db
+                    .flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
                 total_promoted = total_promoted.saturating_add(delta);
                 check_fixpoint_row_budget(&comp_rels, total_promoted, row_max)?;
                 // Every execution after pass 1 is a full-input re-run
@@ -1045,7 +1068,11 @@ impl Engine {
 
         let resolved_work = self.self_rev_text();
         for &rule_index in &base_indices {
-            let rule = crate::lower::resolve_work_alias(derived_rules[rule_index], &self.rels, &resolved_work);
+            let rule = crate::lower::resolve_work_alias(
+                derived_rules[rule_index],
+                &self.rels,
+                &resolved_work,
+            );
             let sql = lower_rule(&rule, &self.rels)?;
             timed(&head_rel, &sql)?;
         }
@@ -1132,7 +1159,8 @@ impl Engine {
         let reached = crate::walk::multi_source_walk(&*adjacency, &starts, None, Some(depth_cap));
         let bfs_elapsed = bfs_started.elapsed();
         let output_started = std::time::Instant::now();
-        self.db.exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
+        self.db
+            .exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
         let secondary_indexes: Vec<(String, String)> = self.db.query_rows(
             "sqlite_master",
             "SELECT name, sql FROM sqlite_master WHERE tbl_name = ?1 AND type = 'index' AND sql IS NOT NULL",
@@ -1384,7 +1412,8 @@ impl Engine {
         // 1. Base rules populate the head (already DELETE-cleared) = start frontier.
         let resolved_work = self.self_rev_text();
         for &ri in &base_ris {
-            let rule = crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
+            let rule =
+                crate::lower::resolve_work_alias(derived_rules[ri], &self.rels, &resolved_work);
             let sql = lower_rule(&rule, &self.rels)?;
             timed(&head_rel, &sql)?;
         }
@@ -1441,39 +1470,38 @@ impl Engine {
                 head_meta.cols[1].name,
                 txt_tbl(&head_rel)
             );
-            self.db.for_each_row(
-                &head_rel,
-                &base_sql,
-                &[],
-                |r| {
-                    let tag_s = r.get::<_, String>(0)?;
-                    let node_s = r.get::<_, String>(1)?;
-                    let tid = match tag_id.get(&tag_s) {
-                        Some(&i) => i,
-                        None => {
-                            let i = tag_names.len() as u32;
-                            tag_names.push(tag_s.clone());
-                            tag_id.insert(tag_s, i);
-                            i
-                        }
-                    };
-                    // The adjacency is keyed in the edge column's stored id space.
-                    // A `sym` edge now stores a DENSE `_sym_dict` surrogate, so the
-                    // seed key (read as text from `txt_tbl`) must resolve
-                    // text -> hash -> dense to land on the same node; a `text` edge
-                    // keys on the raw `StringId` hash directly. Skipping this was the
-                    // 2026-07-21 split-id-space regression: dense adjacency vs
-                    // raw-hash seeds collapsed every recursive closure to its seeds.
-                    let hash = StringId::of(&node_s).sqlite();
-                    let key = if sym_edge { self.db.dense_of_hash(hash)? } else { hash };
-                    let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
-                    if text_by_id.is_none() {
-                        sym_text.entry(nid).or_insert_with(|| node_s.clone());
+            self.db.for_each_row(&head_rel, &base_sql, &[], |r| {
+                let tag_s = r.get::<_, String>(0)?;
+                let node_s = r.get::<_, String>(1)?;
+                let tid = match tag_id.get(&tag_s) {
+                    Some(&i) => i,
+                    None => {
+                        let i = tag_names.len() as u32;
+                        tag_names.push(tag_s.clone());
+                        tag_id.insert(tag_s, i);
+                        i
                     }
-                    starts.push((tid, nid));
-                    Ok(())
-                },
-            )?;
+                };
+                // The adjacency is keyed in the edge column's stored id space.
+                // A `sym` edge now stores a DENSE `_sym_dict` surrogate, so the
+                // seed key (read as text from `txt_tbl`) must resolve
+                // text -> hash -> dense to land on the same node; a `text` edge
+                // keys on the raw `StringId` hash directly. Skipping this was the
+                // 2026-07-21 split-id-space regression: dense adjacency vs
+                // raw-hash seeds collapsed every recursive closure to its seeds.
+                let hash = StringId::of(&node_s).sqlite();
+                let key = if sym_edge {
+                    self.db.dense_of_hash(hash)?
+                } else {
+                    hash
+                };
+                let nid = intern_key(key, &node_s, adj, id2key, interner, text_by_id);
+                if text_by_id.is_none() {
+                    sym_text.entry(nid).or_insert_with(|| node_s.clone());
+                }
+                starts.push((tid, nid));
+                Ok(())
+            })?;
         }
 
         // 4. Halt mask over the (possibly extended) node id space.
@@ -1481,23 +1509,22 @@ impl Engine {
         {
             let hc0 = halt_meta.cols[0].name.clone();
             let sql = format!("SELECT DISTINCT \"{hc0}\" FROM {}", txt_tbl(&halt_rel));
-            self.db.for_each_row(
-                &halt_rel,
-                &sql,
-                &[],
-                |r| {
-                    let name = r.get::<_, String>(0)?;
-                    // Same id space as the adjacency (dense for a sym edge, raw
-                    // hash for a text edge); a halt node absent from the graph
-                    // mints a throwaway dense id that simply misses the interner.
-                    let hash = StringId::of(&name).sqlite();
-                    let key = if sym_edge { self.db.dense_of_hash(hash)? } else { hash };
-                    if let Some(&id) = interner.get(&key) {
-                        halt_mask[id as usize] = true;
-                    }
-                    Ok(())
-                },
-            )?;
+            self.db.for_each_row(&halt_rel, &sql, &[], |r| {
+                let name = r.get::<_, String>(0)?;
+                // Same id space as the adjacency (dense for a sym edge, raw
+                // hash for a text edge); a halt node absent from the graph
+                // mints a throwaway dense id that simply misses the interner.
+                let hash = StringId::of(&name).sqlite();
+                let key = if sym_edge {
+                    self.db.dense_of_hash(hash)?
+                } else {
+                    hash
+                };
+                if let Some(&id) = interner.get(&key) {
+                    halt_mask[id as usize] = true;
+                }
+                Ok(())
+            })?;
         }
 
         // 5. Native BFS — pure u32 pairs, no strings touched.
@@ -1533,11 +1560,13 @@ impl Engine {
             let key_params: Vec<crate::db::SqlVal> = keys.iter().map(|&k| k.into()).collect();
             let rows = self.db.query_in_chunks(
                 "_strings",
-                |n| format!(
-                    "SELECT d.id, s.content FROM _sym_dict d \
+                |n| {
+                    format!(
+                        "SELECT d.id, s.content FROM _sym_dict d \
                      JOIN _strings s ON s.id = d.sym_hash WHERE d.id IN ({})",
-                    crate::db::holes(n)
-                ),
+                        crate::db::holes(n)
+                    )
+                },
                 &[],
                 &key_params,
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
@@ -1566,7 +1595,8 @@ impl Engine {
         //    is one chunk — never the whole result materialized. Secondary indexes
         //    are deferred and rebuilt after (per-row upkeep dominates a bulk load);
         //    the unique autoindex stays and the BFS output is already deduped.
-        self.db.exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
+        self.db
+            .exec_on(&head_rel, &format!("DELETE FROM {}", tbl(&head_rel)))?;
         let sidx: Vec<(String, String)> = self.db.query_rows(
             "sqlite_master",
             "SELECT name, sql FROM sqlite_master \
@@ -1575,7 +1605,8 @@ impl Engine {
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )?;
         for (name, _) in &sidx {
-            self.db.exec_on(&head_rel, &format!("DROP INDEX \"{name}\""))?;
+            self.db
+                .exec_on(&head_rel, &format!("DROP INDEX \"{name}\""))?;
         }
         let cols: Vec<&str> = head_meta.cols.iter().map(|c| c.name.as_str()).collect();
         const CHUNK: usize = 16000;
@@ -1679,7 +1710,8 @@ impl Engine {
         check_fixpoint_row_budget(&comp_rel_names, total_promoted, row_max)?;
         // Drain the seed rules' minted strings before the first recursive pass
         // (or the pure-seed return) decodes them. Pass boundary, one flush.
-        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
+        self.db
+            .flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
 
         if rec_ris.is_empty() {
             return Ok(());
@@ -1754,13 +1786,19 @@ impl Engine {
             // table, deduped by its PK.
             for (ri, occs) in &rec_ris {
                 let rule = derived_rules[*ri];
-                let resolved_rule = crate::lower::resolve_work_alias(rule, &self.rels, &resolved_work);
+                let resolved_rule =
+                    crate::lower::resolve_work_alias(rule, &self.rels, &resolved_work);
                 let target = format!("_delta_new_{}", rule.head.rel);
                 for (k, rel_name) in occs {
                     let mut overrides: HashMap<usize, String> = HashMap::new();
                     overrides.insert(*k, format!("_delta_{rel_name}"));
-                    let sql =
-                        crate::lower::lower_rule_to_ex(&resolved_rule, &self.rels, &target, &[], &overrides)?;
+                    let sql = crate::lower::lower_rule_to_ex(
+                        &resolved_rule,
+                        &self.rels,
+                        &target,
+                        &[],
+                        &overrides,
+                    )?;
                     timed(&rule.head.rel, &sql)?;
                 }
             }
@@ -1835,12 +1873,14 @@ impl Engine {
             // strings must be in `_strings` before the next pass's variant
             // statements decode them. One flush per pass — O(fixpoint depth),
             // not per row.
-            self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
+            self.db
+                .flush_pending_syms_keyed("INSERT _strings (fixpoint/pass)")?;
         }
         // The breaking iteration (total_new == 0) leaves only duplicate interns
         // queued (strings already in `_strings` from when their row first
         // derived); drain them so the queue never leaks across components.
-        self.db.flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
+        self.db
+            .flush_pending_syms_keyed("INSERT _strings (fixpoint/component)")?;
         Ok(())
     }
 
@@ -1858,7 +1898,7 @@ impl Engine {
             .collect();
         self.db.exec_on(
             "_stmt_ms",
-            &format!("DELETE FROM _stmt_ms WHERE rel IN ({})", names.join(","))
+            &format!("DELETE FROM _stmt_ms WHERE rel IN ({})", names.join(",")),
         )?;
         let rows: Vec<Vec<Value>> = stmt_ms
             .iter()
@@ -1962,26 +2002,21 @@ impl Engine {
         let mut pairs: Vec<(u32, u32)> = Vec::new();
         // Read each endpoint as its (key, optional text): text -> (i64 cell, None);
         // text -> (hash(cell), Some(cell)).
-        let rows = self.db.query_rows(
-            edge,
-            &sql,
-            &[],
-            |r| {
-                let a = if sym {
-                    (r.get::<_, i64>(0)?, None)
-                } else {
-                    let s = cell_as_string(r, 0)?;
-                    (StringId::of(&s).sqlite(), Some(s))
-                };
-                let b = if sym {
-                    (r.get::<_, i64>(1)?, None)
-                } else {
-                    let s = cell_as_string(r, 1)?;
-                    (StringId::of(&s).sqlite(), Some(s))
-                };
-                Ok((a, b))
-            },
-        )?;
+        let rows = self.db.query_rows(edge, &sql, &[], |r| {
+            let a = if sym {
+                (r.get::<_, i64>(0)?, None)
+            } else {
+                let s = cell_as_string(r, 0)?;
+                (StringId::of(&s).sqlite(), Some(s))
+            };
+            let b = if sym {
+                (r.get::<_, i64>(1)?, None)
+            } else {
+                let s = cell_as_string(r, 1)?;
+                (StringId::of(&s).sqlite(), Some(s))
+            };
+            Ok((a, b))
+        })?;
         for row in rows {
             let ((ka, ta), (kb, tb)) = row;
             let mut intern = |key: i64, text: Option<String>| -> u32 {
@@ -2092,12 +2127,9 @@ impl Engine {
         let mut intern: HashMap<String, u32> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
         let mut pairs: Vec<(u32, u32)> = Vec::new();
-        let rows = self.db.query_rows(
-            edge,
-            &sql,
-            &[],
-            |r| Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?)),
-        )?;
+        let rows = self.db.query_rows(edge, &sql, &[], |r| {
+            Ok((cell_as_string(r, 0)?, cell_as_string(r, 1)?))
+        })?;
         for row in rows {
             let mut id = |s: String| -> u32 {
                 if let Some(&i) = intern.get(&s) {
@@ -2188,23 +2220,18 @@ impl Engine {
     pub(crate) fn edge_content_digest(&self, edge: &str, c0: &str, c1: &str) -> Result<[u8; 32]> {
         let mut acc = [0u8; 32];
         let sql = format!("SELECT \"{c0}\", \"{c1}\" FROM {}", txt_tbl(edge));
-        self.db.for_each_row(
-            edge,
-            &sql,
-            &[],
-            |row| {
-                let a = cell_as_string(row, 0)?;
-                let b = cell_as_string(row, 1)?;
-                let mut h = blake3::Hasher::new();
-                h.update(a.as_bytes());
-                h.update(&[0]);
-                h.update(b.as_bytes());
-                for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) {
-                    *x ^= *y;
-                }
-                Ok(())
-            },
-        )?;
+        self.db.for_each_row(edge, &sql, &[], |row| {
+            let a = cell_as_string(row, 0)?;
+            let b = cell_as_string(row, 1)?;
+            let mut h = blake3::Hasher::new();
+            h.update(a.as_bytes());
+            h.update(&[0]);
+            h.update(b.as_bytes());
+            for (x, y) in acc.iter_mut().zip(h.finalize().as_bytes().iter()) {
+                *x ^= *y;
+            }
+            Ok(())
+        })?;
         Ok(acc)
     }
 
@@ -2370,7 +2397,9 @@ impl Engine {
             Vec::new()
         };
         match self.query_format {
-            QueryOutputFormat::Ndjson => emit_query_json(&q.head.rel, &[header(0), header(1)], &rows),
+            QueryOutputFormat::Ndjson => {
+                emit_query_json(&q.head.rel, &[header(0), header(1)], &rows)
+            }
             QueryOutputFormat::JsonRows => emit_query_json_rows(&[header(0), header(1)], &rows),
             QueryOutputFormat::Text => {
                 println!("? {} => {}\t{}", q.head.rel, header(0), header(1));
@@ -2690,7 +2719,11 @@ reach_b(w) <- src_a(_, w).
             "the interrupted component's marker must have been cleared before its wipe, got {done:?}"
         );
         assert!(rel_len(&eng, "reach_a") >= 1, "reach_a must stay populated");
-        assert_eq!(rel_len(&eng, "reach_b"), 0, "reach_b was wiped and never refilled");
+        assert_eq!(
+            rel_len(&eng, "reach_b"),
+            0,
+            "reach_b was wiped and never refilled"
+        );
 
         // `derived_incomplete_rels` names exactly the unfinished rel.
         let derived_rels = vec!["reach_a".to_string(), "reach_b".to_string()];
@@ -2708,12 +2741,17 @@ reach_b(w) <- src_a(_, w).
                 _ => None,
             })
             .collect();
-        eng.rebuild_derived(&reach_b_rules, &["reach_b".to_string()]).unwrap();
+        eng.rebuild_derived(&reach_b_rules, &["reach_b".to_string()])
+            .unwrap();
 
         let done = complete_set(&eng);
         assert!(done.contains("reach_a") && done.contains("reach_b"));
         assert!(rel_len(&eng, "reach_a") >= 1);
-        assert_eq!(rel_len(&eng, "reach_b"), 1, "the follow-up repaired reach_b");
+        assert_eq!(
+            rel_len(&eng, "reach_b"),
+            1,
+            "the follow-up repaired reach_b"
+        );
     }
 
     /// A tick that fails during the derived rebuild must NOT have persisted the
@@ -2746,6 +2784,10 @@ reach_b(w) <- src_a(_, w).
             "the rerun must re-detect the src_a change the killed tick left unpersisted, got {:?}",
             report.changed_rels
         );
-        assert_eq!(rel_len(&eng, "reach_b"), 1, "reach_b is repaired on the rerun");
+        assert_eq!(
+            rel_len(&eng, "reach_b"),
+            1,
+            "reach_b is repaired on the rerun"
+        );
     }
 }

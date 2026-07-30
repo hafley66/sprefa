@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use crate::ast::Value;
 use crate::db;
-use crate::engine::Engine;
 use crate::engine::family::{call_input_rels, call_owner_delta_rels, FamilyRouter};
+use crate::engine::Engine;
 use crate::spine::StringId;
 use crate::storage::call::{CallFamilyWrite, CallStore};
 use crate::storage::Storage;
@@ -118,7 +118,15 @@ fn site_rows(engine: &Engine) -> Vec<[i64; 5]> {
             "rel_call_site",
             "SELECT repo, caller, callee, file, line FROM rel_call_site",
             &[],
-            |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?]),
+            |row| {
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
+            },
         )
         .unwrap();
     rows.sort();
@@ -134,8 +142,16 @@ fn as_int(v: &Value) -> i64 {
 
 /// Public call rels read back as sorted integer rows, in a fixed order.
 const CALL_REL_QUERIES: &[(&str, &str, usize)] = &[
-    ("call_site", "SELECT repo, caller, callee, file, line FROM rel_call_site", 5),
-    ("call_edge", "SELECT caller, callee, kind FROM rel_call_edge", 3),
+    (
+        "call_site",
+        "SELECT repo, caller, callee, file, line FROM rel_call_site",
+        5,
+    ),
+    (
+        "call_edge",
+        "SELECT caller, callee, kind FROM rel_call_edge",
+        3,
+    ),
     ("call_kind", "SELECT fn, kind FROM rel_call_kind", 2),
     (
         "call_edge_rev",
@@ -239,8 +255,16 @@ fn assert_all_call_rels_match_memo(engine: &Engine) {
     };
 
     let cases: &[(&str, &str, usize)] = &[
-        ("call_site", "SELECT repo, caller, callee, file, line FROM rel_call_site", 5),
-        ("call_edge", "SELECT caller, callee, kind FROM rel_call_edge", 3),
+        (
+            "call_site",
+            "SELECT repo, caller, callee, file, line FROM rel_call_site",
+            5,
+        ),
+        (
+            "call_edge",
+            "SELECT caller, callee, kind FROM rel_call_edge",
+            3,
+        ),
         ("call_kind", "SELECT fn, kind FROM rel_call_kind", 2),
         (
             "call_edge_rev",
@@ -289,7 +313,9 @@ fn render_cold_family_on_fresh_database() {
         })
         .unwrap();
 
-    let rerun = engine.flip_call_rels_via_router(&call_input_rels()).unwrap();
+    let rerun = engine
+        .flip_call_rels_via_router(&call_input_rels())
+        .unwrap();
     assert_eq!(
         rerun,
         vec![
@@ -346,7 +372,9 @@ fn render_cold_reload_removes_stale_rows() {
 
     // Memo is None again, so every family cold-reloads via `reload_rel`,
     // deleting the bogus row rather than merging around it.
-    engine.flip_call_rels_via_router(&call_input_rels()).unwrap();
+    engine
+        .flip_call_rels_via_router(&call_input_rels())
+        .unwrap();
     assert!(
         !site_rows(&engine).iter().any(|r| r[2] == bogus_callee),
         "cold reload must remove stale rows a prior process left behind"
@@ -368,7 +396,9 @@ fn render_warm_family_empty_delta_issues_no_writes() {
 
     // Re-pass the full input set: every family reruns, but because the owned
     // tables are unchanged the deltas are empty and no write call should land.
-    let rerun = engine.flip_call_rels_via_router(&call_input_rels()).unwrap();
+    let rerun = engine
+        .flip_call_rels_via_router(&call_input_rels())
+        .unwrap();
     assert_eq!(
         rerun,
         vec![
@@ -382,7 +412,11 @@ fn render_warm_family_empty_delta_issues_no_writes() {
         ],
         "warm empty-delta flip must still report every family as rerun"
     );
-    assert_eq!(site_rows(&engine), before, "rel_call_site must be untouched");
+    assert_eq!(
+        site_rows(&engine),
+        before,
+        "rel_call_site must be untouched"
+    );
     let data_version_after: i64 = engine.db.pragma_i64("data_version").unwrap();
     assert_eq!(
         data_version_before, data_version_after,
@@ -407,7 +441,10 @@ fn render_warm_family_insert_only_delta() {
     fs::write(dir.join("lib.rs"), V1_PLUS_DELTA).unwrap();
     engine
         .db
-        .exec_on("_file", "UPDATE _file SET hash = 'v1-plus' WHERE path = 'lib.rs'")
+        .exec_on(
+            "_file",
+            "UPDATE _file SET hash = 'v1-plus' WHERE path = 'lib.rs'",
+        )
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
@@ -439,7 +476,10 @@ fn render_warm_family_retract_only_delta() {
     fs::write(dir.join("lib.rs"), RUST_SRC).unwrap();
     engine
         .db
-        .exec_on("_file", "UPDATE _file SET hash = 'v1' WHERE path = 'lib.rs'")
+        .exec_on(
+            "_file",
+            "UPDATE _file SET hash = 'v1' WHERE path = 'lib.rs'",
+        )
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
@@ -466,15 +506,15 @@ fn render_warm_family_mixed_delta() {
     fs::write(dir.join("lib.rs"), V1_RETARGET).unwrap();
     engine
         .db
-        .exec_on("_file", "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'")
+        .exec_on(
+            "_file",
+            "UPDATE _file SET hash = 'v2' WHERE path = 'lib.rs'",
+        )
         .unwrap();
     engine.refresh_call_rels().unwrap();
 
     let site_after = site_rows(&engine);
-    assert_ne!(
-        site_before, site_after,
-        "mixed delta must change call_site"
-    );
+    assert_ne!(site_before, site_after, "mixed delta must change call_site");
     assert_all_call_rels_match_memo(&engine);
 
     let _ = fs::remove_dir_all(&dir);
@@ -499,7 +539,10 @@ fn render_flip_inside_caller_owned_transaction() {
         .unwrap();
 
     engine.db.begin_immediate().unwrap();
-    assert!(!engine.db.is_autocommit(), "fixture: caller must own a transaction");
+    assert!(
+        !engine.db.is_autocommit(),
+        "fixture: caller must own a transaction"
+    );
     let edge_before = {
         let mut rows: Vec<[i64; 3]> = engine
             .db
@@ -528,7 +571,10 @@ fn render_flip_inside_caller_owned_transaction() {
     );
 
     engine.db.commit().unwrap();
-    assert!(engine.db.is_autocommit(), "outer transaction must commit cleanly");
+    assert!(
+        engine.db.is_autocommit(),
+        "outer transaction must commit cleanly"
+    );
 
     let edge_after = {
         let mut rows: Vec<[i64; 3]> = engine

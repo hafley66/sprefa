@@ -40,7 +40,10 @@ fn ts_import_clause_re() -> &'static Regex {
 /// never a wrong one.
 pub(crate) fn parse_ts_import_clause(clause: &str) -> Vec<(String, String)> {
     let clause = clause.trim();
-    let clause = clause.strip_prefix("type ").map(str::trim).unwrap_or(clause);
+    let clause = clause
+        .strip_prefix("type ")
+        .map(str::trim)
+        .unwrap_or(clause);
     let mut out = Vec::new();
     let (default_seg, named_part) = match (clause.find('{'), clause.find('}')) {
         (Some(open), Some(close)) if close > open => (&clause[..open], &clause[open + 1..close]),
@@ -73,7 +76,10 @@ pub(crate) fn parse_ts_import_clause(clause: &str) -> Vec<(String, String)> {
 /// string-level, non-goal-documented parse as `parse_ts_import_clause`.
 pub(crate) fn parse_ts_module_bindings(clause: &str) -> Vec<(String, String, &'static str)> {
     let clause = clause.trim();
-    let clause = clause.strip_prefix("type ").map(str::trim).unwrap_or(clause);
+    let clause = clause
+        .strip_prefix("type ")
+        .map(str::trim)
+        .unwrap_or(clause);
     let mut out = Vec::new();
     let (head, named_part) = match (clause.find('{'), clause.find('}')) {
         (Some(open), Some(close)) if close > open => (&clause[..open], &clause[open + 1..close]),
@@ -185,17 +191,22 @@ impl ModuleResolver for TsResolver {
         let mut clause_bindings: HashMap<(u32, u32), Vec<(String, String)>> = HashMap::new();
         // Same span-join, the `module_binding` superset (plain named +
         // namespace included; see `parse_ts_module_bindings`).
-        let mut clause_module_bindings: HashMap<(u32, u32), Vec<(String, String, &'static str)>> = HashMap::new();
+        let mut clause_module_bindings: HashMap<(u32, u32), Vec<(String, String, &'static str)>> =
+            HashMap::new();
         for c in ts_import_clause_re().captures_iter(&clean) {
             let clause = c.get(1).map(|m| m.as_str()).unwrap_or("");
             let spec_span = c.get(2).unwrap();
             let bindings = parse_ts_import_clause(clause);
             if !bindings.is_empty() {
-                clause_bindings.insert((spec_span.start() as u32, spec_span.end() as u32), bindings);
+                clause_bindings
+                    .insert((spec_span.start() as u32, spec_span.end() as u32), bindings);
             }
             let module_bindings = parse_ts_module_bindings(clause);
             if !module_bindings.is_empty() {
-                clause_module_bindings.insert((spec_span.start() as u32, spec_span.end() as u32), module_bindings);
+                clause_module_bindings.insert(
+                    (spec_span.start() as u32, spec_span.end() as u32),
+                    module_bindings,
+                );
             }
         }
         for c in ts_spec_re().captures_iter(&clean) {
@@ -207,7 +218,12 @@ impl ModuleResolver for TsResolver {
             // `require`), so a bare `import "spec";` (no `from`, no clause)
             // can be told apart from a `require(...)` or `export ... from`
             // statement (neither of which binds a local name statically here).
-            let matched_import_kw = c.get(0).unwrap().as_str().trim_start().starts_with("import");
+            let matched_import_kw = c
+                .get(0)
+                .unwrap()
+                .as_str()
+                .trim_start()
+                .starts_with("import");
             // a template literal with interpolation cannot be resolved statically
             if spec.contains("${") {
                 out.push(ModuleRef {
@@ -248,7 +264,9 @@ impl ModuleResolver for TsResolver {
                 .get(&(m.start() as u32, m.end() as u32))
                 .cloned()
                 .unwrap_or_default();
-            let module_bindings = match clause_module_bindings.get(&(m.start() as u32, m.end() as u32)) {
+            let module_bindings = match clause_module_bindings
+                .get(&(m.start() as u32, m.end() as u32))
+            {
                 Some(rows) => rows.clone(),
                 // No clause matched this spec span: a genuine bare/side-effect
                 // import (`import "spec";`) binds no name but the import still
@@ -286,4 +304,3 @@ impl ModuleResolver for TsResolver {
 // such match counts, so a name in a comment is a (loud, inspectable) false
 // positive. Compiler-exact graphs come from scip-kotlin via the SCIP importer
 // instead.
-

@@ -23,8 +23,13 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--query-json"])
         .current_dir(dir)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -76,23 +81,38 @@ seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line
     let recs = run_json(&d, prog);
     let entities = recs[0]["rows"].as_array().expect("rows");
     let by_name = |name: &str| -> Vec<&serde_json::Value> {
-        entities.iter().filter(|r| r[2].as_str() == Some(name)).collect()
+        entities
+            .iter()
+            .filter(|r| r[2].as_str() == Some(name))
+            .collect()
     };
     let animal = by_name("Animal");
     assert_eq!(animal.len(), 1, "{entities:?}");
     assert_eq!(animal[0][3].as_str().unwrap(), "class");
-    assert!(animal[0][4].is_null() || animal[0][4].as_str() == Some(""), "class has no parent: {:?}", animal[0]);
+    assert!(
+        animal[0][4].is_null() || animal[0][4].as_str() == Some(""),
+        "class has no parent: {:?}",
+        animal[0]
+    );
     let speak = by_name("speak");
     assert_eq!(speak.len(), 1, "{entities:?}");
     assert_eq!(speak[0][3].as_str().unwrap(), "method");
     let animal_sym = animal[0][1].as_str().unwrap();
-    assert_eq!(speak[0][4].as_str().unwrap(), animal_sym, "method's parent joins the class sym");
+    assert_eq!(
+        speak[0][4].as_str().unwrap(),
+        animal_sym,
+        "method's parent joins the class sym"
+    );
     let greet = by_name("greet");
     assert_eq!(greet.len(), 1, "{entities:?}");
     assert_eq!(greet[0][3].as_str().unwrap(), "function");
 
     let docs = recs[1]["rows"].as_array().expect("rows");
-    assert!(docs.iter().any(|d| d[1].as_str() == Some(animal_sym) && d[3].as_str() == Some("A pet.")), "{docs:?}");
+    assert!(
+        docs.iter()
+            .any(|d| d[1].as_str() == Some(animal_sym) && d[3].as_str() == Some("A pet.")),
+        "{docs:?}"
+    );
 }
 
 #[test]
@@ -109,10 +129,12 @@ seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line
     let recs = run_json(&d, prog);
     let bindings = recs[0]["rows"].as_array().expect("rows");
     assert!(
-        bindings.iter().any(|r| r[0].as_str() == Some("src/helper.py")
-            && r[1].as_str() == Some("Pet")
-            && r[2].as_str() == Some("Animal")
-            && r[3].as_str() == Some("src/main.py")),
+        bindings
+            .iter()
+            .any(|r| r[0].as_str() == Some("src/helper.py")
+                && r[1].as_str() == Some("Pet")
+                && r[2].as_str() == Some("Animal")
+                && r[3].as_str() == Some("src/main.py")),
         "{bindings:?}"
     );
     let edges = recs[1]["rows"].as_array().expect("rows");
@@ -137,18 +159,26 @@ seen(path) <- scan("WORK", "src/**/*.py", path, rev), match(path, rev, /./, line
     let edges = recs[0]["rows"].as_array().expect("rows");
     // `speak` calls the free function `greet`, unique in this small file set.
     assert!(
-        edges.iter().any(|r| r[0].as_str().is_some_and(|s| s.contains("speak")) && r[1].as_str().is_some_and(|s| s.contains("greet"))),
+        edges
+            .iter()
+            .any(|r| r[0].as_str().is_some_and(|s| s.contains("speak"))
+                && r[1].as_str().is_some_and(|s| s.contains("greet"))),
         "{edges:?}"
     );
 
     let nodes = recs[1]["rows"].as_array().expect("rows");
     // `Animal(n)` inside the comprehension mints a `new` df_node named Animal.
     assert!(
-        nodes.iter().any(|r| r[1].as_str() == Some("new") && r[2].as_str() == Some("Animal")),
+        nodes
+            .iter()
+            .any(|r| r[1].as_str() == Some("new") && r[2].as_str() == Some("Animal")),
         "{nodes:?}"
     );
 
     let loops = recs[2]["rows"].as_array().expect("rows");
     // the list comprehension records its own loop span with loop var `n`.
-    assert!(loops.iter().any(|r| r[3].as_str() == Some("n")), "{loops:?}");
+    assert!(
+        loops.iter().any(|r| r[3].as_str() == Some("n")),
+        "{loops:?}"
+    );
 }

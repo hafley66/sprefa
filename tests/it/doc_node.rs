@@ -24,10 +24,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// `# Title` / `## Sub` / fenced ` ```rs ` / `### Deep`: four doc_nodes whose
@@ -35,15 +38,19 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 fn fixture(tag: &str) -> PathBuf {
     let d = sandbox(tag);
     fs::create_dir_all(d.join("docs")).unwrap();
-    fs::write(d.join("docs/guide.md"), concat!(
-        "# Title\n",
-        "intro paragraph\n",
-        "## Sub\n",
-        "```rs\n",
-        "fn x() {}\n",
-        "```\n",
-        "### Deep\n",
-    )).unwrap();
+    fs::write(
+        d.join("docs/guide.md"),
+        concat!(
+            "# Title\n",
+            "intro paragraph\n",
+            "## Sub\n",
+            "```rs\n",
+            "fn x() {}\n",
+            "```\n",
+            "### Deep\n",
+        ),
+    )
+    .unwrap();
     d
 }
 
@@ -61,17 +68,25 @@ fn markdown_headings_and_code_blocks_become_doc_nodes() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     // Title heading at line 1, top level (empty parent).
-    assert!(out.contains("docs/guide.md\t1\theading\tTitle\t"),
-        "Title heading row missing:\n{out}");
+    assert!(
+        out.contains("docs/guide.md\t1\theading\tTitle\t"),
+        "Title heading row missing:\n{out}"
+    );
     // Sub under Title at line 3.
-    assert!(out.contains("docs/guide.md\t3\theading\tSub\tTitle"),
-        "Sub heading must nest under Title:\n{out}");
+    assert!(
+        out.contains("docs/guide.md\t3\theading\tSub\tTitle"),
+        "Sub heading must nest under Title:\n{out}"
+    );
     // code block at line 4, language "rs", under Sub.
-    assert!(out.contains("docs/guide.md\t4\tcode_block\trs\tSub"),
-        "code block must carry its fence language and Sub parent:\n{out}");
+    assert!(
+        out.contains("docs/guide.md\t4\tcode_block\trs\tSub"),
+        "code block must carry its fence language and Sub parent:\n{out}"
+    );
     // Deep under Sub (level 3 nests under level 2) at line 7.
-    assert!(out.contains("docs/guide.md\t7\theading\tDeep\tSub"),
-        "Deep must nest under Sub:\n{out}");
+    assert!(
+        out.contains("docs/guide.md\t7\theading\tDeep\tSub"),
+        "Deep must nest under Sub:\n{out}"
+    );
 }
 
 /// `doc_node` joins `changed` so a rail can scope to touched docs: edit the
@@ -98,14 +113,28 @@ fn doc_node_joins_changed_to_scope_to_touched_docs() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
-    assert!(out.contains("docs/touched.md"), "the touched doc must trip the rail:\n{out}");
-    assert!(!out.contains("docs/clean.md"), "the clean doc must stay silent:\n{out}");
+    assert!(
+        out.contains("docs/touched.md"),
+        "the touched doc must trip the rail:\n{out}"
+    );
+    assert!(
+        !out.contains("docs/clean.md"),
+        "the clean doc must stay silent:\n{out}"
+    );
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed:\n{}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// `doc_node` is a reserved name.
@@ -114,5 +143,8 @@ fn doc_node_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel doc_node(a: text).\n");
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }

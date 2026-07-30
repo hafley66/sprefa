@@ -100,19 +100,27 @@ fn rust_aliased_use_resolves_without_scip_index() {
     let (code, out, err) = run(&d, &cfg, &d.join("db"), RUST_PROG);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
 
-    let links = out.split("? type_link").nth(1).unwrap_or("").split("? call_edge").next().unwrap_or("");
+    let links = out
+        .split("? type_link")
+        .nth(1)
+        .unwrap_or("")
+        .split("? call_edge")
+        .next()
+        .unwrap_or("");
     let calls = out.split("? call_edge").nth(1).unwrap_or("");
 
     // aliased struct field type (Cfg -> pkg::Config)
     assert!(
-        links.lines().any(|l| l.contains("app.rs::struct::Holder")
-            && l.contains("pkg.rs::struct::Config")),
+        links
+            .lines()
+            .any(|l| l.contains("app.rs::struct::Holder") && l.contains("pkg.rs::struct::Config")),
         "type_link resolves the aliased struct type:\n{links}"
     );
     // aliased call (mk() -> pkg::make)
     assert!(
-        calls.lines().any(|l| l.contains("app.rs::function::build\t")
-            && l.contains("pkg.rs::function::make")),
+        calls.lines().any(
+            |l| l.contains("app.rs::function::build\t") && l.contains("pkg.rs::function::make")
+        ),
         "call_edge resolves the aliased call:\n{calls}"
     );
 }
@@ -130,12 +138,16 @@ fn local_def_shadows_an_aliased_import_of_the_same_local_name() {
     // build_shadowed() calls helper(): app.rs both ALIASES pkg::make as
     // "helper" AND declares its own `fn helper()`. The local def must win.
     assert!(
-        calls.lines().any(|l| l.contains("app.rs::function::build_shadowed")
-            && l.contains("app.rs::function::helper")),
+        calls
+            .lines()
+            .any(|l| l.contains("app.rs::function::build_shadowed")
+                && l.contains("app.rs::function::helper")),
         "local helper() must win over the aliased import:\n{calls}"
     );
     assert!(
-        !calls.lines().any(|l| l.contains("build_shadowed") && l.contains("pkg.rs::function::make")),
+        !calls
+            .lines()
+            .any(|l| l.contains("build_shadowed") && l.contains("pkg.rs::function::make")),
         "the alias hop must not override the local shadowing def:\n{calls}"
     );
 }
@@ -156,9 +168,18 @@ fn what_verb_surfaces_the_canonical_def_via_module_binding_resolved() {
         .expect("run dl what");
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(out.status.success(), "what failed:\nstdout={stdout}\nstderr={stderr}");
-    assert!(stdout.contains("module_binding_resolved"), "module_binding_resolved hit missing:\n{stdout}");
-    assert!(stdout.contains("pkg.rs"), "should surface pkg.rs, the aliased def's file:\n{stdout}");
+    assert!(
+        out.status.success(),
+        "what failed:\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("module_binding_resolved"),
+        "module_binding_resolved hit missing:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("pkg.rs"),
+        "should surface pkg.rs, the aliased def's file:\n{stdout}"
+    );
 }
 
 #[test]
@@ -196,7 +217,9 @@ fn editing_the_alias_target_flips_resolution_on_a_retick() {
     assert_eq!(code1, 0, "first run failed:\nstdout={out1}\nstderr={err1}");
     let calls1 = out1.split("? call_edge").nth(1).unwrap_or("");
     assert!(
-        calls1.lines().any(|l| l.contains("app.rs::function::build") && l.contains("pkg.rs::function::make")),
+        calls1
+            .lines()
+            .any(|l| l.contains("app.rs::function::build") && l.contains("pkg.rs::function::make")),
         "first tick resolves mk() to pkg::make:\n{calls1}"
     );
 
@@ -212,7 +235,9 @@ fn editing_the_alias_target_flips_resolution_on_a_retick() {
         "re-tick flips mk() to pkg::other after the alias edit:\n{calls2}"
     );
     assert!(
-        !calls2.lines().any(|l| l.contains("build") && l.contains("pkg.rs::function::make")),
+        !calls2
+            .lines()
+            .any(|l| l.contains("build") && l.contains("pkg.rs::function::make")),
         "the stale pkg::make resolution must not survive the retick:\n{calls2}"
     );
 }
@@ -222,7 +247,11 @@ fn ts_aliased_import_call_resolves_without_scip_index() {
     let d = sandbox("ts_alias");
     let cfg = empty_config(&d);
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("src/model.ts"), "export function foo(): number { return 1 }\n").unwrap();
+    fs::write(
+        d.join("src/model.ts"),
+        "export function foo(): number { return 1 }\n",
+    )
+    .unwrap();
     fs::write(
         d.join("src/app.ts"),
         "import { foo as bar } from './model'\nexport function build(): number { return bar() }\n",

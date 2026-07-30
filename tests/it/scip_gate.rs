@@ -186,7 +186,10 @@ fn same_name_calls_resolve_by_position() {
         &d.join("index.scip"),
         vec![
             document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
-            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document(
+                "a.go",
+                vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)],
+            ),
             document(
                 "caller.go",
                 vec![
@@ -227,7 +230,10 @@ fn same_line_same_name_symbols_stay_bare() {
         &d.join("index.scip"),
         vec![
             document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)]),
-            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document(
+                "a.go",
+                vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)],
+            ),
             document(
                 "caller.go",
                 vec![
@@ -317,7 +323,10 @@ fn reindex_reloads_when_index_invisible_to_corpus() {
     let mut eng = Engine::new(conn, d.clone());
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
     assert_eq!(
-        diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count(),
+        diags
+            .iter()
+            .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+            .count(),
         0,
         "program should typecheck: {diags:?}"
     );
@@ -327,7 +336,10 @@ fn reindex_reloads_when_index_invisible_to_corpus() {
         .iter()
         .find(|r| r[0].contains("caller.go"))
         .unwrap_or_else(|| panic!("v1 index must resolve: {edges:?}"))[1];
-    assert!(callee.contains("b.go::"), "v1 resolves to b.go, got {callee}");
+    assert!(
+        callee.contains("b.go::"),
+        "v1 resolves to b.go, got {callee}"
+    );
 
     // Re-index: v2 says helper's def is a.go. The index is NOT in the corpus
     // (p.dl scans only *.go), so the incremental tick's changed set is blind
@@ -335,7 +347,10 @@ fn reindex_reloads_when_index_invisible_to_corpus() {
     write_index(
         &d.join("index.scip"),
         vec![
-            document("a.go", vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)]),
+            document(
+                "a.go",
+                vec![occurrence(SYM_OTHER, SymbolRole::Definition as i32)],
+            ),
             document("caller.go", vec![occurrence(SYM_OTHER, 0)]),
         ],
     );
@@ -345,7 +360,8 @@ fn reindex_reloads_when_index_invisible_to_corpus() {
     let mut body = fs::read_to_string(&caller).unwrap();
     body.push_str("// touched\n");
     fs::write(&caller, body).unwrap();
-    eng.tick_paths(&prog, std::slice::from_ref(&caller), true).unwrap();
+    eng.tick_paths(&prog, std::slice::from_ref(&caller), true)
+        .unwrap();
 
     let edges = eng.rel_rows("edge", 2);
     let callee = &edges
@@ -366,7 +382,10 @@ fn index_path_newest_wins() {
     let d = sandbox("newestwins");
     let state = sprefa_v5::state_dir(&d);
     fs::create_dir_all(&state).unwrap();
-    let doc = vec![document("b.go", vec![occurrence(SYM, SymbolRole::Definition as i32)])];
+    let doc = vec![document(
+        "b.go",
+        vec![occurrence(SYM, SymbolRole::Definition as i32)],
+    )];
     write_index(&state.join("index.scip"), doc.clone());
     // APFS mtime is fine-grained, but hold a full second so coarse filesystems
     // order the two writes too.

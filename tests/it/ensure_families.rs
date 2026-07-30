@@ -40,7 +40,10 @@ fn tick_once(root: &Path) -> Engine {
     let conn = db::open(Some(root.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, root.to_path_buf());
     let (prog, diags, _) = prepare_paths(&[root.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|d| d.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "program should typecheck: {diags:?}");
     eng.tick(&prog, true).unwrap();
     eng
@@ -55,9 +58,13 @@ fn ensure_families_populates_an_unused_family_without_a_program_tick() {
     // Baseline: the program never names a type-graph rel, so the normal tick
     // left `type_entity` empty (the `used(prog)` gate skipped `TypeFamily`).
     let before = eng.rel_rows("type_entity", 7);
-    assert!(before.is_empty(), "type_entity should start empty: {before:?}");
+    assert!(
+        before.is_empty(),
+        "type_entity should start empty: {before:?}"
+    );
 
-    eng.ensure_families(&["type-rels"]).expect("ensure_families(type-rels)");
+    eng.ensure_families(&["type-rels"])
+        .expect("ensure_families(type-rels)");
 
     // After the forced refresh, the already-scanned `greet.ts` is parsed and
     // its function entity is present — no program tick over a `? type_entity`

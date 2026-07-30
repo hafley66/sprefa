@@ -41,22 +41,34 @@ fn full_tick_rebuilds_only_the_affected_chain() {
 
     // Cold tick: blank derived tables force the full rebuild.
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.last_derived_rebuilt.len(), 2, "cold tick rebuilds both chains");
+    assert_eq!(
+        eng.last_derived_rebuilt.len(),
+        2,
+        "cold tick rebuilds both chains"
+    );
 
     // No-change tick: nothing rebuilds.
     eng.tick(&prog, true).unwrap();
-    assert!(eng.last_derived_rebuilt.is_empty(),
-        "a no-change tick rebuilds nothing, got {:?}", eng.last_derived_rebuilt);
+    assert!(
+        eng.last_derived_rebuilt.is_empty(),
+        "a no-change tick rebuilds nothing, got {:?}",
+        eng.last_derived_rebuilt
+    );
 
     // Touch ONLY the b-chain's file (different byte length — the reconcile
     // (mtime secs, size) fast path can't see a same-second same-size rewrite).
     fs::write(d.join("src/b.txt"), "beta_one\nbeta_two\n").unwrap();
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.last_derived_rebuilt, vec!["db_out".to_string()],
-        "an edit reaching only src_b rebuilds only its chain");
+    assert_eq!(
+        eng.last_derived_rebuilt,
+        vec!["db_out".to_string()],
+        "an edit reaching only src_b rebuilds only its chain"
+    );
 
     // ... and the rebuilt chain is correct while the untouched one survived.
-    let db_rows = eng.query_sql("SELECT w FROM rel_db_out_txt ORDER BY w", &[]).unwrap();
+    let db_rows = eng
+        .query_sql("SELECT w FROM rel_db_out_txt ORDER BY w", &[])
+        .unwrap();
     assert_eq!(db_rows.len(), 2, "db_out re-derived both beta words");
     let da_rows = eng.query_sql("SELECT w FROM rel_da_txt", &[]).unwrap();
     assert_eq!(da_rows.len(), 1, "da still holds its row untouched");

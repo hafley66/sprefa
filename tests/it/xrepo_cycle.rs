@@ -35,14 +35,22 @@ fn cross_repo_call_cycle_via_user_space_resolution() {
     fs::write(ra.join("src/lib.rs"), "fn handle_save() { persist(); }\n").unwrap();
     fs::write(rb.join("src/lib.rs"), "fn persist() { handle_save(); }\n").unwrap();
 
-    fs::write(d.join("cfg.toml"), format!(
-        "[[repos]]\nslug = \"svc_a\"\nroot = \"{a}\"\n\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "[[repos]]\nslug = \"svc_a\"\nroot = \"{a}\"\n\
          [[repos]]\nslug = \"svc_b\"\nroot = \"{b}\"\n",
-        a = ra.display(), b = rb.display())).unwrap();
+            a = ra.display(),
+            b = rb.display()
+        ),
+    )
+    .unwrap();
 
     // User-space cross-repo resolution: call_site.callee (bare text) joined
     // against call_name.name (global) produces edges that span repos.
-    let _ = fs::write(d.join("p.dl"), "\
+    let _ = fs::write(
+        d.join("p.dl"),
+        "\
         rel corpus(p: file).\n\
         corpus(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
         rel fns(sym: text).\n\
@@ -56,32 +64,44 @@ fn cross_repo_call_cycle_via_user_space_resolution() {
         rel cross_cycle(sym: text, rep: text, size: int).\n\
         cross_cycle(member, rep, n) <- cyc(rep, member), cyc_size(rep, n), n > 1.\n\
         ? xref(a, b).\n\
-        ? cross_cycle(sym, rep, size).\n");
+        ? cross_cycle(sym, rep, size).\n",
+    );
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(&ra)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(),
-        "dl failed:\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        out.status.success(),
+        "dl failed:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
 
     // xref must show edges in both directions, spanning both repos.
     let xref_block = stdout.split("? xref").nth(1).unwrap_or("");
-    assert!(xref_block.contains("svc_a") && xref_block.contains("svc_b"),
-        "xref edges must carry both repo prefixes:\n{xref_block}\nFULL:\n{stdout}");
-    assert!(xref_block.contains("handle_save") && xref_block.contains("persist"),
-        "xref must resolve both functions:\n{xref_block}");
+    assert!(
+        xref_block.contains("svc_a") && xref_block.contains("svc_b"),
+        "xref edges must carry both repo prefixes:\n{xref_block}\nFULL:\n{stdout}"
+    );
+    assert!(
+        xref_block.contains("handle_save") && xref_block.contains("persist"),
+        "xref must resolve both functions:\n{xref_block}"
+    );
 
     // SCC must find the 2-member cycle spanning repos.
     let cyc_block = stdout.split("? cross_cycle").nth(1).unwrap_or("");
-    assert!(cyc_block.contains("(2 rows)"),
-        "exactly 2 members in the cross-repo cycle:\n{cyc_block}");
-    assert!(cyc_block.contains("svc_a") && cyc_block.contains("svc_b"),
-        "cycle members span both repos:\n{cyc_block}");
+    assert!(
+        cyc_block.contains("(2 rows)"),
+        "exactly 2 members in the cross-repo cycle:\n{cyc_block}"
+    );
+    assert!(
+        cyc_block.contains("svc_a") && cyc_block.contains("svc_b"),
+        "cycle members span both repos:\n{cyc_block}"
+    );
 }
 
 /// Sanity: the built-in call_edge IS repo-scoped — the same cycle produces
@@ -98,24 +118,34 @@ fn builtin_call_edge_is_repo_scoped_for_cross_repo_calls() {
     fs::write(ra.join("src/lib.rs"), "fn handle_save() { persist(); }\n").unwrap();
     fs::write(rb.join("src/lib.rs"), "fn persist() { handle_save(); }\n").unwrap();
 
-    fs::write(d.join("cfg.toml"), format!(
-        "[[repos]]\nslug = \"svc_a\"\nroot = \"{a}\"\n\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "[[repos]]\nslug = \"svc_a\"\nroot = \"{a}\"\n\
          [[repos]]\nslug = \"svc_b\"\nroot = \"{b}\"\n",
-        a = ra.display(), b = rb.display())).unwrap();
+            a = ra.display(),
+            b = rb.display()
+        ),
+    )
+    .unwrap();
 
-    let _ = fs::write(d.join("p.dl"), "\
+    let _ = fs::write(
+        d.join("p.dl"),
+        "\
         rel corpus(p: file).\n\
         corpus(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
         rel fns(sym: text).\n\
         fns(sym) <- type_entity(_, sym, _, _, _, _, _).\n\
-        ? call_edge(caller, callee, kind).\n");
+        ? call_edge(caller, callee, kind).\n",
+    );
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(&ra)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "dl failed: {stdout}");
 

@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// A css body held in a relation is parsed with the css grammar; each
@@ -38,18 +41,28 @@ fn css_declarations_out_of_a_bound_string() {
     // A backtick string is raw + multiline (a `"..."` literal does not turn
     // `\n` into a newline — it drops the backslash), so the css body carries a
     // real line break and the relative span spans two lines.
-    let (code, out, err) = run(&d, concat!(
-        "rel style(name: text, body: text).\n",
-        "style(\"overlay\", `position: fixed;\ncolor: red;`).\n",
-        "rel decl(name: text, prop: text, value: text, rel_line: int).\n",
-        "decl(name, PROP, VAL, rel_line) <-\n",
-        "  style(name, body),\n",
-        "  sg(:css, body, \"$PROP: $VAL;\", rel_line).\n",
-        "? decl(name, prop, value, rel_line).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel style(name: text, body: text).\n",
+            "style(\"overlay\", `position: fixed;\ncolor: red;`).\n",
+            "rel decl(name: text, prop: text, value: text, rel_line: int).\n",
+            "decl(name, PROP, VAL, rel_line) <-\n",
+            "  style(name, body),\n",
+            "  sg(:css, body, \"$PROP: $VAL;\", rel_line).\n",
+            "? decl(name, prop, value, rel_line).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     // Two declarations, captures bound, relative line 1 then 2.
-    assert!(out.contains("overlay\tposition\tfixed\t1"), "position decl, relative line 1:\n{out}");
-    assert!(out.contains("overlay\tcolor\tred\t2"), "color decl, relative line 2:\n{out}");
+    assert!(
+        out.contains("overlay\tposition\tfixed\t1"),
+        "position decl, relative line 1:\n{out}"
+    );
+    assert!(
+        out.contains("overlay\tcolor\tred\t2"),
+        "color decl, relative line 2:\n{out}"
+    );
 }
 
 /// Dispatch by `:lang`: the SAME term-form op runs the rust grammar over a rust
@@ -57,12 +70,16 @@ fn css_declarations_out_of_a_bound_string() {
 #[test]
 fn rust_grammar_over_a_bound_snippet() {
     let d = sandbox("rust");
-    let (code, out, err) = run(&d, concat!(
-        "rel snippet(id: text, code: text).\n",
-        "snippet(\"a\", \"parse(raw).unwrap()\").\n",
-        "rel uw(id: text, receiver: text).\n",
-        "uw(id, RECEIVER) <- snippet(id, code), sg(:rust, code, \"$RECEIVER.unwrap()\").\n",
-        "? uw(id, receiver).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel snippet(id: text, code: text).\n",
+            "snippet(\"a\", \"parse(raw).unwrap()\").\n",
+            "rel uw(id: text, receiver: text).\n",
+            "uw(id, RECEIVER) <- snippet(id, code), sg(:rust, code, \"$RECEIVER.unwrap()\").\n",
+            "? uw(id, receiver).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("a\tparse(raw)"), "receiver captured:\n{out}");
 }
@@ -73,15 +90,19 @@ fn rust_grammar_over_a_bound_snippet() {
 #[test]
 fn term_extract_and_derived_co_head_unions() {
     let d = sandbox("guard");
-    let (code, out, err) = run(&d, concat!(
-        "rel style(name: text, body: text).\n",
-        "style(\"x\", \"position: fixed;\").\n",
-        "rel other(prop: text).\n",
-        "other(\"margin\").\n",
-        "rel decl(prop: text).\n",
-        "decl(PROP) <- style(_, body), sg(:css, body, \"$PROP: $VAL;\").\n",
-        "decl(prop) <- other(prop).\n",
-        "? decl(prop).\n"));
+    let (code, out, err) = run(
+        &d,
+        concat!(
+            "rel style(name: text, body: text).\n",
+            "style(\"x\", \"position: fixed;\").\n",
+            "rel other(prop: text).\n",
+            "other(\"margin\").\n",
+            "rel decl(prop: text).\n",
+            "decl(PROP) <- style(_, body), sg(:css, body, \"$PROP: $VAL;\").\n",
+            "decl(prop) <- other(prop).\n",
+            "? decl(prop).\n"
+        ),
+    );
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("position"), "extracted row survives:\n{out}");
     assert!(out.contains("margin"), "derived row survives:\n{out}");

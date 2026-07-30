@@ -55,7 +55,10 @@ CREATE INDEX IF NOT EXISTS invocation_pid ON invocation(pid);
 CREATE INDEX IF NOT EXISTS invocation_ts_start ON invocation(ts_start_ms);";
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 /// `DL_INVLOG=0` opts a process out of recording entirely.
@@ -77,7 +80,8 @@ fn open() -> Option<Connection> {
         let _ = std::fs::create_dir_all(dir);
     }
     let conn = Connection::open(&path).ok()?;
-    conn.busy_timeout(std::time::Duration::from_millis(5000)).ok()?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))
+        .ok()?;
     conn.execute_batch("PRAGMA journal_mode=WAL;").ok()?;
     conn.execute_batch(SCHEMA).ok()?;
     Some(conn)
@@ -86,7 +90,10 @@ fn open() -> Option<Connection> {
 fn retain(conn: &Connection) {
     let cutoff = now_ms() - RETENTION_DAYS * 24 * 3600 * 1000;
     // @rusqlite-ok: best-effort retention sweep; a failed DELETE just means next call's sweep tries again.
-    let _ = conn.execute("DELETE FROM invocation WHERE ts_start_ms < ?1", params![cutoff]);
+    let _ = conn.execute(
+        "DELETE FROM invocation WHERE ts_start_ms < ?1",
+        params![cutoff],
+    );
 }
 
 #[cfg(unix)]
@@ -105,7 +112,10 @@ fn parent_pid() -> u32 {
 /// this is diagnostic best-effort, never load-bearing for anything else.
 #[cfg(unix)]
 fn ancestry_line(start_ppid: u32) -> String {
-    let Ok(out) = std::process::Command::new("ps").args(["-eo", "pid=,ppid=,comm="]).output() else {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-eo", "pid=,ppid=,comm="])
+        .output()
+    else {
         return String::new();
     };
     if !out.status.success() {
@@ -118,11 +128,15 @@ fn ancestry_line(start_ppid: u32) -> String {
         let mut parts = line.splitn(3, char::is_whitespace);
         let Some(pid_s) = parts.next() else { continue };
         let Some(rest) = parts.next() else { continue };
-        let Ok(pid) = pid_s.parse::<u32>() else { continue };
+        let Ok(pid) = pid_s.parse::<u32>() else {
+            continue;
+        };
         let rest = rest.trim_start();
         let mut it2 = rest.splitn(2, char::is_whitespace);
         let Some(ppid_s) = it2.next() else { continue };
-        let Ok(ppid) = ppid_s.parse::<u32>() else { continue };
+        let Ok(ppid) = ppid_s.parse::<u32>() else {
+            continue;
+        };
         let comm = it2.next().unwrap_or("").trim().to_string();
         table.insert(pid, (ppid, comm));
     }
@@ -172,12 +186,23 @@ pub fn record_start(argv: &[String]) -> Option<i64> {
     let ppid = parent_pid();
     let ancestry = ancestry_line(ppid);
     let argv_json = serde_json::to_string(argv).unwrap_or_default();
-    let cwd = std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned());
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
     let build = crate::daemon::build_id();
     conn.execute(
         "INSERT INTO invocation(ts_start_ms, pid, ppid, ancestry, argv, cwd, exe_mtime_ms, build) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![now_ms(), pid, ppid, ancestry, argv_json, cwd, exe_mtime_ms(), build],
+        params![
+            now_ms(),
+            pid,
+            ppid,
+            ancestry,
+            argv_json,
+            cwd,
+            exe_mtime_ms(),
+            build
+        ],
     )
     .ok()?;
     let id = conn.last_insert_rowid();
@@ -195,7 +220,10 @@ static CURRENT_ID: Mutex<Option<i64>> = Mutex::new(None);
 /// stored id, so a second close attempt is a no-op; the row UPDATE itself is
 /// idempotent by id regardless.
 pub fn record_end_current(exit_code: i32) {
-    let id = CURRENT_ID.lock().ok().and_then(|mut current| current.take());
+    let id = CURRENT_ID
+        .lock()
+        .ok()
+        .and_then(|mut current| current.take());
     record_end(id, exit_code);
 }
 
@@ -240,8 +268,7 @@ pub struct InvocationRow {
     pub exit_code: Option<i64>,
 }
 
-const SELECT_COLS: &str =
-    "id, ts_start_ms, ts_end_ms, pid, ppid, ancestry, argv, cwd, exit_code";
+const SELECT_COLS: &str = "id, ts_start_ms, ts_end_ms, pid, ppid, ancestry, argv, cwd, exit_code";
 
 fn row_from(r: &crate::db::SqlRow) -> crate::db::SqlRowResult<InvocationRow> {
     Ok(InvocationRow {
@@ -259,12 +286,16 @@ fn row_from(r: &crate::db::SqlRow) -> crate::db::SqlRowResult<InvocationRow> {
 
 /// The most recent rows, newest first — `dl daemon invocations [--limit N]`.
 pub fn recent(limit: usize) -> Vec<InvocationRow> {
-    let Some(conn) = open() else { return Vec::new() };
-    let sql = format!(
-        "SELECT {SELECT_COLS} FROM invocation ORDER BY ts_start_ms DESC LIMIT ?1"
-    );
-    let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
-    let Ok(rows) = stmt.query_map(params![limit as i64], row_from) else { return Vec::new() };
+    let Some(conn) = open() else {
+        return Vec::new();
+    };
+    let sql = format!("SELECT {SELECT_COLS} FROM invocation ORDER BY ts_start_ms DESC LIMIT ?1");
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return Vec::new();
+    };
+    let Ok(rows) = stmt.query_map(params![limit as i64], row_from) else {
+        return Vec::new();
+    };
     rows.filter_map(|r| r.ok()).collect()
 }
 
@@ -305,7 +336,12 @@ pub fn report_recent(limit: usize) -> String {
     let mut out = String::new();
     for r in rows {
         let state = match r.ts_end_ms {
-            Some(_) => format!("exit={}", r.exit_code.map(|c| c.to_string()).unwrap_or_else(|| "?".into())),
+            Some(_) => format!(
+                "exit={}",
+                r.exit_code
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into())
+            ),
             None if crate::why::pid_alive(r.pid as u32) => "RUNNING".to_string(),
             None => "KILLED".to_string(),
         };
@@ -326,9 +362,14 @@ pub fn report_recent(limit: usize) -> String {
 /// spawned it. Empty string if no row is found (invlog was off, or this pid
 /// predates the invlog arc).
 pub fn spawned_by_line(pid: u32) -> String {
-    let Some(row) = lookup_by_pid(pid) else { return String::new() };
+    let Some(row) = lookup_by_pid(pid) else {
+        return String::new();
+    };
     let argv: Vec<String> = serde_json::from_str(&row.argv).unwrap_or_default();
-    let ancestry = row.ancestry.filter(|s| !s.is_empty()).unwrap_or_else(|| "?".into());
+    let ancestry = row
+        .ancestry
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".into());
     format!("spawned by {ancestry} | argv: {}\n", argv.join(" "))
 }
 
@@ -367,7 +408,10 @@ mod tests {
         let id = record_start(&argv).expect("record_start should succeed in a writable sandbox");
         record_end(Some(id), 0);
 
-        let row = recent(10).into_iter().find(|r| r.id == id).expect("row present");
+        let row = recent(10)
+            .into_iter()
+            .find(|r| r.id == id)
+            .expect("row present");
         assert_eq!(row.exit_code, Some(0));
         assert!(row.ts_end_ms.is_some(), "ts_end_ms set after record_end");
         assert_eq!(row.pid, std::process::id() as i64);
@@ -381,7 +425,10 @@ mod tests {
         unsafe { std::env::set_var("DL_INVLOG", "0") };
         let before = recent(1000).len();
         let id = record_start(&["dl".to_string()]);
-        assert!(id.is_none(), "record_start must return None when DL_INVLOG=0");
+        assert!(
+            id.is_none(),
+            "record_start must return None when DL_INVLOG=0"
+        );
         assert_eq!(recent(1000).len(), before, "no row inserted when disabled");
         unsafe { std::env::remove_var("DL_INVLOG") };
     }
@@ -399,6 +446,9 @@ mod tests {
         )
         .unwrap();
         let report = report_recent(10);
-        assert!(report.contains("KILLED"), "dead open row must be flagged KILLED:\n{report}");
+        assert!(
+            report.contains("KILLED"),
+            "dead open row must be flagged KILLED:\n{report}"
+        );
     }
 }

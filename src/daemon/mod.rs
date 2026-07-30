@@ -109,7 +109,11 @@ fn lock_eng<'a>(sr: &'a ServedRoot, method: &str) -> MutexGuard<'a, Engine> {
         crate::verdict::verdict(
             "lock-wait",
             &format!("[wait] {method} waited {waited_ms}ms behind {behind}"),
-            &[("rpc", method), ("waited_ms", &waited_ms.to_string()), ("behind", &behind)],
+            &[
+                ("rpc", method),
+                ("waited_ms", &waited_ms.to_string()),
+                ("behind", &behind),
+            ],
         );
     }
     *lock(current_op_cell()) = method.to_string();
@@ -136,7 +140,6 @@ pub use client::*;
 pub(crate) use dispatch::*;
 pub use home::*;
 pub use root::*;
-
 
 /// The job-queue `root` id for the key-less config view (registered roots use
 /// their blake3 registry key). One reserved token, never a valid key.
@@ -251,7 +254,9 @@ impl Daemon {
             None | Some("") => return Ok(self.config.clone()),
             Some(r) => r,
         };
-        let canon = Path::new(raw).canonicalize().unwrap_or_else(|_| PathBuf::from(raw));
+        let canon = Path::new(raw)
+            .canonicalize()
+            .unwrap_or_else(|_| PathBuf::from(raw));
         let key = key_of(&canon);
         if let Some(sr) = lock(&self.roots).get(&key) {
             return Ok(sr.clone());
@@ -289,7 +294,9 @@ impl Daemon {
                         "refusing to register {}: it is nested inside already-registered root {}. \
                          One daemon serves each root once; register the outer root and query the \
                          inner path against it, or `dl daemon drop {}` first.",
-                        canon.display(), existing.root.display(), existing.root.display()
+                        canon.display(),
+                        existing.root.display(),
+                        existing.root.display()
                     );
                 }
                 if existing.root.starts_with(&canon) {
@@ -297,29 +304,47 @@ impl Daemon {
                         "refusing to register {}: already-registered root {} lives inside it. \
                          Registering the parent would double-serve the child tree; \
                          `dl daemon drop {}` first if you want the parent served instead.",
-                        canon.display(), existing.root.display(), existing.root.display()
+                        canon.display(),
+                        existing.root.display(),
+                        existing.root.display()
                     );
                 }
             }
         }
         let db = root_db_dir(&key).join("db.sqlite");
         let db_str = db.to_string_lossy().into_owned();
-        let sr = ServedRoot::open(Some(canon.clone()), Some(key.clone()), &[], Some(&db_str), self.shared())?;
+        let sr = ServedRoot::open(
+            Some(canon.clone()),
+            Some(key.clone()),
+            &[],
+            Some(&db_str),
+            self.shared(),
+        )?;
         lock(&self.roots).insert(key.clone(), sr.clone());
         // Persist.
-        let added_at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
-            .map(|d| d.as_secs()).unwrap_or(0);
+        let added_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         {
             let mut records = read_roots_json();
             if !records.iter().any(|r| r.key == key) {
-                records.push(RootRecord { root: canon.clone(), key: key.clone(), added_at });
+                records.push(RootRecord {
+                    root: canon.clone(),
+                    key: key.clone(),
+                    added_at,
+                });
                 write_roots_json(&records);
             }
         }
         // Spawn its watcher as a tokio task (notify's callback thread forwards
         // events into a channel this task drains; engine ticks run via
         // `spawn_blocking`).
-        self.shell.rt.spawn(daemon_shell::watch::watch_task(sr.clone(), self.shell.clone(), self.launch_exe_stamp));
+        self.shell.rt.spawn(daemon_shell::watch::watch_task(
+            sr.clone(),
+            self.shell.clone(),
+            self.launch_exe_stamp,
+        ));
         tracing::info!("[daemon] registered root {} (key {key})", canon.display());
         Ok(sr)
     }
@@ -344,8 +369,11 @@ impl Daemon {
         if sr.is_none() {
             tracing::warn!("[daemon] drop_root {}: not registered", canon.display());
         } else {
-            tracing::info!("[daemon] deregistered root {} (key {key}){}",
-                canon.display(), if purge { ", db purged" } else { "" });
+            tracing::info!(
+                "[daemon] deregistered root {} (key {key}){}",
+                canon.display(),
+                if purge { ", db purged" } else { "" }
+            );
         }
         Ok(())
     }
@@ -422,7 +450,9 @@ fn init_daemon_tracing() {
 /// inlined) so the decision itself is unit-testable without constructing a
 /// `tracing_subscriber::EnvFilter`, which has no `PartialEq`.
 fn stderr_filter_spec(dl_log: Option<&str>) -> String {
-    dl_log.map(str::to_string).unwrap_or_else(|| "warn".to_string())
+    dl_log
+        .map(str::to_string)
+        .unwrap_or_else(|| "warn".to_string())
 }
 
 // ---------- daemon entry ----------
@@ -462,15 +492,20 @@ pub fn run_daemon(
     // either releases the OS-level `flock` immediately.
     let pid_lock_file = open_pid_lock_file()?;
     let mut singleton_lock = fd_lock::RwLock::new(pid_lock_file);
-    let mut singleton_guard = singleton_lock.try_write().map_err(|_| anyhow::anyhow!(
-        "another dl daemon instance already holds {} — refusing to start a second one \
+    let mut singleton_guard = singleton_lock.try_write().map_err(|_| {
+        anyhow::anyhow!(
+            "another dl daemon instance already holds {} — refusing to start a second one \
          (fd-lock single-instance witness; `dl daemon status` to check, `dl daemon stop` to clear)",
-        pid_path().display()
-    ))?;
+            pid_path().display()
+        )
+    })?;
     {
         use std::io::{Seek, SeekFrom, Write as _};
         let pid = std::process::id();
-        let start = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let start = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
         let _ = singleton_guard.set_len(0);
         let _ = singleton_guard.seek(SeekFrom::Start(0));
         let _ = write!(singleton_guard, "{pid}\n{start}\n");
@@ -525,11 +560,14 @@ pub fn run_daemon(
     };
 
     let repos = load_repos_eager();
-    if !repos.is_empty() { tracing::info!("[config] {} repo(s) registered", repos.len()); }
+    if !repos.is_empty() {
+        tracing::info!("[config] {} repo(s) registered", repos.len());
+    }
 
     // The config-view engine (root:None). An explicit --db points it at that file;
     // otherwise the home db.
-    let config_db = db_path.map(|s| s.to_string())
+    let config_db = db_path
+        .map(|s| s.to_string())
         .unwrap_or_else(|| home.join("db.sqlite").to_string_lossy().into_owned());
     let config = ServedRoot::open(None, None, &[], Some(&config_db), shared.clone())
         .context("open config-view engine")?;
@@ -558,15 +596,16 @@ pub fn run_daemon(
         Err(e) => tracing::warn!("[daemon] reset_orphaned_on_boot: {e}"),
     }
     let n_workers = daemon_thread_count(
-        std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2),
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2),
         std::env::var("DL_DAEMON_THREADS").ok().as_deref(),
     );
-    let runner: Arc<dyn crate::jobq::JobRunner> =
-        Arc::new(DaemonJobRunner { daemon: Arc::downgrade(&daemon) });
+    let runner: Arc<dyn crate::jobq::JobRunner> = Arc::new(DaemonJobRunner {
+        daemon: Arc::downgrade(&daemon),
+    });
     crate::jobq::workers::spawn_workers(&shell, &jobs_pool, jobs.clone(), runner, n_workers);
-    tracing::info!(
-        "[daemon] apalis workers: dl-engine x{n_workers} + dl-cold x1 (single-flight)"
-    );
+    tracing::info!("[daemon] apalis workers: dl-engine x{n_workers} + dl-cold x1 (single-flight)");
 
     // Bind the socket (reap a stale one first) BEFORE registering roots, so a
     // second daemon fails fast rather than cold-ticking every root then losing
@@ -579,27 +618,42 @@ pub fn run_daemon(
             bail!("daemon already running on socket {}", sock.display());
         }
     }
-    if let Some(dir) = sock.parent() { std::fs::create_dir_all(dir)?; }
+    if let Some(dir) = sock.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     let listener = UnixListener::bind(&sock)?;
     // The accept task adopts this into the runtime via `from_std`, which requires
     // a non-blocking listener.
-    listener.set_nonblocking(true).context("set UDS listener non-blocking")?;
+    listener
+        .set_nonblocking(true)
+        .context("set UDS listener non-blocking")?;
     std::fs::set_permissions(&sock, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
     let idle_secs = idle_timeout_secs();
-    tracing::info!("[daemon] listening on {} (pid {}, idle {}s){}",
-        sock.display(), std::process::id(), idle_secs,
-        if foreground { " [foreground]" } else { "" });
+    tracing::info!(
+        "[daemon] listening on {} (pid {}, idle {}s){}",
+        sock.display(),
+        std::process::id(),
+        idle_secs,
+        if foreground { " [foreground]" } else { "" }
+    );
     // systemd readiness (plan section 3.2, `Type=notify`): a no-op everywhere
     // else — `sd_notify::notify` returns `Ok(())` immediately when
     // `NOTIFY_SOCKET` is unset (macOS, or a systemd unit not using
     // `Type=notify`), so this call is unconditional and cheap.
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
     if let Some(p) = crate::perflog::path() {
-        tracing::info!("[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)", p.display());
+        tracing::info!(
+            "[daemon] perf log {} (tail -f | jq .total_ms, .phase, .ms)",
+            p.display()
+        );
     }
     crate::verdict::emit_run_header(
         "daemon",
-        initial_root.as_ref().map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|| home.to_string_lossy().into_owned()).as_str(),
+        initial_root
+            .as_ref()
+            .map(|r| r.to_string_lossy().into_owned())
+            .unwrap_or_else(|| home.to_string_lossy().into_owned())
+            .as_str(),
         &config_db,
         "singleton daemon home db",
         "self (this process IS the daemon)",
@@ -610,13 +664,18 @@ pub fn run_daemon(
     // auto-started from a stale install (docs/failure-modes.md:300-327).
     // Check against the served root if the caller named one, else cwd (the
     // shell the daemon was launched from).
-    let stale_check_root = initial_root.clone()
+    let stale_check_root = initial_root
+        .clone()
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_else(|| home.clone());
     crate::stale_binary::warn_if_stale(&stale_check_root);
 
     // Config-view watcher (watches the config repos) — a tokio task.
-    daemon.shell.rt.spawn(daemon_shell::watch::watch_task(daemon.config.clone(), shell.clone(), launch_exe_stamp));
+    daemon.shell.rt.spawn(daemon_shell::watch::watch_task(
+        daemon.config.clone(),
+        shell.clone(),
+        launch_exe_stamp,
+    ));
 
     // Replay roots.json: re-register every persisted root (warm from its db).
     // Part 4 (stale-root eviction): a record whose directory no longer
@@ -628,8 +687,11 @@ pub fn run_daemon(
     let mut evicted_any = false;
     for rec in read_roots_json() {
         if !rec.root.exists() {
-            tracing::warn!("[daemon] root {} no longer exists; evicting from roots.json (key {})",
-                rec.root.display(), rec.key);
+            tracing::warn!(
+                "[daemon] root {} no longer exists; evicting from roots.json (key {})",
+                rec.root.display(),
+                rec.key
+            );
             evicted_any = true;
             continue;
         }
@@ -643,7 +705,9 @@ pub fn run_daemon(
             tracing::info!("[daemon] replay skip {} (no .dl/)", rec.root.display());
         }
     }
-    if evicted_any { write_roots_json(&kept); }
+    if evicted_any {
+        write_roots_json(&kept);
+    }
 
     // Register the initial root (a `dl daemon start --foreground` from inside a
     // repo, or an explicit program set).
@@ -654,16 +718,33 @@ pub fn run_daemon(
             if !lock(&daemon.roots).contains_key(&key) {
                 let db = root_db_dir(&key).join("db.sqlite");
                 let db_str = db.to_string_lossy().into_owned();
-                match ServedRoot::open(Some(canon.clone()), Some(key.clone()), programs, Some(&db_str), daemon.shared()) {
+                match ServedRoot::open(
+                    Some(canon.clone()),
+                    Some(key.clone()),
+                    programs,
+                    Some(&db_str),
+                    daemon.shared(),
+                ) {
                     Ok(sr) => {
                         lock(&daemon.roots).insert(key.clone(), sr.clone());
-                        let added_at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                        let added_at = SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
                         let mut records = read_roots_json();
                         if !records.iter().any(|x| x.key == key) {
-                            records.push(RootRecord { root: canon.clone(), key: key.clone(), added_at });
+                            records.push(RootRecord {
+                                root: canon.clone(),
+                                key: key.clone(),
+                                added_at,
+                            });
                             write_roots_json(&records);
                         }
-                        daemon.shell.rt.spawn(daemon_shell::watch::watch_task(sr.clone(), shell.clone(), launch_exe_stamp));
+                        daemon.shell.rt.spawn(daemon_shell::watch::watch_task(
+                            sr.clone(),
+                            shell.clone(),
+                            launch_exe_stamp,
+                        ));
                         tracing::info!("[daemon] registered initial root {}", canon.display());
                     }
                     Err(e) => tracing::error!("[daemon] initial root {}: {e}", canon.display()),
@@ -674,10 +755,18 @@ pub fn run_daemon(
 
     // Poll (@async clock) + idle (self-reap) timers — tokio interval tasks.
     if !foreground {
-        daemon.shell.rt.spawn(daemon_shell::timers::idle_task(daemon.clone(), shell.clone(), idle_secs));
+        daemon.shell.rt.spawn(daemon_shell::timers::idle_task(
+            daemon.clone(),
+            shell.clone(),
+            idle_secs,
+        ));
     }
     if let Some(secs) = poll_interval_secs() {
-        daemon.shell.rt.spawn(daemon_shell::timers::poll_task(daemon.clone(), shell.clone(), secs));
+        daemon.shell.rt.spawn(daemon_shell::timers::poll_task(
+            daemon.clone(),
+            shell.clone(),
+            secs,
+        ));
     }
 
     // ONE router, two thin listeners (plan section 2.4): the UDS socket and the
@@ -756,7 +845,9 @@ struct DaemonJobRunner {
 
 impl crate::jobq::JobRunner for DaemonJobRunner {
     fn run(&self, job: &crate::jobq::JobRow) -> Result<()> {
-        let Some(daemon) = self.daemon.upgrade() else { return Ok(()) };
+        let Some(daemon) = self.daemon.upgrade() else {
+            return Ok(());
+        };
         let Some(sr) = daemon.served_root_for_job(&job.root) else {
             // Root dropped between enqueue and claim; nothing to do.
             return Ok(());
@@ -782,7 +873,8 @@ impl crate::jobq::JobRunner for DaemonJobRunner {
 /// mtime. A client that rebuilt/reinstalled computes a different id and respawns.
 pub(crate) fn build_id() -> String {
     let version = env!("CARGO_PKG_VERSION");
-    let mtime = std::env::current_exe().ok()
+    let mtime = std::env::current_exe()
+        .ok()
         .and_then(|p| std::fs::metadata(p).ok())
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
@@ -799,7 +891,10 @@ pub(crate) fn load_repos_eager() -> Vec<config::RepoConfig> {
     match config::SprfConfig::load_default() {
         Ok(cfg) if !cfg.repos.is_empty() => cfg.repos,
         Ok(_) => Vec::new(),
-        Err(e) => { tracing::warn!("[config] ignored: {e}"); Vec::new() }
+        Err(e) => {
+            tracing::warn!("[config] ignored: {e}");
+            Vec::new()
+        }
     }
 }
 
@@ -854,8 +949,10 @@ mod tests {
     fn self_rss_is_readable_and_under_default_ceiling() {
         let rss = self_rss_mb().expect("ps must report this process's RSS");
         assert!(rss > 0, "RSS should be a positive MB figure, got {rss}");
-        assert!(rss < DEFAULT_MEM_LIMIT_MB,
-            "test process RSS {rss}MB should sit under the {DEFAULT_MEM_LIMIT_MB}MB ceiling");
+        assert!(
+            rss < DEFAULT_MEM_LIMIT_MB,
+            "test process RSS {rss}MB should sit under the {DEFAULT_MEM_LIMIT_MB}MB ceiling"
+        );
     }
 
     /// `DL_DAEMON_MEM_MB=0` disables the guard; unset yields the default.
@@ -902,8 +999,14 @@ mod tests {
 
     #[test]
     fn fresh_binary_compare_exits_only_for_two_confirmed_stamps() {
-        let before = ExeStamp { len: 10, mtime: SystemTime::UNIX_EPOCH };
-        let after = ExeStamp { len: 11, mtime: SystemTime::UNIX_EPOCH };
+        let before = ExeStamp {
+            len: 10,
+            mtime: SystemTime::UNIX_EPOCH,
+        };
+        let after = ExeStamp {
+            len: 11,
+            mtime: SystemTime::UNIX_EPOCH,
+        };
         assert!(should_exit_for_binary_change(Some(before), Some(after)));
         assert!(!should_exit_for_binary_change(Some(before), Some(before)));
         assert!(!should_exit_for_binary_change(Some(before), None));
@@ -915,8 +1018,10 @@ mod tests {
         let a = build_id();
         let b = build_id();
         assert_eq!(a, b, "build_id must be stable within one process");
-        assert!(a.starts_with(env!("CARGO_PKG_VERSION")),
-            "build_id should carry the crate version: {a}");
+        assert!(
+            a.starts_with(env!("CARGO_PKG_VERSION")),
+            "build_id should carry the crate version: {a}"
+        );
     }
 
     #[test]
@@ -963,12 +1068,28 @@ mod tests {
             cold_pending: false,
             cold_staged: vec![],
         };
-        assert!(!super::tick_warrants_broadcast(&noop), "no-op tick must not broadcast");
+        assert!(
+            !super::tick_warrants_broadcast(&noop),
+            "no-op tick must not broadcast"
+        );
 
-        let timer = crate::engine::TickReport { changed: true, changed_rels: vec!["clock".into()], ..noop.clone() };
-        assert!(super::tick_warrants_broadcast(&timer), "timer boundary must broadcast");
+        let timer = crate::engine::TickReport {
+            changed: true,
+            changed_rels: vec!["clock".into()],
+            ..noop.clone()
+        };
+        assert!(
+            super::tick_warrants_broadcast(&timer),
+            "timer boundary must broadcast"
+        );
 
-        let derived = crate::engine::TickReport { derived_moved: true, ..noop.clone() };
-        assert!(super::tick_warrants_broadcast(&derived), "derived digest move must broadcast");
+        let derived = crate::engine::TickReport {
+            derived_moved: true,
+            ..noop.clone()
+        };
+        assert!(
+            super::tick_warrants_broadcast(&derived),
+            "derived digest move must broadcast"
+        );
     }
 }

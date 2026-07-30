@@ -51,23 +51,57 @@ fn run(dir: &Path, prog: &str, db: &str) -> String {
 #[test]
 fn constructors_nested_and_trait_call_defs_emit() {
     let dir = sandbox("shapes");
-    let out = run(&dir, &format!("{SCAN}\n? call_def(repo, sym, kind, file, line, end).\n"), "db");
+    let out = run(
+        &dir,
+        &format!("{SCAN}\n? call_def(repo, sym, kind, file, line, end).\n"),
+        "db",
+    );
 
     // Constructors (kind method), sym IDENTICAL to what the df walkers mint.
-    assert!(out.contains("ts.ts::method::Widget.constructor"), "TS ctor missing:\n{out}");
-    assert!(out.contains("kotlin.kt::method::Widget.<init>"), "kt primary ctor missing:\n{out}");
-    assert!(out.contains("kotlin.kt::method::Widget.<init>@"), "kt secondary ctor missing:\n{out}");
-    assert!(out.contains("python.py::method::Widget.__init__"), "py __init__ missing:\n{out}");
+    assert!(
+        out.contains("ts.ts::method::Widget.constructor"),
+        "TS ctor missing:\n{out}"
+    );
+    assert!(
+        out.contains("kotlin.kt::method::Widget.<init>"),
+        "kt primary ctor missing:\n{out}"
+    );
+    assert!(
+        out.contains("kotlin.kt::method::Widget.<init>@"),
+        "kt secondary ctor missing:\n{out}"
+    );
+    assert!(
+        out.contains("python.py::method::Widget.__init__"),
+        "py __init__ missing:\n{out}"
+    );
 
     // Rust trait method DECLARATION (no body) + DEFAULT body, Method-owned by trait.
-    assert!(out.contains("rust.rs::method::Shape.perimeter"), "rust trait decl missing:\n{out}");
-    assert!(out.contains("rust.rs::method::Shape.describe"), "rust trait default missing:\n{out}");
+    assert!(
+        out.contains("rust.rs::method::Shape.perimeter"),
+        "rust trait decl missing:\n{out}"
+    );
+    assert!(
+        out.contains("rust.rs::method::Shape.describe"),
+        "rust trait default missing:\n{out}"
+    );
 
     // Nested named fns (previously NOT EMITTED per the audit).
-    assert!(out.contains("rust.rs::function::nested_helper"), "rust nested fn missing:\n{out}");
-    assert!(out.contains("ts.ts::function::tally"), "ts nested fn missing:\n{out}");
-    assert!(out.contains("kotlin.kt::function::nestedHelper"), "kt nested fn missing:\n{out}");
-    assert!(out.contains("python.py::function::nested_helper"), "py nested fn missing:\n{out}");
+    assert!(
+        out.contains("rust.rs::function::nested_helper"),
+        "rust nested fn missing:\n{out}"
+    );
+    assert!(
+        out.contains("ts.ts::function::tally"),
+        "ts nested fn missing:\n{out}"
+    );
+    assert!(
+        out.contains("kotlin.kt::function::nestedHelper"),
+        "kt nested fn missing:\n{out}"
+    );
+    assert!(
+        out.contains("python.py::function::nested_helper"),
+        "py nested fn missing:\n{out}"
+    );
 
     // An unbound lambda row (kind lambda, deterministic `::closure::` sym) per lang.
     for lang in FIXTURES {
@@ -107,8 +141,15 @@ fn lambda_and_ctor_extraction_is_byte_identical() {
         rows.join("\n")
     };
     let a = rows(&first);
-    assert!(a.contains("::closure::"), "expected lambda rows in the dump:\n{first}");
-    assert_eq!(a, rows(&second), "call_def extraction is not byte-identical across two cold runs");
+    assert!(
+        a.contains("::closure::"),
+        "expected lambda rows in the dump:\n{first}"
+    );
+    assert_eq!(
+        a,
+        rows(&second),
+        "call_def extraction is not byte-identical across two cold runs"
+    );
 }
 
 #[test]

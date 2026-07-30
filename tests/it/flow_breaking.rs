@@ -18,8 +18,17 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 const FLOW: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bench/flow");
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn copy_dir(src: &Path, dst: &Path) {
@@ -27,7 +36,11 @@ fn copy_dir(src: &Path, dst: &Path) {
     for e in std::fs::read_dir(src).unwrap().flatten() {
         let p = e.path();
         let d = dst.join(e.file_name());
-        if p.is_dir() { copy_dir(&p, &d); } else { std::fs::copy(&p, &d).unwrap(); }
+        if p.is_dir() {
+            copy_dir(&p, &d);
+        } else {
+            std::fs::copy(&p, &d).unwrap();
+        }
     }
 }
 
@@ -35,7 +48,11 @@ fn occ(line0: i32, col0: i32, end_col: i32, symbol: &str, def: bool) -> Occurren
     Occurrence {
         range: vec![line0, col0, end_col],
         symbol: symbol.to_string(),
-        symbol_roles: if def { SymbolRole::Definition as i32 } else { 0 },
+        symbol_roles: if def {
+            SymbolRole::Definition as i32
+        } else {
+            0
+        },
         ..Default::default()
     }
 }
@@ -56,15 +73,18 @@ fn build_index() -> Index {
     let app = Document {
         relative_path: "ts/app/pages.ts".into(),
         occurrences: vec![
-            occ(5, 9, 15, lib_get, false),       // import
+            occ(5, 9, 15, lib_get, false), // import
             occ(5, 17, 26, lib_create, false),
-            occ(8, 9, 15, lib_get, false),       // callsites
+            occ(8, 9, 15, lib_get, false), // callsites
             occ(11, 9, 15, lib_get, false),
-            occ(15, 9, 18, lib_create, false),   // createPet callsite
+            occ(15, 9, 18, lib_create, false), // createPet callsite
         ],
         ..Default::default()
     };
-    Index { documents: vec![lib, app], ..Default::default() }
+    Index {
+        documents: vec![lib, app],
+        ..Default::default()
+    }
 }
 
 /// rows of a `? rel` block from dl stdout (tab-split values).
@@ -72,11 +92,19 @@ fn query_block<'a>(stdout: &'a str, header: &str) -> Vec<Vec<&'a str>> {
     let mut rows = Vec::new();
     let mut in_q = false;
     for line in stdout.lines() {
-        if line.starts_with(header) { in_q = true; continue; }
-        if line.starts_with('?') { in_q = false; continue; }
+        if line.starts_with(header) {
+            in_q = true;
+            continue;
+        }
+        if line.starts_with('?') {
+            in_q = false;
+            continue;
+        }
         if in_q {
             let t = line.trim();
-            if t.is_empty() || t.starts_with('(') { continue; }
+            if t.is_empty() || t.starts_with('(') {
+                continue;
+            }
             rows.push(t.split('\t').collect());
         }
     }
@@ -88,7 +116,11 @@ fn removed_spec_op_flags_breaking_consumers() {
     let root = std::env::temp_dir().join(format!("flow_breaking_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     copy_dir(&PathBuf::from(FLOW), &root);
-    std::fs::write(root.join("index.scip"), build_index().write_to_bytes().unwrap()).unwrap();
+    std::fs::write(
+        root.join("index.scip"),
+        build_index().write_to_bytes().unwrap(),
+    )
+    .unwrap();
 
     // HEAD baseline: the spec declares both getPet and createPet.
     git(&root, &["init", "-q"]);
@@ -96,7 +128,15 @@ fn removed_spec_op_flags_breaking_consumers() {
     git(&root, &["config", "user.name", "t"]);
     git(&root, &["config", "commit.gpgsign", "false"]);
     git(&root, &["add", "-A"]);
-    git(&root, &["commit", "-q", "-m", "baseline spec with getPet + createPet"]);
+    git(
+        &root,
+        &[
+            "commit",
+            "-q",
+            "-m",
+            "baseline spec with getPet + createPet",
+        ],
+    );
 
     // working-tree change: remove the createPet operation from the spec artifact.
     // (The generated lib + app are unchanged: codegen has not re-run yet.)
@@ -108,17 +148,32 @@ fn removed_spec_op_flags_breaking_consumers() {
         .arg(root.join("breaking.dl"))
         .current_dir(&root)
         .args(["--db", root.join("b.db").to_str().unwrap()])
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "dl failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "dl failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let removed = query_block(&stdout, "? removed_op");
-    assert_eq!(removed, vec![vec!["createPet"]], "createPet removed from the spec: {removed:?}\n{stdout}");
+    assert_eq!(
+        removed,
+        vec![vec!["createPet"]],
+        "createPet removed from the spec: {removed:?}\n{stdout}"
+    );
 
     let breaking = query_block(&stdout, "? breaking");
-    assert!(breaking.iter().any(|r| r == &["createPet", "ts/app/pages.ts"]),
-        "createPet break must name the consuming app: {breaking:?}\n{stdout}");
+    assert!(
+        breaking
+            .iter()
+            .any(|r| r == &["createPet", "ts/app/pages.ts"]),
+        "createPet break must name the consuming app: {breaking:?}\n{stdout}"
+    );
     // getPet is still in the spec, so it is not breaking even though it is used.
-    assert!(!breaking.iter().any(|r| r.first() == Some(&"getPet")),
-        "getPet still in spec, not breaking: {breaking:?}");
+    assert!(
+        !breaking.iter().any(|r| r.first() == Some(&"getPet")),
+        "getPet still in spec, not breaking: {breaking:?}"
+    );
 }

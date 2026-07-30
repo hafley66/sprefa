@@ -57,9 +57,15 @@ fn comment_lines(content: &str) -> Vec<CommentLine<'_>> {
     for (i, ln) in content.lines().enumerate() {
         let trimmed = ln.trim_start_matches([' ', '\t']);
         let m = marker_len(trimmed);
-        if m == 0 { continue; }
+        if m == 0 {
+            continue;
+        }
         let text = trimmed[m..].trim_start_matches([' ', '\t']);
-        out.push(CommentLine { line: i, text_off: text.as_ptr() as usize - base, text });
+        out.push(CommentLine {
+            line: i,
+            text_off: text.as_ptr() as usize - base,
+            text,
+        });
     }
     out
 }
@@ -67,19 +73,36 @@ fn comment_lines(content: &str) -> Vec<CommentLine<'_>> {
 /// Byte length of the comment marker opening `s`, 0 if none.
 fn marker_len(s: &str) -> usize {
     for p in ["<!--", "//", "/*", "--"] {
-        if s.starts_with(p) { return p.len(); }
+        if s.starts_with(p) {
+            return p.len();
+        }
     }
-    if s.starts_with('#') || s.starts_with('*') { 1 } else { 0 }
+    if s.starts_with('#') || s.starts_with('*') {
+        1
+    } else {
+        0
+    }
 }
 
 fn sequential(comments: &[CommentLine<'_>], open: &Regex, total_lines: usize) -> Vec<Region> {
-    let opens: Vec<&CommentLine> =
-        comments.iter().filter(|c| open.is_match(c.text)).collect();
-    opens.iter().enumerate().map(|(i, c)| {
-        let l1 = opens.get(i + 1).map(|n| n.line as i64).unwrap_or(total_lines as i64);
-        let (label, label_span) = label_of(c, open);
-        Region { l0: c.line as i64 + 1, l1, label, label_span }
-    }).collect()
+    let opens: Vec<&CommentLine> = comments.iter().filter(|c| open.is_match(c.text)).collect();
+    opens
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let l1 = opens
+                .get(i + 1)
+                .map(|n| n.line as i64)
+                .unwrap_or(total_lines as i64);
+            let (label, label_span) = label_of(c, open);
+            Region {
+                l0: c.line as i64 + 1,
+                l1,
+                label,
+                label_span,
+            }
+        })
+        .collect()
 }
 
 fn paired(comments: &[CommentLine<'_>], open: &Regex, close: &Regex) -> Vec<Region> {
@@ -92,7 +115,10 @@ fn paired(comments: &[CommentLine<'_>], open: &Regex, close: &Regex) -> Vec<Regi
             if let Some(o) = stack.pop() {
                 let (label, label_span) = label_of(o, open);
                 regions.push(Region {
-                    l0: o.line as i64 + 1, l1: c.line as i64 + 1, label, label_span,
+                    l0: o.line as i64 + 1,
+                    l1: c.line as i64 + 1,
+                    label,
+                    label_span,
                 });
             }
         }
@@ -100,26 +126,40 @@ fn paired(comments: &[CommentLine<'_>], open: &Regex, close: &Regex) -> Vec<Regi
     // Unpaired opens collapse to the marker line itself.
     for o in stack {
         let (label, label_span) = label_of(o, open);
-        regions.push(Region { l0: o.line as i64 + 1, l1: o.line as i64 + 1, label, label_span });
+        regions.push(Region {
+            l0: o.line as i64 + 1,
+            l1: o.line as i64 + 1,
+            label,
+            label_span,
+        });
     }
     regions
 }
 
 fn label_of(c: &CommentLine<'_>, open: &Regex) -> (String, Option<(usize, usize)>) {
-    let Some(caps) = open.captures(c.text) else { return (String::new(), None) };
+    let Some(caps) = open.captures(c.text) else {
+        return (String::new(), None);
+    };
     if let Some(name) = open.capture_names().flatten().next() {
         if let Some(g) = caps.name(name) {
             if !g.as_str().is_empty() {
-                return (g.as_str().to_string(),
-                        Some((c.text_off + g.start(), c.text_off + g.end())));
+                return (
+                    g.as_str().to_string(),
+                    Some((c.text_off + g.start(), c.text_off + g.end())),
+                );
             }
         }
     }
     let m = caps.get(0).unwrap();
     let tail = c.text[m.end()..].trim();
-    if tail.is_empty() { return (String::new(), None) }
+    if tail.is_empty() {
+        return (String::new(), None);
+    }
     let start = m.end() + c.text[m.end()..].len() - c.text[m.end()..].trim_start().len();
-    (tail.to_string(), Some((c.text_off + start, c.text_off + start + tail.len())))
+    (
+        tail.to_string(),
+        Some((c.text_off + start, c.text_off + start + tail.len())),
+    )
 }
 
 #[cfg(test)]
@@ -138,7 +178,8 @@ mod tests {
 
     #[test]
     fn paired_regions_nest_lifo_and_unpaired_collapses() {
-        let src = "// BEGIN: outer\nx\n// BEGIN: inner\ny\n// END:\nz\n// END:\n// BEGIN: leak\nw\n";
+        let src =
+            "// BEGIN: outer\nx\n// BEGIN: inner\ny\n// END:\nz\n// END:\n// BEGIN: leak\nw\n";
         let open = Regex::new("BEGIN:").unwrap();
         let close = Regex::new("END:").unwrap();
         let rs = run_comment(src, &open, Some(&close));
@@ -169,6 +210,10 @@ mod tests {
         let re = Regex::new("S: (?P<x>[a-z])").unwrap();
         let rs = run_comment(src, &re, None);
         let labels: Vec<&str> = rs.iter().map(|r| r.label.as_str()).collect();
-        assert_eq!(labels, vec!["a", "b", "c", "d"], "non-comment line must not match");
+        assert_eq!(
+            labels,
+            vec!["a", "b", "c", "d"],
+            "non-comment line must not match"
+        );
     }
 }

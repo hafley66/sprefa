@@ -192,7 +192,8 @@ mod tests {
 
     fn contract_db() -> Db {
         let db = db::open(None).unwrap();
-        db.execute_batch_on("_repo_identity_v1", SHADOW_DDL).unwrap();
+        db.execute_batch_on("_repo_identity_v1", SHADOW_DDL)
+            .unwrap();
         db
     }
 

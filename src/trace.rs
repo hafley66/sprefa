@@ -71,7 +71,9 @@ pub fn init(is_daemon_foreground: bool) {
     // DL_TRACE seeds the filter when RUST_LOG is unset, so the project keeps its
     // own knob without squatting on RUST_LOG for deps.
     let filter = EnvFilter::try_from_env("RUST_LOG")
-        .or_else(|_| EnvFilter::try_new(&std::env::var("DL_TRACE").unwrap_or_else(|_| "off".into())))
+        .or_else(|_| {
+            EnvFilter::try_new(&std::env::var("DL_TRACE").unwrap_or_else(|_| "off".into()))
+        })
         .unwrap_or_else(|_| EnvFilter::new("off"));
     let stderr_layer = fmt::layer()
         .with_target(false)
@@ -119,7 +121,9 @@ where
         .file(PathBuf::from(path))
         .include_args(true)
         .build();
-    *chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner()) = Some(guard);
+    *chrome_guard_slot()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = Some(guard);
     Some(layer)
 }
 
@@ -132,7 +136,9 @@ where
 /// or when this was already called once. A SIGKILL still loses this call
 /// entirely — see `docs/tracing-chrome.md` for exactly what that costs.
 pub fn finish_chrome_trace() {
-    let mut slot = chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner());
+    let mut slot = chrome_guard_slot()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     drop(slot.take());
 }
 
@@ -143,7 +149,9 @@ pub fn finish_chrome_trace() {
 /// ticks loses at most the in-flight tick's spans, not the whole run since
 /// process start. No-op when no chrome layer is installed.
 pub fn flush_chrome_trace() {
-    let slot = chrome_guard_slot().lock().unwrap_or_else(|p| p.into_inner());
+    let slot = chrome_guard_slot()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
     if let Some(guard) = slot.as_ref() {
         guard.flush();
     }
@@ -166,7 +174,11 @@ pub(crate) fn dl_log_layer<S>(
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    let writer = RollingWriter { dir: home.join("log"), name: "dl.log", cap_bytes: ROTATE_BYTES };
+    let writer = RollingWriter {
+        dir: home.join("log"),
+        name: "dl.log",
+        cap_bytes: ROTATE_BYTES,
+    };
     let filter = EnvFilter::try_from_env("DL_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     fmt::layer::<S>()
         .with_writer(writer)
@@ -183,7 +195,11 @@ pub(crate) fn error_log_layer<S>(
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    let writer = RollingWriter { dir: home.join("log"), name: "error.log", cap_bytes: ROTATE_BYTES };
+    let writer = RollingWriter {
+        dir: home.join("log"),
+        name: "error.log",
+        cap_bytes: ROTATE_BYTES,
+    };
     fmt::layer::<S>()
         .with_writer(writer)
         .with_ansi(false)
@@ -220,7 +236,10 @@ struct RollingWriter {
 impl<'a> fmt::MakeWriter<'a> for RollingWriter {
     type Writer = RollingGuard;
     fn make_writer(&'a self) -> Self::Writer {
-        RollingGuard { inner: self.clone(), buf: Vec::new() }
+        RollingGuard {
+            inner: self.clone(),
+            buf: Vec::new(),
+        }
     }
 }
 
@@ -252,7 +271,11 @@ impl Drop for RollingGuard {
                 let _ = std::fs::rename(&path, rotated);
             }
         }
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
             use std::io::Write;
             let _ = f.write_all(&self.buf);
         }
@@ -271,7 +294,11 @@ mod tests {
     fn rolling_writer_buffers_to_one_write_and_rotates() {
         let dir = std::env::temp_dir().join(format!("dl_trace_rw_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let w = RollingWriter { dir: dir.clone(), name: "t.log", cap_bytes: 10 };
+        let w = RollingWriter {
+            dir: dir.clone(),
+            name: "t.log",
+            cap_bytes: 10,
+        };
 
         {
             use std::io::Write as _;
@@ -288,7 +315,10 @@ mod tests {
             let mut g = fmt::MakeWriter::make_writer(&w);
             g.write_all(b"second line\n").unwrap();
         }
-        assert!(dir.join("t.log.1").exists(), "prior content rotated to t.log.1");
+        assert!(
+            dir.join("t.log.1").exists(),
+            "prior content rotated to t.log.1"
+        );
         let rotated = std::fs::read_to_string(dir.join("t.log.1")).unwrap();
         assert_eq!(rotated, "hello world\n");
         let current = std::fs::read_to_string(dir.join("t.log")).unwrap();

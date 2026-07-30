@@ -38,8 +38,9 @@ fn go_module_re() -> &'static Regex {
 /// string) is never mistaken for one.
 fn go_import_single_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(
-        r#"(?m)^[ \t]*import[ \t]+(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+    RE.get_or_init(|| {
+        Regex::new(r#"(?m)^[ \t]*import[ \t]+(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap()
+    })
 }
 
 /// The parenthesized body of a grouped `import (...)` block. Go import blocks
@@ -53,8 +54,7 @@ fn go_import_block_re() -> &'static Regex {
 /// as the single-line form, applied per line of the block's inner text.
 fn go_import_line_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(
-        r#"(?m)^[ \t]*(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
+    RE.get_or_init(|| Regex::new(r#"(?m)^[ \t]*(?:(_|\.|\w+)[ \t]+)?"([^"]*)""#).unwrap())
 }
 
 fn go_join_dir(root_dir: &str, rest: &str) -> String {
@@ -74,11 +74,17 @@ impl GoIndex {
             if !path.ends_with("go.mod") {
                 continue;
             }
-            let Some(m) = go_module_re().captures(content) else { continue };
+            let Some(m) = go_module_re().captures(content) else {
+                continue;
+            };
             modules.push((m[1].to_string(), parent_dir(path)));
         }
-        modules.sort_by(|a, b| b.0.len().cmp(&a.0.len())
-            .then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        modules.sort_by(|a, b| {
+            b.0.len()
+                .cmp(&a.0.len())
+                .then_with(|| a.0.cmp(&b.0))
+                .then_with(|| a.1.cmp(&b.1))
+        });
 
         let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
         for f in files {
@@ -110,8 +116,12 @@ impl GoIndex {
             };
             let Some(dir) = dir else { continue };
             return match self.dirs.get(&dir) {
-                Some(fs) if !fs.is_empty() => fs.iter().map(|f| Resolution::File(f.clone())).collect(),
-                _ => vec![Resolution::Unresolved(format!("{spec}: no .go files in \"{dir}\""))],
+                Some(fs) if !fs.is_empty() => {
+                    fs.iter().map(|f| Resolution::File(f.clone())).collect()
+                }
+                _ => vec![Resolution::Unresolved(format!(
+                    "{spec}: no .go files in \"{dir}\""
+                ))],
             };
         }
         vec![Resolution::External(spec.to_string())]
@@ -188,13 +198,29 @@ impl ModuleResolver for GoResolver {
             for lc in go_import_line_re().captures_iter(inner.as_str()) {
                 let alias = lc.get(1).map(|m| m.as_str());
                 let spec_m = lc.get(2).unwrap();
-                push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), base + spec_m.start(), base + spec_m.end());
+                push_go_import(
+                    &mut out,
+                    idx,
+                    &clean,
+                    alias,
+                    spec_m.as_str(),
+                    base + spec_m.start(),
+                    base + spec_m.end(),
+                );
             }
         }
         for c in go_import_single_re().captures_iter(&clean) {
             let alias = c.get(1).map(|m| m.as_str());
             let spec_m = c.get(2).unwrap();
-            push_go_import(&mut out, idx, &clean, alias, spec_m.as_str(), spec_m.start(), spec_m.end());
+            push_go_import(
+                &mut out,
+                idx,
+                &clean,
+                alias,
+                spec_m.as_str(),
+                spec_m.start(),
+                spec_m.end(),
+            );
         }
         out
     }
@@ -230,4 +256,3 @@ impl ModuleResolver for GoResolver {
 // NON-GOAL: a `py_root(path)` user-fact seam (letting a program declare its
 // own import roots) was considered and deferred — it would need the
 // declared-sink treatment (like `repo`/`diag`), not a resolver-internal read.
-

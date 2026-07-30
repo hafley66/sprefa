@@ -81,7 +81,11 @@ fn write_fixture(dir: &Path, holder_one_target: &str, revision_marker: &str) {
         "pub struct Config { pub n: i64 }\npub fn make() -> i64 { 2 }\n",
     )
     .unwrap();
-    fs::write(dir.join("src/app.rs"), "pub mod holder_one;\npub mod holder_both;\n").unwrap();
+    fs::write(
+        dir.join("src/app.rs"),
+        "pub mod holder_one;\npub mod holder_both;\n",
+    )
+    .unwrap();
     fs::write(
         dir.join("src/app/holder_one.rs"),
         format!(
@@ -137,19 +141,29 @@ fn unique_import_narrows_ambiguity_both_ambiguous_stays_bare() {
     let (code, out, err) = run(&d, &cfg, &d.join("db"));
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
 
-    let links = out.split("? type_link").nth(1).unwrap_or("").split("? call_edge").next().unwrap_or("");
+    let links = out
+        .split("? type_link")
+        .nth(1)
+        .unwrap_or("")
+        .split("? call_edge")
+        .next()
+        .unwrap_or("");
     let calls = out.split("? call_edge").nth(1).unwrap_or("");
 
     // holder_one imports ONLY pkg_a's Config/make: both resolvers narrow to
     // the unique survivor (import-based, a "strong" reason).
     assert!(
-        links.lines().any(|l| l.contains("holder_one.rs::struct::Holder")
-            && l.contains("pkg_a/config.rs::struct::Config")),
+        links
+            .lines()
+            .any(|l| l.contains("holder_one.rs::struct::Holder")
+                && l.contains("pkg_a/config.rs::struct::Config")),
         "type_link narrows to the imported pkg_a::Config:\n{links}"
     );
     assert!(
-        calls.lines().any(|l| l.contains("holder_one.rs::function::build")
-            && l.contains("pkg_a/config.rs::function::make")),
+        calls
+            .lines()
+            .any(|l| l.contains("holder_one.rs::function::build")
+                && l.contains("pkg_a/config.rs::function::make")),
         "call_edge narrows to the imported pkg_a::make:\n{calls}"
     );
 
@@ -158,7 +172,10 @@ fn unique_import_narrows_ambiguity_both_ambiguous_stays_bare() {
     // (never a guess) and call_edge emits no row at all (unresolved calls
     // never appear in call_edge, only in call_site).
     assert!(
-        links.lines().any(|l| l.contains("holder_both.rs::struct::HolderBoth") && l.ends_with("\tConfig\tfield")),
+        links
+            .lines()
+            .any(|l| l.contains("holder_both.rs::struct::HolderBoth")
+                && l.ends_with("\tConfig\tfield")),
         "type_link stays bare for the both-imports case:\n{links}"
     );
     assert!(
@@ -184,7 +201,10 @@ fn editing_an_import_flips_the_resolution_on_a_retick() {
     assert!(
         out1.contains("holder_one.rs::struct::Holder") && {
             let links = out1.split("? type_link").nth(1).unwrap_or("");
-            links.lines().any(|l| l.contains("holder_one.rs::struct::Holder") && l.contains("pkg_a/config.rs::struct::Config"))
+            links.lines().any(|l| {
+                l.contains("holder_one.rs::struct::Holder")
+                    && l.contains("pkg_a/config.rs::struct::Config")
+            })
         },
         "first tick resolves to pkg_a:\n{out1}"
     );
@@ -197,18 +217,33 @@ fn editing_an_import_flips_the_resolution_on_a_retick() {
     let (code2, out2, err2) = run(&d, &cfg, &db);
     assert_eq!(code2, 0, "second run failed:\nstdout={out2}\nstderr={err2}");
 
-    let links2 = out2.split("? type_link").nth(1).unwrap_or("").split("? call_edge").next().unwrap_or("");
+    let links2 = out2
+        .split("? type_link")
+        .nth(1)
+        .unwrap_or("")
+        .split("? call_edge")
+        .next()
+        .unwrap_or("");
     let calls2 = out2.split("? call_edge").nth(1).unwrap_or("");
     assert!(
-        links2.lines().any(|l| l.contains("holder_one.rs::struct::Holder") && l.contains("pkg_b/config.rs::struct::Config")),
+        links2
+            .lines()
+            .any(|l| l.contains("holder_one.rs::struct::Holder")
+                && l.contains("pkg_b/config.rs::struct::Config")),
         "re-tick flips type_link to pkg_b after the import edit:\n{links2}"
     );
     assert!(
-        calls2.lines().any(|l| l.contains("holder_one.rs::function::build") && l.contains("pkg_b/config.rs::function::make")),
+        calls2
+            .lines()
+            .any(|l| l.contains("holder_one.rs::function::build")
+                && l.contains("pkg_b/config.rs::function::make")),
         "re-tick flips call_edge to pkg_b after the import edit:\n{calls2}"
     );
     assert!(
-        !links2.lines().any(|l| l.contains("holder_one.rs::struct::Holder") && l.contains("pkg_a/config.rs::struct::Config")),
+        !links2
+            .lines()
+            .any(|l| l.contains("holder_one.rs::struct::Holder")
+                && l.contains("pkg_a/config.rs::struct::Config")),
         "the stale pkg_a resolution must not survive the retick:\n{links2}"
     );
 }

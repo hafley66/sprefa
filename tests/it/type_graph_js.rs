@@ -85,42 +85,79 @@ fn plain_js_and_jsx_populate_every_extraction_family() {
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
 
     // type_entity: a class and a function in .js, both functions in .jsx.
-    assert!(out.contains("src/model.js::class::Widget\tWidget\tclass"), "class entity: {out}");
-    assert!(out.contains("src/model.js::function::helper\thelper\tfunction"), "fn entity: {out}");
-    assert!(out.contains("src/app.js::function::run\trun\tfunction"), "cross-file fn entity: {out}");
-    assert!(out.contains("src/card.jsx::function::Card\tCard\tfunction"), "jsx fn entity: {out}");
-    assert!(out.contains("src/card.jsx::function::App\tApp\tfunction"), "jsx fn entity: {out}");
+    assert!(
+        out.contains("src/model.js::class::Widget\tWidget\tclass"),
+        "class entity: {out}"
+    );
+    assert!(
+        out.contains("src/model.js::function::helper\thelper\tfunction"),
+        "fn entity: {out}"
+    );
+    assert!(
+        out.contains("src/app.js::function::run\trun\tfunction"),
+        "cross-file fn entity: {out}"
+    );
+    assert!(
+        out.contains("src/card.jsx::function::Card\tCard\tfunction"),
+        "jsx fn entity: {out}"
+    );
+    assert!(
+        out.contains("src/card.jsx::function::App\tApp\tfunction"),
+        "jsx fn entity: {out}"
+    );
 
     // call_edge across two plain-.js files: app.js's run() calls model.js's helper().
     assert!(
         out.contains("src/app.js::function::run\t") && {
             let calls = out.split("? call_edge").nth(1).unwrap_or("");
-            calls.contains("src/app.js::function::run\t") && calls.contains("src/model.js::function::helper\tcall")
+            calls.contains("src/app.js::function::run\t")
+                && calls.contains("src/model.js::function::helper\tcall")
         },
         "cross-file call_edge run->helper: {out}"
     );
 
     // df_node: at least a ret + call_res node inside run(), proving the
     // dataflow lift runs over plain .js the same as .ts.
-    let df_nodes = out.split("? df_node").nth(1).unwrap_or("").split("? df_field").next().unwrap_or("");
+    let df_nodes = out
+        .split("? df_node")
+        .nth(1)
+        .unwrap_or("")
+        .split("? df_field")
+        .next()
+        .unwrap_or("");
     assert!(
-        df_nodes.lines().any(|line| line.contains("src/app.js") && line.contains("\tret\t")),
+        df_nodes
+            .lines()
+            .any(|line| line.contains("src/app.js") && line.contains("\tret\t")),
         "df_node ret in .js: {df_nodes}"
     );
     assert!(
-        df_nodes.lines().any(|line| line.contains("src/app.js") && line.contains("\tcall_res\t")),
+        df_nodes
+            .lines()
+            .any(|line| line.contains("src/app.js") && line.contains("\tcall_res\t")),
         "df_node call_res in .js: {df_nodes}"
     );
 
     // df_field: the JSX <Card title="hi" /> usage lifts as a `new` node with a
     // `title` field pointing at a `lit` value node, in a bare .jsx file.
-    let df_fields = out.split("? df_field").nth(1).unwrap_or("").split("? doc_comment").next().unwrap_or("");
+    let df_fields = out
+        .split("? df_field")
+        .nth(1)
+        .unwrap_or("")
+        .split("? doc_comment")
+        .next()
+        .unwrap_or("");
     assert!(
-        df_fields.lines().any(|line| line.contains("card.jsx") && line.contains("\ttitle\t")),
+        df_fields
+            .lines()
+            .any(|line| line.contains("card.jsx") && line.contains("\ttitle\t")),
         "jsx df_field title prop: {df_fields}"
     );
 
     // doc_comment: the /** Widget model. */ block resolves to the Widget entity.
     let docs = out.split("? doc_comment").nth(1).unwrap_or("");
-    assert!(docs.contains("src/model.js::class::Widget") && docs.contains("Widget model."), "doc_comment: {docs}");
+    assert!(
+        docs.contains("src/model.js::class::Widget") && docs.contains("Widget model."),
+        "doc_comment: {docs}"
+    );
 }

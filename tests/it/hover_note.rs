@@ -81,7 +81,9 @@ impl Session {
         self.send(serde_json::json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}));
         self.send(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
         for _ in 0..20 {
-            if let Ok(Some(_)) = self.child.try_wait() { return; }
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = self.child.kill();
@@ -95,18 +97,28 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
         let mut len = 0usize;
         loop {
             let mut line = String::new();
-            if r.read_line(&mut line).unwrap_or(0) == 0 { return; }
+            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
             let trimmed = line.trim_end();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
                 len = rest.trim().parse().unwrap_or(0);
             }
         }
-        if len == 0 { continue; }
+        if len == 0 {
+            continue;
+        }
         let mut buf = vec![0u8; len];
-        if r.read_exact(&mut buf).is_err() { return; }
+        if r.read_exact(&mut buf).is_err() {
+            return;
+        }
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) {
-            if tx.send(v).is_err() { return; }
+            if tx.send(v).is_err() {
+                return;
+            }
         }
     }
 }
@@ -114,7 +126,9 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
 fn drain_stderr(child: &mut Child) -> String {
     let _ = child.kill();
     let mut s = String::new();
-    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut s); }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut s);
+    }
     s
 }
 
@@ -145,8 +159,11 @@ fn hover_note_alone_shows_at_its_span_and_nowhere_else() {
     // Whole-match column span for line 1 covers "struct FocusPoint" (cols
     // 0..17, 0-based exclusive end); line 2 is a different, unrelated struct
     // with no note attached.
-    fs::write(root.join("src/anchors.rs"),
-        "struct FocusPoint;\nstruct OtherThing;\n").unwrap();
+    fs::write(
+        root.join("src/anchors.rs"),
+        "struct FocusPoint;\nstruct OtherThing;\n",
+    )
+    .unwrap();
     let prog = root.join("p.dl");
     fs::write(&prog, concat!(
         "rel sym(name: text, source_file: file, match_line: int, ",
@@ -163,20 +180,37 @@ fn hover_note_alone_shows_at_its_span_and_nowhere_else() {
     initialize(&mut s, &root);
 
     // Inside the note span: line 0, character 10 (within "struct FocusPoint").
-    let inside = s.request(2, "textDocument/hover",
-        position_params(&root.join("src/anchors.rs"), 0, 10));
-    let inside_md = inside.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("expected a hover with markdown content, got: {inside}\nstderr: {}",
-            drain_stderr(&mut s.child)));
-    assert!(inside_md.contains("FocusPoint carries the anchor position."),
-        "the note text is in the hover: {inside_md}");
+    let inside = s.request(
+        2,
+        "textDocument/hover",
+        position_params(&root.join("src/anchors.rs"), 0, 10),
+    );
+    let inside_md = inside
+        .get("contents")
+        .and_then(|c| c.get("value"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a hover with markdown content, got: {inside}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
+    assert!(
+        inside_md.contains("FocusPoint carries the anchor position."),
+        "the note text is in the hover: {inside_md}"
+    );
 
     // Outside the note span: line 1 (the OTHER struct, no note attached, no
     // entity opted in anywhere in this program) — null.
-    let outside = s.request(3, "textDocument/hover",
-        position_params(&root.join("src/anchors.rs"), 1, 10));
-    assert!(outside.is_null(),
-        "no note and no entity at the unrelated line: {outside}");
+    let outside = s.request(
+        3,
+        "textDocument/hover",
+        position_params(&root.join("src/anchors.rs"), 1, 10),
+    );
+    assert!(
+        outside.is_null(),
+        "no note and no entity at the unrelated line: {outside}"
+    );
 
     s.shutdown();
 }
@@ -195,7 +229,9 @@ fn hover_note_merges_with_entity_hover() {
     // "struct" is all-lowercase so it never matches `[A-Z][a-zA-Z]*`, and the
     // first (and only) match on the line is "Anchor" — the whole-match
     // columns exactly bound the identifier, same span the entity resolves.
-    fs::write(&prog, concat!(
+    fs::write(
+        &prog,
+        concat!(
         "rel sym(name: text, source_file: file, match_line: int, ",
         "start_col: int, finish_col: int).\n",
         "sym(name, source_file, match_line, start_col, finish_col) <- ",
@@ -206,23 +242,50 @@ fn hover_note_merges_with_entity_hover() {
         "hover_note(path: source_file, line: match_line - 1, end_line: match_line - 1, ",
         "col: start_col, end_col: finish_col, md: \"Anchor pins the flow start.\") <- ",
         "sym(name, source_file, match_line, start_col, finish_col), name = \"Anchor\".\n",
-    )).unwrap();
+    ),
+    )
+    .unwrap();
 
     let mut s = Session::spawn(&prog, &root, &root.join("hover.db"));
     initialize(&mut s, &root);
 
-    let result = s.request(2, "textDocument/hover",
-        position_params(&root.join("src/lib.rs"), 0, 9));
-    let md = result.get("contents").and_then(|c| c.get("value")).and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("expected a hover with markdown content, got: {result}\nstderr: {}",
-            drain_stderr(&mut s.child)));
-    assert!(md.contains("Anchor"), "the entity markdown names Anchor: {md}");
-    assert!(md.contains("Anchor pins the flow start."), "the note text is present: {md}");
-    assert!(md.contains("---"), "entity and note are separated by a rule: {md}");
-    let entity_idx = md.find("struct").unwrap_or_else(|| panic!("entity markdown missing: {md}"));
-    let note_idx = md.find("Anchor pins the flow start.")
+    let result = s.request(
+        2,
+        "textDocument/hover",
+        position_params(&root.join("src/lib.rs"), 0, 9),
+    );
+    let md = result
+        .get("contents")
+        .and_then(|c| c.get("value"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a hover with markdown content, got: {result}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
+    assert!(
+        md.contains("Anchor"),
+        "the entity markdown names Anchor: {md}"
+    );
+    assert!(
+        md.contains("Anchor pins the flow start."),
+        "the note text is present: {md}"
+    );
+    assert!(
+        md.contains("---"),
+        "entity and note are separated by a rule: {md}"
+    );
+    let entity_idx = md
+        .find("struct")
+        .unwrap_or_else(|| panic!("entity markdown missing: {md}"));
+    let note_idx = md
+        .find("Anchor pins the flow start.")
         .unwrap_or_else(|| panic!("note text missing: {md}"));
-    assert!(entity_idx < note_idx, "entity markdown comes first, then the note: {md}");
+    assert!(
+        entity_idx < note_idx,
+        "entity markdown comes first, then the note: {md}"
+    );
 
     s.shutdown();
 }
@@ -233,10 +296,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// (3) `rel hover_note(...)` bails: the sink is reserved, head it directly
@@ -244,9 +310,14 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 #[test]
 fn rel_decl_of_the_sink_bails() {
     let dir = sandbox("reserved");
-    let prog = "rel hover_note(path: text, line: int, col: int, end_line: int, end_col: int, md: text).\n";
+    let prog =
+        "rel hover_note(path: text, line: int, col: int, end_line: int, end_col: int, md: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("reserved-name") && err.contains("relation `hover_note`")
-        && err.contains("write to the built-in directly"), "{err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `hover_note`")
+            && err.contains("write to the built-in directly"),
+        "{err}"
+    );
 }

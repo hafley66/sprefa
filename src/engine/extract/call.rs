@@ -1,9 +1,9 @@
 use super::*;
+use crate::rels::{CallPathRefreshOutcome, PathRefreshContext};
 use crate::storage::call::{
     CallDefBaseline, CallDefBucketBaseline, CallDeltaOutcome, CallFamilyWrite, CallOwnerBaseline,
     CallOwnerDelta, CallResolvedEdge, CallSiteBaseline, CallStore,
 };
-use crate::rels::{CallPathRefreshOutcome, PathRefreshContext};
 
 impl Engine {
     pub(crate) fn refresh_call_rels_delta(
@@ -11,32 +11,40 @@ impl Engine {
         context: &PathRefreshContext<'_>,
     ) -> Result<CallPathRefreshOutcome> {
         if context.module_full_refresh {
-            return Ok(CallPathRefreshOutcome::Unsupported("call-module-full-refresh"));
+            return Ok(CallPathRefreshOutcome::Unsupported(
+                "call-module-full-refresh",
+            ));
         }
         if context.module_dependency_changed {
-            return Ok(CallPathRefreshOutcome::Unsupported("call-module-dependency-changed"));
+            return Ok(CallPathRefreshOutcome::Unsupported(
+                "call-module-dependency-changed",
+            ));
         }
         if context.changed_paths.len() != 1 {
             return Ok(CallPathRefreshOutcome::Unsupported("call-path-count"));
         }
         let path = context.changed_paths.iter().next().unwrap();
         if !self.root.join(path).is_file() {
-            return Ok(CallPathRefreshOutcome::Unsupported("call-path-not-existing"));
+            return Ok(CallPathRefreshOutcome::Unsupported(
+                "call-path-not-existing",
+            ));
         }
 
         let work_rev = self.self_rev_text();
         let files = self.extract_file_set()?;
-        let work_files: Vec<ExtractFile> = files.iter()
+        let work_files: Vec<ExtractFile> = files
+            .iter()
             .filter(|file| file.2 == work_rev)
             .cloned()
             .collect();
         let repos: HashSet<&str> = work_files.iter().map(|file| file.0.as_str()).collect();
         if repos.len() != 1 {
-            return Ok(CallPathRefreshOutcome::Unsupported("call-multi-repo-corpus"));
+            return Ok(CallPathRefreshOutcome::Unsupported(
+                "call-multi-repo-corpus",
+            ));
         }
-        let matching: Vec<&ExtractFile> = work_files.iter()
-            .filter(|file| file.1 == *path)
-            .collect();
+        let matching: Vec<&ExtractFile> =
+            work_files.iter().filter(|file| file.1 == *path).collect();
         if matching.len() != 1 {
             return Ok(CallPathRefreshOutcome::Unsupported("call-owner-coordinate"));
         }
@@ -47,7 +55,10 @@ impl Engine {
         }
 
         let roots = self.repo_roots();
-        let froot = roots.get(repo).map(|root| root.as_path()).unwrap_or(&self.root);
+        let froot = roots
+            .get(repo)
+            .map(|root| root.as_path())
+            .unwrap_or(&self.root);
         let key = (repo.clone(), path.clone(), fact_digest.clone());
         // Clone out of the cache in its own statement so the immutable borrow is
         // released before the miss branch takes `borrow_mut` (an `if let`
@@ -56,8 +67,13 @@ impl Engine {
         let (rid, facts) = if let Some((rid, facts)) = cached {
             (rid, facts)
         } else {
-            let Some(lang) = typegraph::type_langs().iter().find(|lang| lang.matches(path)) else {
-                return Ok(CallPathRefreshOutcome::Unsupported("call-language-unsupported"));
+            let Some(lang) = typegraph::type_langs()
+                .iter()
+                .find(|lang| lang.matches(path))
+            else {
+                return Ok(CallPathRefreshOutcome::Unsupported(
+                    "call-language-unsupported",
+                ));
             };
             let content = read_content(froot, rev, path)?;
             let rid = repo_id_of(froot, path, repo);
@@ -73,8 +89,12 @@ impl Engine {
         let mut sites = Vec::with_capacity(facts.sites.len());
         let mut ordinals: HashMap<(&str, u32), u32> = HashMap::new();
         for site in &facts.sites {
-            let caller = facts.defs.iter()
-                .filter(|def| def.file == site.file && site.line >= def.line && site.line <= def.end)
+            let caller = facts
+                .defs
+                .iter()
+                .filter(|def| {
+                    def.file == site.file && site.line >= def.line && site.line <= def.end
+                })
                 .min_by_key(|def| def.end - def.line)
                 .map(|def| format!("{rid}::{}", def.sym))
                 .unwrap_or_default();
@@ -140,7 +160,9 @@ impl Engine {
         // Perf gap A, per rev: same per-rev digest skip + per-file cache as
         // refresh_type_rels. Empty `moved` = whole family skips.
         let moved = self.moved_extract_revs("call", &files, true)?;
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
 
         let root = self.root.clone();
         let roots = self.repo_roots();
@@ -150,14 +172,18 @@ impl Engine {
             let rid = repo_id_of(froot, path, repo);
             fact_digest_by_owner.insert((rid, rev.clone(), path.clone()), digest.clone());
         }
-        let facts: Vec<(String, String, String, Arc<typegraph::CallFacts>)> =
-            cached_facts(&self.call_facts_cache, &files, &self.extract_files_parsed, |repo, path, rev| {
+        let facts: Vec<(String, String, String, Arc<typegraph::CallFacts>)> = cached_facts(
+            &self.call_facts_cache,
+            &files,
+            &self.extract_files_parsed,
+            |repo, path, rev| {
                 let lang = typegraph::type_langs().iter().find(|l| l.matches(path))?;
                 let froot = roots.get(repo).map(|p| p.as_path()).unwrap_or(&root);
                 let content = read_content(froot, rev, path).unwrap_or_default();
                 let rid = repo_id_of(froot, path, repo);
                 Some((rid, lang.extract_calls(path, &content)))
-            });
+            },
+        );
 
         // Corpus-global def index: a barrier before any edge is emitted, same
         // shape as refresh_type_rels. by_name resolves a bare callee to a def
@@ -181,13 +207,29 @@ impl Engine {
                 // Dedup by callable sym (see refresh_type_rels): a def scanned
                 // twice under two slugs that map to one rid stays unique, while
                 // two distinct callables of one name stay ambiguous.
-                let bucket = by_name.entry((repo.as_str(), rev.as_str(), d.name.as_str())).or_default();
+                let bucket = by_name
+                    .entry((repo.as_str(), rev.as_str(), d.name.as_str()))
+                    .or_default();
                 if !bucket.iter().any(|s| *s == d.sym.as_str()) {
                     bucket.push(d.sym.as_str());
                 }
-                sym_at.insert((repo.as_str(), d.file.as_str(), rev.as_str(), d.name.as_str()), d.sym.as_str());
-                sym_file.insert((repo.as_str(), rev.as_str(), d.sym.as_str()), d.file.as_str());
-                def_by_file.entry((repo.as_str(), d.file.as_str(), rev.as_str())).or_default().push((d.line, d.end, d.sym.as_str()));
+                sym_at.insert(
+                    (
+                        repo.as_str(),
+                        d.file.as_str(),
+                        rev.as_str(),
+                        d.name.as_str(),
+                    ),
+                    d.sym.as_str(),
+                );
+                sym_file.insert(
+                    (repo.as_str(), rev.as_str(), d.sym.as_str()),
+                    d.file.as_str(),
+                );
+                def_by_file
+                    .entry((repo.as_str(), d.file.as_str(), rev.as_str()))
+                    .or_default()
+                    .push((d.line, d.end, d.sym.as_str()));
             }
         }
         let mut def_buckets: Vec<CallDefBucketBaseline> = by_name
@@ -217,7 +259,12 @@ impl Engine {
         // describes the working tree, and after alias resolution a rev is an
         // oid, so the predicate is set membership rather than a text compare.
         let work_revs = self.worktree_rev_texts.clone();
-        let resolve_callee = |repo: &str, rev: &str, file: &str, callee: &str, line: u32| -> Option<String> {
+        let resolve_callee = |repo: &str,
+                              rev: &str,
+                              file: &str,
+                              callee: &str,
+                              line: u32|
+         -> Option<String> {
             if work_revs.contains(rev) {
                 // Occurrence-level override (position before name): the exact
                 // symbol occurring at this call's (file, line) disambiguates a
@@ -239,7 +286,9 @@ impl Engine {
                     OccPick::Fallthrough => {
                         // No occurrence names this site: the name-level map still
                         // applies (identical to the pre-occurrence behavior).
-                        if let Some(def_file) = scip.get(&(repo.to_string(), file.to_string(), callee.to_string())) {
+                        if let Some(def_file) =
+                            scip.get(&(repo.to_string(), file.to_string(), callee.to_string()))
+                        {
                             if let Some(sym) = sym_at.get(&(repo, def_file.as_str(), rev, callee)) {
                                 return Some(format!("{repo}::{sym}"));
                             }
@@ -252,16 +301,19 @@ impl Engine {
             // named `callee` itself (local def shadows an aliased import), and
             // never falls through to by_name on a miss.
             if sym_at.get(&(repo, file, rev, callee)).is_none() {
-                if let Some((source, dst)) = aliases.get(&(rev.to_string(), file.to_string())).and_then(|m| m.get(callee)) {
-                    return sym_at.get(&(repo, dst.as_str(), rev, source.as_str()))
+                if let Some((source, dst)) = aliases
+                    .get(&(rev.to_string(), file.to_string()))
+                    .and_then(|m| m.get(callee))
+                {
+                    return sym_at
+                        .get(&(repo, dst.as_str(), rev, source.as_str()))
                         .map(|sym| format!("{repo}::{sym}"));
                 }
             }
             match by_name.get(&(repo, rev, callee)) {
                 Some(v) if v.len() == 1 => Some(format!("{repo}::{}", v[0])),
-                Some(v) if v.len() > 1 =>
-                    narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
-                        .map(|sym| format!("{repo}::{sym}")),
+                Some(v) if v.len() > 1 => narrow_ambiguous(v, repo, rev, file, &sym_file, &imports)
+                    .map(|sym| format!("{repo}::{sym}")),
                 _ => None,
             }
         };
@@ -314,7 +366,9 @@ impl Engine {
                 // Heuristic by name: $R.execute(...) is a write on any receiver;
                 // the rail's conn_fn join narrows to db-shaped sites.
                 let classification = classify_call_kind(&s.callee);
-                let ordinal = occurrence_ordinals.entry((s.file.as_str(), s.line)).or_default();
+                let ordinal = occurrence_ordinals
+                    .entry((s.file.as_str(), s.line))
+                    .or_default();
                 let occurrence = format!("{}:{}:{}", s.file, s.line, *ordinal);
                 *ordinal += 1;
                 // The resolved edge: set only when both endpoints resolve to def
@@ -358,10 +412,13 @@ impl Engine {
             def_buckets: &def_buckets,
             defs: &defs,
             scip_dependency_digest: self.scip_resolution_dependency_digest(&self.self_rev_text()),
-            module_dependency_digest: self.module_resolution_dependency_digest(&self.self_rev_text()),
+            module_dependency_digest: self
+                .module_resolution_dependency_digest(&self.self_rev_text()),
         })?;
         // Persisted only after the writes land, so a failed refresh retries.
-        for (rev, d) in &moved { self.save_extract_digest("call", rev, d)?; }
+        for (rev, d) in &moved {
+            self.save_extract_digest("call", rev, d)?;
+        }
         // The family router is the SOLE writer of the public call rels (P4,
         // capstone cutover): derive every one of them from the owned _call_*
         // tables the write above just populated. A full refresh rewrote every
@@ -395,7 +452,8 @@ impl Engine {
         use crate::storage::Storage;
 
         let mut guard = self.call_router.borrow_mut();
-        let router = guard.get_or_insert_with(|| family::FamilyRouter::new(family::call_families()));
+        let router =
+            guard.get_or_insert_with(|| family::FamilyRouter::new(family::call_families()));
 
         let cold: std::collections::HashSet<&'static str> = family::call_families()
             .iter()
@@ -458,7 +516,9 @@ impl Engine {
         if owns_transaction {
             match &result {
                 Ok(_) => self.db.commit()?,
-                Err(_) => { let _ = self.db.rollback(); }
+                Err(_) => {
+                    let _ = self.db.rollback();
+                }
             }
         }
         self.call_flip_moved.set(any_moved && result.is_ok());
@@ -484,14 +544,16 @@ impl Engine {
 fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {
     let mut identities: Vec<(&str, &str, &str, &str, u32, u32)> = defs
         .iter()
-        .map(|def| (
-            def.sym.as_str(),
-            def.name.as_str(),
-            def.kind.tag(),
-            def.file.as_str(),
-            def.line,
-            def.end,
-        ))
+        .map(|def| {
+            (
+                def.sym.as_str(),
+                def.name.as_str(),
+                def.kind.tag(),
+                def.file.as_str(),
+                def.line,
+                def.end,
+            )
+        })
         .collect();
     identities.sort_unstable();
     let mut hash = blake3::Hasher::new();
@@ -509,4 +571,3 @@ fn call_def_digest(defs: &[typegraph::CallDef]) -> [u8; 32] {
 #[cfg(test)]
 #[path = "call_render_tests.rs"]
 mod render_tests;
-

@@ -75,7 +75,9 @@ impl Session {
         self.send(serde_json::json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}));
         self.send(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
         for _ in 0..20 {
-            if let Ok(Some(_)) = self.child.try_wait() { return; }
+            if let Ok(Some(_)) = self.child.try_wait() {
+                return;
+            }
             std::thread::sleep(Duration::from_millis(100));
         }
         let _ = self.child.kill();
@@ -89,18 +91,28 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
         let mut len = 0usize;
         loop {
             let mut line = String::new();
-            if r.read_line(&mut line).unwrap_or(0) == 0 { return; }
+            if r.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
             let trimmed = line.trim_end();
-            if trimmed.is_empty() { break; }
+            if trimmed.is_empty() {
+                break;
+            }
             if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
                 len = rest.trim().parse().unwrap_or(0);
             }
         }
-        if len == 0 { continue; }
+        if len == 0 {
+            continue;
+        }
         let mut buf = vec![0u8; len];
-        if r.read_exact(&mut buf).is_err() { return; }
+        if r.read_exact(&mut buf).is_err() {
+            return;
+        }
         if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&buf) {
-            if tx.send(v).is_err() { return; }
+            if tx.send(v).is_err() {
+                return;
+            }
         }
     }
 }
@@ -108,7 +120,9 @@ fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<serde_json::Value>) {
 fn drain_stderr(child: &mut Child) -> String {
     let _ = child.kill();
     let mut s = String::new();
-    if let Some(mut e) = child.stderr.take() { let _ = e.read_to_string(&mut s); }
+    if let Some(mut e) = child.stderr.take() {
+        let _ = e.read_to_string(&mut s);
+    }
     s
 }
 
@@ -147,35 +161,72 @@ fn dl_hook_event_lands_row_and_ticks() {
     let mut s = Session::spawn(&prog, &root, &root.join("hook.db"));
     initialize(&mut s, &root);
 
-    let result = s.request(2, "dl/hookEvent", serde_json::json!({
-        "kind": "goto", "session": "take-1", "seq": 1000i64,
-        "json": "{\"word\":\"helper\"}",
-    }));
-    assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true),
-        "well-formed hookEvent acks ok: {result}\nstderr: {}", drain_stderr(&mut s.child));
+    let result = s.request(
+        2,
+        "dl/hookEvent",
+        serde_json::json!({
+            "kind": "goto", "session": "take-1", "seq": 1000i64,
+            "json": "{\"word\":\"helper\"}",
+        }),
+    );
+    assert_eq!(
+        result.get("ok").and_then(|v| v.as_bool()),
+        Some(true),
+        "well-formed hookEvent acks ok: {result}\nstderr: {}",
+        drain_stderr(&mut s.child)
+    );
 
     // The derived rule over hook_event should have run by the time the
     // response came back (same quiet tick as didSave).
-    let rows = s.request(3, "dl/query", serde_json::json!({
-        "sql": "SELECT session, seq, word FROM rel_goto_word_txt ORDER BY seq"}));
-    let rows = rows.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_else(|| panic!(
-        "expected rows, got: {rows}\nstderr: {}", drain_stderr(&mut s.child)));
+    let rows = s.request(
+        3,
+        "dl/query",
+        serde_json::json!({
+        "sql": "SELECT session, seq, word FROM rel_goto_word_txt ORDER BY seq"}),
+    );
+    let rows = rows
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "expected rows, got: {rows}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
     assert_eq!(rows.len(), 1, "one goto_word row derived: {rows:?}");
     assert_eq!(rows[0].get(0).and_then(|v| v.as_str()), Some("take-1"));
     assert_eq!(rows[0].get(1).and_then(|v| v.as_i64()), Some(1000));
     assert_eq!(rows[0].get(2).and_then(|v| v.as_str()), Some("helper"));
 
     // A second event in the same session accumulates rather than replacing.
-    let result = s.request(4, "dl/hookEvent", serde_json::json!({
-        "kind": "goto", "session": "take-1", "seq": 2000i64,
-        "json": "{\"word\":\"caller\"}",
-    }));
+    let result = s.request(
+        4,
+        "dl/hookEvent",
+        serde_json::json!({
+            "kind": "goto", "session": "take-1", "seq": 2000i64,
+            "json": "{\"word\":\"caller\"}",
+        }),
+    );
     assert_eq!(result.get("ok").and_then(|v| v.as_bool()), Some(true));
-    let rows = s.request(5, "dl/query", serde_json::json!({
-        "sql": "SELECT word FROM rel_goto_word_txt ORDER BY seq"}));
-    let words: Vec<&str> = rows.get("rows").and_then(|r| r.as_array()).into_iter().flatten()
-        .filter_map(|r| r.get(0).and_then(|v| v.as_str())).collect();
-    assert_eq!(words, vec!["helper", "caller"], "events accumulate: {words:?}");
+    let rows = s.request(
+        5,
+        "dl/query",
+        serde_json::json!({
+        "sql": "SELECT word FROM rel_goto_word_txt ORDER BY seq"}),
+    );
+    let words: Vec<&str> = rows
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|r| r.get(0).and_then(|v| v.as_str()))
+        .collect();
+    assert_eq!(
+        words,
+        vec!["helper", "caller"],
+        "events accumulate: {words:?}"
+    );
 
     s.shutdown();
 }
@@ -194,29 +245,65 @@ fn dl_hook_event_bad_params_is_error() {
     initialize(&mut s, &root);
 
     // Missing `seq` entirely.
-    let result = s.request(2, "dl/hookEvent", serde_json::json!({
-        "kind": "goto", "session": "take-1", "json": "{}",
-    }));
-    assert!(result.is_null(), "missing seq is a JSON-RPC error: {result}");
+    let result = s.request(
+        2,
+        "dl/hookEvent",
+        serde_json::json!({
+            "kind": "goto", "session": "take-1", "json": "{}",
+        }),
+    );
+    assert!(
+        result.is_null(),
+        "missing seq is a JSON-RPC error: {result}"
+    );
 
     // `seq` present but the wrong type (string, not a number).
-    let result = s.request(3, "dl/hookEvent", serde_json::json!({
-        "kind": "goto", "session": "take-1", "seq": "not-a-number", "json": "{}",
-    }));
-    assert!(result.is_null(), "mistyped seq is a JSON-RPC error: {result}");
+    let result = s.request(
+        3,
+        "dl/hookEvent",
+        serde_json::json!({
+            "kind": "goto", "session": "take-1", "seq": "not-a-number", "json": "{}",
+        }),
+    );
+    assert!(
+        result.is_null(),
+        "mistyped seq is a JSON-RPC error: {result}"
+    );
 
     // Missing `json`.
-    let result = s.request(4, "dl/hookEvent", serde_json::json!({
-        "kind": "goto", "session": "take-1", "seq": 1000i64,
-    }));
-    assert!(result.is_null(), "missing json is a JSON-RPC error: {result}");
+    let result = s.request(
+        4,
+        "dl/hookEvent",
+        serde_json::json!({
+            "kind": "goto", "session": "take-1", "seq": 1000i64,
+        }),
+    );
+    assert!(
+        result.is_null(),
+        "missing json is a JSON-RPC error: {result}"
+    );
 
     // No row should have landed from any of the rejected requests.
-    let rows = s.request(5, "dl/query", serde_json::json!({
-        "sql": "SELECT word FROM rel_goto_word_txt"}));
-    let rows = rows.get("rows").and_then(|r| r.as_array()).cloned().unwrap_or_else(|| panic!(
-        "expected rows, got: {rows}\nstderr: {}", drain_stderr(&mut s.child)));
-    assert!(rows.is_empty(), "rejected hookEvent requests write nothing: {rows:?}");
+    let rows = s.request(
+        5,
+        "dl/query",
+        serde_json::json!({
+        "sql": "SELECT word FROM rel_goto_word_txt"}),
+    );
+    let rows = rows
+        .get("rows")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "expected rows, got: {rows}\nstderr: {}",
+                drain_stderr(&mut s.child)
+            )
+        });
+    assert!(
+        rows.is_empty(),
+        "rejected hookEvent requests write nothing: {rows:?}"
+    );
 
     s.shutdown();
 }

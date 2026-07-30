@@ -42,8 +42,13 @@ fn cold(dir: &Path) {
         .arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()])
-        .output().expect("cold run");
-    assert!(st.status.success(), "cold run failed: {}", String::from_utf8_lossy(&st.stderr));
+        .output()
+        .expect("cold run");
+    assert!(
+        st.status.success(),
+        "cold run failed: {}",
+        String::from_utf8_lossy(&st.stderr)
+    );
 }
 
 /// One incremental tick over the given path; returns the `[tick]` stderr line.
@@ -51,10 +56,10 @@ fn changed(dir: &Path, rel: &str) -> String {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .current_dir(dir)
-        .args(["--db", dir.join("db").to_str().unwrap(),
-               "--changed", rel])
+        .args(["--db", dir.join("db").to_str().unwrap(), "--changed", rel])
         .env("DL_TRACE", "debug")
-        .output().expect("changed run");
+        .output()
+        .expect("changed run");
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -65,8 +70,10 @@ fn comment_edit_rebuilds_nothing() {
     cold(&d);
     fs::write(d.join("src/a.rs"), TWO_FNS_COMMENTED).unwrap();
     let line = changed(&d, "src/a.rs");
-    assert!(line.contains("rebuilt derived: none"),
-        "comment-only edit must rebuild nothing, got: {line}");
+    assert!(
+        line.contains("rebuilt derived: none"),
+        "comment-only edit must rebuild nothing, got: {line}"
+    );
 }
 
 #[test]
@@ -76,6 +83,8 @@ fn real_edit_rebuilds_dependent() {
     cold(&d);
     fs::write(d.join("src/a.rs"), THREE_FNS).unwrap();
     let line = changed(&d, "src/a.rs");
-    assert!(line.contains("rebuilt derived: allfn"),
-        "a new function must rebuild the dependent relation, got: {line}");
+    assert!(
+        line.contains("rebuilt derived: allfn"),
+        "a new function must rebuild the dependent relation, got: {line}"
+    );
 }

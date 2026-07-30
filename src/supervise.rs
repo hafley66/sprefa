@@ -51,7 +51,10 @@ fn qualified_label() -> String {
 #[cfg(target_os = "macos")]
 fn plist_path() -> Result<PathBuf> {
     let home = home_dir()?;
-    Ok(home.join("Library").join("LaunchAgents").join(format!("{}.plist", qualified_label())))
+    Ok(home
+        .join("Library")
+        .join("LaunchAgents")
+        .join(format!("{}.plist", qualified_label())))
 }
 
 /// `$HOME`, resolved the same minimal way `crate::daemon::daemon_home`'s
@@ -60,7 +63,9 @@ fn plist_path() -> Result<PathBuf> {
 /// identically inside `LaunchdServiceManager::get_plist_path`, so this agrees
 /// with wherever the crate itself wrote the plist).
 fn home_dir() -> Result<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from).context("HOME is not set")
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")
 }
 
 /// `gui/<uid>` — the launchd user-session target every `launchctl bootstrap/
@@ -187,7 +192,11 @@ WantedBy=default.target
 #[cfg(target_os = "linux")]
 fn systemd_unit_path() -> Result<PathBuf> {
     let home = home_dir()?;
-    Ok(home.join(".config").join("systemd").join("user").join(format!("{LABEL_APP}.service")))
+    Ok(home
+        .join(".config")
+        .join("systemd")
+        .join("user")
+        .join(format!("{LABEL_APP}.service")))
 }
 
 /// Native, user-level service manager handle (`LaunchdServiceManager::user()`
@@ -198,7 +207,8 @@ fn systemd_unit_path() -> Result<PathBuf> {
 fn native_user_manager() -> Result<Box<dyn service_manager::ServiceManager>> {
     let mut manager = service_manager::native_service_manager()
         .context("no native OS service manager available on this platform")?;
-    manager.set_level(service_manager::ServiceLevel::User)
+    manager
+        .set_level(service_manager::ServiceLevel::User)
         .context("set service manager to user level")?;
     Ok(manager)
 }
@@ -217,7 +227,9 @@ pub fn install(home: &Path) -> Result<PathBuf> {
     let program = current_exe()?;
     let manager = native_user_manager()?;
     if !manager.available().unwrap_or(false) {
-        bail!("no OS service manager available (launchd/systemd) — supervision install requires one");
+        bail!(
+            "no OS service manager available (launchd/systemd) — supervision install requires one"
+        );
     }
     let contents = plist_contents_for_platform(&program, home);
     let ctx = service_manager::ServiceInstallCtx {
@@ -231,7 +243,9 @@ pub fn install(home: &Path) -> Result<PathBuf> {
         autostart: false,
         restart_policy: service_manager::RestartPolicy::default(),
     };
-    manager.install(ctx).context("install LaunchAgent/systemd unit")?;
+    manager
+        .install(ctx)
+        .context("install LaunchAgent/systemd unit")?;
     installed_unit_path()
 }
 
@@ -249,11 +263,17 @@ fn plist_contents_for_platform(_program: &Path, _home: &Path) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn installed_unit_path() -> Result<PathBuf> { plist_path() }
+fn installed_unit_path() -> Result<PathBuf> {
+    plist_path()
+}
 #[cfg(target_os = "linux")]
-fn installed_unit_path() -> Result<PathBuf> { systemd_unit_path() }
+fn installed_unit_path() -> Result<PathBuf> {
+    systemd_unit_path()
+}
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn installed_unit_path() -> Result<PathBuf> { bail!("supervision install is unsupported on this platform") }
+fn installed_unit_path() -> Result<PathBuf> {
+    bail!("supervision install is unsupported on this platform")
+}
 
 /// `dl daemon uninstall`: stop if running (best-effort — `uninstall` must not
 /// leave an orphaned process even if the caller forgot `stop` first), then let
@@ -263,8 +283,12 @@ fn installed_unit_path() -> Result<PathBuf> { bail!("supervision install is unsu
 pub fn uninstall() -> Result<()> {
     let _ = stop();
     let manager = native_user_manager()?;
-    let ctx = service_manager::ServiceUninstallCtx { label: service_label() };
-    manager.uninstall(ctx).context("uninstall LaunchAgent/systemd unit")?;
+    let ctx = service_manager::ServiceUninstallCtx {
+        label: service_label(),
+    };
+    manager
+        .uninstall(ctx)
+        .context("uninstall LaunchAgent/systemd unit")?;
     Ok(())
 }
 
@@ -285,7 +309,10 @@ pub fn is_installed() -> bool {
 pub fn start() -> Result<()> {
     let plist = plist_path()?;
     if !plist.exists() {
-        bail!("supervision not installed ({} missing) — run `dl daemon install` first", plist.display());
+        bail!(
+            "supervision not installed ({} missing) — run `dl daemon install` first",
+            plist.display()
+        );
     }
     let _ = launchctl(&["bootstrap", &gui_domain(), &plist.to_string_lossy()]);
     run_launchctl_checked(&["kickstart", "-p", &domain_target()])?;
@@ -299,7 +326,9 @@ pub fn start() -> Result<()> {
     run_systemctl_checked(&["--user", "start", &format!("{LABEL_APP}.service")])
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn start() -> Result<()> { bail!("supervision start is unsupported on this platform") }
+pub fn start() -> Result<()> {
+    bail!("supervision start is unsupported on this platform")
+}
 
 /// `dl daemon stop` under supervision: `bootout` per the plan's mapping —
 /// unloads the job from the domain AND terminates the running process (within
@@ -316,11 +345,15 @@ pub fn stop() -> Result<()> {
 }
 #[cfg(target_os = "linux")]
 pub fn stop() -> Result<()> {
-    let _ = Command::new("systemctl").args(["--user", "stop", &format!("{LABEL_APP}.service")]).output();
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", &format!("{LABEL_APP}.service")])
+        .output();
     Ok(())
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn stop() -> Result<()> { Ok(()) }
+pub fn stop() -> Result<()> {
+    Ok(())
+}
 
 /// `dl daemon restart` under supervision: `kickstart -k` per the plan's
 /// mapping — kills the running job and restarts it in one call; `-p` also
@@ -341,7 +374,9 @@ pub fn restart() -> Result<()> {
     run_systemctl_checked(&["--user", "restart", &format!("{LABEL_APP}.service")])
 }
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub fn restart() -> Result<()> { bail!("supervision restart is unsupported on this platform") }
+pub fn restart() -> Result<()> {
+    bail!("supervision restart is unsupported on this platform")
+}
 
 /// Raw `launchctl print` text for `dl daemon why`/debug fallbacks — the plan
 /// (section 3.1) is explicit that its format is not API-stable, so nothing
@@ -350,12 +385,14 @@ pub fn restart() -> Result<()> { bail!("supervision restart is unsupported on th
 /// only.
 #[cfg(target_os = "macos")]
 pub fn debug_print() -> Option<String> {
-    launchctl(&["print", &domain_target()]).ok().map(|out| {
-        String::from_utf8_lossy(&out.stdout).into_owned()
-    })
+    launchctl(&["print", &domain_target()])
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 #[cfg(not(target_os = "macos"))]
-pub fn debug_print() -> Option<String> { None }
+pub fn debug_print() -> Option<String> {
+    None
+}
 
 #[cfg(target_os = "macos")]
 fn launchctl(args: &[&str]) -> std::io::Result<std::process::Output> {
@@ -377,7 +414,9 @@ fn run_launchctl_checked(args: &[&str]) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn run_systemctl_checked(args: &[&str]) -> Result<()> {
-    let out = Command::new("systemctl").args(args).output()
+    let out = Command::new("systemctl")
+        .args(args)
+        .output()
         .with_context(|| format!("spawn systemctl {}", args.join(" ")))?;
     if !out.status.success() {
         bail!(

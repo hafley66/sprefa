@@ -66,11 +66,31 @@ const LESSON_14: &str = include_str!("../book/tutorial/14-where-next.md");
 
 /// A reference page: CLI topic name, one-line blurb, embedded body.
 const REFERENCE: &[(&str, &str, &str)] = &[
-    ("authoring", "the rules survival guide: the constraints that bite + language matrix", AUTHORING),
-    ("syntax", "the language surface: source ops, body constructs, sinks", SYNTAX),
-    ("functions", "scalar functions callable in a rule head or comparison", FUNCTIONS),
-    ("relations", "every built-in relation the engine exposes", RELATIONS),
-    ("examples", "one-line summary of every program under examples/", EXAMPLES),
+    (
+        "authoring",
+        "the rules survival guide: the constraints that bite + language matrix",
+        AUTHORING,
+    ),
+    (
+        "syntax",
+        "the language surface: source ops, body constructs, sinks",
+        SYNTAX,
+    ),
+    (
+        "functions",
+        "scalar functions callable in a rule head or comparison",
+        FUNCTIONS,
+    ),
+    (
+        "relations",
+        "every built-in relation the engine exposes",
+        RELATIONS,
+    ),
+    (
+        "examples",
+        "one-line summary of every program under examples/",
+        EXAMPLES,
+    ),
 ];
 
 /// A book chapter: number, slug, one-line blurb, embedded body.
@@ -116,10 +136,17 @@ const LESSONS: &[(u32, &str, &str)] = &[
 fn chapter_body(selector: &str) -> Option<&'static str> {
     let wanted = selector.trim_end_matches(".md");
     if let Ok(number) = wanted.parse::<u32>() {
-        return CHAPTERS.iter().find(|(n, ..)| *n == number).map(|(.., body)| *body);
+        return CHAPTERS
+            .iter()
+            .find(|(n, ..)| *n == number)
+            .map(|(.., body)| *body);
     }
-    CHAPTERS.iter()
-        .find(|(_, slug, ..)| *slug == wanted || slug.trim_start_matches(|c: char| c.is_ascii_digit() || c == '-') == wanted)
+    CHAPTERS
+        .iter()
+        .find(|(_, slug, ..)| {
+            *slug == wanted
+                || slug.trim_start_matches(|c: char| c.is_ascii_digit() || c == '-') == wanted
+        })
         .map(|(.., body)| *body)
 }
 
@@ -131,17 +158,26 @@ fn print_topics() {
         println!("  {name:<12}{blurb}");
     }
     println!("\nTHE BOOK    (dl docs book [N]  |  dl docs <NN-slug>)");
-    println!("  {:<12}{}", "book", "the index; add a chapter number or slug to read one");
+    println!(
+        "  {:<12}{}",
+        "book", "the index; add a chapter number or slug to read one"
+    );
     for (number, _, blurb, _) in CHAPTERS {
         println!("  {number:<12}{blurb}");
     }
     println!("\nTUTORIAL    (dl docs tutorial [N] — hands-on, type-along track)");
-    println!("  {:<12}{}", "tutorial", "the track index; add a lesson number to read one");
+    println!(
+        "  {:<12}{}",
+        "tutorial", "the track index; add a lesson number to read one"
+    );
     for (number, blurb, _) in LESSONS {
         println!("  {number:<12}{blurb}");
     }
     println!("\nSEARCH      (dl docs search <words> — rank every guide + the CLI help)");
-    println!("  {:<12}{}", "search", "e.g. `dl docs search concat`, `dl docs search daemon restart`");
+    println!(
+        "  {:<12}{}",
+        "search", "e.g. `dl docs search concat`, `dl docs search daemon restart`"
+    );
     println!("\naddress a chapter as `dl docs book 3` or `dl docs 03-the-cycle-problem`;");
     println!("a lesson as `dl docs tutorial 2`.");
 }
@@ -170,7 +206,10 @@ fn search_corpus() -> Vec<(String, &'static str)> {
 /// substring ranking, so it works offline and cheaply.
 fn run_search(query: &[String]) -> i32 {
     let joined = query.join(" ");
-    let terms: Vec<String> = joined.split_whitespace().map(|t| t.to_lowercase()).collect();
+    let terms: Vec<String> = joined
+        .split_whitespace()
+        .map(|t| t.to_lowercase())
+        .collect();
     if terms.is_empty() {
         eprintln!("usage: dl docs search <words>"); // @eprintln-ok: usage/help text
         return 1;
@@ -201,8 +240,11 @@ fn run_search(query: &[String]) -> i32 {
         if hits > 0 {
             // Best lines first: most distinct terms, then earliest.
             lines.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-            let best: Vec<(usize, String)> =
-                lines.into_iter().take(3).map(|(_, ln, text)| (ln, text)).collect();
+            let best: Vec<(usize, String)> = lines
+                .into_iter()
+                .take(3)
+                .map(|(_, ln, text)| (ln, text))
+                .collect();
             ranked.push((hits, terms_seen.len(), label, best));
         }
     }
@@ -214,7 +256,10 @@ fn run_search(query: &[String]) -> i32 {
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
     println!("matches for {joined:?} (read the full page with the command shown):\n");
     for (hits, _, label, lines) in ranked.iter().take(8) {
-        println!("{label}   ({hits} hit{})", if *hits == 1 { "" } else { "s" });
+        println!(
+            "{label}   ({hits} hit{})",
+            if *hits == 1 { "" } else { "s" }
+        );
         for (ln, text) in lines {
             let snippet: String = text.chars().take(100).collect();
             println!("    {ln}: {snippet}");
@@ -227,7 +272,10 @@ fn run_search(query: &[String]) -> i32 {
 /// `dl docs …`. Returns the process exit code.
 pub fn run(args: &[String]) -> Result<i32> {
     let topic = match args.first() {
-        None => { print_topics(); return Ok(0); }
+        None => {
+            print_topics();
+            return Ok(0);
+        }
         Some(t) => t.as_str(),
     };
     if topic == "-h" || topic == "--help" {
@@ -239,9 +287,15 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
     if topic == "book" {
         match args.get(1) {
-            None => { print!("{BOOK_INDEX}"); return Ok(0); }
+            None => {
+                print!("{BOOK_INDEX}");
+                return Ok(0);
+            }
             Some(selector) => match chapter_body(selector) {
-                Some(body) => { print!("{body}"); return Ok(0); }
+                Some(body) => {
+                    print!("{body}");
+                    return Ok(0);
+                }
                 None => {
                     eprintln!("dl docs: no book chapter {selector:?}\n"); // @eprintln-ok: final user-facing error print at CLI top level
                     print_topics();
@@ -252,12 +306,21 @@ pub fn run(args: &[String]) -> Result<i32> {
     }
     if topic == "tutorial" {
         match args.get(1) {
-            None => { print!("{TUTORIAL_INDEX}"); return Ok(0); }
+            None => {
+                print!("{TUTORIAL_INDEX}");
+                return Ok(0);
+            }
             Some(selector) => {
-                let lesson = selector.trim_end_matches(".md").parse::<u32>().ok()
+                let lesson = selector
+                    .trim_end_matches(".md")
+                    .parse::<u32>()
+                    .ok()
                     .and_then(|number| LESSONS.iter().find(|(n, ..)| *n == number));
                 match lesson {
-                    Some((.., body)) => { print!("{body}"); return Ok(0); }
+                    Some((.., body)) => {
+                        print!("{body}");
+                        return Ok(0);
+                    }
                     None => {
                         eprintln!("dl docs: no tutorial lesson {selector:?}\n"); // @eprintln-ok: final user-facing error print at CLI top level
                         print_topics();

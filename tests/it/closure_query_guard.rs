@@ -35,7 +35,9 @@ fn run(dir: &Path, query: &str, cap: Option<&str>) -> (i32, String, String) {
     cmd.arg(dir.join("p.dl"))
         .current_dir(dir)
         .args(["--db", dir.join("db").to_str().unwrap()]);
-    if let Some(cap) = cap { cmd.env("DL_CLOSURE_QUERY_MAX_EDGES", cap); }
+    if let Some(cap) = cap {
+        cmd.env("DL_CLOSURE_QUERY_MAX_EDGES", cap);
+    }
     let out = cmd.output().expect("run dl");
     (
         out.status.code().unwrap_or(-1),
@@ -64,7 +66,10 @@ fn unpinned_closure_query_under_cap_answers() {
     let dir = sandbox("under");
     let (code, stdout, stderr) = run(&dir, "? reach(from, to).", None);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("a\tc"), "transitive pair present:\n{stdout}");
+    assert!(
+        stdout.contains("a\tc"),
+        "transitive pair present:\n{stdout}"
+    );
 }
 
 /// A pinned query rides the seeded condensation walk, so the cap is irrelevant.
@@ -74,7 +79,10 @@ fn pinned_closure_query_ignores_cap() {
     let (code, stdout, stderr) = run(&dir, "? reach(\"a\", to).", Some("2"));
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("a\tc"), "seeded walk reaches c:\n{stdout}");
-    assert!(!stderr.contains("DL_CLOSURE_QUERY_MAX_EDGES"), "guard silent:\n{stderr}");
+    assert!(
+        !stderr.contains("DL_CLOSURE_QUERY_MAX_EDGES"),
+        "guard silent:\n{stderr}"
+    );
 }
 
 /// Both endpoints pinned: an existence probe answered by the walk (one row when
@@ -82,11 +90,24 @@ fn pinned_closure_query_ignores_cap() {
 #[test]
 fn both_pinned_closure_query_is_an_existence_probe() {
     let dir = sandbox("pair");
-    let (code, stdout, stderr) = run(&dir, "? reach(\"a\", \"c\").\n? reach(\"a\", \"y\").", Some("2"));
+    let (code, stdout, stderr) = run(
+        &dir,
+        "? reach(\"a\", \"c\").\n? reach(\"a\", \"y\").",
+        Some("2"),
+    );
     assert_eq!(code, 0, "{stderr}");
     let secs: Vec<&str> = stdout.split("? reach").collect();
     assert!(secs.len() >= 3, "two query sections:\n{stdout}");
-    assert!(secs[1].contains("(1 rows)") && secs[1].contains("a\tc"), "a reaches c:\n{stdout}");
-    assert!(secs[2].contains("(0 rows)"), "a does not reach y:\n{stdout}");
-    assert!(!stderr.contains("DL_CLOSURE_QUERY_MAX_EDGES"), "guard silent:\n{stderr}");
+    assert!(
+        secs[1].contains("(1 rows)") && secs[1].contains("a\tc"),
+        "a reaches c:\n{stdout}"
+    );
+    assert!(
+        secs[2].contains("(0 rows)"),
+        "a does not reach y:\n{stdout}"
+    );
+    assert!(
+        !stderr.contains("DL_CLOSURE_QUERY_MAX_EDGES"),
+        "guard silent:\n{stderr}"
+    );
 }

@@ -29,7 +29,9 @@ pub(crate) fn async_bound_vars(rule: &Rule) -> Vec<String> {
         if let BodyItem::Pos(a) = b {
             for t in &a.terms {
                 if let Term::Var(v) = t {
-                    if !seen.contains(v) { seen.push(v.clone()); }
+                    if !seen.contains(v) {
+                        seen.push(v.clone());
+                    }
                 }
             }
         }
@@ -45,27 +47,53 @@ pub(crate) fn async_bound_vars(rule: &Rule) -> Vec<String> {
 fn rule_var_uses(rule: &Rule) -> HashMap<String, usize> {
     fn walk(t: &Term, uses: &mut HashMap<String, usize>) {
         match t {
-            Term::Var(v) => { *uses.entry(v.clone()).or_insert(0) += 1; }
-            Term::Arith { lhs, rhs, .. } => { walk(lhs, uses); walk(rhs, uses); }
-            Term::Call { args, .. } => for a in args { walk(a, uses); },
-            Term::Interp(parts) => for p in parts {
-                if let InterpPart::Var(v) = p { *uses.entry(v.clone()).or_insert(0) += 1; }
-            },
+            Term::Var(v) => {
+                *uses.entry(v.clone()).or_insert(0) += 1;
+            }
+            Term::Arith { lhs, rhs, .. } => {
+                walk(lhs, uses);
+                walk(rhs, uses);
+            }
+            Term::Call { args, .. } => {
+                for a in args {
+                    walk(a, uses);
+                }
+            }
+            Term::Interp(parts) => {
+                for p in parts {
+                    if let InterpPart::Var(v) = p {
+                        *uses.entry(v.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
             _ => {}
         }
     }
     let mut uses = HashMap::new();
-    for t in &rule.head.terms { walk(t, &mut uses); }
+    for t in &rule.head.terms {
+        walk(t, &mut uses);
+    }
     for b in &rule.body {
         match b {
             BodyItem::Pos(a) | BodyItem::Neg(a) => {
-                for t in &a.terms { walk(t, &mut uses); }
-                for (_, t) in &a.named { walk(t, &mut uses); }
+                for t in &a.terms {
+                    walk(t, &mut uses);
+                }
+                for (_, t) in &a.named {
+                    walk(t, &mut uses);
+                }
             }
-            BodyItem::Cmp(c) => { walk(&c.lhs, &mut uses); walk(&c.rhs, &mut uses); }
+            BodyItem::Cmp(c) => {
+                walk(&c.lhs, &mut uses);
+                walk(&c.rhs, &mut uses);
+            }
             BodyItem::Effect { args, outs, .. } => {
-                for t in args { walk(t, &mut uses); }
-                for t in outs { walk(t, &mut uses); }
+                for t in args {
+                    walk(t, &mut uses);
+                }
+                for t in outs {
+                    walk(t, &mut uses);
+                }
             }
             _ => {}
         }
@@ -87,15 +115,23 @@ pub(crate) fn clock_salt_periods(rule: &Rule) -> Vec<i64> {
     let mut periods: Vec<i64> = Vec::new();
     for b in &rule.body {
         let BodyItem::Pos(a) = b else { continue };
-        if a.rel != "clock" { continue; }
-        let [Term::Int(secs), bucket] = a.terms.as_slice() else { continue };
-        if *secs <= 0 { continue; }
+        if a.rel != "clock" {
+            continue;
+        }
+        let [Term::Int(secs), bucket] = a.terms.as_slice() else {
+            continue;
+        };
+        if *secs <= 0 {
+            continue;
+        }
         let salted = match bucket {
             Term::Wild => true,
             Term::Var(bucket_var) => uses.get(bucket_var).copied().unwrap_or(0) == 1,
             _ => false,
         };
-        if salted && !periods.contains(secs) { periods.push(*secs); }
+        if salted && !periods.contains(secs) {
+            periods.push(*secs);
+        }
     }
     periods.sort_unstable();
     periods
@@ -110,13 +146,21 @@ pub(crate) fn clock_salt_periods(rule: &Rule) -> Vec<i64> {
 /// `drain_effects` runs the pending requests in parallel (the subprocess spawn is
 /// the slow part; the DB writes stay serial and batched).
 pub trait EffectExec: Sync {
-    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>>;
+    fn run(
+        &self,
+        kind: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<String>>;
     /// A streaming/batch executor: each OUTPUT LINE becomes one response row,
     /// split into the kind's output slots (a `@tsv` row, D-7). A `sh*` (`@stream`)
     /// effect drains through this so one subprocess yields N head rows; the
     /// default wraps `run` as a single row, so a plain mock exec still drives a
     /// stream in tests. See `drain_streams`.
-    fn run_stream(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<Vec<String>>> {
+    fn run_stream(
+        &self,
+        kind: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<Vec<String>>> {
         Ok(vec![self.run(kind, args)?])
     }
     /// Whether `kind` has an executor registered to run it. `drain_effects` /
@@ -152,8 +196,14 @@ pub struct ShellEffectExec {
 impl ShellEffectExec {
     /// Render the template, spawn `sh -c`, return stdout. Shared by `run` (one
     /// response, line-slotted) and `run_stream` (N responses, one per line).
-    fn spawn_stdout(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<String> {
-        let tmpl = self.templates.get(kind)
+    fn spawn_stdout(
+        &self,
+        kind: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String> {
+        let tmpl = self
+            .templates
+            .get(kind)
             .ok_or_else(|| anyhow::anyhow!("no effect command registered for kind `{kind}`"))?;
         // Each arg is available two ways: `{k}` is raw text substitution (handy
         // for clean values like a path), and `$k` is an environment variable the
@@ -180,14 +230,22 @@ impl ShellEffectExec {
         let run_in = match args.get("cwd").and_then(|v| v.as_str()) {
             Some(d) if !d.is_empty() => {
                 let p = std::path::Path::new(d);
-                if p.is_absolute() { p.to_path_buf() } else { self.cwd.join(p) }
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    self.cwd.join(p)
+                }
             }
             _ => self.cwd.clone(),
         };
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg(&cmdline);
-        for (k, v) in &envs { cmd.env(k, v); }
-        if run_in.as_os_str().len() > 0 { cmd.current_dir(&run_in); }
+        for (k, v) in &envs {
+            cmd.env(k, v);
+        }
+        if run_in.as_os_str().len() > 0 {
+            cmd.current_dir(&run_in);
+        }
         // Effect trace (DL_TRACE=debug): the rendered command actually spawned,
         // truncated so a giant inlined body stays one readable line. This is the
         // "what request am I about to make" half of the ghcacher-style log.
@@ -238,8 +296,11 @@ impl ShellEffectExec {
         // nonzero exit WITH stdout is the findings-exist convention (the `cmd` op
         // shares it); nonzero with empty stdout is a broken command — be loud.
         if !output.status.success() && stdout.trim().is_empty() {
-            bail!("effect `{cmdline}` failed (exit {:?}): {}",
-                  output.status.code(), String::from_utf8_lossy(&output.stderr).trim());
+            bail!(
+                "effect `{cmdline}` failed (exit {:?}): {}",
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
         }
         Ok(stdout)
     }
@@ -250,20 +311,31 @@ impl EffectExec for ShellEffectExec {
         self.templates.contains_key(kind)
     }
 
-    fn run(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+    fn run(
+        &self,
+        kind: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<String>> {
         let stdout = self.spawn_stdout(kind, args)?;
         let nout = self.n_out.get(kind).copied().unwrap_or(1);
         Ok(split_outputs(&stdout, nout))
     }
 
-    fn run_stream(&self, kind: &str, args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<Vec<String>>> {
+    fn run_stream(
+        &self,
+        kind: &str,
+        args: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<Vec<String>>> {
         let stdout = self.spawn_stdout(kind, args)?;
         let nout = self.n_out.get(kind).copied().unwrap_or(1);
         // Each non-empty line is one response row; its columns are tab-separated
         // (the `@tsv` convention). A line short of `nout` tabs pads with empties;
         // the last slot absorbs any extra tabs (so a body with tabs stays whole).
-        Ok(stdout.lines().filter(|l| !l.is_empty())
-            .map(|l| split_tsv(l, nout)).collect())
+        Ok(stdout
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| split_tsv(l, nout))
+            .collect())
     }
 }
 
@@ -278,8 +350,16 @@ impl EffectExec for ShellEffectExec {
 /// as untrusted by default. A key match wins even when the value itself
 /// looks harmless.
 const SENSITIVE_KEY_FRAGMENTS: &[&str] = &[
-    "token", "secret", "password", "passwd", "auth", "key", "credential",
-    "cookie", "bearer", "apikey",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "key",
+    "credential",
+    "cookie",
+    "bearer",
+    "apikey",
 ];
 
 /// Value-shape check for a credential riding in under an innocuous key name
@@ -295,7 +375,15 @@ fn looks_like_credential(value: &str) -> bool {
         }
     }
     const VALUE_PREFIXES: &[&str] = &[
-        "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "sk-", "xox", "Bearer ",
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "ghs_",
+        "ghr_",
+        "github_pat_",
+        "sk-",
+        "xox",
+        "Bearer ",
     ];
     VALUE_PREFIXES.iter().any(|p| value.starts_with(p))
 }
@@ -309,10 +397,15 @@ fn looks_like_credential(value: &str) -> bool {
 fn redact_args(args: &serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
     let mut out = serde_json::Map::with_capacity(args.len());
     for (k, v) in args {
-        let key_hits = SENSITIVE_KEY_FRAGMENTS.iter().any(|f| k.to_lowercase().contains(f));
+        let key_hits = SENSITIVE_KEY_FRAGMENTS
+            .iter()
+            .any(|f| k.to_lowercase().contains(f));
         let value_hits = v.as_str().is_some_and(looks_like_credential);
         if key_hits || value_hits {
-            out.insert(k.clone(), serde_json::Value::String("<redacted>".to_string()));
+            out.insert(
+                k.clone(),
+                serde_json::Value::String("<redacted>".to_string()),
+            );
         } else {
             out.insert(k.clone(), v.clone());
         }
@@ -324,13 +417,21 @@ fn redact_args(args: &serde_json::Map<String, serde_json::Value>) -> serde_json:
 /// `split_outputs`, which splits a whole stdout by newline). The last slot
 /// absorbs any trailing tab-separated fields.
 fn split_tsv(line: &str, nout: usize) -> Vec<String> {
-    if nout == 0 { return Vec::new(); }
-    if nout == 1 { return vec![line.to_string()]; }
+    if nout == 0 {
+        return Vec::new();
+    }
+    if nout == 1 {
+        return vec![line.to_string()];
+    }
     let fields: Vec<&str> = line.split('\t').collect();
     let mut out: Vec<String> = (0..nout - 1)
         .map(|i| fields.get(i).copied().unwrap_or("").to_string())
         .collect();
-    let rest = if fields.len() > nout - 1 { fields[nout - 1..].join("\t") } else { String::new() };
+    let rest = if fields.len() > nout - 1 {
+        fields[nout - 1..].join("\t")
+    } else {
+        String::new()
+    };
     out.push(rest);
     out
 }
@@ -350,13 +451,21 @@ fn preview(s: &str) -> String {
 /// Split shell stdout into `nout` response values: one per line, the last slot
 /// absorbing any trailing lines (so a multi-line body stays one value).
 fn split_outputs(stdout: &str, nout: usize) -> Vec<String> {
-    if nout == 0 { return Vec::new(); }
-    if nout == 1 { return vec![stdout.trim_end_matches('\n').to_string()]; }
+    if nout == 0 {
+        return Vec::new();
+    }
+    if nout == 1 {
+        return vec![stdout.trim_end_matches('\n').to_string()];
+    }
     let lines: Vec<&str> = stdout.lines().collect();
     let mut out: Vec<String> = (0..nout - 1)
         .map(|i| lines.get(i).copied().unwrap_or("").to_string())
         .collect();
-    let rest = if lines.len() > nout - 1 { lines[nout - 1..].join("\n") } else { String::new() };
+    let rest = if lines.len() > nout - 1 {
+        lines[nout - 1..].join("\n")
+    } else {
+        String::new()
+    };
     out.push(rest);
     out
 }
@@ -368,7 +477,9 @@ pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
     let mut m = HashMap::new();
     for item in &prog.items {
         let Item::Rule(r) = item else { continue };
-        if !r.is_async() && !r.is_stream() { continue; }
+        if !r.is_async() && !r.is_stream() {
+            continue;
+        }
         // After desugar every @async rule carries a body-effect; its `outs` are
         // the response columns (the stdout slots the executor fills). A rule
         // loaded without the frontend desugar (raw parse) falls back to the
@@ -381,8 +492,12 @@ pub fn async_effect_arity(prog: &Program) -> HashMap<String, usize> {
             Some((k, _, outs)) => (k.to_string(), outs.len()),
             None => {
                 let vars = async_bound_vars(r);
-                let nout = r.head.terms.iter()
-                    .filter(|t| matches!(t, Term::Var(v) if !vars.contains(v))).count();
+                let nout = r
+                    .head
+                    .terms
+                    .iter()
+                    .filter(|t| matches!(t, Term::Var(v) if !vars.contains(v)))
+                    .count();
                 (r.head.rel.clone(), nout)
             }
         };
@@ -446,9 +561,7 @@ fn shell_kinds(prog: &Program) -> HashMap<String, ShellKind> {
 /// var is supported inside `collect`.
 fn collect_inner_var(t: &Term) -> Option<&str> {
     match t {
-        Term::Call { name, args }
-            if name == "collect" && (args.len() == 1 || args.len() == 2) =>
-        {
+        Term::Call { name, args } if name == "collect" && (args.len() == 1 || args.len() == 2) => {
             match &args[0] {
                 Term::Var(v) => Some(v.as_str()),
                 _ => None,
@@ -505,14 +618,23 @@ impl Engine {
     /// digest of (kind, args) so re-emitting the same request across ticks before
     /// it runs does not double-fire (INSERT OR IGNORE on the PK). The executor
     /// runs off-tick in `drain_effects`; nothing here touches the network.
-    pub(crate) fn rebuild_async(&self, prog: &Program, async_rules: &[&Rule], cur: i64) -> Result<()> {
+    pub(crate) fn rebuild_async(
+        &self,
+        prog: &Program,
+        async_rules: &[&Rule],
+        cur: i64,
+    ) -> Result<()> {
         let params_by_kind = shell_fn_params(prog);
         let mut rows: Vec<Vec<Value>> = Vec::new();
         for r in async_rules {
             let head_rel = &r.head.rel;
-            let (kind, eff_args, _outs) = r.effect()
-                .ok_or_else(|| anyhow::anyhow!("@async rule (rel `{}`) was not desugared to a \
-                    body-effect (frontend bug)", r.head.rel))?;
+            let (kind, eff_args, _outs) = r.effect().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "@async rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)",
+                    r.head.rel
+                )
+            })?;
             // The FULL body solution (all positive-atom-bound vars) is the head
             // rebuild env (D-4); the effect args are a subset/expression over it.
             let vars = async_bound_vars(r);
@@ -523,13 +645,16 @@ impl Engine {
             // row space — a flip invalidates zero derived rows.
             let salt_periods = clock_salt_periods(r);
             let now = crate::engine::now_secs();
-            let clock_salt: String = salt_periods.iter()
+            let clock_salt: String = salt_periods
+                .iter()
                 .map(|secs| format!("\u{0}clock:{secs}={}", now / secs))
                 .collect();
             if vars.is_empty() && salt_periods.is_empty() {
-                bail!("@async rule (rel `{kind}`) binds no request args; its body must have \
+                bail!(
+                    "@async rule (rel `{kind}`) binds no request args; its body must have \
                        a positive atom with at least one variable (or a wildcard-bucket \
-                       `clock(secs, _)` atom to key the request on cadence)");
+                       `clock(secs, _)` atom to key the request on cadence)"
+                );
             }
             let mut body = r.body.clone();
             crate::lower::resolve_work_alias_body(&mut body, &self.rels, &self.self_rev_text());
@@ -540,7 +665,9 @@ impl Engine {
                     .map(|row| {
                         let mut obj = serde_json::Map::new();
                         for (i, v) in vars.iter().enumerate() {
-                            let jv = row.get(i).map_or(serde_json::Value::Null, |cell| cell.to_json());
+                            let jv = row
+                                .get(i)
+                                .map_or(serde_json::Value::Null, |cell| cell.to_json());
                             obj.insert(v.clone(), jv);
                         }
                         obj
@@ -553,10 +680,13 @@ impl Engine {
             // declared params iff their arity matches the call args, else var names.
             let hole_keys: Vec<String> = match params_by_kind.get(kind) {
                 Some(ps) if ps.len() == eff_args.len() => ps.clone(),
-                _ => eff_args.iter().map(|a| match a {
-                    Term::Var(v) => v.clone(),
-                    _ => String::new(),
-                }).collect(),
+                _ => eff_args
+                    .iter()
+                    .map(|a| match a {
+                        Term::Var(v) => v.clone(),
+                        _ => String::new(),
+                    })
+                    .collect(),
             };
             // `collect(x)` makes this an AGGREGATE effect: gather `x` over ALL
             // solutions and fire ONE request whose response fans back out (one head
@@ -572,9 +702,13 @@ impl Engine {
                     // the non-collected holes (must agree across the batch).
                     let mut h = serde_json::Map::new();
                     for (i, a) in eff_args.iter().enumerate() {
-                        if i == ci { continue; }
+                        if i == ci {
+                            continue;
+                        }
                         let key = &hole_keys[i];
-                        if key.is_empty() { continue; }
+                        if key.is_empty() {
+                            continue;
+                        }
                         h.insert(key.clone(), eval_term_json(a, sol));
                     }
                     match &base {
@@ -591,7 +725,9 @@ impl Engine {
                         });
                     }
                 }
-                if values.is_empty() { continue; }
+                if values.is_empty() {
+                    continue;
+                }
                 values.sort();
                 values.dedup();
                 let ckey = &hole_keys[ci];
@@ -611,16 +747,21 @@ impl Engine {
                     // `clock_salt` is empty for rules without a wildcard-bucket
                     // clock atom, keeping their ids byte-identical to before.
                     let id = blake3::hash(
-                        format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes()
-                    ).to_hex().to_string();
+                        format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes(),
+                    )
+                    .to_hex()
+                    .to_string();
                     // No single body solution keys the batch — the head rebuilds
                     // purely from the fanned-out response (`full_json` empty), so a
                     // batch head must read only response outs / the echoed id (not a
                     // per-row body var). `batch=1`.
                     rows.push(vec![
-                        Value::Text(id), Value::Text(kind.to_string()),
+                        Value::Text(id),
+                        Value::Text(kind.to_string()),
                         Value::Text(head_rel.clone()),
-                        Value::Text(args_json), Value::Text(String::new()), Value::Int(cur),
+                        Value::Text(args_json),
+                        Value::Text(String::new()),
+                        Value::Int(cur),
                         Value::Int(1),
                     ]);
                 }
@@ -631,7 +772,9 @@ impl Engine {
                 let mut hole = serde_json::Map::new();
                 for (i, a) in eff_args.iter().enumerate() {
                     let key = &hole_keys[i];
-                    if key.is_empty() { continue; } // unnamed literal arg, head-only
+                    if key.is_empty() {
+                        continue;
+                    } // unnamed literal arg, head-only
                     hole.insert(key.clone(), eval_term_json(a, &sol));
                 }
                 let args_json = serde_json::Value::Object(hole).to_string();
@@ -643,21 +786,37 @@ impl Engine {
                 // into the id so a cadence rule re-fires once per bucket with no
                 // bucket column anywhere in the row space.
                 let id = blake3::hash(
-                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes()
-                ).to_hex().to_string();
+                    format!("{head_rel}\u{0}{kind}\u{0}{args_json}{clock_salt}").as_bytes(),
+                )
+                .to_hex()
+                .to_string();
                 let full_json = serde_json::Value::Object(sol).to_string();
                 rows.push(vec![
-                    Value::Text(id), Value::Text(kind.to_string()),
+                    Value::Text(id),
+                    Value::Text(kind.to_string()),
                     Value::Text(head_rel.clone()),
-                    Value::Text(args_json), Value::Text(full_json), Value::Int(cur),
+                    Value::Text(args_json),
+                    Value::Text(full_json),
+                    Value::Int(cur),
                     Value::Int(0),
                 ]);
             }
         }
         // `done` defaults to 0; INSERT OR IGNORE keeps an already-queued (or
         // already-run, done=1) request untouched.
-        self.db.insert_rows("pending_effect",
-            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx", "batch"], &rows)?;
+        self.db.insert_rows(
+            "pending_effect",
+            &[
+                "id",
+                "kind",
+                "head_rel",
+                "args_json",
+                "full_json",
+                "req_tx",
+                "batch",
+            ],
+            &rows,
+        )?;
         Ok(())
     }
 
@@ -683,7 +842,8 @@ impl Engine {
         )?;
         // A kind with no `sh` decl defaults to Read (the legacy effect_cmd path),
         // so it counts as in-flight, matching drain_effects' `kind_of` default.
-        Ok(rows.into_iter()
+        Ok(rows
+            .into_iter()
             .filter(|k| kinds.get(k).copied() != Some(ShellKind::Stream))
             .count())
     }
@@ -729,13 +889,17 @@ impl Engine {
     /// orphaned kind stops being rescanned every poll instead of aborting the
     /// drain via `?` forever. One batched UPDATE, not a per-row write.
     fn park_orphan_effects(&self, ids: &[String]) -> Result<()> {
-        if ids.is_empty() { return Ok(()); }
+        if ids.is_empty() {
+            return Ok(());
+        }
         self.db.exec_in_chunks(
             "pending_effect",
-            |n| format!(
-                "UPDATE pending_effect SET state = '{STATE_ORPHANED}' WHERE id IN ({})",
-                crate::db::holes(n)
-            ),
+            |n| {
+                format!(
+                    "UPDATE pending_effect SET state = '{STATE_ORPHANED}' WHERE id IN ({})",
+                    crate::db::holes(n)
+                )
+            },
             &[],
             &ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
         )?;
@@ -757,7 +921,9 @@ impl Engine {
             &[STATE_ORPHANED.into()],
             |r| Ok(r.get::<_, String>(0)?),
         )?;
-        if kinds.is_empty() { return Ok(()); }
+        if kinds.is_empty() {
+            return Ok(());
+        }
         let mut recoverable: Vec<String> = kinds
             .iter()
             .filter(|k| exec.has_template(k))
@@ -769,34 +935,46 @@ impl Engine {
         // has not been rebuilt yet. The base `rel_effect_cmd` stores interned
         // ids, so the text view is the source of truth for kind names.
         if recoverable.len() < kinds.len() {
-            let kind_params: Vec<crate::db::SqlVal> = kinds.iter().map(|s| s.as_str().into()).collect();
+            let kind_params: Vec<crate::db::SqlVal> =
+                kinds.iter().map(|s| s.as_str().into()).collect();
             let effect_cmd_txt = crate::lower::txt_tbl("effect_cmd");
             // Tolerant: `rel_effect_cmd_txt` may not exist on a fresh/empty db.
             if let Ok(dynamic) = self.db.query_in_chunks(
                 "effect_cmd",
-                |n| format!(
-                    "SELECT DISTINCT kind FROM {effect_cmd_txt} WHERE kind IN ({})",
-                    crate::db::holes(n)
-                ),
+                |n| {
+                    format!(
+                        "SELECT DISTINCT kind FROM {effect_cmd_txt} WHERE kind IN ({})",
+                        crate::db::holes(n)
+                    )
+                },
                 &[],
                 &kind_params,
                 |r| Ok(r.get::<_, String>(0)?),
             ) {
                 for k in dynamic {
-                    if !recoverable.contains(&k) { recoverable.push(k); }
+                    if !recoverable.contains(&k) {
+                        recoverable.push(k);
+                    }
                 }
             }
         }
 
-        if recoverable.is_empty() { return Ok(()); }
+        if recoverable.is_empty() {
+            return Ok(());
+        }
         self.db.exec_in_chunks(
             "pending_effect",
-            |n| format!(
-                "UPDATE pending_effect SET state = ?1 WHERE state = ?2 AND kind IN ({})",
-                crate::db::holes(n)
-            ),
+            |n| {
+                format!(
+                    "UPDATE pending_effect SET state = ?1 WHERE state = ?2 AND kind IN ({})",
+                    crate::db::holes(n)
+                )
+            },
             &[STATE_QUEUED.into(), STATE_ORPHANED.into()],
-            &recoverable.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+            &recoverable
+                .iter()
+                .map(|s| s.as_str().into())
+                .collect::<Vec<_>>(),
         )?;
         Ok(())
     }
@@ -833,15 +1011,27 @@ impl Engine {
         let mut plans: HashMap<String, (Vec<Term>, Vec<String>)> = HashMap::new();
         for item in &prog.items {
             let Item::Rule(r) = item else { continue };
-            if !r.is_async() { continue; }
-            let (_, _, outs) = r.effect()
-                .ok_or_else(|| anyhow::anyhow!("@async rule (rel `{}`) was not desugared to a \
-                    body-effect (frontend bug)", r.head.rel))?;
-            let out_vars: Vec<String> = outs.iter().map(|t| match t {
-                Term::Var(v) => Ok(v.clone()),
-                other => Err(anyhow::anyhow!("@async effect output {other:?} (rel `{}`) must be a \
-                    fresh variable", r.head.rel)),
-            }).collect::<Result<_>>()?;
+            if !r.is_async() {
+                continue;
+            }
+            let (_, _, outs) = r.effect().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "@async rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)",
+                    r.head.rel
+                )
+            })?;
+            let out_vars: Vec<String> = outs
+                .iter()
+                .map(|t| match t {
+                    Term::Var(v) => Ok(v.clone()),
+                    other => Err(anyhow::anyhow!(
+                        "@async effect output {other:?} (rel `{}`) must be a \
+                    fresh variable",
+                        r.head.rel
+                    )),
+                })
+                .collect::<Result<_>>()?;
             plans.insert(r.head.rel.clone(), (r.head.terms.clone(), out_vars));
         }
 
@@ -857,23 +1047,24 @@ impl Engine {
         // a row left 'running' by a crash is quarantined (never silently re-fired).
         // A `Stream` row is skipped here (Phase 4 owns it).
         // (id, kind = executor/template key, head_rel = reconstruction key, state).
-        let pending: Vec<(String, String, String, String, String, String, i64)> = self.db.query_rows(
-            "pending_effect",
-            "SELECT id, kind, head_rel, args_json, full_json, state, batch \
+        let pending: Vec<(String, String, String, String, String, String, i64)> =
+            self.db.query_rows(
+                "pending_effect",
+                "SELECT id, kind, head_rel, args_json, full_json, state, batch \
              FROM pending_effect WHERE state IN (?1,?2)",
-            &[STATE_QUEUED.into(), STATE_RUNNING.into()],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, i64>(6)?,
-                ))
-            },
-        )?;
+                &[STATE_QUEUED.into(), STATE_RUNNING.into()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, String>(5)?,
+                        r.get::<_, i64>(6)?,
+                    ))
+                },
+            )?;
         // The exactly-once claim for `sh!`: flip queued -> running under the row's
         // own conditional UPDATE (changes()==1 wins the claim). A row not claimed
         // (already running/done, or a concurrent drainer took it) is dropped from
@@ -892,9 +1083,14 @@ impl Engine {
         // blob should bail before any subprocess spawns). Drop requests whose head
         // rel is not an @async rule in the current program — a different program
         // may own it, leave it queued.
-        let mut work: Vec<(String, String, String,
+        let mut work: Vec<(
+            String,
+            String,
+            String,
             serde_json::Map<String, serde_json::Value>,
-            serde_json::Map<String, serde_json::Value>, bool)> = Vec::new();
+            serde_json::Map<String, serde_json::Value>,
+            bool,
+        )> = Vec::new();
         // Rows whose kind has no registered executor template (Part 2): parked
         // (state='orphaned') and warned about once per kind, never fed to the
         // rayon pool below — a missing template must not abort the whole
@@ -904,11 +1100,19 @@ impl Engine {
         let mut orphan_kinds: Vec<String> = Vec::new();
         for (id, kind, head_rel, args_json, full_json, state, batch) in pending {
             // Pre-migration rows have head_rel='' (head-response 1:1 with kind).
-            let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
-            if !plans.contains_key(&head_rel) { continue; }
+            let head_rel = if head_rel.is_empty() {
+                kind.clone()
+            } else {
+                head_rel
+            };
+            if !plans.contains_key(&head_rel) {
+                continue;
+            }
             if !exec.has_template(&kind) {
                 orphan_ids.push(id);
-                if !orphan_kinds.contains(&kind) { orphan_kinds.push(kind.clone()); }
+                if !orphan_kinds.contains(&kind) {
+                    orphan_kinds.push(kind.clone());
+                }
                 continue;
             }
             match kind_of(&kind) {
@@ -917,7 +1121,11 @@ impl Engine {
                 ShellKind::Stream => continue,
                 // `sh!` is exactly-once: claim queued->running or skip. A row found
                 // already 'running' (crash orphan) is left quarantined, not re-run.
-                ShellKind::Mutate => { if state != "queued" || !claim(&id)? { continue; } }
+                ShellKind::Mutate => {
+                    if state != "queued" || !claim(&id)? {
+                        continue;
+                    }
+                }
                 // `sh` is cached/re-runnable: a crash-orphaned 'running' row is fair
                 // game; no claim needed (re-firing a read is harmless).
                 ShellKind::Read => {}
@@ -940,7 +1148,9 @@ impl Engine {
         }
         if !orphan_ids.is_empty() {
             self.park_orphan_effects(&orphan_ids)?;
-            for kind in &orphan_kinds { self.warn_orphan_kind_once(kind); }
+            for kind in &orphan_kinds {
+                self.warn_orphan_kind_once(kind);
+            }
         }
         if !work.is_empty() {
             tracing::info!(target: "dl::effect", n = work.len(), "draining effects");
@@ -1012,16 +1222,23 @@ impl Engine {
         if !failed_ids.is_empty() {
             self.db.exec_in_chunks(
                 "pending_effect",
-                |n| format!(
-                    "UPDATE pending_effect SET state = ?1 WHERE id IN ({})",
-                    crate::db::holes(n)
-                ),
+                |n| {
+                    format!(
+                        "UPDATE pending_effect SET state = ?1 WHERE id IN ({})",
+                        crate::db::holes(n)
+                    )
+                },
                 &[STATE_FAILED.into()],
-                &failed_ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+                &failed_ids
+                    .iter()
+                    .map(|s| s.as_str().into())
+                    .collect::<Vec<_>>(),
             )?;
         }
 
-        if assembled.is_empty() { return Ok(0); }
+        if assembled.is_empty() {
+            return Ok(0);
+        }
 
         // Batch the response rows by head rel (one `insert_rows` per response rel)
         // and mark every drained request done in a single transaction. A `collect`
@@ -1031,12 +1248,15 @@ impl Engine {
         let mut done_ids: Vec<String> = Vec::new();
         for (id, head_rel, row) in assembled {
             by_rel.entry(head_rel).or_default().push(row);
-            if !done_ids.contains(&id) { done_ids.push(id); }
+            if !done_ids.contains(&id) {
+                done_ids.push(id);
+            }
         }
         for (head_rel, rows) in &by_rel {
             let cols: Vec<String> = {
-                let meta = self.rels.get(head_rel)
-                    .ok_or_else(|| anyhow::anyhow!("@async response relation `{head_rel}` is not declared"))?;
+                let meta = self.rels.get(head_rel).ok_or_else(|| {
+                    anyhow::anyhow!("@async response relation `{head_rel}` is not declared")
+                })?;
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
@@ -1044,12 +1264,17 @@ impl Engine {
         }
         self.db.exec_in_chunks(
             "pending_effect",
-            |n| format!(
-                "UPDATE pending_effect SET done = 1, state = ?1 WHERE id IN ({})",
-                crate::db::holes(n)
-            ),
+            |n| {
+                format!(
+                    "UPDATE pending_effect SET done = 1, state = ?1 WHERE id IN ({})",
+                    crate::db::holes(n)
+                )
+            },
             &[STATE_DONE.into()],
-            &done_ids.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+            &done_ids
+                .iter()
+                .map(|s| s.as_str().into())
+                .collect::<Vec<_>>(),
         )?;
         self.gc_done_effects(&kinds)?;
         Ok(done_ids.len())
@@ -1071,13 +1296,18 @@ impl Engine {
     ///   default 256 ticks) are removed, so the live `effect_log` view still
     ///   shows recent activity.
     fn gc_done_effects(&self, kinds: &HashMap<String, ShellKind>) -> Result<()> {
-        let read_kinds: Vec<&String> = kinds.iter()
+        let read_kinds: Vec<&String> = kinds
+            .iter()
             .filter(|(_, k)| **k == ShellKind::Read)
             .map(|(name, _)| name)
             .collect();
-        if read_kinds.is_empty() { return Ok(()); }
-        let keep: i64 = std::env::var("DL_EFFECT_RETAIN_TICKS").ok()
-            .and_then(|s| s.parse().ok()).unwrap_or(256);
+        if read_kinds.is_empty() {
+            return Ok(());
+        }
+        let keep: i64 = std::env::var("DL_EFFECT_RETAIN_TICKS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256);
         // Read the carry clock directly (the private `current_tx` lives in the
         // engine module); `_carry_meta` is the same row `set_tx` advances.
         let cur_tx: i64 = self.db.query_one(
@@ -1086,16 +1316,23 @@ impl Engine {
             &[],
             |r| Ok(r.get::<_, i64>(0)?),
         )?;
-        if cur_tx <= keep { return Ok(()); }
+        if cur_tx <= keep {
+            return Ok(());
+        }
         let cutoff = cur_tx - keep;
         let n = self.db.exec_in_chunks(
             "pending_effect",
-            |n| format!(
-                "DELETE FROM pending_effect WHERE state = ?1 AND req_tx < ?2 AND kind IN ({})",
-                crate::db::holes(n)
-            ),
+            |n| {
+                format!(
+                    "DELETE FROM pending_effect WHERE state = ?1 AND req_tx < ?2 AND kind IN ({})",
+                    crate::db::holes(n)
+                )
+            },
             &[STATE_DONE.into(), cutoff.into()],
-            &read_kinds.iter().map(|s| s.as_str().into()).collect::<Vec<_>>(),
+            &read_kinds
+                .iter()
+                .map(|s| s.as_str().into())
+                .collect::<Vec<_>>(),
         )?;
         if n > 0 {
             tracing::debug!(target: "dl::effect", reclaimed = n, cutoff, "gc done effects");
@@ -1117,18 +1354,32 @@ impl Engine {
         let mut plans: HashMap<String, (Vec<Term>, Vec<String>)> = HashMap::new();
         for item in &prog.items {
             let Item::Rule(r) = item else { continue };
-            if !r.is_stream() { continue; }
-            let (_, _, outs) = r.effect()
-                .ok_or_else(|| anyhow::anyhow!("@stream rule (rel `{}`) was not desugared to a \
-                    body-effect (frontend bug)", r.head.rel))?;
-            let out_vars: Vec<String> = outs.iter().map(|t| match t {
-                Term::Var(v) => Ok(v.clone()),
-                other => Err(anyhow::anyhow!("@stream effect output {other:?} (rel `{}`) must be a \
-                    fresh variable", r.head.rel)),
-            }).collect::<Result<_>>()?;
+            if !r.is_stream() {
+                continue;
+            }
+            let (_, _, outs) = r.effect().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "@stream rule (rel `{}`) was not desugared to a \
+                    body-effect (frontend bug)",
+                    r.head.rel
+                )
+            })?;
+            let out_vars: Vec<String> = outs
+                .iter()
+                .map(|t| match t {
+                    Term::Var(v) => Ok(v.clone()),
+                    other => Err(anyhow::anyhow!(
+                        "@stream effect output {other:?} (rel `{}`) must be a \
+                    fresh variable",
+                        r.head.rel
+                    )),
+                })
+                .collect::<Result<_>>()?;
             plans.insert(r.head.rel.clone(), (r.head.terms.clone(), out_vars));
         }
-        if plans.is_empty() { return Ok(0); }
+        if plans.is_empty() {
+            return Ok(0);
+        }
         let kinds = shell_kinds(prog);
 
         // Pending stream rows: queued (just subscribed) or running (live). Only a
@@ -1152,21 +1403,34 @@ impl Engine {
 
         // Subscribe a freshly-queued stream (queued -> running); a stream never
         // returns to 'done' on its own (it is long-lived). Build the run set.
-        let mut work: Vec<(String, String,
+        let mut work: Vec<(
+            String,
+            String,
             serde_json::Map<String, serde_json::Value>,
-            serde_json::Map<String, serde_json::Value>)> = Vec::new();
+            serde_json::Map<String, serde_json::Value>,
+        )> = Vec::new();
         // Same orphaned-kind gate as `drain_effects` (Part 2): a stream row
         // whose kind lost its executor template is parked, warned about once,
         // and never subscribed — not left to abort the whole drain.
         let mut orphan_ids: Vec<String> = Vec::new();
         let mut orphan_kinds: Vec<String> = Vec::new();
         for (id, kind, head_rel, args_json, full_json) in pending {
-            if kinds.get(&kind).copied() != Some(ShellKind::Stream) { continue; }
-            let head_rel = if head_rel.is_empty() { kind.clone() } else { head_rel };
-            if !plans.contains_key(&head_rel) { continue; }
+            if kinds.get(&kind).copied() != Some(ShellKind::Stream) {
+                continue;
+            }
+            let head_rel = if head_rel.is_empty() {
+                kind.clone()
+            } else {
+                head_rel
+            };
+            if !plans.contains_key(&head_rel) {
+                continue;
+            }
             if !exec.has_template(&kind) {
                 orphan_ids.push(id);
-                if !orphan_kinds.contains(&kind) { orphan_kinds.push(kind.clone()); }
+                if !orphan_kinds.contains(&kind) {
+                    orphan_kinds.push(kind.clone());
+                }
                 continue;
             }
             self.db.exec_params(
@@ -1190,7 +1454,9 @@ impl Engine {
         }
         if !orphan_ids.is_empty() {
             self.park_orphan_effects(&orphan_ids)?;
-            for kind in &orphan_kinds { self.warn_orphan_kind_once(kind); }
+            for kind in &orphan_kinds {
+                self.warn_orphan_kind_once(kind);
+            }
         }
 
         // Each stream yields N rows (one per output line). Assemble head rows the
@@ -1222,15 +1488,21 @@ impl Engine {
             .collect::<Result<Vec<_>>>()?
             .into_iter().flatten().collect();
 
-        if assembled.is_empty() { return Ok(0); }
+        if assembled.is_empty() {
+            return Ok(0);
+        }
         let mut by_rel: HashMap<String, Vec<Vec<Value>>> = HashMap::new();
         for (head_rel, row) in &assembled {
-            by_rel.entry(head_rel.clone()).or_default().push(row.clone());
+            by_rel
+                .entry(head_rel.clone())
+                .or_default()
+                .push(row.clone());
         }
         for (head_rel, rows) in &by_rel {
             let cols: Vec<String> = {
-                let meta = self.rels.get(head_rel)
-                    .ok_or_else(|| anyhow::anyhow!("@stream response relation `{head_rel}` is not declared"))?;
+                let meta = self.rels.get(head_rel).ok_or_else(|| {
+                    anyhow::anyhow!("@stream response relation `{head_rel}` is not declared")
+                })?;
                 meta.cols.iter().map(|c| c.name.clone()).collect()
             };
             let col_refs: Vec<&str> = cols.iter().map(|s| s.as_str()).collect();
@@ -1252,7 +1524,11 @@ mod tests {
     }
 
     impl EffectExec for TemplatableExec {
-        fn run(&self, _kind: &str, _args: &serde_json::Map<String, serde_json::Value>) -> Result<Vec<String>> {
+        fn run(
+            &self,
+            _kind: &str,
+            _args: &serde_json::Map<String, serde_json::Value>,
+        ) -> Result<Vec<String>> {
             Ok(vec!["ok".to_string()])
         }
         fn has_template(&self, kind: &str) -> bool {
@@ -1264,20 +1540,31 @@ mod tests {
         let mut eng = Engine::new(crate::db::open(None).unwrap(), PathBuf::from("/tmp"));
         eng.ensure_meta().unwrap();
         let id = format!("test-{state}-{kind}");
-        eng.db.insert_rows(
-            "pending_effect",
-            &["id", "kind", "head_rel", "args_json", "full_json", "req_tx", "batch", "state"],
-            &[vec![
-                Value::Text(id.clone()),
-                Value::Text(kind.to_string()),
-                Value::Text("resp".to_string()),
-                Value::Text(r#"{"x":"1"}"#.to_string()),
-                Value::Text(r#"{"x":"1"}"#.to_string()),
-                Value::Int(1),
-                Value::Int(0),
-                Value::Text(state.to_string()),
-            ]],
-        ).unwrap();
+        eng.db
+            .insert_rows(
+                "pending_effect",
+                &[
+                    "id",
+                    "kind",
+                    "head_rel",
+                    "args_json",
+                    "full_json",
+                    "req_tx",
+                    "batch",
+                    "state",
+                ],
+                &[vec![
+                    Value::Text(id.clone()),
+                    Value::Text(kind.to_string()),
+                    Value::Text("resp".to_string()),
+                    Value::Text(r#"{"x":"1"}"#.to_string()),
+                    Value::Text(r#"{"x":"1"}"#.to_string()),
+                    Value::Int(1),
+                    Value::Int(0),
+                    Value::Text(state.to_string()),
+                ]],
+            )
+            .unwrap();
         (eng, id)
     }
 
@@ -1298,7 +1585,9 @@ mod tests {
         let prog = Program::default();
 
         // No template registered: the orphaned row stays orphaned.
-        let no_template = TemplatableExec { kinds: HashSet::new() };
+        let no_template = TemplatableExec {
+            kinds: HashSet::new(),
+        };
         eng.drain_effects(&prog, &no_template).unwrap();
         assert_eq!(state_of(&eng, &id), STATE_ORPHANED);
 

@@ -87,7 +87,10 @@ pub struct RawComment {
 /// safety that a naive text scan can't give. Positions come straight from
 /// tree-sitter (0-based row/col), normalized here to 1-based line / 0-based
 /// column to match `sg`/`diag`.
-pub fn walk_comments(content: &str, lang: &tree_sitter::Language) -> anyhow::Result<Vec<RawComment>> {
+pub fn walk_comments(
+    content: &str,
+    lang: &tree_sitter::Language,
+) -> anyhow::Result<Vec<RawComment>> {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(lang)?;
     let tree = parser
@@ -103,7 +106,10 @@ pub fn walk_comments(content: &str, lang: &tree_sitter::Language) -> anyhow::Res
         if node.kind().contains("comment") {
             let sp = node.start_position();
             let ep = node.end_position();
-            let raw = content.get(node.start_byte()..node.end_byte()).unwrap_or("").to_string();
+            let raw = content
+                .get(node.start_byte()..node.end_byte())
+                .unwrap_or("")
+                .to_string();
             out.push(RawComment {
                 start_row: sp.row as u32 + 1,
                 start_col: sp.column as u32,
@@ -141,7 +147,9 @@ pub fn walk_md_comments(content: &str) -> anyhow::Result<Vec<RawComment>> {
     let mut stack: Vec<tree_sitter::Node> = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if node.kind() == "html_block" {
-            let raw = content.get(node.start_byte()..node.end_byte()).unwrap_or("");
+            let raw = content
+                .get(node.start_byte()..node.end_byte())
+                .unwrap_or("");
             let trimmed = raw.trim();
             if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
                 let sp = node.start_position();
@@ -181,10 +189,20 @@ pub fn classify_comment(raw: &str) -> (&'static str, String) {
         return ("doc", body.trim().to_string());
     }
     if (t.starts_with("/**") || t.starts_with("/*!")) && t != "/**/" {
-        return ("doc", crate::typegraph::clean_block_comment(t).trim_end().to_string());
+        return (
+            "doc",
+            crate::typegraph::clean_block_comment(t)
+                .trim_end()
+                .to_string(),
+        );
     }
     if t.starts_with("/*") {
-        return ("block", crate::typegraph::clean_block_comment(t).trim_end().to_string());
+        return (
+            "block",
+            crate::typegraph::clean_block_comment(t)
+                .trim_end()
+                .to_string(),
+        );
     }
     // Markdown HTML comment (`walk_md_comments`'s only shape): no doc/line
     // variant, always a block.
@@ -244,7 +262,10 @@ mod tests {
         let lang = tree_sitter::Language::new(tree_sitter_rust::LANGUAGE);
         let nodes = walk_cst("fn alpha() {}\n", &lang).unwrap();
         // root source_file + function_item + identifier + parameters + block, etc.
-        assert!(nodes.len() >= 3, "expected several named nodes, got {nodes:?}");
+        assert!(
+            nodes.len() >= 3,
+            "expected several named nodes, got {nodes:?}"
+        );
         // Root is the source_file, parent None.
         assert_eq!(nodes[0].kind, "source_file");
         assert_eq!(nodes[0].parent_ix, None);
@@ -252,17 +273,29 @@ mod tests {
         // Exactly one node has no parent (the root).
         assert_eq!(nodes.iter().filter(|n| n.parent_ix.is_none()).count(), 1);
         // A function_item exists and its parent is the root (named ancestor).
-        let fi = nodes.iter().position(|n| n.kind == "function_item").expect("function_item");
-        assert_eq!(nodes[fi].parent_ix, Some(0), "function_item's named parent is the root");
+        let fi = nodes
+            .iter()
+            .position(|n| n.kind == "function_item")
+            .expect("function_item");
+        assert_eq!(
+            nodes[fi].parent_ix,
+            Some(0),
+            "function_item's named parent is the root"
+        );
         // An identifier `alpha` is present.
-        assert!(nodes.iter().any(|n| n.kind == "identifier" && &"fn alpha() {}\n"[n.lo..n.hi] == "alpha"));
+        assert!(nodes
+            .iter()
+            .any(|n| n.kind == "identifier" && &"fn alpha() {}\n"[n.lo..n.hi] == "alpha"));
     }
 
     #[test]
     fn walks_a_small_python_file() {
         let lang = tree_sitter::Language::new(tree_sitter_python::LANGUAGE);
         let nodes = walk_cst("def beta():\n    pass\n", &lang).unwrap();
-        assert!(nodes.iter().any(|n| n.kind == "function_definition"), "python fn def: {nodes:?}");
+        assert!(
+            nodes.iter().any(|n| n.kind == "function_definition"),
+            "python fn def: {nodes:?}"
+        );
         assert_eq!(nodes.iter().filter(|n| n.parent_ix.is_none()).count(), 1);
     }
 
@@ -273,9 +306,18 @@ mod tests {
         let src = "// real\nfn f() { let s = \"// fake\"; }\n/* block */\n";
         let cs = walk_comments(src, &lang).unwrap();
         let texts: Vec<String> = cs.iter().map(|c| c.raw.clone()).collect();
-        assert!(texts.iter().any(|r| r.contains("// real")), "line comment: {texts:?}");
-        assert!(texts.iter().any(|r| r.contains("/* block */")), "block comment: {texts:?}");
-        assert!(!texts.iter().any(|r| r.contains("fake")), "string leaked: {texts:?}");
+        assert!(
+            texts.iter().any(|r| r.contains("// real")),
+            "line comment: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|r| r.contains("/* block */")),
+            "block comment: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|r| r.contains("fake")),
+            "string leaked: {texts:?}"
+        );
         // 1-based line, 0-based col.
         let first = cs.iter().find(|c| c.raw.contains("// real")).unwrap();
         assert_eq!((first.start_row, first.start_col), (1, 0));
@@ -288,7 +330,11 @@ mod tests {
         let src = "# Title\n\n<!-- todo(perf): fix the thing\nspans lines -->\n\n<div>raw html island</div>\n\nBody `<!-- not a comment, inline code -->` text.\n";
         let cs = walk_md_comments(src).unwrap();
         assert_eq!(cs.len(), 1, "exactly the block comment: {cs:?}");
-        assert_eq!((cs[0].start_row, cs[0].end_row), (3, 5), "1-based span incl. trailing newline row");
+        assert_eq!(
+            (cs[0].start_row, cs[0].end_row),
+            (3, 5),
+            "1-based span incl. trailing newline row"
+        );
         assert!(cs[0].raw.contains("todo(perf)"));
         // classify strips the delimiters and lands kind=block.
         let (kind, text) = classify_comment(&cs[0].raw);
@@ -300,7 +346,10 @@ mod tests {
     fn classify_comment_kinds_and_strip() {
         assert_eq!(classify_comment("// hi"), ("line", "hi".to_string()));
         assert_eq!(classify_comment("/// doc"), ("doc", "doc".to_string()));
-        assert_eq!(classify_comment("//! inner doc"), ("doc", "inner doc".to_string()));
+        assert_eq!(
+            classify_comment("//! inner doc"),
+            ("doc", "inner doc".to_string())
+        );
         assert_eq!(classify_comment("/* b */"), ("block", "b".to_string()));
         assert_eq!(classify_comment("/** d */"), ("doc", "d".to_string()));
         assert_eq!(classify_comment("# py"), ("line", "py".to_string()));

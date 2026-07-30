@@ -20,7 +20,8 @@ fn rail() -> String {
 }
 
 fn sandbox(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("dl_family_op_raw_sql_{tag}_{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("dl_family_op_raw_sql_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src/engine/family")).unwrap();
     dir
@@ -35,9 +36,11 @@ fn check(dir: &PathBuf) -> (i32, String, String) {
         .env("SPREFA_CONFIG", "/dev/null")
         .output()
         .expect("run dl --check on the rusqlite-coupling rail");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// The three real op-authoring files must pass with zero `op-raw-sql`
@@ -90,11 +93,20 @@ fn rail_flags_raw_sql_in_planted_family_file() {
 
     let (code, out, err) = check(&dir);
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(code, 2, "rail fails --check on raw SQL in a planted op file: out={out} err={err}");
+    assert_eq!(
+        code, 2,
+        "rail fails --check on raw SQL in a planted op file: out={out} err={err}"
+    );
     let text = format!("{out}{err}");
     assert!(text.contains("op-raw-sql"), "reports the ban code: {text}");
-    assert!(text.contains("call_dirty.rs"), "names the offending file: {text}");
-    assert!(text.contains("Ctx::scan"), "points at the sanctioned read helper: {text}");
+    assert!(
+        text.contains("call_dirty.rs"),
+        "names the offending file: {text}"
+    );
+    assert!(
+        text.contains("Ctx::scan"),
+        "points at the sanctioned read helper: {text}"
+    );
 }
 
 /// `mod.rs` and `router.rs` are the framework (Ctx::scan itself lives in
@@ -116,7 +128,10 @@ fn rail_excludes_framework_files() {
 
     let (code, out, err) = check(&dir);
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(code, 0, "framework files (mod.rs/router.rs) are out of scope: out={out} err={err}");
+    assert_eq!(
+        code, 0,
+        "framework files (mod.rs/router.rs) are out of scope: out={out} err={err}"
+    );
 }
 
 /// A raw SQL call inside a family file's OWN `#[cfg(test)] mod tests { .. }`
@@ -154,7 +169,13 @@ fn rail_exempts_own_test_module() {
 
     let (code, out, err) = check(&dir);
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(code, 0, "raw SQL inside the file's own #[cfg(test)] mod tests is exempt: out={out} err={err}");
+    assert_eq!(
+        code, 0,
+        "raw SQL inside the file's own #[cfg(test)] mod tests is exempt: out={out} err={err}"
+    );
     let text = format!("{out}{err}");
-    assert!(!text.contains("op-raw-sql"), "no finding should fire inside the test module: {text}");
+    assert!(
+        !text.contains("op-raw-sql"),
+        "no finding should fire inside the test module: {text}"
+    );
 }

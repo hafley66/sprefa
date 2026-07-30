@@ -33,9 +33,9 @@ pub(crate) async fn idle_task(d: Arc<Daemon>, ctx: ShellCtx, idle_secs: u64) {
         // lock — see `daemon::logcap`'s module doc for the mechanism.
         crate::daemon::logcap::sweep(&d.home);
         let roots = d.all_roots();
-        let all_idle = roots.iter().all(|sr| {
-            lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs)
-        });
+        let all_idle = roots
+            .iter()
+            .all(|sr| lock(&sr.last_activity).elapsed() > Duration::from_secs(idle_secs));
         if all_idle {
             tracing::info!("[daemon] all roots idle {}min, exiting", idle_secs / 60);
             shutdown_cleanup(&d);
@@ -77,7 +77,10 @@ fn poll_scan(d: &Arc<Daemon>) {
         // being served — and error-looped — forever. The config view
         // (`key == None`) has no directory of its own to vanish.
         if sr.key.is_some() && !sr.root.exists() {
-            tracing::warn!("[daemon] root {} no longer exists; deregistering", sr.root.display());
+            tracing::warn!(
+                "[daemon] root {} no longer exists; deregistering",
+                sr.root.display()
+            );
             let _ = d.drop_root(&sr.root, false);
             continue;
         }
@@ -95,7 +98,10 @@ fn poll_scan(d: &Arc<Daemon>) {
         match sr.poll_idle() {
             Ok(true) => continue,
             Ok(false) => {}
-            Err(e) => { tracing::warn!("[{}] poll idle probe: {e}", sr.root_label()); continue; }
+            Err(e) => {
+                tracing::warn!("[{}] poll idle probe: {e}", sr.root_label());
+                continue;
+            }
         }
         if let Err(e) = sr.enqueue_job(crate::jobq::JobRow::sink_drain(&sr.job_root_id())) {
             tracing::warn!("[{}] enqueue sink drain: {e}", sr.root_label());

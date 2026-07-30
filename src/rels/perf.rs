@@ -25,7 +25,9 @@ use super::{col, RelKind};
 fn fold_twins(rows: Vec<(String, i64)>) -> Vec<(String, i64)> {
     let mut merged: BTreeMap<String, i64> = BTreeMap::new();
     for (rel, value) in rows {
-        *merged.entry(display_rel_name(&rel).to_string()).or_insert(0) += value;
+        *merged
+            .entry(display_rel_name(&rel).to_string())
+            .or_insert(0) += value;
     }
     merged.into_iter().collect()
 }
@@ -36,11 +38,16 @@ fn fold_twins(rows: Vec<(String, i64)>) -> Vec<(String, i64)> {
 fn fold_twin_triples(rows: Vec<(String, i64, i64)>) -> Vec<(String, i64, i64)> {
     let mut merged: BTreeMap<String, (i64, i64)> = BTreeMap::new();
     for (rel, ms, n) in rows {
-        let e = merged.entry(display_rel_name(&rel).to_string()).or_insert((0, 0));
+        let e = merged
+            .entry(display_rel_name(&rel).to_string())
+            .or_insert((0, 0));
         e.0 += ms;
         e.1 += n;
     }
-    merged.into_iter().map(|(rel, (ms, n))| (rel, ms, n)).collect()
+    merged
+        .into_iter()
+        .map(|(rel, (ms, n))| (rel, ms, n))
+        .collect()
 }
 
 /// Row count per declared relation, as of this refresh. Honest limits: the
@@ -56,7 +63,9 @@ impl RelKind for PerfKind {
     }
     // Projections of the tick's own bookkeeping (`_stmt_ms` timings jitter on
     // every rebuild); see `RelKind::bookkeeping`.
-    fn bookkeeping(&self) -> bool { true }
+    fn bookkeeping(&self) -> bool {
+        true
+    }
     fn decls(&self) -> Vec<RelDecl> {
         vec![
             RelDecl {
@@ -84,17 +93,21 @@ impl RelKind for PerfKind {
         // closure head is a reachability view, and COUNT(*) on it materializes
         // the full closure — the exact unbounded evaluation the closure-query
         // guard refuses. Only real tables are counted.
-        let views: std::collections::HashSet<String> = eng.db.query_rows(
-            "sqlite_master",
-            "SELECT name FROM sqlite_master WHERE type = 'view'",
-            &[],
-            |r| Ok(r.get::<_, String>(0)?),
-        )?
+        let views: std::collections::HashSet<String> = eng
+            .db
+            .query_rows(
+                "sqlite_master",
+                "SELECT name FROM sqlite_master WHERE type = 'view'",
+                &[],
+                |r| Ok(r.get::<_, String>(0)?),
+            )?
             .into_iter()
             .collect();
         let mut counts: Vec<(String, i64)> = Vec::new();
         for rel in eng.rels.keys() {
-            if self.rels().contains(&rel.as_str()) || views.contains(&tbl(rel)) { continue; }
+            if self.rels().contains(&rel.as_str()) || views.contains(&tbl(rel)) {
+                continue;
+            }
             let n: i64 = eng.db.query_one(
                 rel,
                 &format!("SELECT COUNT(*) FROM {}", txt_tbl(rel)),
@@ -118,40 +131,68 @@ impl RelKind for PerfKind {
                 "_stmt_ms",
                 "SELECT rel, ms, n FROM _stmt_ms ORDER BY rel",
                 &[],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
             )?;
             for row in rows {
-                let name = row.0.split_once(':').map(|(_, suffix)| suffix).unwrap_or(&row.0);
-                if eng.rels.contains_key(name) { timings.push(row); }
+                let name = row
+                    .0
+                    .split_once(':')
+                    .map(|(_, suffix)| suffix)
+                    .unwrap_or(&row.0);
+                if eng.rels.contains_key(name) {
+                    timings.push(row);
+                }
             }
         }
         let timings = fold_twin_triples(timings);
         let read_pairs = |rel: &str, c0: &str, c1: &str| -> Result<Vec<(String, i64)>> {
             eng.db.query_rows(
                 rel,
-                &format!("SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"", txt_tbl(rel)),
+                &format!(
+                    "SELECT \"{c0}\", \"{c1}\" FROM {} ORDER BY \"{c0}\"",
+                    txt_tbl(rel)
+                ),
                 &[],
                 |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
             )
         };
         let mut changed = false;
         if read_pairs("rel_count", "rel", "rows")? != counts {
-            let rows: Vec<Vec<Value>> = counts.into_iter()
-                .map(|(r, n)| vec![Value::Text(r), Value::Int(n)]).collect();
+            let rows: Vec<Vec<Value>> = counts
+                .into_iter()
+                .map(|(r, n)| vec![Value::Text(r), Value::Int(n)])
+                .collect();
             eng.refresh_rel("rel_count", &["rel", "rows"], &rows)?;
             changed = true;
         }
         let read_triples = || -> Result<Vec<(String, i64, i64)>> {
             eng.db.query_rows(
                 "stmt_ms",
-                &format!("SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"", txt_tbl("stmt_ms")),
+                &format!(
+                    "SELECT \"rel\", \"ms\", \"n\" FROM {} ORDER BY \"rel\"",
+                    txt_tbl("stmt_ms")
+                ),
                 &[],
-                |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?)),
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
             )
         };
         if read_triples()? != timings {
-            let rows: Vec<Vec<Value>> = timings.into_iter()
-                .map(|(r, ms, n)| vec![Value::Text(r), Value::Int(ms), Value::Int(n)]).collect();
+            let rows: Vec<Vec<Value>> = timings
+                .into_iter()
+                .map(|(r, ms, n)| vec![Value::Text(r), Value::Int(ms), Value::Int(n)])
+                .collect();
             eng.refresh_rel("stmt_ms", &["rel", "ms", "n"], &rows)?;
             changed = true;
         }

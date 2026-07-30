@@ -29,10 +29,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn check(dir: &Path, prog: &str) -> (i32, String) {
@@ -41,11 +44,16 @@ fn check(dir: &Path, prog: &str) -> (i32, String) {
         .args(["--check", dir.join("p.dl").to_str().unwrap()])
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl --check");
-    (out.status.code().unwrap_or(-1),
-     format!("{}{}",
-         String::from_utf8_lossy(&out.stdout),
-         String::from_utf8_lossy(&out.stderr)))
+        .output()
+        .expect("run dl --check");
+    (
+        out.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
 }
 
 /// The base program: a derived rule computes the `point` shape and a
@@ -57,7 +65,8 @@ const POINT: &str = concat!(
     "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
     "rel point_rel: point.\n",
     "point_rel(3, 4).\n",
-    "? point_rel(x, y).\n");
+    "? point_rel(x, y).\n"
+);
 
 /// Tick 1 the shape rel is pending (query fails loudly, run still exits 0);
 /// tick 2 it resolves from the persisted `_shapes` rows and the fact heading it
@@ -67,12 +76,16 @@ fn derived_shape_resolves_on_next_tick() {
     let dir = sandbox("resolve");
     let (code1, _out1, err1) = run(&dir, POINT);
     assert_eq!(code1, 0, "tick 1 pending is loud but non-fatal:\n{err1}");
-    assert!(err1.contains("unknown relation point_rel"),
-        "tick 1 the rel does not exist yet:\n{err1}");
+    assert!(
+        err1.contains("unknown relation point_rel"),
+        "tick 1 the rel does not exist yet:\n{err1}"
+    );
     let (code2, out2, err2) = run(&dir, POINT);
     assert_eq!(code2, 0, "{err2}");
-    assert!(out2.contains("(1 rows)") && out2.contains("3\t4"),
-        "tick 2 the derived shape is live and the fact row landed:\n{out2}");
+    assert!(
+        out2.contains("(1 rows)") && out2.contains("3\t4"),
+        "tick 2 the derived shape is live and the fact row landed:\n{out2}"
+    );
 }
 
 /// --check on tick 1 carries the `shape-pending` info diag naming the rel and
@@ -84,14 +97,19 @@ fn shape_pending_diag_then_clears() {
         "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"int\").\n",
         "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
-        "rel point_rel: point.\n");
+        "rel point_rel: point.\n"
+    );
     let (_code1, out1) = check(&dir, prog);
-    assert!(out1.contains("shape-pending") && out1.contains("point_rel"),
-        "tick 1 --check names the pending rel:\n{out1}");
+    assert!(
+        out1.contains("shape-pending") && out1.contains("point_rel"),
+        "tick 1 --check names the pending rel:\n{out1}"
+    );
     let (code2, out2) = check(&dir, prog);
     assert_eq!(code2, 0, "{out2}");
-    assert!(!out2.contains("shape-pending"),
-        "tick 2 the shape resolved, no pending diag:\n{out2}");
+    assert!(
+        !out2.contains("shape-pending"),
+        "tick 2 the shape resolved, no pending diag:\n{out2}"
+    );
 }
 
 /// A syntax `type point(...)` and derived rows sharing the name: syntax wins
@@ -107,14 +125,19 @@ fn syntax_shape_shadows_derived() {
         "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
         "point_rel(1, 2).\n",
-        "? point_rel(x, y).\n");
+        "? point_rel(x, y).\n"
+    );
     let (code1, out1, err1) = run(&dir, prog);
     assert_eq!(code1, 0, "{err1}");
-    assert!(out1.contains("(1 rows)"),
-        "syntax shape resolves immediately, tick 1:\n{out1}");
+    assert!(
+        out1.contains("(1 rows)"),
+        "syntax shape resolves immediately, tick 1:\n{out1}"
+    );
     let (_code2, out2) = check(&dir, prog);
-    assert!(out2.contains("shape-shadowed"),
-        "persisted derived rows under a syntax shape name warn:\n{out2}");
+    assert!(
+        out2.contains("shape-shadowed"),
+        "persisted derived rows under a syntax shape name warn:\n{out2}"
+    );
 }
 
 /// A derived shape row naming an unknown type: `shape-unknown-type` warn, and the
@@ -126,15 +149,22 @@ fn unknown_ty_keeps_shape_pending() {
         "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
         "col_spec(\"point\", 0, \"x\", \"flavor\").\n",
         "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
-        "rel point_rel: point.\n");
+        "rel point_rel: point.\n"
+    );
     let (_code1, out1) = check(&dir, prog);
-    assert!(out1.contains("shape-unknown-type") && out1.contains("flavor"),
-        "the unknown type is named:\n{out1}");
+    assert!(
+        out1.contains("shape-unknown-type") && out1.contains("flavor"),
+        "the unknown type is named:\n{out1}"
+    );
     let (_code2, out2) = check(&dir, prog);
-    assert!(out2.contains("shape-pending"),
-        "the shape never persisted, still pending on tick 2:\n{out2}");
-    assert!(out2.contains("shape-unknown-type"),
-        "the type warn is steady, not one-shot:\n{out2}");
+    assert!(
+        out2.contains("shape-pending"),
+        "the shape never persisted, still pending on tick 2:\n{out2}"
+    );
+    assert!(
+        out2.contains("shape-unknown-type"),
+        "the type warn is steady, not one-shot:\n{out2}"
+    );
 }
 
 /// `rel type_decl_row(...)` bails: the sink is reserved, head it directly.
@@ -144,8 +174,12 @@ fn rel_decl_of_the_sink_bails() {
     let prog = "rel type_decl_row(shape: text, pos: int, col: text, type: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("reserved-name") && err.contains("relation `type_decl_row`")
-        && err.contains("write to the built-in directly"), "{err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `type_decl_row`")
+            && err.contains("write to the built-in directly"),
+        "{err}"
+    );
 }
 
 /// A shape's row set changing = column drift on the rel using it: the stale
@@ -160,11 +194,15 @@ fn shape_row_change_migrates_the_rel() {
         "col_spec(\"point\", 1, \"y\", \"int\").\n",
         "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
-        "? point_rel(x, y).\n");
+        "? point_rel(x, y).\n"
+    );
     run(&dir, two_cols);
     let (code2, out2, err2) = run(&dir, two_cols);
     assert_eq!(code2, 0, "{err2}");
-    assert!(out2.contains("(0 rows)"), "2-col shape live on tick 2:\n{out2}");
+    assert!(
+        out2.contains("(0 rows)"),
+        "2-col shape live on tick 2:\n{out2}"
+    );
 
     let three_cols = concat!(
         "rel col_spec(shape: text, pos: int, col_name: text, type: text).\n",
@@ -173,15 +211,20 @@ fn shape_row_change_migrates_the_rel() {
         "col_spec(\"point\", 2, \"z\", \"int\").\n",
         "type_decl_row(shape, pos, col, type) <- col_spec(shape, pos, col, type).\n",
         "rel point_rel: point.\n",
-        "? point_rel(x, y, z).\n");
+        "? point_rel(x, y, z).\n"
+    );
     let (code3, _out3, err3) = run(&dir, three_cols);
     assert_eq!(code3, 0, "{err3}");
-    assert!(err3.contains("expects 2 cols, got 3"),
-        "tick 3 still serves the stale 2-col shape, loudly:\n{err3}");
+    assert!(
+        err3.contains("expects 2 cols, got 3"),
+        "tick 3 still serves the stale 2-col shape, loudly:\n{err3}"
+    );
     let (code4, out4, err4) = run(&dir, three_cols);
     assert_eq!(code4, 0, "{err4}");
-    assert!(out4.contains("(0 rows)"),
-        "tick 4 the table migrated to the 3-col shape:\n{out4}");
+    assert!(
+        out4.contains("(0 rows)"),
+        "tick 4 the table migrated to the 3-col shape:\n{out4}"
+    );
 }
 
 /// The shipped example end to end: a schema inferred from a JSON sample (int
@@ -191,14 +234,20 @@ fn shape_row_change_migrates_the_rel() {
 fn json_inference_example_end_to_end() {
     let dir = sandbox("json_example");
     let example = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/type-from-json.dl")).unwrap();
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/type-from-json.dl"),
+    )
+    .unwrap();
     run(&dir, &example);
     let (code2, out2, err2) = run(&dir, &example);
     assert_eq!(code2, 0, "{err2}");
-    assert!(out2.contains("age\tcity\tname"),
-        "inferred columns in alphabetical order:\n{out2}");
-    assert!(out2.contains("30\tparis\talice") && out2.contains("(1 rows)"),
-        "the shaped row landed:\n{out2}");
+    assert!(
+        out2.contains("age\tcity\tname"),
+        "inferred columns in alphabetical order:\n{out2}"
+    );
+    assert!(
+        out2.contains("30\tparis\talice") && out2.contains("(1 rows)"),
+        "the shaped row landed:\n{out2}"
+    );
 }
 
 /// The mapped-type trick: `type_decl_row("partial_" + rel, ...)` over the
@@ -210,10 +259,13 @@ fn mapped_type_mints_partial_shapes() {
     let prog = concat!(
         "type_decl_row(\"partial_\" + rel, pos, col, type) <- rel_col(rel, pos, col, type, _).\n",
         "rel partial_checkout: partial_checkout_done.\n",
-        "? partial_checkout(repo, branch, action, ok, detail).\n");
+        "? partial_checkout(repo, branch, action, ok, detail).\n"
+    );
     run(&dir, prog);
     let (code2, out2, err2) = run(&dir, prog);
     assert_eq!(code2, 0, "{err2}");
-    assert!(out2.contains("repo\tbranch\taction\tok\tdetail") && out2.contains("(0 rows)"),
-        "checkout_done's 5 columns copied into the derived partial shape:\n{out2}");
+    assert!(
+        out2.contains("repo\tbranch\taction\tok\tdetail") && out2.contains("(0 rows)"),
+        "checkout_done's 5 columns copied into the derived partial shape:\n{out2}"
+    );
 }

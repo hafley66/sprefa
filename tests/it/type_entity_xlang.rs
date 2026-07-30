@@ -71,14 +71,32 @@ fn finds_network_interfaces_and_functions_across_languages() {
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
 
     // the four cross-language hits
-    assert!(out.contains("NetworkClient\tinterface\tsrc/net.ts"), "ts interface: {out}");
-    assert!(out.contains("openNetwork\tfunction\tsrc/net.ts"), "ts function: {out}");
-    assert!(out.contains("NetworkSocket\tinterface\tsrc/Net.kt"), "kotlin interface: {out}");
-    assert!(out.contains("pingNetwork\tfunction\tsrc/Net.kt"), "kotlin function: {out}");
+    assert!(
+        out.contains("NetworkClient\tinterface\tsrc/net.ts"),
+        "ts interface: {out}"
+    );
+    assert!(
+        out.contains("openNetwork\tfunction\tsrc/net.ts"),
+        "ts function: {out}"
+    );
+    assert!(
+        out.contains("NetworkSocket\tinterface\tsrc/Net.kt"),
+        "kotlin interface: {out}"
+    );
+    assert!(
+        out.contains("pingNetwork\tfunction\tsrc/Net.kt"),
+        "kotlin function: {out}"
+    );
 
     // decoys excluded: wrong name, or right name but wrong kind (the alias)
-    assert!(!out.contains("\tCache\t") && !out.contains("Cache\tinterface"), "Cache leaked: {out}");
+    assert!(
+        !out.contains("\tCache\t") && !out.contains("Cache\tinterface"),
+        "Cache leaked: {out}"
+    );
     assert!(!out.contains("unrelated"), "unrelated fn leaked: {out}");
     assert!(!out.contains("Plain\tinterface"), "Plain leaked: {out}");
-    assert!(!out.contains("NetworkAlias"), "alias is neither interface nor function: {out}");
+    assert!(
+        !out.contains("NetworkAlias"),
+        "alias is neither interface nor function: {out}"
+    );
 }

@@ -36,7 +36,9 @@ fn run(dir: &Path, extra_envs: &[(&str, &str)]) -> String {
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml");
-    for (k, v) in extra_envs { cmd.env(k, v); }
+    for (k, v) in extra_envs {
+        cmd.env(k, v);
+    }
     let out = cmd.output().expect("run dl");
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -50,7 +52,9 @@ fn cold_run_emits_extract_rebuild_and_warm_rerun_emits_skip_under_debug() {
     // Default level (no DL_LOG set) already shows the verdict line.
     let cold_stderr = run(&dir, &[]);
     assert!(
-        cold_stderr.lines().any(|l| l.contains("[extract]") && l.contains("REBUILD")),
+        cold_stderr
+            .lines()
+            .any(|l| l.contains("[extract]") && l.contains("REBUILD")),
         "cold run should print an [extract] ... REBUILD verdict line, got:\n{cold_stderr}"
     );
     assert!(
@@ -62,7 +66,9 @@ fn cold_run_emits_extract_rebuild_and_warm_rerun_emits_skip_under_debug() {
     // every family skips. The skip verdict is Debug-only.
     let warm_stderr_default = run(&dir, &[]);
     assert!(
-        !warm_stderr_default.lines().any(|l| l.contains("[extract]") && l.contains("skipped")),
+        !warm_stderr_default
+            .lines()
+            .any(|l| l.contains("[extract]") && l.contains("skipped")),
         "a skip verdict must NOT print at Default level:\n{warm_stderr_default}"
     );
     let warm_stderr_debug = run(&dir, &[("DL_LOG", "debug")]);
@@ -71,7 +77,9 @@ fn cold_run_emits_extract_rebuild_and_warm_rerun_emits_skip_under_debug() {
         "warm run under DL_LOG=debug should print an [extract] ... skipped (digest match) verdict, got:\n{warm_stderr_debug}"
     );
     assert!(
-        !warm_stderr_debug.lines().any(|l| l.contains("[extract]") && l.contains("REBUILD")),
+        !warm_stderr_debug
+            .lines()
+            .any(|l| l.contains("[extract]") && l.contains("REBUILD")),
         "a warm no-change run must not also claim a rebuild:\n{warm_stderr_debug}"
     );
 }

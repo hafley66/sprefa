@@ -63,10 +63,9 @@ pub struct QueryOut {
 // LANG-JUNCTION(anchor-source-exts): the extension list that classifies a bare `dl what` anchor as a path (and the module's probe program's scan globs further down); a new language's extension belongs here for path anchors to classify
 /// Known source extensions that make a bare (slash-free) string a [`Anchor::Path`].
 const SOURCE_EXTS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "kt", "kts", "py", "go",
-    "java", "c", "cc", "cpp", "cxx", "h", "hh", "hpp", "cs", "rb", "php",
-    "swift", "scala", "lua", "ex", "exs", "erl", "hs", "ml", "sh", "bash",
-    "css", "scss", "html", "htm", "vue", "svelte", "json", "yaml", "yml",
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "kt", "kts", "py", "go", "java", "c", "cc",
+    "cpp", "cxx", "h", "hh", "hpp", "cs", "rb", "php", "swift", "scala", "lua", "ex", "exs", "erl",
+    "hs", "ml", "sh", "bash", "css", "scss", "html", "htm", "vue", "svelte", "json", "yaml", "yml",
     "toml", "md", "sql",
 ];
 
@@ -80,7 +79,10 @@ pub fn classify(input: &str) -> Anchor {
         let digits = &tail[1..];
         if !head.is_empty() && !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
             if let Ok(line) = digits.parse::<i64>() {
-                return Anchor::PathLine { path: head.to_string(), line };
+                return Anchor::PathLine {
+                    path: head.to_string(),
+                    line,
+                };
             }
         }
     }
@@ -294,37 +296,55 @@ fn neighborhood(eng: &Engine, sym: &str) -> String {
     let callers = count_of(
         eng,
         "call_edge",
-        &format!("SELECT COUNT(DISTINCT \"caller\") FROM {} WHERE \"callee\" = ?1", txt_tbl("call_edge")),
+        &format!(
+            "SELECT COUNT(DISTINCT \"caller\") FROM {} WHERE \"callee\" = ?1",
+            txt_tbl("call_edge")
+        ),
         &s,
     );
     let callees = count_of(
         eng,
         "call_edge",
-        &format!("SELECT COUNT(DISTINCT \"callee\") FROM {} WHERE \"caller\" = ?1", txt_tbl("call_edge")),
+        &format!(
+            "SELECT COUNT(DISTINCT \"callee\") FROM {} WHERE \"caller\" = ?1",
+            txt_tbl("call_edge")
+        ),
         &s,
     );
     let type_in = count_of(
         eng,
         "type_link",
-        &format!("SELECT COUNT(DISTINCT \"src\") FROM {} WHERE \"dst\" = ?1", txt_tbl("type_link")),
+        &format!(
+            "SELECT COUNT(DISTINCT \"src\") FROM {} WHERE \"dst\" = ?1",
+            txt_tbl("type_link")
+        ),
         &s,
     );
     let type_out = count_of(
         eng,
         "type_link",
-        &format!("SELECT COUNT(DISTINCT \"dst\") FROM {} WHERE \"src\" = ?1", txt_tbl("type_link")),
+        &format!(
+            "SELECT COUNT(DISTINCT \"dst\") FROM {} WHERE \"src\" = ?1",
+            txt_tbl("type_link")
+        ),
         &s,
     );
     let doc = count_of(
         eng,
         "doc_comment",
-        &format!("SELECT COUNT(*) FROM {} WHERE \"sym\" = ?1", txt_tbl("doc_comment")),
+        &format!(
+            "SELECT COUNT(*) FROM {} WHERE \"sym\" = ?1",
+            txt_tbl("doc_comment")
+        ),
         &s,
     ) > 0;
     let scip_occ = count_of(
         eng,
         "scip_occurrence",
-        &format!("SELECT COUNT(*) FROM {} WHERE \"symbol\" = ?1", txt_tbl("scip_occurrence")),
+        &format!(
+            "SELECT COUNT(*) FROM {} WHERE \"symbol\" = ?1",
+            txt_tbl("scip_occurrence")
+        ),
         &s,
     );
     format!(
@@ -365,7 +385,11 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             // comment_node keys its file on the `path` column.
             let (cpred, _) = path_predicate("path", &path);
             let ln = line.to_string();
-            let params = [SqlVal::from(pp[0].as_str()), SqlVal::from(pp[1].as_str()), SqlVal::from(ln.as_str())];
+            let params = [
+                SqlVal::from(pp[0].as_str()),
+                SqlVal::from(pp[1].as_str()),
+                SqlVal::from(ln.as_str()),
+            ];
 
             // call_site(repo, caller, callee, file, line)
             let sql = format!(
@@ -464,7 +488,11 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
             }
         }
         Anchor::Name(pattern) => {
-            let match_kind = if pattern.contains('*') { "glob" } else { "exact" };
+            let match_kind = if pattern.contains('*') {
+                "glob"
+            } else {
+                "exact"
+            };
             let hits = resolve_name(eng, &pattern).unwrap_or_default();
             for h in hits {
                 let detail = neighborhood(eng, &h.sym);
@@ -482,13 +510,24 @@ pub fn what(eng: &Engine, anchor: &str, limit: Option<usize>, offset: Option<usi
     }
 
     // SCIP tier honesty.
-    if count_of(eng, "scip_def", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
+    if count_of(
+        eng,
+        "scip_def",
+        &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")),
+        &[],
+    ) == 0
+    {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 
     let total = rows.len();
     let rows = page(rows, limit, offset);
-    QueryOut { columns, rows, total, notes }
+    QueryOut {
+        columns,
+        rows,
+        total,
+        notes,
+    }
 }
 
 /// `dl summary <path>`: a per-file report — declared entities, callables with
@@ -507,7 +546,11 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         txt_tbl("type_entity")
     );
     for r in rows_of(eng, "type_entity", &sql, &fparams) {
-        rows.push(vec!["entity".into(), r[0].clone(), format!("{} L{}", r[1], r[2])]);
+        rows.push(vec![
+            "entity".into(),
+            r[0].clone(),
+            format!("{} L{}", r[1], r[2]),
+        ]);
     }
 
     // Callables with fan totals (set-based correlated subqueries, one statement).
@@ -568,10 +611,17 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
         te = txt_tbl("type_entity"),
         doc = txt_tbl("doc_comment"),
     );
-    if let Some(r) = rows_of(eng, "type_entity", &sql, &fparams).into_iter().next() {
+    if let Some(r) = rows_of(eng, "type_entity", &sql, &fparams)
+        .into_iter()
+        .next()
+    {
         let total: i64 = r[0].parse().unwrap_or(0);
         let documented: i64 = r[1].parse().unwrap_or(0);
-        let pct = if total > 0 { documented * 100 / total } else { 0 };
+        let pct = if total > 0 {
+            documented * 100 / total
+        } else {
+            0
+        };
         rows.push(vec![
             "metric".into(),
             "doc_coverage".into(),
@@ -585,24 +635,46 @@ pub fn summary(eng: &Engine, path: &str) -> QueryOut {
     let comments = count_of(
         eng,
         "comment_node",
-        &format!("SELECT COUNT(*) FROM {} WHERE {cpred}", txt_tbl("comment_node")),
+        &format!(
+            "SELECT COUNT(*) FROM {} WHERE {cpred}",
+            txt_tbl("comment_node")
+        ),
         &cparams,
     );
-    rows.push(vec!["metric".into(), "comment_nodes".into(), comments.to_string()]);
+    rows.push(vec![
+        "metric".into(),
+        "comment_nodes".into(),
+        comments.to_string(),
+    ]);
     let df_nodes = count_of(
         eng,
         "df_node",
         &format!("SELECT COUNT(*) FROM {} WHERE {fpred}", txt_tbl("df_node")),
         &fparams,
     );
-    rows.push(vec!["metric".into(), "df_nodes".into(), df_nodes.to_string()]);
+    rows.push(vec![
+        "metric".into(),
+        "df_nodes".into(),
+        df_nodes.to_string(),
+    ]);
 
-    if count_of(eng, "scip_def", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")), &[]) == 0 {
+    if count_of(
+        eng,
+        "scip_def",
+        &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_def")),
+        &[],
+    ) == 0
+    {
         notes.push("scip: no index (run dl index to upgrade)".into());
     }
 
     let total = rows.len();
-    QueryOut { columns, rows, total, notes }
+    QueryOut {
+        columns,
+        rows,
+        total,
+        notes,
+    }
 }
 
 /// In-memory paging over a bounded row set.
@@ -695,7 +767,10 @@ mod tests {
 
     #[test]
     fn classify_path_by_slash() {
-        assert_eq!(classify("src/engine/mod.rs"), Anchor::Path("src/engine/mod.rs".into()));
+        assert_eq!(
+            classify("src/engine/mod.rs"),
+            Anchor::Path("src/engine/mod.rs".into())
+        );
     }
 
     #[test]
@@ -707,7 +782,10 @@ mod tests {
     fn classify_path_line() {
         assert_eq!(
             classify("src/foo.rs:42"),
-            Anchor::PathLine { path: "src/foo.rs".into(), line: 42 }
+            Anchor::PathLine {
+                path: "src/foo.rs".into(),
+                line: 42
+            }
         );
     }
 
@@ -721,7 +799,10 @@ mod tests {
     #[test]
     fn classify_qualified_name_is_not_a_line() {
         // `Repo::method` has a `::` but the trailing segment is not digits.
-        assert_eq!(classify("Repo::method"), Anchor::Name("Repo::method".into()));
+        assert_eq!(
+            classify("Repo::method"),
+            Anchor::Name("Repo::method".into())
+        );
     }
 
     #[test]

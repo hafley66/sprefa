@@ -13,8 +13,8 @@
 //! into the per-file change loop in `tick_paths`. See
 //! `plans/2026-06-30-engine-breakdown-proposal.md`.
 
-use anyhow::Result;
 use crate::db::SqlVal;
+use anyhow::Result;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -61,14 +61,22 @@ fn exe_stamp() -> u128 {
         // Test/override hook: a distinct value stands in for a distinct binary
         // so the digest-namespace behavior is checkable without a real reinstall.
         if let Ok(s) = std::env::var("DL_EXE_STAMP") {
-            return u128::from_le_bytes(blake3::hash(s.as_bytes()).as_bytes()[..16].try_into().unwrap());
+            return u128::from_le_bytes(
+                blake3::hash(s.as_bytes()).as_bytes()[..16]
+                    .try_into()
+                    .unwrap(),
+            );
         }
-        std::env::current_exe().ok()
+        std::env::current_exe()
+            .ok()
             .and_then(|p| std::fs::metadata(&p).ok())
             .map(|m| {
-                let mt = m.modified().ok()
+                let mt = m
+                    .modified()
+                    .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_nanos()).unwrap_or(0);
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
                 (m.len() as u128) << 64 | (mt & u128::from(u64::MAX))
             })
             .unwrap_or(0)
@@ -103,13 +111,22 @@ impl Engine {
         let hex: Option<String> = self.db.query_opt(
             "_extract_digest",
             "SELECT digest FROM _extract_digest WHERE exe = ?1 AND family = ?2 AND rev = ?3",
-            &[extract_digest_exe().into(), intern(family).into(), intern(rev).into()],
+            &[
+                extract_digest_exe().into(),
+                intern(family).into(),
+                intern(rev).into(),
+            ],
             |row| Ok(row.get::<_, String>(0)?),
         )?;
         Ok(hex.and_then(|h| crate::engine::hex_to_32(&h).ok()))
     }
 
-    pub(crate) fn save_extract_digest(&self, family: &str, rev: &str, digest: &[u8; 32]) -> Result<()> {
+    pub(crate) fn save_extract_digest(
+        &self,
+        family: &str,
+        rev: &str,
+        digest: &[u8; 32],
+    ) -> Result<()> {
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         self.db.exec_params(
             "_extract_digest",
@@ -168,13 +185,17 @@ fn cached_facts_profiled<T: Send + Sync>(
     {
         let cur = cache.borrow();
         for f in files {
-            let hit = if f.3.is_empty() { None } else {
+            let hit = if f.3.is_empty() {
+                None
+            } else {
                 cur.get(&(f.0.clone(), f.1.clone(), f.3.clone()))
             };
             match hit {
                 Some((rid, facts)) => {
-                    next.insert((f.0.clone(), f.1.clone(), f.3.clone()),
-                                (rid.clone(), facts.clone()));
+                    next.insert(
+                        (f.0.clone(), f.1.clone(), f.3.clone()),
+                        (rid.clone(), facts.clone()),
+                    );
                 }
                 None => misses.push(f),
             }
@@ -183,13 +204,16 @@ fn cached_facts_profiled<T: Send + Sync>(
     // Time every miss (a file actually re-parsed this tick). The `Instant` is
     // cheap and taken unconditionally; the per-file emit below is gated on
     // `profile_enabled()`. `ms` is the parse+extract cost for that one file.
-    let parsed: Vec<(&ExtractFile, String, Arc<T>, u64)> = misses.par_iter().filter_map(|f| {
-        crate::budget::throttle_point();
-        tracing::trace!(file = %f.1, family, "[extract] parse file");
-        let start = std::time::Instant::now();
-        let (rid, facts) = parse(&f.0, &f.1, &f.2)?;
-        Some((*f, rid, Arc::new(facts), start.elapsed().as_millis() as u64))
-    }).collect();
+    let parsed: Vec<(&ExtractFile, String, Arc<T>, u64)> = misses
+        .par_iter()
+        .filter_map(|f| {
+            crate::budget::throttle_point();
+            tracing::trace!(file = %f.1, family, "[extract] parse file");
+            let start = std::time::Instant::now();
+            let (rid, facts) = parse(&f.0, &f.1, &f.2)?;
+            Some((*f, rid, Arc::new(facts), start.elapsed().as_millis() as u64))
+        })
+        .collect();
     parsed_counter.set(parsed_counter.get() + parsed.len());
     if crate::perflog::profile_enabled() {
         for (f, _, _, ms) in &parsed {
@@ -197,7 +221,10 @@ fn cached_facts_profiled<T: Send + Sync>(
         }
     }
     for (f, rid, facts, _) in parsed {
-        miss_map.insert((f.0.clone(), f.1.clone(), f.2.clone()), (rid.clone(), facts.clone()));
+        miss_map.insert(
+            (f.0.clone(), f.1.clone(), f.2.clone()),
+            (rid.clone(), facts.clone()),
+        );
         if !f.3.is_empty() {
             next.insert((f.0.clone(), f.1.clone(), f.3.clone()), (rid, facts));
         }
@@ -264,20 +291,29 @@ pub(crate) fn prime_analysis_bundles(eng: &Engine, prog: &Program) -> Result<()>
 
     let roots = eng.repo_roots();
     let root = eng.root.clone();
-    let misses: Vec<(&ExtractFile, typegraph::AnalysisMask)> = files.iter().filter_map(|f| {
-        // Without a content identity the family caches intentionally refuse a
-        // hit. Let the ordinary refreshers handle that rare row; priming it
-        // would only cause a second parse when the projection cannot be kept.
-        if f.3.is_empty() { return None }
-        let key = (f.0.clone(), f.1.clone(), f.3.clone());
-        let types = do_types && !eng.type_facts_cache.borrow().contains_key(&key);
-        let calls = do_calls && !eng.call_facts_cache.borrow().contains_key(&key);
-        let dataflow = do_dataflow && !eng.df_facts_cache.borrow().contains_key(&key);
-        (usize::from(types) + usize::from(calls) + usize::from(dataflow) >= 2).then_some((
-            f,
-            typegraph::AnalysisMask { types, calls, dataflow },
-        ))
-    }).collect();
+    let misses: Vec<(&ExtractFile, typegraph::AnalysisMask)> = files
+        .iter()
+        .filter_map(|f| {
+            // Without a content identity the family caches intentionally refuse a
+            // hit. Let the ordinary refreshers handle that rare row; priming it
+            // would only cause a second parse when the projection cannot be kept.
+            if f.3.is_empty() {
+                return None;
+            }
+            let key = (f.0.clone(), f.1.clone(), f.3.clone());
+            let types = do_types && !eng.type_facts_cache.borrow().contains_key(&key);
+            let calls = do_calls && !eng.call_facts_cache.borrow().contains_key(&key);
+            let dataflow = do_dataflow && !eng.df_facts_cache.borrow().contains_key(&key);
+            (usize::from(types) + usize::from(calls) + usize::from(dataflow) >= 2).then_some((
+                f,
+                typegraph::AnalysisMask {
+                    types,
+                    calls,
+                    dataflow,
+                },
+            ))
+        })
+        .collect();
 
     struct Primed<'a> {
         file: &'a ExtractFile,
@@ -285,40 +321,57 @@ pub(crate) fn prime_analysis_bundles(eng: &Engine, prog: &Program) -> Result<()>
         mask: typegraph::AnalysisMask,
         bundle: typegraph::AnalysisBundle,
     }
-    let primed: Vec<Primed<'_>> = misses.par_iter().filter_map(|(f, mask)| {
-        crate::budget::throttle_point();
-        tracing::trace!(file = %f.1, "[extract] prime analysis bundle");
-        let lang = typegraph::type_langs().iter().find(|l| l.matches(&f.1))?;
-        if !lang.supports_analysis_bundle() { return None }
-        let froot = roots.get(&f.0).map(|p| p.as_path()).unwrap_or(&root);
-        let content = read_content(froot, &f.2, &f.1).unwrap_or_default();
-        let rid = repo_id_of(froot, &f.1, &f.0);
-        let bundle = lang.extract_bundle(&f.1, &content, *mask);
-        Some(Primed { file: f, rid, mask: *mask, bundle })
-    }).collect();
-    eng.extract_files_parsed.set(eng.extract_files_parsed.get() + primed.len());
+    let primed: Vec<Primed<'_>> = misses
+        .par_iter()
+        .filter_map(|(f, mask)| {
+            crate::budget::throttle_point();
+            tracing::trace!(file = %f.1, "[extract] prime analysis bundle");
+            let lang = typegraph::type_langs().iter().find(|l| l.matches(&f.1))?;
+            if !lang.supports_analysis_bundle() {
+                return None;
+            }
+            let froot = roots.get(&f.0).map(|p| p.as_path()).unwrap_or(&root);
+            let content = read_content(froot, &f.2, &f.1).unwrap_or_default();
+            let rid = repo_id_of(froot, &f.1, &f.0);
+            let bundle = lang.extract_bundle(&f.1, &content, *mask);
+            Some(Primed {
+                file: f,
+                rid,
+                mask: *mask,
+                bundle,
+            })
+        })
+        .collect();
+    eng.extract_files_parsed
+        .set(eng.extract_files_parsed.get() + primed.len());
 
     for mut item in primed {
-        let key = (item.file.0.clone(), item.file.1.clone(), item.file.3.clone());
+        let key = (
+            item.file.0.clone(),
+            item.file.1.clone(),
+            item.file.3.clone(),
+        );
         if item.mask.types {
             let facts = item.bundle.types.take().unwrap_or_default();
-            eng.type_facts_cache.borrow_mut()
+            eng.type_facts_cache
+                .borrow_mut()
                 .insert(key.clone(), (item.rid.clone(), Arc::new(facts)));
         }
         if item.mask.calls {
             let facts = item.bundle.calls.take().unwrap_or_default();
-            eng.call_facts_cache.borrow_mut()
+            eng.call_facts_cache
+                .borrow_mut()
                 .insert(key.clone(), (item.rid.clone(), Arc::new(facts)));
         }
         if item.mask.dataflow {
             let facts = item.bundle.dataflow.take().unwrap_or_default();
-            eng.df_facts_cache.borrow_mut()
+            eng.df_facts_cache
+                .borrow_mut()
                 .insert(key, (item.rid, Arc::new(facts)));
         }
     }
     Ok(())
 }
-
 
 impl Engine {
     /// Project the durable `_strings` / `_where_bytes` meta tables into the
@@ -338,32 +391,36 @@ impl Engine {
         // When Some() is implemented, remove this comment and the wholesale read
         // below for the Some branch.
         let _ = delta; // future Some() will drive a targeted merge instead
-        // No stored `norm` column (storage-diet Direction 3b): the third
-        // column is folded at read time by the same scalar the `norm()`
-        // builtin calls (src/db.rs `sprf_norm`, itself `spine::normalize`),
-        // so `string(id, text, norm)` rows stay byte-identical to the old
-        // stored-column values.
+                       // No stored `norm` column (storage-diet Direction 3b): the third
+                       // column is folded at read time by the same scalar the `norm()`
+                       // builtin calls (src/db.rs `sprf_norm`, itself `spine::normalize`),
+                       // so `string(id, text, norm)` rows stay byte-identical to the old
+                       // stored-column values.
         let strings: Vec<Vec<Value>> = self.db.query_rows(
             "_strings",
             "SELECT id, content, sprf_norm(content) FROM _strings WHERE id != 0",
             &[],
-            |r| Ok(vec![
-                Value::Int(r.get::<_, i64>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
-                Value::Text(r.get::<_, String>(2)?),
-            ]),
+            |r| {
+                Ok(vec![
+                    Value::Int(r.get::<_, i64>(0)?),
+                    Value::Text(r.get::<_, String>(1)?),
+                    Value::Text(r.get::<_, String>(2)?),
+                ])
+            },
         )?;
         let refs: Vec<Vec<Value>> = self.db.query_rows(
             "_where_bytes",
             "SELECT id, string_id, file_id, lo, hi FROM _where_bytes WHERE id != '0'",
             &[],
-            |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
-                Value::Int(r.get::<_, i64>(1)?),
-                Value::Text(r.get::<_, String>(2)?),
-                Value::Int(r.get::<_, i64>(3)?),
-                Value::Int(r.get::<_, i64>(4)?),
-            ]),
+            |r| {
+                Ok(vec![
+                    Value::Text(r.get::<_, String>(0)?),
+                    Value::Int(r.get::<_, i64>(1)?),
+                    Value::Text(r.get::<_, String>(2)?),
+                    Value::Int(r.get::<_, i64>(3)?),
+                    Value::Int(r.get::<_, i64>(4)?),
+                ])
+            },
         )?;
         self.refresh_rel("string", &["id", "text", "norm"], &strings)?;
         self.refresh_rel("ref", &["id", "string", "file", "lo", "hi"], &refs)?;
@@ -386,32 +443,35 @@ impl Engine {
             "_program",
             "SELECT path, hash, mtime FROM _program",
             &[],
-            |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
-                Value::Int(r.get::<_, i64>(2)?),
-            ]),
+            |r| {
+                Ok(vec![
+                    Value::Text(r.get::<_, String>(0)?),
+                    Value::Text(r.get::<_, String>(1)?),
+                    Value::Int(r.get::<_, i64>(2)?),
+                ])
+            },
         )?;
-        let heads: Vec<Vec<Value>> = self.db.query_rows(
-            "_ref",
-            "SELECT repo, name, oid FROM _ref",
-            &[],
-            |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
-                Value::Text(r.get::<_, String>(2)?),
-            ]),
-        )?;
+        let heads: Vec<Vec<Value>> =
+            self.db
+                .query_rows("_ref", "SELECT repo, name, oid FROM _ref", &[], |r| {
+                    Ok(vec![
+                        Value::Text(r.get::<_, String>(0)?),
+                        Value::Text(r.get::<_, String>(1)?),
+                        Value::Text(r.get::<_, String>(2)?),
+                    ])
+                })?;
         let advances: Vec<Vec<Value>> = self.db.query_rows(
             "_rev_log",
             "SELECT repo, name, old, new FROM _rev_log ORDER BY id",
             &[],
-            |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
-                Value::Text(r.get::<_, String>(2)?),
-                Value::Text(r.get::<_, String>(3)?),
-            ]),
+            |r| {
+                Ok(vec![
+                    Value::Text(r.get::<_, String>(0)?),
+                    Value::Text(r.get::<_, String>(1)?),
+                    Value::Text(r.get::<_, String>(2)?),
+                    Value::Text(r.get::<_, String>(3)?),
+                ])
+            },
         )?;
         self.refresh_rel("program", &["path", "hash", "mtime"], &programs)?;
         self.refresh_rel("head", &["repo", "name", "oid"], &heads)?;
@@ -431,17 +491,22 @@ impl Engine {
             "SELECT id, kind, head_rel, state, args_json, req_tx \
              FROM pending_effect ORDER BY req_tx, id",
             &[],
-            |r| Ok(vec![
-                Value::Text(r.get::<_, String>(0)?),
-                Value::Text(r.get::<_, String>(1)?),
-                Value::Text(r.get::<_, String>(2)?),
-                Value::Text(r.get::<_, String>(3)?),
-                Value::Text(r.get::<_, String>(4)?),
-                Value::Int(r.get::<_, i64>(5)?),
-            ]),
+            |r| {
+                Ok(vec![
+                    Value::Text(r.get::<_, String>(0)?),
+                    Value::Text(r.get::<_, String>(1)?),
+                    Value::Text(r.get::<_, String>(2)?),
+                    Value::Text(r.get::<_, String>(3)?),
+                    Value::Text(r.get::<_, String>(4)?),
+                    Value::Int(r.get::<_, i64>(5)?),
+                ])
+            },
         )?;
-        self.refresh_rel("effect_log",
-            &["id", "kind", "head", "state", "args", "req_tx"], &rows)?;
+        self.refresh_rel(
+            "effect_log",
+            &["id", "kind", "head", "state", "args", "req_tx"],
+            &rows,
+        )?;
         Ok(())
     }
 
@@ -451,9 +516,17 @@ impl Engine {
             "_file",
             "SELECT path, rev, hash FROM _file ORDER BY repo, path, rev",
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         )?;
-        for row in rows { by_rev.entry(row.1).or_default().push((row.0, row.2)); }
+        for row in rows {
+            by_rev.entry(row.1).or_default().push((row.0, row.2));
+        }
         Ok(by_rev)
     }
 
@@ -482,92 +555,159 @@ impl Engine {
             );
         }
         let cx = ProjectCx::new(&root, &fileset, &manifests).with_reader(&reader);
-        let selected: Vec<&(String, String)> = files.iter()
+        let selected: Vec<&(String, String)> = files
+            .iter()
             .filter(|(path, _)| match only_paths {
                 Some(paths) => paths.contains(path.as_str()),
                 None => true,
             })
             .collect();
 
-        let batches: Vec<ModuleRows> = selected.par_iter().map(|(path, hash)| {
-            crate::budget::throttle_point();
-            tracing::trace!(file = %path, "[extract] module resolve");
-            let mut rows = ModuleRows::default();
-            let ext = Path::new(path).extension().and_then(|e| e.to_str()).unwrap_or("");
-            if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
-                let content = read_content(&root, rev, path).unwrap_or_default();
-                // Same content-addressed file id `_files`/parse_file use, so import
-                // spans join `_files` for both WORK and committed revs.
-                let where_file = spine::FileId::from_content_address(hash, content.len() as i64)
-                    .filter(|f| *f != spine::FileId::SYNTHETIC);
-                for mref in res.edges(path, &content, &cx) {
-                    rows.imports.push(vec![t(path), t(rev), t(&mref.specifier), Value::Text(mref.kind.to_string()), Value::Int(mref.line as i64)]);
-                    if let (Some(file), Some((lo, hi))) = (where_file, mref.span) {
-                        let text = content.get(lo as usize..hi as usize).unwrap_or("");
-                        if !text.is_empty() {
-                            rows.spans.push((path.to_string(), text.to_string(), spine::WhereBytes {
-                                string: spine::StringId::of(text), file, lo, hi, ..Default::default()
-                            }));
-                        }
-                    }
-                    // Alias bindings only mean anything against a resolved, non-self
-                    // target file (same self-edge exclusion as `edges_rev` below);
-                    // borrow before the ownership match moves `mref.target`.
-                    if let Resolution::File(dst) = &mref.target {
-                        if dst != path {
-                            for (local, source) in &mref.bindings {
-                                rows.bindings.push(vec![t(path), t(local), t(source), t(dst), t(rev)]);
+        let batches: Vec<ModuleRows> = selected
+            .par_iter()
+            .map(|(path, hash)| {
+                crate::budget::throttle_point();
+                tracing::trace!(file = %path, "[extract] module resolve");
+                let mut rows = ModuleRows::default();
+                let ext = Path::new(path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                if let Some(res) = resolvers.iter().find(|r| r.exts().contains(&ext)) {
+                    let content = read_content(&root, rev, path).unwrap_or_default();
+                    // Same content-addressed file id `_files`/parse_file use, so import
+                    // spans join `_files` for both WORK and committed revs.
+                    let where_file =
+                        spine::FileId::from_content_address(hash, content.len() as i64)
+                            .filter(|f| *f != spine::FileId::SYNTHETIC);
+                    for mref in res.edges(path, &content, &cx) {
+                        rows.imports.push(vec![
+                            t(path),
+                            t(rev),
+                            t(&mref.specifier),
+                            Value::Text(mref.kind.to_string()),
+                            Value::Int(mref.line as i64),
+                        ]);
+                        if let (Some(file), Some((lo, hi))) = (where_file, mref.span) {
+                            let text = content.get(lo as usize..hi as usize).unwrap_or("");
+                            if !text.is_empty() {
+                                rows.spans.push((
+                                    path.to_string(),
+                                    text.to_string(),
+                                    spine::WhereBytes {
+                                        string: spine::StringId::of(text),
+                                        file,
+                                        lo,
+                                        hi,
+                                        ..Default::default()
+                                    },
+                                ));
                             }
                         }
-                    }
-                    // module_binding: EVERY local binding, for EVERY resolution
-                    // kind (File/External/Unresolved) — unlike `bindings` above,
-                    // this is the rel a "which library" query joins, so it must
-                    // not skip External (the common library-import case).
-                    for (local_name, imported_name, kind) in &mref.module_bindings {
-                        rows.module_bindings.push(vec![
-                            t(path), t(local_name), t(&mref.specifier), t(imported_name),
-                            Value::Text((*kind).to_string()), t(rev),
-                        ]);
-                    }
-                    match mref.target {
-                        // A self-edge (e.g. `use crate::X` where X is defined in this
-                        // crate root) is not a dependency; drop it so the graph and
-                        // its closure have no spurious self-loops.
-                        Resolution::File(dst) if &dst != path => {
-                            rows.edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                        // Alias bindings only mean anything against a resolved, non-self
+                        // target file (same self-edge exclusion as `edges_rev` below);
+                        // borrow before the ownership match moves `mref.target`.
+                        if let Resolution::File(dst) = &mref.target {
+                            if dst != path {
+                                for (local, source) in &mref.bindings {
+                                    rows.bindings.push(vec![
+                                        t(path),
+                                        t(local),
+                                        t(source),
+                                        t(dst),
+                                        t(rev),
+                                    ]);
+                                }
+                            }
                         }
-                        Resolution::File(_) => {}
-                        Resolution::Unresolved(reason) => {
-                            rows.unresolved_rev.push(vec![t(path), t(rev), t(&mref.specifier), t(&reason), Value::Int(mref.line as i64)]);
+                        // module_binding: EVERY local binding, for EVERY resolution
+                        // kind (File/External/Unresolved) — unlike `bindings` above,
+                        // this is the rel a "which library" query joins, so it must
+                        // not skip External (the common library-import case).
+                        for (local_name, imported_name, kind) in &mref.module_bindings {
+                            rows.module_bindings.push(vec![
+                                t(path),
+                                t(local_name),
+                                t(&mref.specifier),
+                                t(imported_name),
+                                Value::Text((*kind).to_string()),
+                                t(rev),
+                            ]);
                         }
-                        Resolution::External(_) => {}
+                        match mref.target {
+                            // A self-edge (e.g. `use crate::X` where X is defined in this
+                            // crate root) is not a dependency; drop it so the graph and
+                            // its closure have no spurious self-loops.
+                            Resolution::File(dst) if &dst != path => {
+                                rows.edges_rev.push(vec![t(path), t(&dst), t(rev)]);
+                            }
+                            Resolution::File(_) => {}
+                            Resolution::Unresolved(reason) => {
+                                rows.unresolved_rev.push(vec![
+                                    t(path),
+                                    t(rev),
+                                    t(&mref.specifier),
+                                    t(&reason),
+                                    Value::Int(mref.line as i64),
+                                ]);
+                            }
+                            Resolution::External(_) => {}
+                        }
                     }
                 }
-            }
-            rows
-        }).collect();
+                rows
+            })
+            .collect();
 
         let mut out = ModuleRows::default();
-        for batch in batches { out.extend(batch); }
+        for batch in batches {
+            out.extend(batch);
+        }
         if include_crate_edges {
             for edge in modgraph::crate_edges(&manifests) {
-                out.crate_edges.push(vec![t(&edge.src), t(&edge.dst), t(edge.kind), t(rev)]);
+                out.crate_edges
+                    .push(vec![t(&edge.src), t(&edge.dst), t(edge.kind), t(rev)]);
             }
         }
         out
     }
 
     fn insert_module_rows(&self, rows: &ModuleRows, include_crate_edges: bool) -> Result<()> {
-        self.insert_rel_rows("module_import", &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
+        self.insert_rel_rows(
+            "module_import",
+            &["file", "rev", "specifier", "kind", "line"],
+            &rows.imports,
+        )?;
         self.insert_rel_rows("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
-        self.insert_rel_rows("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
+        self.insert_rel_rows(
+            "module_unresolved_rev",
+            &["file", "rev", "specifier", "reason", "line"],
+            &rows.unresolved_rev,
+        )?;
         if include_crate_edges {
-            self.insert_rel_rows("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
+            self.insert_rel_rows(
+                "crate_edge",
+                &["src", "dst", "kind", "rev"],
+                &rows.crate_edges,
+            )?;
         }
-        self.insert_rel_rows("module_binding_resolved_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
-        self.insert_rel_rows("module_binding_rev",
-            &["file", "local_name", "source_module", "imported_name", "kind", "rev"], &rows.module_bindings)?;
+        self.insert_rel_rows(
+            "module_binding_resolved_rev",
+            &["file", "local", "source", "dst", "rev"],
+            &rows.bindings,
+        )?;
+        self.insert_rel_rows(
+            "module_binding_rev",
+            &[
+                "file",
+                "local_name",
+                "source_module",
+                "imported_name",
+                "kind",
+                "rev",
+            ],
+            &rows.module_bindings,
+        )?;
         self.insert_module_spans(rows)?;
         Ok(())
     }
@@ -577,11 +717,17 @@ impl Engine {
     /// covers the import graph. Called by every module-refresh path.
     fn insert_module_spans(&self, rows: &ModuleRows) -> Result<()> {
         let slug = self.self_slug();
-        let string_rows: Vec<(String, String, Vec<Value>)> = rows.spans.iter()
-            .map(|(path, text, _)| (slug.clone(), path.clone(), vec![Value::Text(text.clone())])).collect();
+        let string_rows: Vec<(String, String, Vec<Value>)> = rows
+            .spans
+            .iter()
+            .map(|(path, text, _)| (slug.clone(), path.clone(), vec![Value::Text(text.clone())]))
+            .collect();
         self.insert_spine_strings(&string_rows)?;
-        let where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = rows.spans.iter()
-            .map(|(path, _, wb)| (slug.clone(), path.clone(), *wb, None)).collect();
+        let where_rows: Vec<(String, String, spine::WhereBytes, Option<String>)> = rows
+            .spans
+            .iter()
+            .map(|(path, _, wb)| (slug.clone(), path.clone(), *wb, None))
+            .collect();
         self.insert_spine_where_bytes(&where_rows)?;
         Ok(())
     }
@@ -624,21 +770,51 @@ impl Engine {
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, files) in &by_rev {
             let d = self.module_input_digest(rev, files);
-            if self.load_extract_digest("module", rev)? == Some(d) { continue; }
+            if self.load_extract_digest("module", rev)? == Some(d) {
+                continue;
+            }
             moved.push((rev.clone(), d));
         }
-        if moved.is_empty() { return Ok(false); }
+        if moved.is_empty() {
+            return Ok(false);
+        }
         let mut rows = ModuleRows::default();
         for (rev, files) in &by_rev {
             rows.extend(self.module_rows_for_rev(rev, files, None, true));
         }
-        self.refresh_rel("module_import", &["file", "rev", "specifier", "kind", "line"], &rows.imports)?;
+        self.refresh_rel(
+            "module_import",
+            &["file", "rev", "specifier", "kind", "line"],
+            &rows.imports,
+        )?;
         self.refresh_rel("module_edge_rev", &["src", "dst", "rev"], &rows.edges_rev)?;
-        self.refresh_rel("module_unresolved_rev", &["file", "rev", "specifier", "reason", "line"], &rows.unresolved_rev)?;
-        self.refresh_rel("crate_edge", &["src", "dst", "kind", "rev"], &rows.crate_edges)?;
-        self.refresh_rel("module_binding_resolved_rev", &["file", "local", "source", "dst", "rev"], &rows.bindings)?;
-        self.refresh_rel("module_binding_rev",
-            &["file", "local_name", "source_module", "imported_name", "kind", "rev"], &rows.module_bindings)?;
+        self.refresh_rel(
+            "module_unresolved_rev",
+            &["file", "rev", "specifier", "reason", "line"],
+            &rows.unresolved_rev,
+        )?;
+        self.refresh_rel(
+            "crate_edge",
+            &["src", "dst", "kind", "rev"],
+            &rows.crate_edges,
+        )?;
+        self.refresh_rel(
+            "module_binding_resolved_rev",
+            &["file", "local", "source", "dst", "rev"],
+            &rows.bindings,
+        )?;
+        self.refresh_rel(
+            "module_binding_rev",
+            &[
+                "file",
+                "local_name",
+                "source_module",
+                "imported_name",
+                "kind",
+                "rev",
+            ],
+            &rows.module_bindings,
+        )?;
         self.insert_module_spans(&rows)?;
         self.rebuild_legacy_module_rels()?;
         for (rev, d) in &moved {
@@ -654,25 +830,40 @@ impl Engine {
     fn module_input_digest(&self, rev: &str, files: &[(String, String)]) -> [u8; 32] {
         let mut acc = [0u8; 32];
         let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
-            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= b; }
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) {
+                *a ^= b;
+            }
         };
         fold(&mut acc, &blake3::hash(format!("module\0{rev}").as_bytes()));
         for (path, hash) in files {
-            fold(&mut acc, &blake3::hash(format!("{path}\0{hash}").as_bytes()));
+            fold(
+                &mut acc,
+                &blake3::hash(format!("{path}\0{hash}").as_bytes()),
+            );
         }
         let fileset: HashSet<String> = files.iter().map(|(p, _)| p.clone()).collect();
         for (mrel, content) in self.collect_manifests(rev, &fileset) {
-            fold(&mut acc, &blake3::hash(format!("manifest\0{mrel}\0{content}").as_bytes()));
+            fold(
+                &mut acc,
+                &blake3::hash(format!("manifest\0{mrel}\0{content}").as_bytes()),
+            );
         }
         acc
     }
 
     pub(crate) fn refresh_module_rels_for_revs(&self, revs: &[&str]) -> Result<()> {
-        if revs.is_empty() { return Ok(()); }
-        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_rev(rev TEXT PRIMARY KEY)")?;
+        if revs.is_empty() {
+            return Ok(());
+        }
+        self.db
+            .exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_rev(rev TEXT PRIMARY KEY)")?;
         self.db.exec("DELETE FROM _module_refresh_rev")?;
-        let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
-        self.db.insert_rows("_module_refresh_rev", &["rev"], &rev_rows)?;
+        let rev_rows: Vec<Vec<Value>> = revs
+            .iter()
+            .map(|rev| vec![Value::Text((*rev).to_string())])
+            .collect();
+        self.db
+            .insert_rows("_module_refresh_rev", &["rev"], &rev_rows)?;
         // The twins' `rev` column is interned (i64 StringId); `_module_refresh_rev`
         // holds raw text revs. Hash the text side into id-space (`sprf_sym`) so the
         // set-match runs in the same representation — else the stale rows are never
@@ -681,12 +872,30 @@ impl Engine {
         // revs through the dict so the set-match runs in dense id space.
         let del_by_rev = "\"rev\" IN (SELECT d.id FROM _sym_dict d \
              JOIN _module_refresh_rev m ON d.sym_hash = sprf_sym(m.rev))";
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_import")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_edge_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_unresolved_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("crate_edge")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_binding_resolved_rev")))?;
-        self.db.exec(&format!("DELETE FROM {} WHERE {del_by_rev}", tbl("module_binding_rev")))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("module_import")
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("module_edge_rev")
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("module_unresolved_rev")
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("crate_edge")
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("module_binding_resolved_rev")
+        ))?;
+        self.db.exec(&format!(
+            "DELETE FROM {} WHERE {del_by_rev}",
+            tbl("module_binding_rev")
+        ))?;
 
         let by_rev = self.module_files_by_rev()?;
         let mut rows = ModuleRows::default();
@@ -700,12 +909,21 @@ impl Engine {
         Ok(())
     }
 
-    pub(crate) fn refresh_module_rels_for_paths(&self, rev: &str, paths: &HashSet<String>) -> Result<()> {
-        if paths.is_empty() { return Ok(()); }
-        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_path(path TEXT PRIMARY KEY)")?;
+    pub(crate) fn refresh_module_rels_for_paths(
+        &self,
+        rev: &str,
+        paths: &HashSet<String>,
+    ) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        self.db
+            .exec("CREATE TEMP TABLE IF NOT EXISTS _module_refresh_path(path TEXT PRIMARY KEY)")?;
         self.db.exec("DELETE FROM _module_refresh_path")?;
-        let path_rows: Vec<Vec<Value>> = paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
-        self.db.insert_rows("_module_refresh_path", &["path"], &path_rows)?;
+        let path_rows: Vec<Vec<Value>> =
+            paths.iter().map(|p| vec![Value::Text(p.clone())]).collect();
+        self.db
+            .insert_rows("_module_refresh_path", &["path"], &path_rows)?;
         // Interned `rev`/`file`/`src` columns store the dense `_sym_dict`
         // surrogate: resolve the hashed literal rev and the hashed temp-table
         // paths to their dense ids so the per-path DELETE matches.
@@ -735,7 +953,8 @@ impl Engine {
         ))?;
 
         let by_rev = self.module_files_by_rev()?;
-        let rows = by_rev.get(rev)
+        let rows = by_rev
+            .get(rev)
             .map(|files| self.module_rows_for_rev(rev, files, Some(paths), false))
             .unwrap_or_default();
         self.insert_module_rows(&rows, false)?;
@@ -773,21 +992,28 @@ impl Engine {
         if !self.is_worktree_rev(rev) {
             return acc;
         }
-        let rows = self.db.query_rows(
-            "scip_ref",
-            &format!("SELECT file, symbol, def_file, repo FROM {}", txt_tbl("scip_ref")),
-            &[],
-            |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            )),
-        ).unwrap_or_default();
+        let rows = self
+            .db
+            .query_rows(
+                "scip_ref",
+                &format!(
+                    "SELECT file, symbol, def_file, repo FROM {}",
+                    txt_tbl("scip_ref")
+                ),
+                &[],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap_or_default();
         for (file, symbol, def_file, repo) in rows {
-            let hash = blake3::hash(
-                format!("scip\0{file}\0{symbol}\0{def_file}\0{repo}").as_bytes(),
-            );
+            let hash =
+                blake3::hash(format!("scip\0{file}\0{symbol}\0{def_file}\0{repo}").as_bytes());
             for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
                 *slot ^= *byte;
             }
@@ -800,36 +1026,46 @@ impl Engine {
     /// XOR digest while retaining the two original row-domain prefixes.
     pub(crate) fn module_resolution_dependency_digest(&self, rev: &str) -> [u8; 32] {
         let mut acc = [0u8; 32];
-        let edge_rows = self.db.query_rows(
-            "module_edge_rev",
-            &format!("SELECT src, dst FROM {} WHERE \"rev\" = ?1", txt_tbl("module_edge_rev")),
-            &[SqlVal::from(rev)],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-        ).unwrap_or_default();
+        let edge_rows = self
+            .db
+            .query_rows(
+                "module_edge_rev",
+                &format!(
+                    "SELECT src, dst FROM {} WHERE \"rev\" = ?1",
+                    txt_tbl("module_edge_rev")
+                ),
+                &[SqlVal::from(rev)],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .unwrap_or_default();
         for (src, dst) in edge_rows {
             let hash = blake3::hash(format!("module\0{src}\0{dst}").as_bytes());
             for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
                 *slot ^= *byte;
             }
         }
-        let binding_rows = self.db.query_rows(
-            "module_binding_resolved_rev",
-            &format!(
-                "SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1",
-                txt_tbl("module_binding_resolved_rev")
-            ),
-            &[SqlVal::from(rev)],
-            |r| Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-            )),
-        ).unwrap_or_default();
+        let binding_rows = self
+            .db
+            .query_rows(
+                "module_binding_resolved_rev",
+                &format!(
+                    "SELECT file, local, source, dst FROM {} WHERE \"rev\" = ?1",
+                    txt_tbl("module_binding_resolved_rev")
+                ),
+                &[SqlVal::from(rev)],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap_or_default();
         for (file, local, source, dst) in binding_rows {
-            let hash = blake3::hash(
-                format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes(),
-            );
+            let hash =
+                blake3::hash(format!("binding\0{file}\0{local}\0{source}\0{dst}").as_bytes());
             for (slot, byte) in acc.iter_mut().zip(hash.as_bytes()) {
                 *slot ^= *byte;
             }
@@ -858,12 +1094,23 @@ impl Engine {
     /// resolve + write pass skips for that rev. A row with an empty content hash
     /// has no identity, so the digest is salted with the current time — never
     /// equal, never a false skip. `files` is already filtered to `rev`.
-    fn extract_input_digest(&self, family: &str, rev: &str, files: &[ExtractFile], with_scip: bool) -> [u8; 32] {
+    fn extract_input_digest(
+        &self,
+        family: &str,
+        rev: &str,
+        files: &[ExtractFile],
+        with_scip: bool,
+    ) -> [u8; 32] {
         let mut acc = [0u8; 32];
         let fold = |acc: &mut [u8; 32], h: &blake3::Hash| {
-            for (a, b) in acc.iter_mut().zip(h.as_bytes()) { *a ^= *b; }
+            for (a, b) in acc.iter_mut().zip(h.as_bytes()) {
+                *a ^= *b;
+            }
         };
-        fold(&mut acc, &blake3::hash(format!("{family}\0{rev}").as_bytes()));
+        fold(
+            &mut acc,
+            &blake3::hash(format!("{family}\0{rev}").as_bytes()),
+        );
         for (repo, path, frev, hash) in files {
             if hash.is_empty() {
                 // An empty content hash means the file is unresolved (vanished,
@@ -876,10 +1123,16 @@ impl Engine {
                 // stable token still flips the digest the tick a file BECOMES or
                 // STOPS being empty (its hash column changes), which is the only
                 // transition that must re-tick.
-                fold(&mut acc, &blake3::hash(format!("unresolved\0{repo}\0{path}\0{frev}").as_bytes()));
+                fold(
+                    &mut acc,
+                    &blake3::hash(format!("unresolved\0{repo}\0{path}\0{frev}").as_bytes()),
+                );
                 continue;
             }
-            fold(&mut acc, &blake3::hash(format!("{repo}\0{path}\0{frev}\0{hash}").as_bytes()));
+            fold(
+                &mut acc,
+                &blake3::hash(format!("{repo}\0{path}\0{frev}\0{hash}").as_bytes()),
+            );
         }
         if with_scip {
             for dependency in [
@@ -900,12 +1153,17 @@ impl Engine {
     /// skip its whole pass (the per-rev twin of perf gap A's warm-tick skip).
     /// `with_scip` requests the scip fold, which `extract_input_digest` applies
     /// only to the WORK rev.
-    fn moved_extract_revs(&self, family: &str, files: &[ExtractFile], with_scip: bool)
-        -> Result<Vec<(String, [u8; 32])>>
-    {
+    fn moved_extract_revs(
+        &self,
+        family: &str,
+        files: &[ExtractFile],
+        with_scip: bool,
+    ) -> Result<Vec<(String, [u8; 32])>> {
         let start = std::time::Instant::now();
         let mut by_rev: HashMap<&str, Vec<ExtractFile>> = HashMap::new();
-        for f in files { by_rev.entry(f.2.as_str()).or_default().push(f.clone()); }
+        for f in files {
+            by_rev.entry(f.2.as_str()).or_default().push(f.clone());
+        }
         let mut moved: Vec<(String, [u8; 32])> = Vec::new();
         for (rev, frev) in &by_rev {
             let d = self.extract_input_digest(family, rev, frev, with_scip);
@@ -922,10 +1180,16 @@ impl Engine {
             let ms = start.elapsed().as_secs_f64() * 1000.0;
             crate::verdict::verdict(
                 "extract-rebuild",
-                &format!("[extract] {family}: REBUILD ({reason}) — {} files parsed, {ms:.1}ms", frev.len()),
+                &format!(
+                    "[extract] {family}: REBUILD ({reason}) — {} files parsed, {ms:.1}ms",
+                    frev.len()
+                ),
                 &[
-                    ("family", family), ("rev", rev), ("outcome", "rebuild"),
-                    ("reason", &reason), ("files", &frev.len().to_string()),
+                    ("family", family),
+                    ("rev", rev),
+                    ("outcome", "rebuild"),
+                    ("reason", &reason),
+                    ("files", &frev.len().to_string()),
                     ("ms", &format!("{ms:.1}")),
                 ],
             );
@@ -944,7 +1208,14 @@ impl Engine {
     /// content hash of the prior corpus (that would mean keeping a second
     /// copy of the file list around just to explain a digest, which this
     /// stays honest about not doing).
-    fn extract_rebuild_reason(&self, family: &str, rev: &str, files: &[ExtractFile], with_scip: bool, first_run: bool) -> String {
+    fn extract_rebuild_reason(
+        &self,
+        family: &str,
+        rev: &str,
+        files: &[ExtractFile],
+        with_scip: bool,
+        first_run: bool,
+    ) -> String {
         if first_run {
             return "first-run".to_string();
         }
@@ -955,8 +1226,14 @@ impl Engine {
             return "exe-identity-changed".to_string();
         }
         if with_scip && self.is_worktree_rev(rev) {
-            let n: i64 = self.db
-                .query_one("scip_ref", &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_ref")), &[], |r| Ok(r.get(0)?))
+            let n: i64 = self
+                .db
+                .query_one(
+                    "scip_ref",
+                    &format!("SELECT COUNT(*) FROM {}", txt_tbl("scip_ref")),
+                    &[],
+                    |r| Ok(r.get(0)?),
+                )
                 .unwrap_or(0);
             let key = format!("extract:scip-rows:{family}");
             let prior = self.load_rel_digest(&key).ok().flatten();
@@ -1016,12 +1293,25 @@ impl Engine {
     /// Returns whether the scoped rows actually moved (same contract and same
     /// identical-content skip as `refresh_rel`; the count guard is scoped to
     /// the named revs so out-of-scope rows never mask an external delete).
-    fn refresh_rel_for_revs(&self, rel: &str, cols: &[&str], rows: &[Vec<Value>], revs: &[&str]) -> Result<bool> {
-        if revs.is_empty() { return Ok(false); }
-        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _rel_refresh_rev(rev TEXT PRIMARY KEY)")?;
+    fn refresh_rel_for_revs(
+        &self,
+        rel: &str,
+        cols: &[&str],
+        rows: &[Vec<Value>],
+        revs: &[&str],
+    ) -> Result<bool> {
+        if revs.is_empty() {
+            return Ok(false);
+        }
+        self.db
+            .exec("CREATE TEMP TABLE IF NOT EXISTS _rel_refresh_rev(rev TEXT PRIMARY KEY)")?;
         self.db.exec("DELETE FROM _rel_refresh_rev")?;
-        let rev_rows: Vec<Vec<Value>> = revs.iter().map(|rev| vec![Value::Text((*rev).to_string())]).collect();
-        self.db.insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
+        let rev_rows: Vec<Vec<Value>> = revs
+            .iter()
+            .map(|rev| vec![Value::Text((*rev).to_string())])
+            .collect();
+        self.db
+            .insert_rows("_rel_refresh_rev", &["rev"], &rev_rows)?;
         let encoded = self.encode_rel_rows(rel, cols, rows)?;
         let mut scope: Vec<&str> = revs.to_vec();
         scope.sort_unstable();
@@ -1044,7 +1334,8 @@ impl Engine {
         // set-match happens in the same representation (else i64 IN (text…)
         // never matches and the stale rows are never cleared before re-insert).
         self.db.exec(&format!("DELETE FROM {} WHERE \"rev\" IN (SELECT d.id FROM _sym_dict d JOIN _rel_refresh_rev m ON d.sym_hash = sprf_sym(m.rev))", tbl(rel)))?;
-        self.db.insert_rows(&tbl(rel), cols, &encoded)
+        self.db
+            .insert_rows(&tbl(rel), cols, &encoded)
             .map_err(|error| anyhow::anyhow!("refresh relation {rel}: {error}"))?;
         self.save_rel_digest(&content_key, &digest)?;
         Ok(true)
@@ -1060,9 +1351,19 @@ impl Engine {
     /// input layer by `Engine::sweep_gone_call_inputs` (below), not by a
     /// public-rel twin delete + legacy rebuild.
     const REV_TWINS: &[&str] = &[
-        "type_entity_rev", "type_link_rev", "type_edge_rev", "const_value_rev",
-        "df_node_rev", "df_node_repo_rev", "df_arg_rev", "df_field_rev", "df_lit_rev",
-        "module_edge_rev", "module_unresolved_rev", "module_binding_resolved_rev", "module_binding_rev",
+        "type_entity_rev",
+        "type_link_rev",
+        "type_edge_rev",
+        "const_value_rev",
+        "df_node_rev",
+        "df_node_repo_rev",
+        "df_arg_rev",
+        "df_field_rev",
+        "df_lit_rev",
+        "module_edge_rev",
+        "module_unresolved_rev",
+        "module_binding_resolved_rev",
+        "module_binding_rev",
     ];
 
     /// D5.5 — the rev-retraction sweep (plan Layer 4, "Retraction"). A rev
@@ -1097,9 +1398,11 @@ impl Engine {
     /// tick's `_file` set and before the extraction families run — see the
     /// call sites in `tick.rs`.
     pub(crate) fn sweep_gone_revs(&self) -> Result<()> {
-        self.db.exec("CREATE TEMP TABLE IF NOT EXISTS _live_rev_scope(rev TEXT PRIMARY KEY)")?;
+        self.db
+            .exec("CREATE TEMP TABLE IF NOT EXISTS _live_rev_scope(rev TEXT PRIMARY KEY)")?;
         self.db.exec("DELETE FROM _live_rev_scope")?;
-        self.db.exec("INSERT OR IGNORE INTO _live_rev_scope SELECT DISTINCT rev FROM _file")?;
+        self.db
+            .exec("INSERT OR IGNORE INTO _live_rev_scope SELECT DISTINCT rev FROM _file")?;
 
         // `_live_rev_scope` holds raw text revs (from `_file.rev`, which is a
         // hand-rolled table that never interns); each twin's `rev` column is
@@ -1138,7 +1441,6 @@ impl Engine {
         Ok(())
     }
 
-
     /// Best-effort SCIP override for resolution: read `scip_ref(file, symbol,
     /// def_file, repo)` and key it by (repo, file, trailing-descriptor-name) ->
     /// def_file. Keying on the origin repo scopes the override to the ref site's
@@ -1155,12 +1457,25 @@ impl Engine {
     /// the syntactic path, which refuses ambiguity on its own terms.
     fn scip_name_defs(&self) -> Result<HashMap<(String, String, String), String>> {
         let mut seen: HashMap<(String, String, String), Option<String>> = HashMap::new();
-        let rows = self.db.query_rows(
-            "scip_ref",
-            &format!("SELECT file, symbol, def_file, repo FROM {}", txt_tbl("scip_ref")),
-            &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
-        ).unwrap_or_default();
+        let rows = self
+            .db
+            .query_rows(
+                "scip_ref",
+                &format!(
+                    "SELECT file, symbol, def_file, repo FROM {}",
+                    txt_tbl("scip_ref")
+                ),
+                &[],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap_or_default();
         for row in rows {
             let (file, symbol, def_file, repo) = row;
             if let Some(name) = scip_descriptor_name(&symbol) {
@@ -1176,7 +1491,10 @@ impl Engine {
                 }
             }
         }
-        Ok(seen.into_iter().filter_map(|(key, def)| def.map(|d| (key, d))).collect())
+        Ok(seen
+            .into_iter()
+            .filter_map(|(key, def)| def.map(|d| (key, d)))
+            .collect())
     }
 
     /// Occurrence-level SCIP resolution input, built once per call-family
@@ -1194,7 +1512,13 @@ impl Engine {
             "scip_def",
             &format!("SELECT symbol, file, repo FROM {}", txt_tbl("scip_def")),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         );
         let Ok(def_rows) = def_rows else {
             return Ok(idx);
@@ -1205,12 +1529,25 @@ impl Engine {
         }
         // Occurrences: (repo, file, 0-based line) -> symbols; cache descriptor
         // names as we go (the moniker parse is repo-independent).
-        let occ_rows = self.db.query_rows(
-            "scip_occurrence",
-            &format!("SELECT file, symbol, line, repo FROM {}", txt_tbl("scip_occurrence")),
-            &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?)),
-        ).unwrap_or_default();
+        let occ_rows = self
+            .db
+            .query_rows(
+                "scip_occurrence",
+                &format!(
+                    "SELECT file, symbol, line, repo FROM {}",
+                    txt_tbl("scip_occurrence")
+                ),
+                &[],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap_or_default();
         for row in occ_rows {
             let (file, symbol, line, repo) = row;
             if !idx.desc_name.contains_key(&symbol) {
@@ -1218,18 +1555,37 @@ impl Engine {
                     idx.desc_name.insert(symbol.clone(), name);
                 }
             }
-            idx.occ_at.entry((repo, file, line)).or_default().push(symbol);
+            idx.occ_at
+                .entry((repo, file, line))
+                .or_default()
+                .push(symbol);
         }
         // Aliased-import local bindings: (repo, file, symbol) -> {local name}.
-        let binding_rows = self.db.query_rows(
-            "scip_binding",
-            &format!("SELECT file, symbol, local_name, repo FROM {}", txt_tbl("scip_binding")),
-            &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)),
-        ).unwrap_or_default();
+        let binding_rows = self
+            .db
+            .query_rows(
+                "scip_binding",
+                &format!(
+                    "SELECT file, symbol, local_name, repo FROM {}",
+                    txt_tbl("scip_binding")
+                ),
+                &[],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .unwrap_or_default();
         for row in binding_rows {
             let (file, symbol, local, repo) = row;
-            idx.binding_names.entry((repo, file, symbol)).or_default().insert(local);
+            idx.binding_names
+                .entry((repo, file, symbol))
+                .or_default()
+                .insert(local);
         }
         Ok(idx)
     }
@@ -1249,9 +1605,18 @@ impl Engine {
         let mut out: HashMap<(String, String), HashSet<String>> = HashMap::new();
         let rows = self.db.query_rows(
             "module_edge_rev",
-            &format!("SELECT src, dst, \"rev\" FROM {}", txt_tbl("module_edge_rev")),
+            &format!(
+                "SELECT src, dst, \"rev\" FROM {}",
+                txt_tbl("module_edge_rev")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            },
         );
         let Ok(rows) = rows else {
             return Ok(out);
@@ -1273,21 +1638,35 @@ impl Engine {
     /// Kotlin `import a.b.C as D`) that the name-keyed `by_name` bucket has
     /// no bucket for (the def's real name is `y`/`a`/`C`, not the local `z`/
     /// `b`/`D`).
-    fn module_binding_resolved_map(&self) -> Result<HashMap<(String, String), HashMap<String, (String, String)>>> {
+    fn module_binding_resolved_map(
+        &self,
+    ) -> Result<HashMap<(String, String), HashMap<String, (String, String)>>> {
         let mut out: HashMap<(String, String), HashMap<String, (String, String)>> = HashMap::new();
         let rows = self.db.query_rows(
             "module_binding_resolved_rev",
-            &format!("SELECT file, local, source, dst, \"rev\" FROM {}", txt_tbl("module_binding_resolved_rev")),
+            &format!(
+                "SELECT file, local, source, dst, \"rev\" FROM {}",
+                txt_tbl("module_binding_resolved_rev")
+            ),
             &[],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?, r.get::<_, String>(4)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
         );
         let Ok(rows) = rows else {
             return Ok(out);
         };
         for row in rows {
             let (file, local, source, dst, rev) = row;
-            out.entry((rev, file)).or_default().insert(local, (source, dst));
+            out.entry((rev, file))
+                .or_default()
+                .insert(local, (source, dst));
         }
         Ok(out)
     }
@@ -1321,17 +1700,4 @@ impl Engine {
         ))?;
         Ok(())
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
 }

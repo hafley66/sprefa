@@ -32,8 +32,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -45,7 +54,9 @@ fn init_git(d: &Path) {
 }
 
 fn count(eng: &Engine, sql: &str) -> i64 {
-    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0].as_i64().unwrap()
+    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0]
+        .as_i64()
+        .unwrap()
 }
 
 /// The PR-diff program: examples/pr-diff.dl's core (types + type_link edges),
@@ -126,18 +137,24 @@ fn pr_diff_resolves_shas_via_gh_and_reports_exact_delta() {
     let d = sandbox("delta");
 
     // BASE commit: Alpha, Beta; Beta has a field of type Alpha (a type_link).
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Alpha { pub n: i64 }\n\
-         pub struct Beta { pub a: Alpha }\n").unwrap();
+         pub struct Beta { pub a: Alpha }\n",
+    )
+    .unwrap();
     init_git(&d);
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "base"]);
     let base_sha = git(&d, &["rev-parse", "HEAD"]);
 
     // HEAD commit: Beta -> Gamma (Beta removed, Gamma added), both linking Alpha.
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Alpha { pub n: i64 }\n\
-         pub struct Gamma { pub a: Alpha }\n").unwrap();
+         pub struct Gamma { pub a: Alpha }\n",
+    )
+    .unwrap();
     git(&d, &["add", "."]);
     git(&d, &["commit", "-q", "-m", "head"]);
     let head_sha = git(&d, &["rev-parse", "HEAD"]);
@@ -147,9 +164,13 @@ fn pr_diff_resolves_shas_via_gh_and_reports_exact_delta() {
     let bin = d.join("bin");
     fs::create_dir_all(&bin).unwrap();
     let gh = bin.join("gh");
-    fs::write(&gh, format!(
+    fs::write(
+        &gh,
+        format!(
         "#!/bin/sh\nprintf '%s' '{{\"baseRefOid\":\"{base_sha}\",\"headRefOid\":\"{head_sha}\"}}'\n"
-    )).unwrap();
+    ),
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -193,25 +214,64 @@ fn pr_diff_resolves_shas_via_gh_and_reports_exact_delta() {
     );
     // The twins spanned both revs.
     assert_eq!(
-        count(&eng, "SELECT COUNT(DISTINCT rev) FROM rel_type_entity_rev"), 2,
+        count(&eng, "SELECT COUNT(DISTINCT rev) FROM rel_type_entity_rev"),
+        2,
         "type_entity_rev spans base + head shas",
     );
 
     // Nodes: exactly Gamma added, Beta removed (Alpha unchanged).
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added"), 1, "one node added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed"), 1, "one node removed");
-    assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%::struct::Gamma'"), 1,
-        "Gamma is the added node");
-    assert_eq!(count(&eng,
-        "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%::struct::Beta'"), 1,
-        "Beta is the removed node");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%Alpha'"), 0);
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%Alpha'"), 0);
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_pr_node_added"),
+        1,
+        "one node added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_pr_node_removed"),
+        1,
+        "one node removed"
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%::struct::Gamma'"
+        ),
+        1,
+        "Gamma is the added node"
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%::struct::Beta'"
+        ),
+        1,
+        "Beta is the removed node"
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_pr_node_added_txt WHERE sym LIKE '%Alpha'"
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_pr_node_removed_txt WHERE sym LIKE '%Alpha'"
+        ),
+        0
+    );
 
     // Edges: exactly one field link added (Gamma->Alpha), one removed (Beta->Alpha).
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_added"), 1, "one edge added");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_removed"), 1, "one edge removed");
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_added"),
+        1,
+        "one edge added"
+    );
+    assert_eq!(
+        count(&eng, "SELECT COUNT(*) FROM rel_pr_edge_removed"),
+        1,
+        "one edge removed"
+    );
     assert_eq!(count(&eng,
         "SELECT COUNT(*) FROM rel_pr_edge_added_txt WHERE a LIKE '%::struct::Gamma' AND b LIKE '%::struct::Alpha'"),
         1, "the added edge is Gamma -> Alpha");

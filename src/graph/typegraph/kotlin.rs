@@ -7,8 +7,12 @@ use std::collections::BTreeSet;
 use super::*;
 
 impl TypeLang for KotlinTypes {
-    fn name(&self) -> &'static str { "kotlin" }
-    fn matches(&self, path: &str) -> bool { path.ends_with(".kt") || path.ends_with(".kts") }
+    fn name(&self) -> &'static str {
+        "kotlin"
+    }
+    fn matches(&self, path: &str) -> bool {
+        path.ends_with(".kt") || path.ends_with(".kts")
+    }
     // One tree-sitter parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
         let mut parser = tree_sitter::Parser::new();
@@ -25,7 +29,12 @@ impl TypeLang for KotlinTypes {
         walk_kotlin_entities(root, src, file, &mut entities);
         let mut docs = Vec::new();
         walk_kotlin_docs(root, src, file, &mut docs);
-        TypeFacts { entities, edges: kotlin_edges_from(root, src), docs, ..Default::default() }
+        TypeFacts {
+            entities,
+            edges: kotlin_edges_from(root, src),
+            docs,
+            ..Default::default()
+        }
     }
     // One tree-sitter parse feeds defs + sites, same shape as the Rust pass.
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
@@ -48,8 +57,12 @@ impl TypeLang for KotlinTypes {
     fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
         let mut parser = tree_sitter::Parser::new();
         let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
-        if parser.set_language(&lang).is_err() { return DataflowFacts::default(); }
-        let Some(tree) = parser.parse(content, None) else { return DataflowFacts::default(); };
+        if parser.set_language(&lang).is_err() {
+            return DataflowFacts::default();
+        }
+        let Some(tree) = parser.parse(content, None) else {
+            return DataflowFacts::default();
+        };
         kotlin_dataflow_from(tree.root_node(), content.as_bytes(), file)
     }
 }
@@ -62,7 +75,6 @@ impl TypeLang for KotlinTypes {
 // it's a binding target, under parameter it's a param, under call_expression it's
 // the callee (skipped), otherwise it's a var_read. Conservative on unsupported
 // constructs: may miss flows, never invents.
-
 
 fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
     let mut cur = node.walk();
@@ -82,7 +94,10 @@ fn kotlin_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Data
     // de-intern reconstructs the id from the columns, so the id's line must equal
     // the stored line), remapping every id-referencing fact; `compute_nests`
     // below then reads the rebuilt ids.
-    for l in &mut out.loops { l.start += 1; l.end += 1; }
+    for l in &mut out.loops {
+        l.start += 1;
+        l.end += 1;
+    }
     bump_node_lines_1based(&mut out);
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
@@ -106,11 +121,23 @@ fn kt_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Data
     let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
     if let Some(params) = kt_first_child(fn_node, "function_value_parameters") {
         let mut cur = params.walk();
-        for (pos, p) in params.children(&mut cur).filter(|n| n.kind() == "parameter").enumerate() {
+        for (pos, p) in params
+            .children(&mut cur)
+            .filter(|n| n.kind() == "parameter")
+            .enumerate()
+        {
             if let Some(idn) = kt_first_child(p, "simple_identifier") {
                 let ppos = idn.start_position();
                 let v = idn.utf8_text(src).unwrap_or("").to_string();
-                let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &v, &fn_sym);
+                let id = push_node(
+                    out,
+                    file,
+                    ppos.row as u32,
+                    ppos.column as u32,
+                    "param",
+                    &v,
+                    &fn_sym,
+                );
                 out.param_pos.push((id.clone(), pos as u32));
                 scope.insert(v, id);
             }
@@ -122,8 +149,19 @@ fn kt_flow_fn(fn_node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Data
         // Explicit `return EXPR` is handled in the jump_expression arm.
         if let Some(tail) = flow_kt(body, src, file, &fn_sym, &mut scope, out) {
             let bpos = body.start_position();
-            let ret = push_node(out, file, bpos.row as u32, bpos.column as u32, "ret", "", &fn_sym);
-            out.edges.push(DfEdge { from: tail, to: ret });
+            let ret = push_node(
+                out,
+                file,
+                bpos.row as u32,
+                bpos.column as u32,
+                "ret",
+                "",
+                &fn_sym,
+            );
+            out.edges.push(DfEdge {
+                from: tail,
+                to: ret,
+            });
         }
     }
 }
@@ -147,9 +185,20 @@ fn flow_kt(
                 Some("variable_declaration") | Some("parameter") | Some("call_expression") => None,
                 _ => {
                     let v = node.utf8_text(src).unwrap_or("").to_string();
-                    let id = push_node(out, file, pos.row as u32, pos.column as u32, "var_read", &v, fn_sym);
+                    let id = push_node(
+                        out,
+                        file,
+                        pos.row as u32,
+                        pos.column as u32,
+                        "var_read",
+                        &v,
+                        fn_sym,
+                    );
                     if let Some(b) = scope.get(&v) {
-                        out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                        out.edges.push(DfEdge {
+                            from: b.clone(),
+                            to: id.clone(),
+                        });
                     }
                     Some(id)
                 }
@@ -189,17 +238,22 @@ fn flow_kt(
             if let Some(suffix) = kt_first_child(node, "call_suffix") {
                 if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
                     let mut cur = vargs.walk();
-                    for va in vargs.children(&mut cur).filter(|n| n.kind() == "value_argument") {
+                    for va in vargs
+                        .children(&mut cur)
+                        .filter(|n| n.kind() == "value_argument")
+                    {
                         // named form: value_argument = simple_identifier '=' expr
                         let mut kids = Vec::new();
                         let mut vc = va.walk();
-                        for k in va.children(&mut vc) { kids.push(k); }
+                        for k in va.children(&mut vc) {
+                            kids.push(k);
+                        }
                         let eq_at = kids.iter().position(|k| k.kind() == "=");
                         let (name, val_node) = match eq_at {
-                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => {
-                                (Some(kids[i - 1].utf8_text(src).unwrap_or("").to_string()),
-                                 kids.get(i + 1).copied())
-                            }
+                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => (
+                                Some(kids[i - 1].utf8_text(src).unwrap_or("").to_string()),
+                                kids.get(i + 1).copied(),
+                            ),
                             _ => (None, None),
                         };
                         let vid = match val_node {
@@ -223,14 +277,32 @@ fn flow_kt(
                 }
             }
             let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
-            let (kind, var) = if is_ctor { ("new", callee_name.as_str()) } else { ("call_res", "") };
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, kind, var, fn_sym);
+            let (kind, var) = if is_ctor {
+                ("new", callee_name.as_str())
+            } else {
+                ("call_res", "")
+            };
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                kind,
+                var,
+                fn_sym,
+            );
             if let Some(r) = recv {
-                out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: r.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), -1, r));
             }
             for (p, (name, vid)) in arg_ids.into_iter().enumerate() {
-                out.edges.push(DfEdge { from: vid.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: vid.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), p as i64, vid.clone()));
                 if let Some(n) = name {
                     out.fields.push((id.clone(), n, vid));
@@ -247,14 +319,27 @@ fn flow_kt(
             if node.parent().map(|p| p.kind()) == Some("call_expression") {
                 return None;
             }
-            let obj = node.child(0).and_then(|c| flow_kt(c, src, file, fn_sym, scope, out));
+            let obj = node
+                .child(0)
+                .and_then(|c| flow_kt(c, src, file, fn_sym, scope, out));
             let name = kt_first_child(node, "navigation_suffix")
                 .and_then(|s| kt_first_child(s, "simple_identifier"))
                 .map(|n| n.utf8_text(src).unwrap_or("").to_string())
                 .unwrap_or_default();
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "member", &name, fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "member",
+                &name,
+                fn_sym,
+            );
             if let Some(o) = obj {
-                out.edges.push(DfEdge { from: o, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: o,
+                    to: id.clone(),
+                });
             }
             Some(id)
         }
@@ -269,7 +354,15 @@ fn flow_kt(
                         if let Some(si) = kt_first_child(c, "simple_identifier") {
                             let sp = si.start_position();
                             let v = si.utf8_text(src).unwrap_or("").to_string();
-                            let id = push_node(out, file, sp.row as u32, sp.column as u32, "let_bind", &v, fn_sym);
+                            let id = push_node(
+                                out,
+                                file,
+                                sp.row as u32,
+                                sp.column as u32,
+                                "let_bind",
+                                &v,
+                                fn_sym,
+                            );
                             bind = Some((v, id));
                         }
                     }
@@ -282,7 +375,10 @@ fn flow_kt(
                 }
             }
             if let (Some((v, bid)), Some(rhs)) = (bind, rhs_id) {
-                out.edges.push(DfEdge { from: rhs, to: bid.clone() });
+                out.edges.push(DfEdge {
+                    from: rhs,
+                    to: bid.clone(),
+                });
                 scope.insert(v, bid);
             }
             None
@@ -310,11 +406,23 @@ fn flow_kt(
             let mut seeded = false;
             if let Some(lp) = kt_first_child(node, "lambda_parameters") {
                 let mut cur = lp.walk();
-                for (i, vd) in lp.children(&mut cur).filter(|n| n.kind() == "variable_declaration").enumerate() {
+                for (i, vd) in lp
+                    .children(&mut cur)
+                    .filter(|n| n.kind() == "variable_declaration")
+                    .enumerate()
+                {
                     if let Some(idn) = kt_first_child(vd, "simple_identifier") {
                         let ppos = idn.start_position();
                         let v = idn.utf8_text(src).unwrap_or("").to_string();
-                        let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &v, &lam_sym);
+                        let id = push_node(
+                            out,
+                            file,
+                            ppos.row as u32,
+                            ppos.column as u32,
+                            "param",
+                            &v,
+                            &lam_sym,
+                        );
                         out.param_pos.push((id.clone(), i as u32));
                         scope.insert(v, id);
                         seeded = true;
@@ -323,7 +431,15 @@ fn flow_kt(
             }
             if !seeded {
                 // No declared parameter list: Kotlin's implicit `it`, slot 0.
-                let id = push_node(out, file, pos.row as u32, pos.column as u32, "param", "it", &lam_sym);
+                let id = push_node(
+                    out,
+                    file,
+                    pos.row as u32,
+                    pos.column as u32,
+                    "param",
+                    "it",
+                    &lam_sym,
+                );
                 out.param_pos.push((id.clone(), 0));
                 scope.insert("it".into(), id);
             }
@@ -331,10 +447,26 @@ fn flow_kt(
                 .and_then(|s| flow_kt(s, src, file, &lam_sym, scope, out));
             if let Some(t) = tail {
                 let end = node.end_position();
-                let ret = push_node(out, file, end.row as u32, end.column as u32, "ret", "", &lam_sym);
+                let ret = push_node(
+                    out,
+                    file,
+                    end.row as u32,
+                    end.column as u32,
+                    "ret",
+                    "",
+                    &lam_sym,
+                );
                 out.edges.push(DfEdge { from: t, to: ret });
             }
-            Some(push_node(out, file, pos.row as u32, pos.column as u32, "closure", &lam_sym, fn_sym))
+            Some(push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "closure",
+                &lam_sym,
+                fn_sym,
+            ))
         }
         // return EXPR: the returned value flows into the fn's `ret` node — the
         // sink the interprocedural backward hop reads.
@@ -348,8 +480,21 @@ fn flow_kt(
                     }
                 }
             }
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "ret", "", fn_sym);
-            if let Some(v) = inner { out.edges.push(DfEdge { from: v, to: id.clone() }); }
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "ret",
+                "",
+                fn_sym,
+            );
+            if let Some(v) = inner {
+                out.edges.push(DfEdge {
+                    from: v,
+                    to: id.clone(),
+                });
+            }
             Some(id)
         }
         // a OP b: both operands taint the result. This is the taint-vs-dataflow
@@ -361,16 +506,45 @@ fn flow_kt(
         "additive_expression" | "multiplicative_expression" | "infix_expression" => {
             let mut cur = node.walk();
             let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
-            let l = kids.first().and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
-            let r = kids.last().and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "binop", "", fn_sym);
-            if let Some(lid) = l { out.edges.push(DfEdge { from: lid, to: id.clone() }); }
-            if let Some(rid) = r { out.edges.push(DfEdge { from: rid, to: id.clone() }); }
+            let l = kids
+                .first()
+                .and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
+            let r = kids
+                .last()
+                .and_then(|n| flow_kt(*n, src, file, fn_sym, scope, out));
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "binop",
+                "",
+                fn_sym,
+            );
+            if let Some(lid) = l {
+                out.edges.push(DfEdge {
+                    from: lid,
+                    to: id.clone(),
+                });
+            }
+            if let Some(rid) = r {
+                out.edges.push(DfEdge {
+                    from: rid,
+                    to: id.clone(),
+                });
+            }
             Some(id)
         }
-        "string_literal" | "integer_literal" | "real_literal" | "boolean_literal" | "character_literal" | "long_literal" => {
-            Some(push_node(out, file, pos.row as u32, pos.column as u32, "lit", "", fn_sym))
-        }
+        "string_literal" | "integer_literal" | "real_literal" | "boolean_literal"
+        | "character_literal" | "long_literal" => Some(push_node(
+            out,
+            file,
+            pos.row as u32,
+            pos.column as u32,
+            "lit",
+            "",
+            fn_sym,
+        )),
         // `for (x in coll) body`: record the span + loop var so loop_over can flag
         // loop-invariant calls inside the body. The body is then walked by the
         // conservative recursion below (Kotlin has no named fields on for_statement).
@@ -378,22 +552,31 @@ fn flow_kt(
             let lvar = {
                 let mut cur = node.walk();
                 let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
-                kids.iter().find(|c| c.kind() == "simple_identifier")
+                kids.iter()
+                    .find(|c| c.kind() == "simple_identifier")
                     .map(|n| n.utf8_text(src).unwrap_or("").to_string())
                     .unwrap_or_default()
             };
             let end = node.end_position();
             out.loops.push(LoopFact {
-                file: file.into(), start: pos.row as u32, end: end.row as u32,
-                var: lvar, collection: String::new(), fn_sym: fn_sym.into(),
+                file: file.into(),
+                start: pos.row as u32,
+                end: end.row as u32,
+                var: lvar,
+                collection: String::new(),
+                fn_sym: fn_sym.into(),
             });
             kt_recurse_children(node, src, file, fn_sym, scope, out)
         }
         "while_statement" | "do_while_statement" => {
             let end = node.end_position();
             out.loops.push(LoopFact {
-                file: file.into(), start: pos.row as u32, end: end.row as u32,
-                var: String::new(), collection: String::new(), fn_sym: fn_sym.into(),
+                file: file.into(),
+                start: pos.row as u32,
+                end: end.row as u32,
+                var: String::new(),
+                collection: String::new(),
+                fn_sym: fn_sym.into(),
             });
             kt_recurse_children(node, src, file, fn_sym, scope, out)
         }
@@ -429,7 +612,6 @@ fn kt_recurse_children(
 // `file:<byte_off>` (oxc's native byte-offset span); `line_at` recovers the
 // 1-based line for the `line` column. Conservative on unsupported constructs.
 
-
 pub fn kotlin_edges(content: &str) -> Vec<TypeEdge> {
     let mut parser = tree_sitter::Parser::new();
     let lang = tree_sitter::Language::new(tree_sitter_kotlin_sg::LANGUAGE);
@@ -450,7 +632,11 @@ fn kotlin_edges_from(root: tree_sitter::Node, src: &[u8]) -> Vec<TypeEdge> {
         .collect()
 }
 
-fn walk_kotlin(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, String, &'static str)>) {
+fn walk_kotlin(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         if matches!(child.kind(), "class_declaration" | "object_declaration") {
@@ -460,12 +646,20 @@ fn walk_kotlin(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, 
     }
 }
 
-fn kotlin_decl_edges(decl: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, String, &'static str)>) {
+fn kotlin_decl_edges(
+    decl: tree_sitter::Node,
+    src: &[u8],
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
     let text = |n: tree_sitter::Node| n.utf8_text(src).unwrap_or("").to_string();
     let mut cursor = decl.walk();
     let children: Vec<tree_sitter::Node> = decl.children(&mut cursor).collect();
 
-    let Some(owner) = children.iter().find(|n| n.kind() == "type_identifier").map(|n| text(*n)) else {
+    let Some(owner) = children
+        .iter()
+        .find(|n| n.kind() == "type_identifier")
+        .map(|n| text(*n))
+    else {
         return;
     };
     // keyword-level split: `interface` is an anonymous token under the same
@@ -477,7 +671,9 @@ fn kotlin_decl_edges(decl: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(St
     // names themselves are not type refs
     let mut params: BTreeSet<String> = BTreeSet::new();
     for n in &children {
-        if n.kind() != "type_parameters" { continue; }
+        if n.kind() != "type_parameters" {
+            continue;
+        }
         let mut c = n.walk();
         for tp in n.children(&mut c).filter(|n| n.kind() == "type_parameter") {
             let mut cc = tp.walk();
@@ -509,7 +705,9 @@ fn kotlin_decl_edges(decl: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(St
                     let kids: Vec<tree_sitter::Node> = param.children(&mut cc).collect();
                     // val/var (binding_pattern_kind) makes it a field; a bare
                     // constructor arg is not part of the type's shape
-                    if !kids.iter().any(|n| n.kind() == "binding_pattern_kind") { continue; }
+                    if !kids.iter().any(|n| n.kind() == "binding_pattern_kind") {
+                        continue;
+                    }
                     for kid in kids.iter().filter(|n| n.kind() != "simple_identifier") {
                         for to in kotlin_type_refs(*kid, src, &params) {
                             push(out, &owner, &to, "field");
@@ -519,9 +717,15 @@ fn kotlin_decl_edges(decl: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(St
             }
             "class_body" => {
                 let mut c = n.walk();
-                for prop in n.children(&mut c).filter(|n| n.kind() == "property_declaration") {
+                for prop in n
+                    .children(&mut c)
+                    .filter(|n| n.kind() == "property_declaration")
+                {
                     let mut cc = prop.walk();
-                    for vd in prop.children(&mut cc).filter(|n| n.kind() == "variable_declaration") {
+                    for vd in prop
+                        .children(&mut cc)
+                        .filter(|n| n.kind() == "variable_declaration")
+                    {
                         for to in kotlin_type_refs(vd, src, &params) {
                             push(out, &owner, &to, "field");
                         }
@@ -532,7 +736,9 @@ fn kotlin_decl_edges(decl: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(St
                 let mut c = n.walk();
                 for entry in n.children(&mut c).filter(|n| n.kind() == "enum_entry") {
                     let mut cc = entry.walk();
-                    let name = entry.children(&mut cc).find(|n| n.kind() == "simple_identifier");
+                    let name = entry
+                        .children(&mut cc)
+                        .find(|n| n.kind() == "simple_identifier");
                     if let Some(name) = name {
                         let variant = format!("{owner}::{}", text(name));
                         push(out, &owner, &variant, "variant");
@@ -554,10 +760,16 @@ fn kotlin_type_refs(node: tree_sitter::Node, src: &[u8], params: &BTreeSet<Strin
     out
 }
 
-fn collect_kotlin_refs(node: tree_sitter::Node, src: &[u8], params: &BTreeSet<String>, out: &mut Vec<String>) {
+fn collect_kotlin_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    params: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
     if node.kind() == "user_type" {
         let mut cursor = node.walk();
-        let segs: Vec<String> = node.children(&mut cursor)
+        let segs: Vec<String> = node
+            .children(&mut cursor)
             .filter(|n| n.kind() == "type_identifier")
             .map(|n| n.utf8_text(src).unwrap_or("").to_string())
             .collect();
@@ -566,7 +778,10 @@ fn collect_kotlin_refs(node: tree_sitter::Node, src: &[u8], params: &BTreeSet<St
             out.push(name);
         }
         let mut cursor = node.walk();
-        for child in node.children(&mut cursor).filter(|n| n.kind() != "type_identifier") {
+        for child in node
+            .children(&mut cursor)
+            .filter(|n| n.kind() != "type_identifier")
+        {
             collect_kotlin_refs(child, src, params, out);
         }
         return;
@@ -580,8 +795,18 @@ fn collect_kotlin_refs(node: tree_sitter::Node, src: &[u8], params: &BTreeSet<St
 fn is_noise_kotlin(name: &str) -> bool {
     matches!(
         name,
-        "Int" | "Long" | "Short" | "Byte" | "Float" | "Double" | "Boolean" | "Char"
-            | "String" | "Unit" | "Any" | "Nothing"
+        "Int"
+            | "Long"
+            | "Short"
+            | "Byte"
+            | "Float"
+            | "Double"
+            | "Boolean"
+            | "Char"
+            | "String"
+            | "Unit"
+            | "Any"
+            | "Nothing"
     )
 }
 
@@ -701,7 +926,13 @@ fn kt_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
     for child in node.children(&mut cur) {
         if child.kind() == "call_expression" {
             if let Some((callee, line)) = kt_callee(child, src) {
-                out.push(CallSite { caller_sym: None, callee, callee_path: None, file: file.to_string(), line });
+                out.push(CallSite {
+                    caller_sym: None,
+                    callee,
+                    callee_path: None,
+                    file: file.to_string(),
+                    line,
+                });
             }
         }
         kt_walk_call_sites(child, src, file, out);
@@ -712,7 +943,9 @@ fn kt_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
 /// callee is not a plain/navigation name (e.g. an invoked lambda value).
 fn kt_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, u32)> {
     let mut cur = call.walk();
-    let lead = call.children(&mut cur).find(|c| c.kind() != "call_suffix")?;
+    let lead = call
+        .children(&mut cur)
+        .find(|c| c.kind() != "call_suffix")?;
     let line = lead.start_position().row as u32 + 1;
     match lead.kind() {
         "simple_identifier" => Some((lead.utf8_text(src).unwrap_or("").to_string(), line)),
@@ -724,7 +957,6 @@ fn kt_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, u32)> {
         _ => None,
     }
 }
-
 
 // ── TypeScript / JavaScript (oxc) ───────────────────────────────────────────
 //
@@ -738,13 +970,21 @@ fn kt_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, u32)> {
 // Method signatures/bodies are skipped everywhere — shape only.
 // Top-level + exported declarations only (namespaces wait on demand).
 
-fn walk_kotlin_entities(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Vec<TypeEntity>) {
+fn walk_kotlin_entities(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    out: &mut Vec<TypeEntity>,
+) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         // `companion_object` is a distinct grammar node from `object_declaration`
         // (a top-level/nested `object Name { ... }`); both mint a `type_entity`
         // the same way a plain class does.
-        if matches!(child.kind(), "class_declaration" | "object_declaration" | "companion_object") {
+        if matches!(
+            child.kind(),
+            "class_declaration" | "object_declaration" | "companion_object"
+        ) {
             let mut c = child.walk();
             let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
             if let Some(id) = kids.iter().find(|n| n.kind() == "type_identifier") {
@@ -797,21 +1037,29 @@ fn walk_kotlin_docs(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut V
         let named = if matches!(child.kind(), "class_declaration" | "object_declaration") {
             let mut c = child.walk();
             let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
-            kids.iter().find(|n| n.kind() == "type_identifier").map(|id| {
-                let kind = if kids.iter().any(|n| n.kind() == "interface") {
-                    EntityKind::Interface
-                } else if kids.iter().any(|n| n.kind() == "enum") {
-                    EntityKind::Enum
-                } else {
-                    EntityKind::Class
-                };
-                (id.utf8_text(src).unwrap_or("").to_string(), kind)
-            })
+            kids.iter()
+                .find(|n| n.kind() == "type_identifier")
+                .map(|id| {
+                    let kind = if kids.iter().any(|n| n.kind() == "interface") {
+                        EntityKind::Interface
+                    } else if kids.iter().any(|n| n.kind() == "enum") {
+                        EntityKind::Enum
+                    } else {
+                        EntityKind::Class
+                    };
+                    (id.utf8_text(src).unwrap_or("").to_string(), kind)
+                })
         } else if child.kind() == "function_declaration" {
             let mut c = child.walk();
             let kids: Vec<tree_sitter::Node> = child.children(&mut c).collect();
-            kids.iter().find(|n| n.kind() == "simple_identifier")
-                .map(|id| (id.utf8_text(src).unwrap_or("").to_string(), EntityKind::Function))
+            kids.iter()
+                .find(|n| n.kind() == "simple_identifier")
+                .map(|id| {
+                    (
+                        id.utf8_text(src).unwrap_or("").to_string(),
+                        EntityKind::Function,
+                    )
+                })
         } else {
             None
         };
@@ -833,9 +1081,13 @@ fn walk_kotlin_docs(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut V
 /// `*comment*` previous sibling whose text opens with `/**`.
 fn kotlin_leading_kdoc(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
     let prev = node.prev_sibling()?;
-    if !prev.kind().contains("comment") { return None; }
+    if !prev.kind().contains("comment") {
+        return None;
+    }
     let raw = prev.utf8_text(src).ok()?;
-    if !raw.trim_start().starts_with("/**") { return None; }
+    if !raw.trim_start().starts_with("/**") {
+        return None;
+    }
     Some(clean_block_comment(raw))
 }
 
@@ -851,7 +1103,9 @@ fn kotlin_fn_type(node: tree_sitter::Node, src: &[u8]) -> TypeExpr {
     // declared type-parameter names: excluded from refs, like the decl pass
     let mut tparams: BTreeSet<String> = BTreeSet::new();
     for n in &children {
-        if n.kind() != "type_parameters" { continue; }
+        if n.kind() != "type_parameters" {
+            continue;
+        }
         let mut c = n.walk();
         for tp in n.children(&mut c).filter(|n| n.kind() == "type_parameter") {
             let mut cc = tp.walk();
@@ -907,7 +1161,6 @@ fn is_kotlin_type_node(kind: &str) -> bool {
 // attempted), cgo, build-tag-conditional files, cross-module resolution
 // outside the workspace.
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,7 +1201,11 @@ fun resolve(model: Model, n: Int): NodeId { return n }
 fun <T : Entity> wrap(item: T, sink: Sink<Report>) {}
 ";
         let es = KotlinTypes.extract("src/app.kt", src).entities;
-        let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+        let by = |name: &str| {
+            es.iter()
+                .find(|e| e.name == name)
+                .unwrap_or_else(|| panic!("missing {name}: {es:?}"))
+        };
         let resolve = by("resolve");
         assert_eq!(resolve.kind, EntityKind::Function);
         let ty = resolve.ty.as_ref().unwrap();
@@ -958,9 +1215,18 @@ fun <T : Entity> wrap(item: T, sink: Sink<Report>) {}
         // declared type-param T excluded; owner + nested generic arg both kept;
         // no return type -> empty ret
         let wrap = by("wrap").ty.as_ref().unwrap();
-        assert!(wrap.params[0].is_empty(), "type-param T is not a ref: {wrap:?}");
-        assert!(wrap.params[1].contains(&TypeRef::Named("Sink".into())), "owner: {wrap:?}");
-        assert!(wrap.params[1].contains(&TypeRef::Named("Report".into())), "nested arg: {wrap:?}");
+        assert!(
+            wrap.params[0].is_empty(),
+            "type-param T is not a ref: {wrap:?}"
+        );
+        assert!(
+            wrap.params[1].contains(&TypeRef::Named("Sink".into())),
+            "owner: {wrap:?}"
+        );
+        assert!(
+            wrap.params[1].contains(&TypeRef::Named("Report".into())),
+            "nested arg: {wrap:?}"
+        );
         assert!(wrap.ret.is_empty(), "no declared return: {wrap:?}");
     }
 
@@ -997,23 +1263,43 @@ class Outer {
         // capitalized callee = ctor call = `new` node with the type name.
         let cfg = dnode(&df, "new", "Cfg").id.clone();
         // named args land in df_field AND keep their source slot in df_arg.
-        let h_read = df.nodes.iter().find(|n| n.kind == "var_read" && n.var == "h").unwrap().id.clone();
+        let h_read = df
+            .nodes
+            .iter()
+            .find(|n| n.kind == "var_read" && n.var == "h")
+            .unwrap()
+            .id
+            .clone();
         assert!(has_field(&df, &cfg, "host", &h_read), "{:?}", df.fields);
-        assert!(df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"), "{:?}", df.fields);
+        assert!(
+            df.fields.iter().any(|(i, f, _)| i == &cfg && f == "port"),
+            "{:?}",
+            df.fields
+        );
         assert!(has_arg(&df, &cfg, 0, &h_read), "{:?}", df.args);
         // the named-arg label is NOT a var_read (it's a label, not a value).
         assert!(
-            !df.nodes.iter().any(|n| n.kind == "var_read" && n.var == "host"),
-            "named-arg label leaked as a read: {:?}", df.nodes
+            !df.nodes
+                .iter()
+                .any(|n| n.kind == "var_read" && n.var == "host"),
+            "named-arg label leaked as a read: {:?}",
+            df.nodes
         );
         // `.host` outside a call is a member read carrying the name.
         let member = dnode(&df, "member", "host");
-        assert!(df.edges.iter().any(|e| e.to == member.id), "member has a base edge");
+        assert!(
+            df.edges.iter().any(|e| e.to == member.id),
+            "member has a base edge"
+        );
         // navigation callee: c.count() flows the receiver in at slot -1.
         assert!(
             df.args.iter().any(|(_, p, a)| *p == -1
-                && df.nodes.iter().any(|n| &n.id == a && n.kind == "var_read" && n.var == "c")),
-            "{:?}", df.args
+                && df
+                    .nodes
+                    .iter()
+                    .any(|n| &n.id == a && n.kind == "var_read" && n.var == "c")),
+            "{:?}",
+            df.args
         );
         // lowercase callee stays a call with slot-0 arg.
         let go2 = df.nodes.iter().filter(|n| n.kind == "call_res").count();
@@ -1030,15 +1316,28 @@ class Outer {
         // after the parenthesized args (fold's accumulator lambda at slot 1).
         let src2 = "fun go(xs: List<Int>) {\n    val out = xs.fold(0) { acc, x -> acc + x }\n}\n";
         let df2 = KotlinTypes.extract_dataflow("f.kt", src2);
-        let clo = df2.nodes.iter().find(|n| n.kind == "closure").expect("closure node");
+        let clo = df2
+            .nodes
+            .iter()
+            .find(|n| n.kind == "closure")
+            .expect("closure node");
         assert!(
             df2.args.iter().any(|(_, p, a)| *p == 1 && a == &clo.id),
-            "trailing lambda after one paren arg sits at slot 1: {:?}", df2.args
+            "trailing lambda after one paren arg sits at slot 1: {:?}",
+            df2.args
         );
         let lam_sym = clo.var.clone();
-        let pos_of = |v: &str| df2.nodes.iter()
-            .find(|n| n.kind == "param" && n.var == v && n.fn_sym == lam_sym)
-            .and_then(|n| df2.param_pos.iter().find(|(i, _)| i == &n.id).map(|(_, p)| *p));
+        let pos_of = |v: &str| {
+            df2.nodes
+                .iter()
+                .find(|n| n.kind == "param" && n.var == v && n.fn_sym == lam_sym)
+                .and_then(|n| {
+                    df2.param_pos
+                        .iter()
+                        .find(|(i, _)| i == &n.id)
+                        .map(|(_, p)| *p)
+                })
+        };
         assert_eq!(pos_of("acc"), Some(0), "{:?}", df2.nodes);
         assert_eq!(pos_of("x"), Some(1), "{:?}", df2.nodes);
     }

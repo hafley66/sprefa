@@ -53,6 +53,12 @@ mod staged_delta;
 mod symbols;
 mod term_extract;
 mod timeutil;
+pub(crate) use family::{
+    CALL_RELS, CLOCK_RELS, COMMENT_RELS, CONST_VALUE_RELS, DAEMON_RELS, DATAFLOW_RELS, DEMAND_RELS,
+    DIAG_RELS, DIAG_STAGE_RELS, DOC_RELS, DOC_TEXT_RELS, EFFECT_RELS, EVERY_RELS, GRAPH_RELS,
+    HOOK_RELS, HOVER_RELS, MODULE_RELS, MUTE_RELS, NODE_RELS, SPINE_RELS, TEMPLATE_RELS,
+    TYPE_DECL_RELS, TYPE_RELS, UNRESOLVED_RELS,
+};
 pub(crate) use query::{emit_query_json, emit_query_json_rows, QueryOutputFormat};
 pub(crate) use repo::git_batch_read;
 pub use results::{
@@ -60,12 +66,6 @@ pub use results::{
     SymbolRow,
 };
 pub(crate) use timeutil::{iso8601_utc_now, mtime_secs, unix_secs};
-pub(crate) use family::{
-    CALL_RELS, CLOCK_RELS, COMMENT_RELS, CONST_VALUE_RELS, DAEMON_RELS, DATAFLOW_RELS, DEMAND_RELS,
-    DIAG_RELS, DIAG_STAGE_RELS, DOC_RELS, DOC_TEXT_RELS, EFFECT_RELS, EVERY_RELS, GRAPH_RELS,
-    HOOK_RELS, HOVER_RELS, MODULE_RELS, MUTE_RELS, NODE_RELS, SPINE_RELS, TEMPLATE_RELS,
-    TYPE_DECL_RELS, TYPE_RELS, UNRESOLVED_RELS,
-};
 mod decls;
 pub(crate) use decls::*;
 pub use decls::{
@@ -327,8 +327,6 @@ pub fn apply_sinks_enabled() -> bool {
         || std::env::var_os("DL_CHECKOUT_DRY_RUN").is_some()
 }
 
-
-
 /// The trailing identifier of a SCIP symbol descriptor: `... Foo#` -> "Foo",
 /// `... bar().` -> "bar". Used to key the SCIP override by plain type name.
 pub(crate) fn scip_descriptor_name(symbol: &str) -> Option<String> {
@@ -369,7 +367,6 @@ pub(crate) fn hex_to_32(s: &str) -> Result<[u8; 32]> {
     }
     Ok(out)
 }
-
 
 /// head relation -> edge relation, for every `head(..) <- closure(edge).` rule.
 
@@ -430,7 +427,6 @@ struct ClosureCache {
     id: HashMap<String, u32>, // name -> node id
     digest: [u8; 32],         // content digest of the edge relation's (c0,c1) rows
 }
-
 
 pub struct Engine {
     pub(crate) db: crate::db::Db,
@@ -899,7 +895,8 @@ impl Engine {
         // label keeps this off the plain `INSERT _strings` key the scream
         // reserves for a genuine per-row leak. The flush also persists the
         // `_sym_dict` rows for every hash `dense_of_hash` just minted.
-        self.db.flush_syms_keyed(&mut sink, "INSERT _strings (encode/rel)")?;
+        self.db
+            .flush_syms_keyed(&mut sink, "INSERT _strings (encode/rel)")?;
         Ok(encoded)
     }
 
@@ -988,9 +985,7 @@ impl Engine {
         use std::collections::BTreeMap;
         let mut combined: BTreeMap<(String, String), usize> = BTreeMap::new();
         for (rel, rows) in self.db.take_write_ledger() {
-            *combined
-                .entry((rel, "source".to_string()))
-                .or_insert(0) += rows;
+            *combined.entry((rel, "source".to_string())).or_insert(0) += rows;
         }
         for (rel, rows, seam) in self.write_ledger.borrow_mut().drain(..) {
             *combined.entry((rel, seam)).or_insert(0) += rows;
@@ -1042,7 +1037,9 @@ impl Engine {
         if self.load_rel_digest(&content_key)? == Some(digest) {
             let live: i64 = self
                 .db
-                .query_one(rel, &format!("SELECT COUNT(*) FROM {table}"), &[], |r| Ok(r.get(0)?))
+                .query_one(rel, &format!("SELECT COUNT(*) FROM {table}"), &[], |r| {
+                    Ok(r.get(0)?)
+                })
                 .unwrap_or(-1);
             if live == encoded.len() as i64 {
                 crate::verdict::debug_verdict(
@@ -1110,22 +1107,40 @@ pub(crate) fn rows_content_digest(cols: &[&str], rows: &[Vec<Value>], scope: &[&
         let mut h = blake3::Hasher::new();
         for cell in row {
             match cell {
-                Value::Null => { h.update(b"\x00"); }
-                Value::Int(i) => { h.update(b"\x01"); h.update(&i.to_le_bytes()); }
-                Value::Text(s) => { h.update(b"\x02"); h.update(s.as_bytes()); }
+                Value::Null => {
+                    h.update(b"\x00");
+                }
+                Value::Int(i) => {
+                    h.update(b"\x01");
+                    h.update(&i.to_le_bytes());
+                }
+                Value::Text(s) => {
+                    h.update(b"\x02");
+                    h.update(s.as_bytes());
+                }
             }
             h.update(b"\x1f");
         }
         let d = h.finalize();
         for (k, s) in sum.iter_mut().enumerate() {
-            *s = s.wrapping_add(u64::from_le_bytes(d.as_bytes()[k * 8..k * 8 + 8].try_into().unwrap()));
+            *s = s.wrapping_add(u64::from_le_bytes(
+                d.as_bytes()[k * 8..k * 8 + 8].try_into().unwrap(),
+            ));
         }
     }
     let mut out = blake3::Hasher::new();
     out.update(&(rows.len() as u64).to_le_bytes());
-    for c in cols { out.update(c.as_bytes()); out.update(b","); }
-    for s in scope { out.update(s.as_bytes()); out.update(b";"); }
-    for s in sum { out.update(&s.to_le_bytes()); }
+    for c in cols {
+        out.update(c.as_bytes());
+        out.update(b",");
+    }
+    for s in scope {
+        out.update(s.as_bytes());
+        out.update(b";");
+    }
+    for s in sum {
+        out.update(&s.to_le_bytes());
+    }
     *out.finalize().as_bytes()
 }
 
@@ -1203,7 +1218,9 @@ pub fn scan_has_var_coords(rule: &Rule) -> bool {
 /// that is not a rev at all, so an unexpected value degrades to the filesystem
 /// read rather than a git failure.
 pub(crate) fn rev_text_is_dirty_worktree(rev: &str) -> bool {
-    RevId::parse(rev).map(|parsed| parsed.dirty()).unwrap_or(true)
+    RevId::parse(rev)
+        .map(|parsed| parsed.dirty())
+        .unwrap_or(true)
 }
 
 pub(crate) fn read_content(root: &Path, rev: &str, path: &str) -> Result<String> {

@@ -35,7 +35,8 @@ fn rail() -> String {
 /// A throwaway `XDG_STATE_HOME` for one test — every `dl` invocation below
 /// passes this so no run ever touches the developer's real daemon home.
 fn scratch_state_home(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("dl_composite_key_xdg_{tag}_{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("dl_composite_key_xdg_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir

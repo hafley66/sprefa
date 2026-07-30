@@ -12,20 +12,26 @@ use oxc_ast_visit::Visit as OxcVisit;
 
 use super::*;
 use flow::{span_off, ts_dataflow_from};
-pub use text::{TemplatePart, UnresolvedRef, ts_comments, ts_template_parts, ts_unresolved_refs};
+pub use text::{ts_comments, ts_template_parts, ts_unresolved_refs, TemplatePart, UnresolvedRef};
 
 impl TypeLang for TsTypes {
-    fn name(&self) -> &'static str { "ts" }
+    fn name(&self) -> &'static str {
+        "ts"
+    }
     // Plain JS rides the same oxc front-end as TS: `.js`/`.jsx`/`.mjs`/`.cjs`
     // parse fine as JSX-enabled JavaScript, so type_entity/call_*/df_*/
     // doc_comment all populate for JS too (type_link/type_sig stay thin, a
     // JS file carries no type annotations to resolve). Nothing else in the
     // `type_langs()` registry claims these extensions.
     fn matches(&self, path: &str) -> bool {
-        path.ends_with(".ts") || path.ends_with(".tsx")
-            || path.ends_with(".js") || path.ends_with(".jsx")
-            || path.ends_with(".mjs") || path.ends_with(".cjs")
-            || path.ends_with(".mts") || path.ends_with(".cts")
+        path.ends_with(".ts")
+            || path.ends_with(".tsx")
+            || path.ends_with(".js")
+            || path.ends_with(".jsx")
+            || path.ends_with(".mjs")
+            || path.ends_with(".cjs")
+            || path.ends_with(".mts")
+            || path.ends_with(".cts")
     }
     // One oxc parse feeds both walks.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
@@ -69,12 +75,24 @@ impl TypeLang for TsTypes {
         let df = ts_dataflow_from(&ret.program, file, content);
         ts_push_lambda_defs(&df, file, &mut defs);
         // Nested named function declarations (below top level), file-level mint.
-        let mut nested = TsNestedFnDefs { file, starts: &starts, depth: 0, out: Vec::new() };
+        let mut nested = TsNestedFnDefs {
+            file,
+            starts: &starts,
+            depth: 0,
+            out: Vec::new(),
+        };
         nested.visit_program(&ret.program);
         defs.extend(nested.out);
-        let mut sites = TsCallSites { file, starts: &starts, sites: Vec::new() };
+        let mut sites = TsCallSites {
+            file,
+            starts: &starts,
+            sites: Vec::new(),
+        };
         sites.visit_program(&ret.program);
-        CallFacts { defs, sites: sites.sites }
+        CallFacts {
+            defs,
+            sites: sites.sites,
+        }
     }
     // One oxc parse feeds the node + edge lift. Byte-offset spans (oxc's native
     // shape) become node ids `file:<byte_off>`; `line_at` recovers the 1-based
@@ -92,7 +110,11 @@ impl TypeLang for TsTypes {
 
 pub fn ts_edges(content: &str, tsx: bool) -> Vec<TypeEdge> {
     let alloc = oxc_allocator::Allocator::default();
-    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let st = if tsx {
+        oxc_span::SourceType::tsx()
+    } else {
+        oxc_span::SourceType::ts()
+    };
     let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
     if ret.panicked {
         return Vec::new();
@@ -111,9 +133,15 @@ fn ts_edges_from(program: &ts_ast::Program) -> Vec<TypeEdge> {
                 }
             }
             S::ExportDefaultDeclaration(e) => match &e.declaration {
-                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_edges(c, &mut out),
-                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => ts_interface_edges(i, &mut out),
-                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => ts_function_edges(f, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    ts_class_edges(c, &mut out)
+                }
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
+                    ts_interface_edges(i, &mut out)
+                }
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    ts_function_edges(f, &mut out)
+                }
                 _ => {}
             },
             S::ClassDeclaration(c) => ts_class_edges(c, &mut out),
@@ -160,7 +188,10 @@ fn ts_type_name(n: &ts_ast::TSTypeName) -> Option<String> {
 }
 
 fn ts_refs_in_type(ty: &ts_ast::TSType, params: &BTreeSet<String>) -> Vec<String> {
-    let mut c = TsRefs { params, out: Vec::new() };
+    let mut c = TsRefs {
+        params,
+        out: Vec::new(),
+    };
     c.visit_ts_type(ty);
     c.out.sort();
     c.out.dedup();
@@ -216,9 +247,14 @@ fn ts_function_edges(f: &ts_ast::Function, out: &mut BTreeSet<(String, String, &
 /// `const foo = (...) => ...` / `const foo = function (...) {...}` at the top
 /// level: the binding name owns the function's edges. Plain value consts (no
 /// function initializer) carry no type shape and are skipped.
-fn ts_var_fn_edges(v: &ts_ast::VariableDeclaration, out: &mut BTreeSet<(String, String, &'static str)>) {
+fn ts_var_fn_edges(
+    v: &ts_ast::VariableDeclaration,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
     for d in &v.declarations {
-        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else {
+            continue;
+        };
         match &d.init {
             Some(ts_ast::Expression::ArrowFunctionExpression(a)) => ts_fn_signature_edges(
                 &name.name,
@@ -266,7 +302,10 @@ fn ts_fn_signature_edges(
         }
     }
     if let Some(b) = body {
-        let mut v = TsRefs { params: &tp, out: Vec::new() };
+        let mut v = TsRefs {
+            params: &tp,
+            out: Vec::new(),
+        };
         v.visit_function_body(b);
         v.out.sort();
         v.out.dedup();
@@ -408,7 +447,10 @@ fn ts_alias_edges(
     }
 }
 
-fn ts_enum_edges(e: &ts_ast::TSEnumDeclaration, out: &mut BTreeSet<(String, String, &'static str)>) {
+fn ts_enum_edges(
+    e: &ts_ast::TSEnumDeclaration,
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
     let owner = e.id.name.to_string();
     for m in &e.body.members {
         let name = match &m.id {
@@ -427,7 +469,11 @@ fn ts_enum_edges(e: &ts_ast::TSEnumDeclaration, out: &mut BTreeSet<(String, Stri
 #[cfg(test)]
 fn ts_entities(file: &str, content: &str, tsx: bool) -> Vec<TypeEntity> {
     let alloc = oxc_allocator::Allocator::default();
-    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let st = if tsx {
+        oxc_span::SourceType::tsx()
+    } else {
+        oxc_span::SourceType::ts()
+    };
     let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
     if ret.panicked {
         return Vec::new();
@@ -447,23 +493,55 @@ fn ts_entities_from(program: &ts_ast::Program, file: &str, content: &str) -> Vec
                 }
             }
             S::ExportDefaultDeclaration(e) => match &e.declaration {
-                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_entity(c, file, &starts, &mut out),
-                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
-                    push_entity(&mut out, file, &starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    ts_class_entity(c, file, &starts, &mut out)
                 }
-                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => ts_fn_entity(f, file, &starts, &mut out),
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => push_entity(
+                    &mut out,
+                    file,
+                    &starts,
+                    &i.id.name,
+                    i.span.start,
+                    EntityKind::Interface,
+                    None,
+                    None,
+                ),
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    ts_fn_entity(f, file, &starts, &mut out)
+                }
                 _ => {}
             },
             S::ClassDeclaration(c) => ts_class_entity(c, file, &starts, &mut out),
-            S::TSInterfaceDeclaration(i) => {
-                push_entity(&mut out, file, &starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
-            }
-            S::TSTypeAliasDeclaration(a) => {
-                push_entity(&mut out, file, &starts, &a.id.name, a.span.start, EntityKind::Alias, None, None)
-            }
-            S::TSEnumDeclaration(e) => {
-                push_entity(&mut out, file, &starts, &e.id.name, e.span.start, EntityKind::Enum, None, None)
-            }
+            S::TSInterfaceDeclaration(i) => push_entity(
+                &mut out,
+                file,
+                &starts,
+                &i.id.name,
+                i.span.start,
+                EntityKind::Interface,
+                None,
+                None,
+            ),
+            S::TSTypeAliasDeclaration(a) => push_entity(
+                &mut out,
+                file,
+                &starts,
+                &a.id.name,
+                a.span.start,
+                EntityKind::Alias,
+                None,
+                None,
+            ),
+            S::TSEnumDeclaration(e) => push_entity(
+                &mut out,
+                file,
+                &starts,
+                &e.id.name,
+                e.span.start,
+                EntityKind::Enum,
+                None,
+                None,
+            ),
             S::FunctionDeclaration(f) => ts_fn_entity(f, file, &starts, &mut out),
             S::VariableDeclaration(v) => ts_var_fn_entity(v, file, &starts, &mut out),
             _ => {}
@@ -472,18 +550,44 @@ fn ts_entities_from(program: &ts_ast::Program, file: &str, content: &str) -> Vec
     out
 }
 
-fn ts_decl_entity(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+fn ts_decl_entity(
+    d: &ts_ast::Declaration,
+    file: &str,
+    starts: &[usize],
+    out: &mut Vec<TypeEntity>,
+) {
     match d {
         ts_ast::Declaration::ClassDeclaration(c) => ts_class_entity(c, file, starts, out),
-        ts_ast::Declaration::TSInterfaceDeclaration(i) => {
-            push_entity(out, file, starts, &i.id.name, i.span.start, EntityKind::Interface, None, None)
-        }
-        ts_ast::Declaration::TSTypeAliasDeclaration(a) => {
-            push_entity(out, file, starts, &a.id.name, a.span.start, EntityKind::Alias, None, None)
-        }
-        ts_ast::Declaration::TSEnumDeclaration(e) => {
-            push_entity(out, file, starts, &e.id.name, e.span.start, EntityKind::Enum, None, None)
-        }
+        ts_ast::Declaration::TSInterfaceDeclaration(i) => push_entity(
+            out,
+            file,
+            starts,
+            &i.id.name,
+            i.span.start,
+            EntityKind::Interface,
+            None,
+            None,
+        ),
+        ts_ast::Declaration::TSTypeAliasDeclaration(a) => push_entity(
+            out,
+            file,
+            starts,
+            &a.id.name,
+            a.span.start,
+            EntityKind::Alias,
+            None,
+            None,
+        ),
+        ts_ast::Declaration::TSEnumDeclaration(e) => push_entity(
+            out,
+            file,
+            starts,
+            &e.id.name,
+            e.span.start,
+            EntityKind::Enum,
+            None,
+            None,
+        ),
         ts_ast::Declaration::FunctionDeclaration(f) => ts_fn_entity(f, file, starts, out),
         ts_ast::Declaration::VariableDeclaration(v) => ts_var_fn_entity(v, file, starts, out),
         _ => {}
@@ -493,7 +597,16 @@ fn ts_decl_entity(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: &m
 fn ts_class_entity(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
     let Some(id) = &c.id else { return };
     let owner = id.name.to_string();
-    push_entity(out, file, starts, &id.name, c.span.start, EntityKind::Class, None, None);
+    push_entity(
+        out,
+        file,
+        starts,
+        &id.name,
+        c.span.start,
+        EntityKind::Class,
+        None,
+        None,
+    );
     for el in &c.body.body {
         if let ts_ast::ClassElement::MethodDefinition(m) = el {
             // normal method name `foo()`; skip computed/private/constructor keys
@@ -501,9 +614,22 @@ fn ts_class_entity(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Ve
                 continue;
             }
             if let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key {
-                let ty = ts_fn_type(&m.value.type_parameters, &m.value.params, &m.value.return_type);
+                let ty = ts_fn_type(
+                    &m.value.type_parameters,
+                    &m.value.params,
+                    &m.value.return_type,
+                );
                 // a TS method's owner is always the enclosing class.
-                push_entity(out, file, starts, &k.name, m.span.start, EntityKind::Method, Some((&owner, EntityKind::Class)), Some(ty));
+                push_entity(
+                    out,
+                    file,
+                    starts,
+                    &k.name,
+                    m.span.start,
+                    EntityKind::Method,
+                    Some((&owner, EntityKind::Class)),
+                    Some(ty),
+                );
             }
         }
     }
@@ -512,12 +638,28 @@ fn ts_class_entity(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut Ve
 fn ts_fn_entity(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
     let Some(id) = &f.id else { return };
     let ty = ts_fn_type(&f.type_parameters, &f.params, &f.return_type);
-    push_entity(out, file, starts, &id.name, f.span.start, EntityKind::Function, None, Some(ty));
+    push_entity(
+        out,
+        file,
+        starts,
+        &id.name,
+        f.span.start,
+        EntityKind::Function,
+        None,
+        Some(ty),
+    );
 }
 
-fn ts_var_fn_entity(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<TypeEntity>) {
+fn ts_var_fn_entity(
+    v: &ts_ast::VariableDeclaration,
+    file: &str,
+    starts: &[usize],
+    out: &mut Vec<TypeEntity>,
+) {
     for d in &v.declarations {
-        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else {
+            continue;
+        };
         let ty = match &d.init {
             Some(ts_ast::Expression::ArrowFunctionExpression(a)) => {
                 ts_fn_type(&a.type_parameters, &a.params, &a.return_type)
@@ -527,7 +669,16 @@ fn ts_var_fn_entity(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize
             }
             _ => continue,
         };
-        push_entity(out, file, starts, &name.name, d.span.start, EntityKind::Function, None, Some(ty));
+        push_entity(
+            out,
+            file,
+            starts,
+            &name.name,
+            d.span.start,
+            EntityKind::Function,
+            None,
+            Some(ty),
+        );
     }
 }
 
@@ -583,16 +734,27 @@ fn ts_collect_const_values(
     match ts_unwrap_const(e) {
         ts_ast::Expression::StringLiteral(s) => {
             out.push(ConstValueFact {
-                sym: sym.to_string(), field: prefix.to_string(), text: s.value.to_string(),
-                kind: "lit", file: file.to_string(), line: line_at(starts, s.span.start as usize),
+                sym: sym.to_string(),
+                field: prefix.to_string(),
+                text: s.value.to_string(),
+                kind: "lit",
+                file: file.to_string(),
+                line: line_at(starts, s.span.start as usize),
             });
         }
         ts_ast::Expression::TemplateLiteral(t) => {
             let span = t.span();
-            let text = content.get(span.start as usize..span.end as usize).unwrap_or_default().to_string();
+            let text = content
+                .get(span.start as usize..span.end as usize)
+                .unwrap_or_default()
+                .to_string();
             out.push(ConstValueFact {
-                sym: sym.to_string(), field: prefix.to_string(), text,
-                kind: "template", file: file.to_string(), line: line_at(starts, span.start as usize),
+                sym: sym.to_string(),
+                field: prefix.to_string(),
+                text,
+                kind: "template",
+                file: file.to_string(),
+                line: line_at(starts, span.start as usize),
             });
         }
         ts_ast::Expression::ObjectExpression(o) => {
@@ -604,10 +766,25 @@ fn ts_collect_const_values(
                             ts_ast::PropertyKey::StringLiteral(s) => s.value.to_string(),
                             _ => continue, // computed key: no static field name
                         };
-                        let field = if prefix.is_empty() { key } else { format!("{prefix}.{key}") };
-                        ts_collect_const_values(&prop.value, sym, &field, file, starts, content, out, spread_skips);
+                        let field = if prefix.is_empty() {
+                            key
+                        } else {
+                            format!("{prefix}.{key}")
+                        };
+                        ts_collect_const_values(
+                            &prop.value,
+                            sym,
+                            &field,
+                            file,
+                            starts,
+                            content,
+                            out,
+                            spread_skips,
+                        );
                     }
-                    ts_ast::ObjectPropertyKind::SpreadProperty(_) => { *spread_skips += 1; }
+                    ts_ast::ObjectPropertyKind::SpreadProperty(_) => {
+                        *spread_skips += 1;
+                    }
                 }
             }
         }
@@ -644,14 +821,22 @@ fn ts_var_const_facts(
     mutable_skips: &mut usize,
 ) {
     for d in &v.declarations {
-        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else {
+            continue;
+        };
         let Some(init) = &d.init else { continue };
         // Arrow/function-expression consts are ts_var_fn_entity's Function
         // entities; leave those exactly as they are.
-        if matches!(init, ts_ast::Expression::ArrowFunctionExpression(_) | ts_ast::Expression::FunctionExpression(_)) {
+        if matches!(
+            init,
+            ts_ast::Expression::ArrowFunctionExpression(_)
+                | ts_ast::Expression::FunctionExpression(_)
+        ) {
             continue;
         }
-        if !ts_expr_string_bearing(init) { continue; }
+        if !ts_expr_string_bearing(init) {
+            continue;
+        }
         let as_const = matches!(init, ts_ast::Expression::TSAsExpression(t) if t.type_annotation.is_const_type_reference());
         if !v.kind.is_const() && !as_const {
             *mutable_skips += 1;
@@ -659,8 +844,13 @@ fn ts_var_const_facts(
         }
         let sym = mint_sym(file, EntityKind::Const, &name.name, scope);
         entities.push(TypeEntity {
-            sym: sym.clone(), name: name.name.to_string(), kind: EntityKind::Const,
-            parent: None, file: file.to_string(), line: line_at(starts, d.span.start as usize), ty: None,
+            sym: sym.clone(),
+            name: name.name.to_string(),
+            kind: EntityKind::Const,
+            parent: None,
+            file: file.to_string(),
+            line: line_at(starts, d.span.start as usize),
+            ty: None,
         });
         ts_collect_const_values(init, &sym, "", file, starts, content, consts, spread_skips);
     }
@@ -671,7 +861,12 @@ fn ts_var_const_facts(
 /// `TSEnumDeclaration` arm) — a member is a field of its enum, not a second
 /// entity. Only a plain string initializer qualifies; a computed/numeric
 /// member yields no row.
-fn ts_enum_const_values(e: &ts_ast::TSEnumDeclaration, file: &str, starts: &[usize], out: &mut Vec<ConstValueFact>) {
+fn ts_enum_const_values(
+    e: &ts_ast::TSEnumDeclaration,
+    file: &str,
+    starts: &[usize],
+    out: &mut Vec<ConstValueFact>,
+) {
     let owner_sym = mint_sym(file, EntityKind::Enum, &e.id.name, None);
     for m in &e.body.members {
         let name = match &m.id {
@@ -682,8 +877,12 @@ fn ts_enum_const_values(e: &ts_ast::TSEnumDeclaration, file: &str, starts: &[usi
         let Some(init) = &m.initializer else { continue };
         if let ts_ast::Expression::StringLiteral(s) = ts_unwrap_const(init) {
             out.push(ConstValueFact {
-                sym: owner_sym.clone(), field: name, text: s.value.to_string(),
-                kind: "lit", file: file.to_string(), line: line_at(starts, m.span.start as usize),
+                sym: owner_sym.clone(),
+                field: name,
+                text: s.value.to_string(),
+                kind: "lit",
+                file: file.to_string(),
+                line: line_at(starts, m.span.start as usize),
             });
         }
     }
@@ -710,7 +909,11 @@ fn ts_enum_const_values(e: &ts_ast::TSEnumDeclaration, file: &str, starts: &[usi
 /// Enum declarations stay top-level-only (no known corpus case of a
 /// function-local enum feeding a route table; `const_string_member` never
 /// covered enums either).
-fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> (Vec<TypeEntity>, Vec<ConstValueFact>, usize, usize) {
+fn ts_const_facts_from(
+    program: &ts_ast::Program,
+    file: &str,
+    content: &str,
+) -> (Vec<TypeEntity>, Vec<ConstValueFact>, usize, usize) {
     let starts = line_index(content);
     let mut entities = Vec::new();
     let mut consts = Vec::new();
@@ -727,7 +930,17 @@ fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> 
             _ => None,
         };
         if let Some(v) = var_decl {
-            ts_var_const_facts(v, file, &starts, content, None, &mut entities, &mut consts, &mut spread_skips, &mut mutable_skips);
+            ts_var_const_facts(
+                v,
+                file,
+                &starts,
+                content,
+                None,
+                &mut entities,
+                &mut consts,
+                &mut spread_skips,
+                &mut mutable_skips,
+            );
         }
         let enum_decl: Option<&ts_ast::TSEnumDeclaration> = match stmt {
             S::TSEnumDeclaration(en) => Some(en),
@@ -742,9 +955,14 @@ fn ts_const_facts_from(program: &ts_ast::Program, file: &str, content: &str) -> 
         }
     }
     let mut nested = TsNestedConstWalker {
-        file, content, starts: &starts, scope: Vec::new(),
-        entities: &mut entities, consts: &mut consts,
-        spread_skips: &mut spread_skips, mutable_skips: &mut mutable_skips,
+        file,
+        content,
+        starts: &starts,
+        scope: Vec::new(),
+        entities: &mut entities,
+        consts: &mut consts,
+        spread_skips: &mut spread_skips,
+        mutable_skips: &mut mutable_skips,
     };
     nested.visit_program(program);
     (entities, consts, spread_skips, mutable_skips)
@@ -773,7 +991,10 @@ struct TsNestedConstWalker<'s> {
 
 impl<'a, 's> OxcVisit<'a> for TsNestedConstWalker<'s> {
     fn visit_function(&mut self, it: &ts_ast::Function<'a>, flags: oxc_syntax::scope::ScopeFlags) {
-        let name = it.id.as_ref().map(|id| id.name.to_string())
+        let name = it
+            .id
+            .as_ref()
+            .map(|id| id.name.to_string())
             .unwrap_or_else(|| format!("closure_{}", it.span.start));
         self.scope.push(name);
         oxc_ast_visit::walk::walk_function(self, it, flags);
@@ -790,8 +1011,15 @@ impl<'a, 's> OxcVisit<'a> for TsNestedConstWalker<'s> {
         if let Some(scope) = self.scope.last() {
             let scope = scope.clone();
             ts_var_const_facts(
-                it, self.file, self.starts, self.content, Some(&scope),
-                self.entities, self.consts, self.spread_skips, self.mutable_skips,
+                it,
+                self.file,
+                self.starts,
+                self.content,
+                Some(&scope),
+                self.entities,
+                self.consts,
+                self.spread_skips,
+                self.mutable_skips,
             );
         }
         oxc_ast_visit::walk::walk_variable_declaration(self, it);
@@ -807,16 +1035,33 @@ impl<'a, 's> OxcVisit<'a> for TsNestedConstWalker<'s> {
 /// `doc_comment` joins `type_entity`.
 fn ts_docs_from(program: &ts_ast::Program, file: &str, content: &str) -> Vec<DocFact> {
     let anchors = ts_doc_anchors(program, file);
-    if anchors.is_empty() { return Vec::new(); }
+    if anchors.is_empty() {
+        return Vec::new();
+    }
     let starts = line_index(content);
     let mut out = Vec::new();
     for (cstart, cend) in ts_block_comments(content) {
         let raw = &content[cstart..cend];
-        if !raw.trim_start().starts_with("/**") { continue; }
-        let Some((sym, at)) = anchors.iter().filter(|(_, s)| (*s as usize) >= cend).min_by_key(|(_, s)| *s) else { continue };
-        if !content[cend..*at as usize].trim().is_empty() { continue; }
+        if !raw.trim_start().starts_with("/**") {
+            continue;
+        }
+        let Some((sym, at)) = anchors
+            .iter()
+            .filter(|(_, s)| (*s as usize) >= cend)
+            .min_by_key(|(_, s)| *s)
+        else {
+            continue;
+        };
+        if !content[cend..*at as usize].trim().is_empty() {
+            continue;
+        }
         let text = clean_block_comment(raw);
-        out.push(DocFact { sym: sym.clone(), line: line_at(&starts, *at as usize), tags: parse_jsdoc_tags(&text), text });
+        out.push(DocFact {
+            sym: sym.clone(),
+            line: line_at(&starts, *at as usize),
+            tags: parse_jsdoc_tags(&text),
+            text,
+        });
     }
     out
 }
@@ -830,18 +1075,40 @@ fn ts_doc_anchors(program: &ts_ast::Program, file: &str) -> Vec<(String, u32)> {
         use ts_ast::Statement as S;
         let at = stmt.span().start;
         match stmt {
-            S::ExportNamedDeclaration(e) => { if let Some(d) = &e.declaration { ts_decl_anchor(d, file, at, &mut out); } }
+            S::ExportNamedDeclaration(e) => {
+                if let Some(d) = &e.declaration {
+                    ts_decl_anchor(d, file, at, &mut out);
+                }
+            }
             S::ExportDefaultDeclaration(e) => match &e.declaration {
-                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => ts_class_anchor(c, file, at, &mut out),
-                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
-                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+                ts_ast::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    ts_class_anchor(c, file, at, &mut out)
+                }
+                ts_ast::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
+                    out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at))
+                }
+                ts_ast::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    if let Some(id) = &f.id {
+                        out.push((mint_sym(file, EntityKind::Function, &id.name, None), at));
+                    }
+                }
                 _ => {}
             },
             S::ClassDeclaration(c) => ts_class_anchor(c, file, at, &mut out),
-            S::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
-            S::TSTypeAliasDeclaration(a) => out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at)),
-            S::TSEnumDeclaration(en) => out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at)),
-            S::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+            S::TSInterfaceDeclaration(i) => {
+                out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at))
+            }
+            S::TSTypeAliasDeclaration(a) => {
+                out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at))
+            }
+            S::TSEnumDeclaration(en) => {
+                out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at))
+            }
+            S::FunctionDeclaration(f) => {
+                if let Some(id) = &f.id {
+                    out.push((mint_sym(file, EntityKind::Function, &id.name, None), at));
+                }
+            }
             S::VariableDeclaration(v) => ts_var_anchor(v, file, at, &mut out),
             _ => {}
         }
@@ -852,10 +1119,20 @@ fn ts_doc_anchors(program: &ts_ast::Program, file: &str) -> Vec<(String, u32)> {
 fn ts_decl_anchor(d: &ts_ast::Declaration, file: &str, at: u32, out: &mut Vec<(String, u32)>) {
     match d {
         ts_ast::Declaration::ClassDeclaration(c) => ts_class_anchor(c, file, at, out),
-        ts_ast::Declaration::TSInterfaceDeclaration(i) => out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at)),
-        ts_ast::Declaration::TSTypeAliasDeclaration(a) => out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at)),
-        ts_ast::Declaration::TSEnumDeclaration(en) => out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at)),
-        ts_ast::Declaration::FunctionDeclaration(f) => { if let Some(id) = &f.id { out.push((mint_sym(file, EntityKind::Function, &id.name, None), at)); } }
+        ts_ast::Declaration::TSInterfaceDeclaration(i) => {
+            out.push((mint_sym(file, EntityKind::Interface, &i.id.name, None), at))
+        }
+        ts_ast::Declaration::TSTypeAliasDeclaration(a) => {
+            out.push((mint_sym(file, EntityKind::Alias, &a.id.name, None), at))
+        }
+        ts_ast::Declaration::TSEnumDeclaration(en) => {
+            out.push((mint_sym(file, EntityKind::Enum, &en.id.name, None), at))
+        }
+        ts_ast::Declaration::FunctionDeclaration(f) => {
+            if let Some(id) = &f.id {
+                out.push((mint_sym(file, EntityKind::Function, &id.name, None), at));
+            }
+        }
         ts_ast::Declaration::VariableDeclaration(v) => ts_var_anchor(v, file, at, out),
         _ => {}
     }
@@ -867,18 +1144,34 @@ fn ts_class_anchor(c: &ts_ast::Class, file: &str, at: u32, out: &mut Vec<(String
     out.push((mint_sym(file, EntityKind::Class, &id.name, None), at));
     for el in &c.body.body {
         if let ts_ast::ClassElement::MethodDefinition(m) = el {
-            if m.kind == ts_ast::MethodDefinitionKind::Constructor { continue; }
+            if m.kind == ts_ast::MethodDefinitionKind::Constructor {
+                continue;
+            }
             if let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key {
-                out.push((mint_sym(file, EntityKind::Method, &k.name, Some(&owner)), m.span.start));
+                out.push((
+                    mint_sym(file, EntityKind::Method, &k.name, Some(&owner)),
+                    m.span.start,
+                ));
             }
         }
     }
 }
 
-fn ts_var_anchor(v: &ts_ast::VariableDeclaration, file: &str, at: u32, out: &mut Vec<(String, u32)>) {
+fn ts_var_anchor(
+    v: &ts_ast::VariableDeclaration,
+    file: &str,
+    at: u32,
+    out: &mut Vec<(String, u32)>,
+) {
     for d in &v.declarations {
-        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
-        if matches!(&d.init, Some(ts_ast::Expression::ArrowFunctionExpression(_)) | Some(ts_ast::Expression::FunctionExpression(_))) {
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else {
+            continue;
+        };
+        if matches!(
+            &d.init,
+            Some(ts_ast::Expression::ArrowFunctionExpression(_))
+                | Some(ts_ast::Expression::FunctionExpression(_))
+        ) {
             out.push((mint_sym(file, EntityKind::Function, &name.name, None), at));
         }
     }
@@ -894,7 +1187,12 @@ fn ts_block_comments(content: &str) -> Vec<(usize, usize)> {
     while i + 1 < b.len() {
         if b[i] == b'/' && b[i + 1] == b'*' {
             match content[i + 2..].find("*/") {
-                Some(rel) => { let end = i + 2 + rel + 2; out.push((i, end)); i = end; continue; }
+                Some(rel) => {
+                    let end = i + 2 + rel + 2;
+                    out.push((i, end));
+                    i = end;
+                    continue;
+                }
                 None => break,
             }
         }
@@ -1006,7 +1304,9 @@ fn ts_decl_call_def(d: &ts_ast::Declaration, file: &str, starts: &[usize], out: 
 // @callable ts function
 fn ts_fn_call_def(f: &ts_ast::Function, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
     let Some(id) = &f.id else { return };
-    let Some(body) = f.body.as_deref() else { return };
+    let Some(body) = f.body.as_deref() else {
+        return;
+    };
     let name = id.name.to_string();
     out.push(CallDef {
         sym: mint_sym(file, EntityKind::Function, &name, None),
@@ -1023,17 +1323,27 @@ fn ts_class_call_defs(c: &ts_ast::Class, file: &str, starts: &[usize], out: &mut
     let Some(id) = &c.id else { return };
     let owner = id.name.to_string();
     for el in &c.body.body {
-        let ts_ast::ClassElement::MethodDefinition(m) = el else { continue };
+        let ts_ast::ClassElement::MethodDefinition(m) = el else {
+            continue;
+        };
         // computed/private keys have no static name to resolve.
-        let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key else { continue };
-        let Some(body) = m.value.body.as_deref() else { continue };
+        let ts_ast::PropertyKey::StaticIdentifier(k) = &m.key else {
+            continue;
+        };
+        let Some(body) = m.value.body.as_deref() else {
+            continue;
+        };
         let is_ctor = m.kind == ts_ast::MethodDefinitionKind::Constructor;
         // The constructor's sym stays `mint_sym(Method, "constructor", owner)` —
         // IDENTICAL to what `ts_flow_class` mints for its df body, so df<->call
         // joins line up. Its call_name uses the CLASS name, so a `new Widget(x)`
         // call site (callee "Widget") resolves to this ctor row. Every other
         // method resolves by its own name (getters/setters share one sym).
-        let name = if is_ctor { owner.clone() } else { k.name.to_string() };
+        let name = if is_ctor {
+            owner.clone()
+        } else {
+            k.name.to_string()
+        };
         out.push(CallDef {
             sym: mint_sym(file, EntityKind::Method, &k.name, Some(&owner)),
             name,
@@ -1117,9 +1427,16 @@ impl<'a, 'p> OxcVisit<'a> for TsNestedFnDefs<'p> {
     }
 }
 
-fn ts_var_call_defs(v: &ts_ast::VariableDeclaration, file: &str, starts: &[usize], out: &mut Vec<CallDef>) {
+fn ts_var_call_defs(
+    v: &ts_ast::VariableDeclaration,
+    file: &str,
+    starts: &[usize],
+    out: &mut Vec<CallDef>,
+) {
     for d in &v.declarations {
-        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else { continue };
+        let ts_ast::BindingPattern::BindingIdentifier(name) = &d.id else {
+            continue;
+        };
         let body_end = match &d.init {
             Some(ts_ast::Expression::ArrowFunctionExpression(a)) => a.body.span.end,
             Some(ts_ast::Expression::FunctionExpression(f)) => match f.body.as_deref() {
@@ -1217,7 +1534,6 @@ fn ts_callee_name(e: &ts_ast::Expression) -> Option<String> {
 // functions and impl methods as callables with arrow types. Lines come from
 // proc-macro2 span-locations (the `Spanned` ident span). ---
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1240,24 +1556,75 @@ type Pair = [Left, Right]
 enum Color { Red, Green = "g" }
 "#;
         let got = ts_edges(src, false);
-        assert!(has(&got, "Entity", "Id", "field"), "interface property: {got:?}");
-        assert!(has(&got, "Catalog", "Pricing", "generic"), "interface extends: {got:?}");
-        assert!(has(&got, "Catalog", "Entity", "generic"), "type-param bound: {got:?}");
-        assert!(has(&got, "Catalog", "Sku", "field"), "generic arg in property: {got:?}");
-        assert!(!got.iter().any(|e| e.to == "T"), "type-param name leaked: {got:?}");
+        assert!(
+            has(&got, "Entity", "Id", "field"),
+            "interface property: {got:?}"
+        );
+        assert!(
+            has(&got, "Catalog", "Pricing", "generic"),
+            "interface extends: {got:?}"
+        );
+        assert!(
+            has(&got, "Catalog", "Entity", "generic"),
+            "type-param bound: {got:?}"
+        );
+        assert!(
+            has(&got, "Catalog", "Sku", "field"),
+            "generic arg in property: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|e| e.to == "T"),
+            "type-param name leaked: {got:?}"
+        );
         assert!(has(&got, "Repo", "Base", "impl"), "class extends: {got:?}");
-        assert!(has(&got, "Repo", "Pricing", "impl"), "class implements: {got:?}");
-        assert!(has(&got, "Repo", "Cache", "field"), "class property: {got:?}");
-        assert!(has(&got, "Repo", "Item", "field"), "property generic arg: {got:?}");
-        assert!(has(&got, "Repo", "Db", "field"), "ctor parameter property: {got:?}");
-        assert!(!got.iter().any(|e| e.to == "Wire"), "plain ctor arg is not a field: {got:?}");
-        assert!(has(&got, "Event", "Created", "variant"), "union alternative: {got:?}");
-        assert!(has(&got, "Event", "Deleted", "variant"), "generic union alternative: {got:?}");
-        assert!(has(&got, "Event", "Reason", "field"), "union alternative arg: {got:?}");
-        assert!(has(&got, "Pair", "Left", "field"), "tuple alias member: {got:?}");
-        assert!(has(&got, "Color", "Color::Red", "variant"), "enum member: {got:?}");
-        assert!(has(&got, "Color", "Color::Green", "variant"), "initialized enum member: {got:?}");
-        assert!(!got.iter().any(|e| e.to == "string"), "keyword type leaked: {got:?}");
+        assert!(
+            has(&got, "Repo", "Pricing", "impl"),
+            "class implements: {got:?}"
+        );
+        assert!(
+            has(&got, "Repo", "Cache", "field"),
+            "class property: {got:?}"
+        );
+        assert!(
+            has(&got, "Repo", "Item", "field"),
+            "property generic arg: {got:?}"
+        );
+        assert!(
+            has(&got, "Repo", "Db", "field"),
+            "ctor parameter property: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|e| e.to == "Wire"),
+            "plain ctor arg is not a field: {got:?}"
+        );
+        assert!(
+            has(&got, "Event", "Created", "variant"),
+            "union alternative: {got:?}"
+        );
+        assert!(
+            has(&got, "Event", "Deleted", "variant"),
+            "generic union alternative: {got:?}"
+        );
+        assert!(
+            has(&got, "Event", "Reason", "field"),
+            "union alternative arg: {got:?}"
+        );
+        assert!(
+            has(&got, "Pair", "Left", "field"),
+            "tuple alias member: {got:?}"
+        );
+        assert!(
+            has(&got, "Color", "Color::Red", "variant"),
+            "enum member: {got:?}"
+        );
+        assert!(
+            has(&got, "Color", "Color::Green", "variant"),
+            "initialized enum member: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|e| e.to == "string"),
+            "keyword type leaked: {got:?}"
+        );
     }
 
     #[test]
@@ -1267,8 +1634,14 @@ interface CardProps { item: Item; onPick: (s: Sku) => void }
 export function Card({ item }: CardProps) { return <div>{item.name}</div> }
 "#;
         let got = ts_edges(src, true);
-        assert!(has(&got, "CardProps", "Item", "field"), "tsx interface prop: {got:?}");
-        assert!(has(&got, "CardProps", "Sku", "field"), "function-type param ref: {got:?}");
+        assert!(
+            has(&got, "CardProps", "Item", "field"),
+            "tsx interface prop: {got:?}"
+        );
+        assert!(
+            has(&got, "CardProps", "Sku", "field"),
+            "function-type param ref: {got:?}"
+        );
     }
 
     #[test]
@@ -1284,7 +1657,11 @@ export function resolveIdent(model: Model, n: string): NodeId[] { return [] }
 export const cone = (model: Model, mode: ConeMode): View => view()
 ";
         let es = ts_entities("src/core/model.ts", src, false);
-        let by = |name: &str| es.iter().find(|e| e.name == name).unwrap_or_else(|| panic!("missing {name}: {es:?}"));
+        let by = |name: &str| {
+            es.iter()
+                .find(|e| e.name == name)
+                .unwrap_or_else(|| panic!("missing {name}: {es:?}"))
+        };
         // kinds
         assert_eq!(by("Entity").kind, EntityKind::Interface);
         assert_eq!(by("Event").kind, EntityKind::Alias);
@@ -1299,11 +1676,14 @@ export const cone = (model: Model, mode: ConeMode): View => view()
         // method: parented to the class, callable
         let find = by("find");
         assert_eq!(find.kind, EntityKind::Method);
-        assert_eq!(find.parent.as_deref(), Some("src/core/model.ts::class::Repo"));
+        assert_eq!(
+            find.parent.as_deref(),
+            Some("src/core/model.ts::class::Repo")
+        );
         assert_eq!(find.sym, "src/core/model.ts::method::Repo.find");
         // a function IS a type: [...A] => B
         let f = by("resolveIdent").ty.as_ref().unwrap();
-        assert_eq!(f.params[0], vec![TypeRef::Named("Model".into())]);  // first param type
+        assert_eq!(f.params[0], vec![TypeRef::Named("Model".into())]); // first param type
         assert!(f.params[1].is_empty(), "string is a keyword, no ref: {f:?}");
         assert_eq!(f.ret, vec![TypeRef::Named("NodeId".into())]);
         let a = by("cone").ty.as_ref().unwrap();
@@ -1326,29 +1706,70 @@ function helper(raw: Raw) {}
 "#;
         let got = ts_edges(src, false);
         // function declaration: params in, return out, body refs internal
-        assert!(has(&got, "resolveIdent", "Model", "param"), "fn param type: {got:?}");
-        assert!(has(&got, "resolveIdent", "NodeId", "returns"), "fn return type: {got:?}");
-        assert!(has(&got, "resolveIdent", "Visited", "uses"), "body annotation: {got:?}");
-        assert!(has(&got, "resolveIdent", "NodeId", "uses"), "body cast `as NodeId[]`: {got:?}");
+        assert!(
+            has(&got, "resolveIdent", "Model", "param"),
+            "fn param type: {got:?}"
+        );
+        assert!(
+            has(&got, "resolveIdent", "NodeId", "returns"),
+            "fn return type: {got:?}"
+        );
+        assert!(
+            has(&got, "resolveIdent", "Visited", "uses"),
+            "body annotation: {got:?}"
+        );
+        assert!(
+            has(&got, "resolveIdent", "NodeId", "uses"),
+            "body cast `as NodeId[]`: {got:?}"
+        );
         // arrow const: same three kinds, type-param bound is generic + excluded
         assert!(has(&got, "cone", "Model", "param"), "arrow param: {got:?}");
-        assert!(has(&got, "cone", "ConeMode", "param"), "arrow param 2: {got:?}");
-        assert!(has(&got, "cone", "View", "returns"), "arrow return: {got:?}");
-        assert!(has(&got, "cone", "Accumulator", "uses"), "arrow body: {got:?}");
-        assert!(has(&got, "cone", "Ctx", "generic"), "type-param bound: {got:?}");
-        assert!(!got.iter().any(|e| e.from == "cone" && e.to == "C"), "type-param name leaked: {got:?}");
+        assert!(
+            has(&got, "cone", "ConeMode", "param"),
+            "arrow param 2: {got:?}"
+        );
+        assert!(
+            has(&got, "cone", "View", "returns"),
+            "arrow return: {got:?}"
+        );
+        assert!(
+            has(&got, "cone", "Accumulator", "uses"),
+            "arrow body: {got:?}"
+        );
+        assert!(
+            has(&got, "cone", "Ctx", "generic"),
+            "type-param bound: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|e| e.from == "cone" && e.to == "C"),
+            "type-param name leaked: {got:?}"
+        );
         // un-exported function still owns edges; keyword param type is no ref
-        assert!(has(&got, "helper", "Raw", "param"), "non-exported fn: {got:?}");
-        assert!(!got.iter().any(|e| e.to == "string"), "keyword param leaked: {got:?}");
+        assert!(
+            has(&got, "helper", "Raw", "param"),
+            "non-exported fn: {got:?}"
+        );
+        assert!(
+            !got.iter().any(|e| e.to == "string"),
+            "keyword param leaked: {got:?}"
+        );
     }
 
     #[test]
     fn ts_string_literal_const_mints_entity_and_value() {
         let src = "const home = '/home';\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ent = facts.entities.iter().find(|e| e.name == "home").expect("const entity");
+        let ent = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "home")
+            .expect("const entity");
         assert_eq!(ent.kind, EntityKind::Const);
-        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        let row = facts
+            .consts
+            .iter()
+            .find(|c| c.sym == ent.sym)
+            .expect("const_value row");
         assert_eq!(row.field, "");
         assert_eq!(row.text, "/home");
         assert_eq!(row.kind, "lit");
@@ -1358,8 +1779,17 @@ function helper(raw: Raw) {}
     fn ts_object_literal_const_dotted_field_paths() {
         let src = "const routes = { home: '/home', nested: { a: '/a' } };\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ent = facts.entities.iter().find(|e| e.name == "routes").expect("const entity");
-        let by_field = |field: &str| facts.consts.iter().find(|c| c.sym == ent.sym && c.field == field);
+        let ent = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "routes")
+            .expect("const entity");
+        let by_field = |field: &str| {
+            facts
+                .consts
+                .iter()
+                .find(|c| c.sym == ent.sym && c.field == field)
+        };
         assert_eq!(by_field("home").expect("home row").text, "/home");
         assert_eq!(by_field("nested.a").expect("nested.a row").text, "/a");
     }
@@ -1368,24 +1798,48 @@ function helper(raw: Raw) {}
     fn ts_template_const_keeps_holes_and_no_entity_without_strings() {
         let src = "const greeting = `hi ${name}`;\nconst count = 3;\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ent = facts.entities.iter().find(|e| e.name == "greeting").expect("template const entity");
-        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        let ent = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "greeting")
+            .expect("template const entity");
+        let row = facts
+            .consts
+            .iter()
+            .find(|c| c.sym == ent.sym)
+            .expect("const_value row");
         assert_eq!(row.kind, "template");
         assert_eq!(row.text, "`hi ${name}`");
         // a numeric const gains neither an entity nor a const_value row.
-        assert!(!facts.entities.iter().any(|e| e.name == "count"), "{:?}", facts.entities);
+        assert!(
+            !facts.entities.iter().any(|e| e.name == "count"),
+            "{:?}",
+            facts.entities
+        );
     }
 
     #[test]
     fn ts_string_enum_members_key_off_the_enum_sym() {
         let src = "enum Routes { Home = '/home', About = '/about' }\n";
         let facts = TsTypes.extract("f.ts", src);
-        let enum_ent = facts.entities.iter().find(|e| e.name == "Routes").expect("enum entity");
+        let enum_ent = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "Routes")
+            .expect("enum entity");
         assert_eq!(enum_ent.kind, EntityKind::Enum);
-        let home = facts.consts.iter().find(|c| c.field == "Home").expect("Home row");
+        let home = facts
+            .consts
+            .iter()
+            .find(|c| c.field == "Home")
+            .expect("Home row");
         assert_eq!(home.sym, enum_ent.sym);
         assert_eq!(home.text, "/home");
-        let about = facts.consts.iter().find(|c| c.field == "About").expect("About row");
+        let about = facts
+            .consts
+            .iter()
+            .find(|c| c.field == "About")
+            .expect("About row");
         assert_eq!(about.sym, enum_ent.sym);
     }
 
@@ -1393,20 +1847,42 @@ function helper(raw: Raw) {}
     fn ts_let_var_string_init_excluded_but_as_const_included() {
         let src = "let mutablePath = '/mut';\nconst pinned = '/pin' as const;\n";
         let facts = TsTypes.extract("f.ts", src);
-        assert!(!facts.entities.iter().any(|e| e.name == "mutablePath"), "{:?}", facts.entities);
-        assert!(!facts.consts.iter().any(|c| c.text == "/mut"), "{:?}", facts.consts);
+        assert!(
+            !facts.entities.iter().any(|e| e.name == "mutablePath"),
+            "{:?}",
+            facts.entities
+        );
+        assert!(
+            !facts.consts.iter().any(|c| c.text == "/mut"),
+            "{:?}",
+            facts.consts
+        );
         assert_eq!(facts.const_mutable_skips, 1);
-        let pinned = facts.entities.iter().find(|e| e.name == "pinned").expect("as-const entity");
-        assert!(facts.consts.iter().any(|c| c.sym == pinned.sym && c.text == "/pin"));
+        let pinned = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "pinned")
+            .expect("as-const entity");
+        assert!(facts
+            .consts
+            .iter()
+            .any(|c| c.sym == pinned.sym && c.text == "/pin"));
     }
 
     #[test]
     fn ts_object_spread_property_counted_not_followed() {
         let src = "const base = { a: '/a' };\nconst merged = { ...base, b: '/b' };\n";
         let facts = TsTypes.extract("f.ts", src);
-        let merged = facts.entities.iter().find(|e| e.name == "merged").expect("merged entity");
+        let merged = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "merged")
+            .expect("merged entity");
         // "b" still lands; the spread contributes no field (nothing named ".." here).
-        assert!(facts.consts.iter().any(|c| c.sym == merged.sym && c.field == "b" && c.text == "/b"));
+        assert!(facts
+            .consts
+            .iter()
+            .any(|c| c.sym == merged.sym && c.field == "b" && c.text == "/b"));
         assert_eq!(facts.const_spread_skips, 1);
     }
 
@@ -1416,7 +1892,11 @@ function helper(raw: Raw) {}
         // const-value pass must not also mint a Const entity for them.
         let src = "const handler = (x: number) => x + 1;\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ents: Vec<&TypeEntity> = facts.entities.iter().filter(|e| e.name == "handler").collect();
+        let ents: Vec<&TypeEntity> = facts
+            .entities
+            .iter()
+            .filter(|e| e.name == "handler")
+            .collect();
         assert_eq!(ents.len(), 1, "{:?}", facts.entities);
         assert_eq!(ents[0].kind, EntityKind::Function);
         assert!(!facts.consts.iter().any(|c| c.sym == ents[0].sym));
@@ -1437,10 +1917,22 @@ function makeTable() {\n    \
     return INNER_TABLE;\n\
 }\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ent = facts.entities.iter().find(|e| e.name == "INNER_TABLE").expect("nested const entity");
+        let ent = facts
+            .entities
+            .iter()
+            .find(|e| e.name == "INNER_TABLE")
+            .expect("nested const entity");
         assert_eq!(ent.kind, EntityKind::Const);
-        assert!(ent.sym.contains("makeTable"), "sym should carry the enclosing scope: {}", ent.sym);
-        let row = facts.consts.iter().find(|c| c.sym == ent.sym).expect("const_value row");
+        assert!(
+            ent.sym.contains("makeTable"),
+            "sym should carry the enclosing scope: {}",
+            ent.sym
+        );
+        let row = facts
+            .consts
+            .iter()
+            .find(|c| c.sym == ent.sym)
+            .expect("const_value row");
         assert_eq!(row.field, "x");
         assert_eq!(row.text, "/inner/x");
     }
@@ -1457,11 +1949,25 @@ function b() {\n    \
     return TABLE;\n\
 }\n";
         let facts = TsTypes.extract("f.ts", src);
-        let ents: Vec<&TypeEntity> = facts.entities.iter().filter(|e| e.name == "TABLE").collect();
+        let ents: Vec<&TypeEntity> = facts
+            .entities
+            .iter()
+            .filter(|e| e.name == "TABLE")
+            .collect();
         assert_eq!(ents.len(), 2, "{:?}", facts.entities);
         assert_ne!(ents[0].sym, ents[1].sym);
-        let text_for = |sym: &str| facts.consts.iter().find(|c| c.sym == sym && c.field == "k").map(|c| c.text.as_str());
+        let text_for = |sym: &str| {
+            facts
+                .consts
+                .iter()
+                .find(|c| c.sym == sym && c.field == "k")
+                .map(|c| c.text.as_str())
+        };
         let texts: Vec<&str> = ents.iter().map(|e| text_for(&e.sym).unwrap()).collect();
-        assert!(texts.contains(&"/a") && texts.contains(&"/b"), "{:?}", texts);
+        assert!(
+            texts.contains(&"/a") && texts.contains(&"/b"),
+            "{:?}",
+            texts
+        );
     }
 }

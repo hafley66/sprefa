@@ -72,7 +72,9 @@ pub struct ScipRows {
 pub fn index_path(root: &Path) -> Option<PathBuf> {
     if let Ok(path) = std::env::var("SPREFA_SCIP_INDEX") {
         let path = PathBuf::from(path);
-        if path.is_file() { return Some(path); }
+        if path.is_file() {
+            return Some(path);
+        }
     }
     [
         root.join("index.scip"),
@@ -142,11 +144,15 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
     // scoped to this index's documents — the cross-root symbol collapse is gone.
     let mut repo_of_doc: HashMap<&str, String> = HashMap::new();
     for doc in &index.documents {
-        repo_of_doc.entry(doc.relative_path.as_str())
+        repo_of_doc
+            .entry(doc.relative_path.as_str())
             .or_insert_with(|| repo_of(root, &doc.relative_path, slug));
     }
     let doc_repo = |path: &str| -> String {
-        repo_of_doc.get(path).cloned().unwrap_or_else(|| slug.to_string())
+        repo_of_doc
+            .get(path)
+            .cloned()
+            .unwrap_or_else(|| slug.to_string())
     };
     let mut def_file: HashMap<String, String> = HashMap::new();
     let mut defs: HashSet<(String, String, String)> = HashSet::new();
@@ -168,18 +174,28 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
 
     for doc in &index.documents {
         for occ in &doc.occurrences {
-            if !usable_symbol(&occ.symbol) { continue; }
+            if !usable_symbol(&occ.symbol) {
+                continue;
+            }
             if is_def(occ.symbol_roles) {
-                def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
-                defs.insert((occ.symbol.clone(), doc.relative_path.clone(), doc_repo(&doc.relative_path)));
+                def_file
+                    .entry(occ.symbol.clone())
+                    .or_insert_with(|| doc.relative_path.clone());
+                defs.insert((
+                    occ.symbol.clone(),
+                    doc.relative_path.clone(),
+                    doc_repo(&doc.relative_path),
+                ));
                 if let Some(ty) = receiver_type(&occ.symbol) {
                     callee_types.insert((occ.symbol.clone(), ty));
                 }
                 if is_callable_def(&occ.symbol) {
                     if let Some((s, e)) = parse_range(&occ.range) {
-                        fn_defs.entry(doc.relative_path.clone())
-                            .or_default()
-                            .push((s, e, occ.symbol.clone()));
+                        fn_defs.entry(doc.relative_path.clone()).or_default().push((
+                            s,
+                            e,
+                            occ.symbol.clone(),
+                        ));
                     }
                 }
             }
@@ -203,7 +219,10 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
                     occurrences.insert((
                         doc.relative_path.clone(),
                         occ.symbol.clone(),
-                        sl, sc, el, ec,
+                        sl,
+                        sc,
+                        el,
+                        ec,
                         role_label(occ.symbol_roles).to_string(),
                         doc_repo(&doc.relative_path),
                     ));
@@ -232,10 +251,19 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
                 }
                 continue;
             }
-            if !usable_symbol(&occ.symbol) || is_def(occ.symbol_roles) { continue; }
-            let Some(def) = def_file.get(&occ.symbol) else { continue };
+            if !usable_symbol(&occ.symbol) || is_def(occ.symbol_roles) {
+                continue;
+            }
+            let Some(def) = def_file.get(&occ.symbol) else {
+                continue;
+            };
             let repo = doc_repo(&doc.relative_path);
-            refs.insert((doc.relative_path.clone(), occ.symbol.clone(), def.clone(), repo.clone()));
+            refs.insert((
+                doc.relative_path.clone(),
+                occ.symbol.clone(),
+                def.clone(),
+                repo.clone(),
+            ));
             if def != &doc.relative_path {
                 edges.insert((doc.relative_path.clone(), def.clone(), repo));
             }
@@ -263,7 +291,9 @@ pub fn rows(index: &Index, root: &Path, slug: &str) -> ScipRows {
         .flat_map(|d| d.symbols.iter())
         .chain(index.external_symbols.iter());
     for si in sym_infos {
-        if si.symbol.is_empty() { continue; }
+        if si.symbol.is_empty() {
+            continue;
+        }
         for rel in &si.relationships {
             if rel.is_implementation && !rel.symbol.is_empty() {
                 impls.insert((si.symbol.clone(), rel.symbol.clone()));
@@ -314,10 +344,7 @@ fn parse_range(r: &[i32]) -> Option<((i32, i32), (i32, i32))> {
 /// most-recently-opened fn before the ref is the enclosing one. It
 /// mis-attributes the rare module/impl-level ref that sits after a fn's body
 /// but before the next fn; acceptable noise for a call-graph extractor.
-fn enclosing_fn(
-    fns: &[((i32, i32), (i32, i32), String)],
-    pos: (i32, i32),
-) -> Option<&String> {
+fn enclosing_fn(fns: &[((i32, i32), (i32, i32), String)], pos: (i32, i32)) -> Option<&String> {
     fns.iter()
         .filter(|f| f.0 <= pos)
         .max_by_key(|f| f.0)
@@ -353,10 +380,14 @@ fn role_label(roles: i32) -> &'static str {
 /// for a line with a wide character before the occurrence. Returns "" for an
 /// out-of-range or inverted span.
 fn slice_local_name(line_text: &str, start_col: i32, end_col: i32) -> String {
-    if start_col < 0 || end_col <= start_col { return String::new(); }
+    if start_col < 0 || end_col <= start_col {
+        return String::new();
+    }
     let units: Vec<u16> = line_text.encode_utf16().collect();
     let (lo, hi) = (start_col as usize, end_col as usize);
-    if hi > units.len() { return String::new(); }
+    if hi > units.len() {
+        return String::new();
+    }
     String::from_utf16_lossy(&units[lo..hi])
 }
 
@@ -378,14 +409,18 @@ pub fn local_bindings(
     let mut lines_of: HashMap<&str, Option<Vec<String>>> = HashMap::new();
     let mut out: HashSet<(String, String, String, i32, i32, String)> = HashSet::new();
     for (file, symbol, sl, sc, el, ec, _role, repo) in occurrences {
-        if sl != el { continue; } // single-line occurrences only
+        if sl != el {
+            continue;
+        } // single-line occurrences only
         let lines = lines_of.entry(file.as_str()).or_insert_with(|| {
             std::fs::read_to_string(root.join(file))
                 .ok()
                 .map(|content| content.lines().map(str::to_string).collect())
         });
         let Some(lines) = lines else { continue };
-        let Some(line_text) = lines.get(*sl as usize) else { continue };
+        let Some(line_text) = lines.get(*sl as usize) else {
+            continue;
+        };
         let name = slice_local_name(line_text, *sc, *ec);
         if !name.is_empty() {
             out.insert((file.clone(), symbol.clone(), name, *sl, *sc, repo.clone()));
@@ -440,7 +475,10 @@ fn display_names(index: &Index) -> HashMap<(String, String), String> {
     for doc in &index.documents {
         for si in &doc.symbols {
             if !si.display_name.is_empty() {
-                m.insert((doc.relative_path.clone(), si.symbol.clone()), si.display_name.clone());
+                m.insert(
+                    (doc.relative_path.clone(), si.symbol.clone()),
+                    si.display_name.clone(),
+                );
             }
         }
     }
@@ -478,9 +516,7 @@ mod tests {
         let mk = || {
             let mut d = Document::new();
             d.relative_path = "src/lib.rs".to_string();
-            d.occurrences = vec![
-                occ_r(def, SymbolRole::Definition as i32, [0, 0, 0, 6]),
-            ];
+            d.occurrences = vec![occ_r(def, SymbolRole::Definition as i32, [0, 0, 0, 6])];
             let mut r = Document::new();
             r.relative_path = "src/main.rs".to_string();
             r.occurrences = vec![occ_r(def, 0, [1, 0, 1, 6])];
@@ -507,8 +543,14 @@ mod tests {
         assert_eq!(a.refs[0].3, "base", "base ref repo tag: {:?}", a.refs);
         assert_eq!(b.refs[0].3, "head", "head ref repo tag: {:?}", b.refs);
         // Edges too (main.rs -> lib.rs, per repo).
-        assert_eq!(a.edges[0], ("src/main.rs".into(), "src/lib.rs".into(), "base".into()));
-        assert_eq!(b.edges[0], ("src/main.rs".into(), "src/lib.rs".into(), "head".into()));
+        assert_eq!(
+            a.edges[0],
+            ("src/main.rs".into(), "src/lib.rs".into(), "base".into())
+        );
+        assert_eq!(
+            b.edges[0],
+            ("src/main.rs".into(), "src/lib.rs".into(), "head".into())
+        );
     }
 
     #[test]
@@ -527,8 +569,13 @@ mod tests {
         let mut index = Index::new();
         index.documents = vec![doc];
         let rows = test_rows(&index);
-        assert_eq!(rows.fn_edges.len(), 1,
-            "expected 1 fn_edge, got {}: {:?}", rows.fn_edges.len(), rows.fn_edges);
+        assert_eq!(
+            rows.fn_edges.len(),
+            1,
+            "expected 1 fn_edge, got {}: {:?}",
+            rows.fn_edges.len(),
+            rows.fn_edges
+        );
         assert_eq!(rows.fn_edges[0].0, caller, "caller attribution");
         assert_eq!(rows.fn_edges[0].1, callee, "callee");
     }
@@ -554,7 +601,12 @@ mod tests {
         index.documents = vec![doc];
         let rows = test_rows(&index);
         // Self-edge callee→callee (the name-only-range limitation, documented).
-        assert_eq!(rows.fn_edges.len(), 1, "self-edge from predecessor search: {:?}", rows.fn_edges);
+        assert_eq!(
+            rows.fn_edges.len(),
+            1,
+            "self-edge from predecessor search: {:?}",
+            rows.fn_edges
+        );
         assert_eq!(rows.fn_edges[0].0, callee);
         assert_eq!(rows.fn_edges[0].1, callee);
     }
@@ -629,13 +681,18 @@ mod tests {
         doc.occurrences = vec![
             occ_r(caller, SymbolRole::Definition as i32, [0, 0, 0, 6]),
             occ_r("local 0", SymbolRole::Definition as i32, [3, 8, 3, 9]),
-            occ_r("local 0", 0, [4, 8, 4, 9]),  // ref, no role
+            occ_r("local 0", 0, [4, 8, 4, 9]), // ref, no role
         ];
         doc.symbols = vec![si];
         let mut index = Index::new();
         index.documents = vec![doc];
         let rows = test_rows(&index);
-        assert_eq!(rows.locals.len(), 1, "only def collected: {:?}", rows.locals);
+        assert_eq!(
+            rows.locals.len(),
+            1,
+            "only def collected: {:?}",
+            rows.locals
+        );
     }
 
     #[test]
@@ -656,15 +713,24 @@ mod tests {
             occ_r(method, SymbolRole::Definition as i32, [0, 4, 0, 10]),
             occ_r(param, SymbolRole::Definition as i32, [0, 11, 0, 13]),
             occ_r(callee, SymbolRole::Definition as i32, [3, 0, 3, 8]),
-            occ_r(callee, 0, [1, 8, 1, 16]),  // body call to httpExec
+            occ_r(callee, 0, [1, 8, 1, 16]), // body call to httpExec
         ];
         let mut index = Index::new();
         index.documents = vec![doc];
         let rows = test_rows(&index);
         // exactly one fn_edge: the METHOD calls httpExec (not the parameter).
         let call: Vec<_> = rows.fn_edges.iter().filter(|(_, c)| c == callee).collect();
-        assert_eq!(call.len(), 1, "one body call attributed: {:?}", rows.fn_edges);
-        assert_eq!(call[0].0, method, "attributed to the method, not the param: {:?}", rows.fn_edges);
+        assert_eq!(
+            call.len(),
+            1,
+            "one body call attributed: {:?}",
+            rows.fn_edges
+        );
+        assert_eq!(
+            call[0].0, method,
+            "attributed to the method, not the param: {:?}",
+            rows.fn_edges
+        );
     }
 
     #[test]
@@ -696,8 +762,12 @@ mod tests {
         let mut index = Index::new();
         index.documents = vec![doc];
         let rows = test_rows(&index);
-        assert_eq!(rows.impls, vec![(impl_m.to_string(), iface.to_string())],
-            "only the is_implementation edge, oriented impl→iface: {:?}", rows.impls);
+        assert_eq!(
+            rows.impls,
+            vec![(impl_m.to_string(), iface.to_string())],
+            "only the is_implementation edge, oriented impl→iface: {:?}",
+            rows.impls
+        );
     }
 
     #[test]
@@ -738,8 +808,8 @@ mod tests {
         assert_eq!(slice_local_name(line, 16, 19), "bar");
         // A wide char before the occurrence shifts UTF-16 columns; the slice
         // still lands on the identifier when the index is UTF-16-based.
-        let wide = "let 😀 = bar";           // 😀 = 2 UTF-16 units
-        // "let " = 4, "😀" = 2 (→6), " = " = 3 (→9), "bar" = [9, 12).
+        let wide = "let 😀 = bar"; // 😀 = 2 UTF-16 units
+                                   // "let " = 4, "😀" = 2 (→6), " = " = 3 (→9), "bar" = [9, 12).
         assert_eq!(slice_local_name(wide, 9, 12), "bar");
         // Out-of-range / inverted spans yield "".
         assert_eq!(slice_local_name(line, 100, 103), "");
@@ -760,10 +830,42 @@ mod tests {
         let rows = rows(&idx, Path::new("/roots/head"), "head");
         // Two occurrence rows, one per span, tagged def vs ref, repo = slug.
         assert_eq!(rows.occurrences.len(), 2, "{:?}", rows.occurrences);
-        let def_row = rows.occurrences.iter().find(|o| o.6 == "definition").unwrap();
-        assert_eq!(*def_row, ("src/lib.rs".into(), def.into(), 0, 0, 0, 6, "definition".into(), "head".into()));
-        let ref_row = rows.occurrences.iter().find(|o| o.6 == "reference").unwrap();
-        assert_eq!(*ref_row, ("src/lib.rs".into(), def.into(), 4, 8, 4, 14, "reference".into(), "head".into()));
+        let def_row = rows
+            .occurrences
+            .iter()
+            .find(|o| o.6 == "definition")
+            .unwrap();
+        assert_eq!(
+            *def_row,
+            (
+                "src/lib.rs".into(),
+                def.into(),
+                0,
+                0,
+                0,
+                6,
+                "definition".into(),
+                "head".into()
+            )
+        );
+        let ref_row = rows
+            .occurrences
+            .iter()
+            .find(|o| o.6 == "reference")
+            .unwrap();
+        assert_eq!(
+            *ref_row,
+            (
+                "src/lib.rs".into(),
+                def.into(),
+                4,
+                8,
+                4,
+                14,
+                "reference".into(),
+                "head".into()
+            )
+        );
     }
 
     #[test]
@@ -778,13 +880,28 @@ mod tests {
         let canonical = "scip-typescript npm mod 1.0.0 `mod`/foo#";
         // `bar` starts at UTF-16 col 16, ends at 19 (0-based).
         let occ = vec![(
-            "app.ts".to_string(), canonical.to_string(),
-            0, 16, 0, 19, "reference".to_string(), "app".to_string(),
+            "app.ts".to_string(),
+            canonical.to_string(),
+            0,
+            16,
+            0,
+            19,
+            "reference".to_string(),
+            "app".to_string(),
         )];
         let binds = local_bindings(&occ, &dir);
         assert_eq!(binds.len(), 1, "{binds:?}");
-        assert_eq!(binds[0],
-            ("app.ts".into(), canonical.into(), "bar".into(), 0, 16, "app".into()));
+        assert_eq!(
+            binds[0],
+            (
+                "app.ts".into(),
+                canonical.into(),
+                "bar".into(),
+                0,
+                16,
+                "app".into()
+            )
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -793,8 +910,26 @@ mod tests {
         // Multi-line occurrence (sl != el) is skipped; a file that isn't on disk
         // yields nothing (no panic).
         let occ = vec![
-            ("gone.ts".to_string(), "sym".to_string(), 0, 0, 0, 3, "reference".to_string(), "r".to_string()),
-            ("gone.ts".to_string(), "sym".to_string(), 0, 0, 5, 3, "reference".to_string(), "r".to_string()),
+            (
+                "gone.ts".to_string(),
+                "sym".to_string(),
+                0,
+                0,
+                0,
+                3,
+                "reference".to_string(),
+                "r".to_string(),
+            ),
+            (
+                "gone.ts".to_string(),
+                "sym".to_string(),
+                0,
+                0,
+                5,
+                3,
+                "reference".to_string(),
+                "r".to_string(),
+            ),
         ];
         let binds = local_bindings(&occ, Path::new("/no/such/root"));
         assert!(binds.is_empty(), "{binds:?}");
@@ -826,15 +961,17 @@ mod tests {
             d
         }
         let mut index = Index::new();
-        index.documents = vec![
-            doc("src/lib.rs", "alpha"),
-            doc("src/daemon.rs", "beta"),
-        ];
+        index.documents = vec![doc("src/lib.rs", "alpha"), doc("src/daemon.rs", "beta")];
         let rows = test_rows(&index);
         // Two distinct locals: (lib caller, alpha) and (daemon caller, beta).
         // Under the old global-keyed map the second doc would clobber the first
         // and both fns would report `beta`.
-        assert_eq!(rows.locals.len(), 2, "per-doc locals kept distinct: {:?}", rows.locals);
+        assert_eq!(
+            rows.locals.len(),
+            2,
+            "per-doc locals kept distinct: {:?}",
+            rows.locals
+        );
         let has = |name: &str| rows.locals.iter().any(|(_, n)| n == name);
         assert!(has("alpha"), "lib.rs local preserved: {:?}", rows.locals);
         assert!(has("beta"), "daemon.rs local preserved: {:?}", rows.locals);

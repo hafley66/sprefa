@@ -52,9 +52,13 @@ impl RelKind for EnvKind {
             &[],
             |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
         )?;
-        if existing == rows { return Ok(false); }
-        let out: Vec<Vec<Value>> = rows.into_iter()
-            .map(|(name, value)| vec![Value::Text(name), Value::Text(value)]).collect();
+        if existing == rows {
+            return Ok(false);
+        }
+        let out: Vec<Vec<Value>> = rows
+            .into_iter()
+            .map(|(name, value)| vec![Value::Text(name), Value::Text(value)])
+            .collect();
         eng.refresh_rel("env", &["name", "value"], &out)?;
         Ok(true)
     }

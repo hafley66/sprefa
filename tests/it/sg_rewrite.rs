@@ -22,7 +22,11 @@ fn sandbox(tag: &str) -> PathBuf {
 #[test]
 fn sg_metavar_template_rewrites_whole_match() {
     let d = sandbox("unwrap_to_expect");
-    fs::write(d.join("src/a.rs"), "let a = foo.unwrap();\nlet b = bar.baz.unwrap();\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "let a = foo.unwrap();\nlet b = bar.baz.unwrap();\n",
+    )
+    .unwrap();
 
     // $X.unwrap()  ->  $X.expect("checked")
     // X binds the receiver text; id binds the whole-match span; ref resolves it;
@@ -40,13 +44,17 @@ gen(:replace, p, lo, hi, "{x}.expect(\"checked\")") <-
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(&d)
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let after = fs::read_to_string(d.join("src/a.rs")).unwrap();
     assert_eq!(
-        after,
-        "let a = foo.expect(\"checked\");\nlet b = bar.baz.expect(\"checked\");\n",
+        after, "let a = foo.expect(\"checked\");\nlet b = bar.baz.expect(\"checked\");\n",
         "whole match rewritten, metavar receiver preserved; got:\n{after}"
     );
 }

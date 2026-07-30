@@ -23,7 +23,8 @@ use sprefa_v5::prepare_paths;
 const DL: &str = env!("CARGO_BIN_EXE_dl");
 
 fn sandbox(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("mixed_source_derived_{tag}_{}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("mixed_source_derived_{tag}_{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
@@ -37,15 +38,25 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .current_dir(dir)
         .output()
         .expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn strs(db_path: &Path, rel: &str, col: &str) -> Vec<String> {
     let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
-    let mut s = conn.prepare(&format!("SELECT \"{col}\" FROM rel_{rel}_txt ORDER BY \"{col}\"")).unwrap();
-    let mut v: Vec<String> = s.query_map([], |r| r.get(0)).unwrap().filter_map(|x| x.ok()).collect();
+    let mut s = conn
+        .prepare(&format!(
+            "SELECT \"{col}\" FROM rel_{rel}_txt ORDER BY \"{col}\""
+        ))
+        .unwrap();
+    let mut v: Vec<String> = s
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .filter_map(|x| x.ok())
+        .collect();
     v.sort();
     v
 }
@@ -62,29 +73,43 @@ fn source_plus_derived_unions_and_retracts_scanned_side_only() {
     let d = sandbox("union_src");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/a.txt"), "hello\n").unwrap();
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel other(tag: text).\n\
          other(\"derived-only\").\n\
          rel mixed(x: text).\n\
          mixed(p) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /./, line).\n\
-         mixed(x) <- other(x).\n").unwrap();
+         mixed(x) <- other(x).\n",
+    )
+    .unwrap();
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    assert!(diags.iter().all(|dd| dd.severity != sprefa_v5::ast::Severity::Error), "unexpected diags: {diags:?}");
+    assert!(
+        diags
+            .iter()
+            .all(|dd| dd.severity != sprefa_v5::ast::Severity::Error),
+        "unexpected diags: {diags:?}"
+    );
 
     let dbp = d.join("db");
     let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
-    assert_eq!(strs(&dbp, "mixed", "x"), vec!["derived-only".to_string(), "src/a.txt".to_string()],
-        "the union must hold both the scanned row and the derived-only row");
+    assert_eq!(
+        strs(&dbp, "mixed", "x"),
+        vec!["derived-only".to_string(), "src/a.txt".to_string()],
+        "the union must hold both the scanned row and the derived-only row"
+    );
 
     // Delete the scanned file and retick incrementally: only the scanned side
     // retracts (this used to be the exact silent-loss repro; now it is the
     // positive proof).
     fs::remove_file(d.join("src/a.txt")).unwrap();
     eng.tick_paths(&prog, &[d.join("src/a.txt")], true).unwrap();
-    assert_eq!(strs(&dbp, "mixed", "x"), vec!["derived-only".to_string()],
-        "the scanned row must retract while the derived-only row survives");
+    assert_eq!(
+        strs(&dbp, "mixed", "x"),
+        vec!["derived-only".to_string()],
+        "the scanned row must retract while the derived-only row survives"
+    );
 }
 
 /// A relation atom in a source rule's body used to be silently ignored by the
@@ -107,9 +132,15 @@ fn source_rule_body_relation_join_bails_loudly() {
     // exercise ever runs — same underlying `source_input_vars` classification
     // (see src/engine/desugar.rs), so it fires on the identical shape, just
     // earlier and through --check/--parse-only/the LSP too.
-    assert!(err.contains("source-rule-extra-atom"), "names the typecheck code: {err}");
+    assert!(
+        err.contains("source-rule-extra-atom"),
+        "names the typecheck code: {err}"
+    );
     assert!(err.contains("joins `keep`"), "names ignored atom: {err}");
-    assert!(err.contains("two separate relations and combine them in a third derived rule"), "names fix: {err}");
+    assert!(
+        err.contains("two separate relations and combine them in a third derived rule"),
+        "names fix: {err}"
+    );
 }
 
 /// The relation atom in a data-driven scan supplies the scan's rev INPUT, so
@@ -120,18 +151,29 @@ fn data_driven_source_relation_binding_remains_legal() {
     let d = sandbox("data_driven_source");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/a.txt"), "hello\n").unwrap();
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel pin(rev: text).\n\
          pin(\"WORK\").\n\
          rel hit(rev: text, path: file).\n\
-         hit(rev, path) <- pin(rev), scan(rev, \"src/**/*.txt\", path, scanned_rev).\n").unwrap();
+         hit(rev, path) <- pin(rev), scan(rev, \"src/**/*.txt\", path, scanned_rev).\n",
+    )
+    .unwrap();
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    assert!(diags.iter().all(|diag| diag.severity != sprefa_v5::ast::Severity::Error), "unexpected diagnostics: {diags:?}");
+    assert!(
+        diags
+            .iter()
+            .all(|diag| diag.severity != sprefa_v5::ast::Severity::Error),
+        "unexpected diagnostics: {diags:?}"
+    );
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
     eng.tick(&prog, true).unwrap();
-    assert_eq!(strs(&d.join("db"), "hit", "path"), vec!["src/a.txt".to_string()]);
+    assert_eq!(
+        strs(&d.join("db"), "hit", "path"),
+        vec!["src/a.txt".to_string()]
+    );
 }
 
 /// A derived rule on the mixed rel that reads the mixed rel itself
@@ -153,15 +195,27 @@ fn recursive_derived_rule_over_mixed_rel_reaches_fixpoint_from_scanned_seed() {
          mixed(seed) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /(?<seed>.+)/, line).\n\
          mixed(b) <- mixed(a), step(a, b).\n").unwrap();
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    assert!(diags.iter().all(|dd| dd.severity != sprefa_v5::ast::Severity::Error), "unexpected diags: {diags:?}");
+    assert!(
+        diags
+            .iter()
+            .all(|dd| dd.severity != sprefa_v5::ast::Severity::Error),
+        "unexpected diags: {diags:?}"
+    );
 
     let dbp = d.join("db");
     let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
-    assert_eq!(strs(&dbp, "mixed", "x"),
-        vec!["n1".to_string(), "n2".to_string(), "n3".to_string(), "n4".to_string()],
-        "recursion through the union must chain from the scanned seed to a fixpoint");
+    assert_eq!(
+        strs(&dbp, "mixed", "x"),
+        vec![
+            "n1".to_string(),
+            "n2".to_string(),
+            "n3".to_string(),
+            "n4".to_string()
+        ],
+        "recursion through the union must chain from the scanned seed to a fixpoint"
+    );
 }
 
 // ---- D2: term-extract + derived --------------------------------------------
@@ -172,7 +226,8 @@ fn recursive_derived_rule_over_mixed_rel_reaches_fixpoint_from_scanned_seed() {
 #[test]
 fn extract_plus_derived_unions_both_rows() {
     let d = sandbox("union_extract");
-    let (code, out, err) = run(&d,
+    let (code, out, err) = run(
+        &d,
         "rel src(x: text).\n\
          src(\"keep\").\n\
          rel body_rel(b: text).\n\
@@ -180,10 +235,17 @@ fn extract_plus_derived_unions_both_rows() {
          rel mixed(v: text).\n\
          mixed(n) <- body_rel(b), jsonp(b, \"n\", n).\n\
          mixed(x) <- src(x).\n\
-         ? mixed(v).\n");
+         ? mixed(v).\n",
+    );
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(out.contains("keep"), "derived-side row missing from union:\n{out}");
-    assert!(out.contains('7'), "extract-side row missing from union:\n{out}");
+    assert!(
+        out.contains("keep"),
+        "derived-side row missing from union:\n{out}"
+    );
+    assert!(
+        out.contains('7'),
+        "extract-side row missing from union:\n{out}"
+    );
 }
 
 // ---- exclusions kept -------------------------------------------------------
@@ -196,13 +258,17 @@ fn lattice_mixed_rel_still_bails() {
     let d = sandbox("lattice_bail");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/a.txt"), "hello\n").unwrap();
-    let (code, _out, err) = run(&d,
+    let (code, _out, err) = run(
+        &d,
         "rel mixed(k: text, v: int) key(k) merge(MaxBy(v)).\n\
          mixed(p, 1) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /./, line).\n\
-         mixed(k, 2) <- mixed(k, _).\n");
+         mixed(k, 2) <- mixed(k, _).\n",
+    );
     assert_ne!(code, 0, "expected a non-zero exit");
-    assert!(err.contains("lattice rels cannot be mixed yet") && err.contains("mixed"),
-        "expected the narrowed lattice-exclusion bail naming 'mixed'; got: {err}");
+    assert!(
+        err.contains("lattice rels cannot be mixed yet") && err.contains("mixed"),
+        "expected the narrowed lattice-exclusion bail naming 'mixed'; got: {err}"
+    );
 }
 
 /// The sanctioned manual split (extract into its own rel, derive into another,
@@ -211,7 +277,8 @@ fn lattice_mixed_rel_still_bails() {
 #[test]
 fn split_extract_and_derived_into_two_rels_is_fine() {
     let d = sandbox("extract_split");
-    let (code, _out, err) = run(&d,
+    let (code, _out, err) = run(
+        &d,
         "rel body_rel(b: text).\n\
          body_rel(\"{\\\"n\\\": 7}\").\n\
          rel xrow(v: text).\n\
@@ -221,7 +288,8 @@ fn split_extract_and_derived_into_two_rels_is_fine() {
          rel both(v: text).\n\
          both(v) <- xrow(v).\n\
          both(v) <- src(v).\n\
-         ? both(v).\n");
+         ? both(v).\n",
+    );
     assert_eq!(code, 0, "split program should succeed; stderr: {err}");
 }
 
@@ -231,7 +299,8 @@ fn split_source_and_derived_into_two_rels_is_fine() {
     let d = sandbox("split");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/a.txt"), "hello\n").unwrap();
-    let (code, _out, err) = run(&d,
+    let (code, _out, err) = run(
+        &d,
         "rel spin(p: file).\n\
          spin(p) <- scan(\"WORK\", \"src/**/*.txt\", p, rev), match(p, rev, /./, line).\n\
          rel dpin(p: file).\n\
@@ -239,7 +308,8 @@ fn split_source_and_derived_into_two_rels_is_fine() {
          rel both(p: file).\n\
          both(p) <- spin(p).\n\
          both(p) <- dpin(p).\n\
-         ? both(p).\n");
+         ? both(p).\n",
+    );
     assert_eq!(code, 0, "split program should succeed; stderr: {err}");
 }
 
@@ -270,8 +340,16 @@ fn rel_count_and_stmt_ms_never_leak_twin_names() {
     // derived rebuild has landed (see perf.rs's doc comment).
     let (code, out, err) = run(&d, program);
     assert_eq!(code, 0, "stderr: {err}");
-    assert!(!out.contains("__src"), "rel_count/stmt_ms leaked a __src twin name:\n{out}");
-    assert!(!out.contains("__drv"), "rel_count/stmt_ms leaked a __drv twin name:\n{out}");
-    assert!(out.contains("mixed_telemetry"),
-        "expected the visible rel name to appear in rel_count/stmt_ms output:\n{out}");
+    assert!(
+        !out.contains("__src"),
+        "rel_count/stmt_ms leaked a __src twin name:\n{out}"
+    );
+    assert!(
+        !out.contains("__drv"),
+        "rel_count/stmt_ms leaked a __drv twin name:\n{out}"
+    );
+    assert!(
+        out.contains("mixed_telemetry"),
+        "expected the visible rel name to appear in rel_count/stmt_ms output:\n{out}"
+    );
 }

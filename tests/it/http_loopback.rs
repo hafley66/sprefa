@@ -28,10 +28,13 @@ fn run(dir: &std::path::Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap(), "--no-daemon"])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// The virtual cycle:
@@ -42,14 +45,17 @@ fn run(dir: &std::path::Path, prog: &str) -> (i32, String, String) {
 fn http_loopback_creates_virtual_cycle() {
     let d = sandbox("cycle");
     // TS fixture: two functions + a route registration that closes the loop.
-    fs::write(d.join("src/app.ts"),
+    fs::write(
+        d.join("src/app.ts"),
         "function handleUsers() {\n\
          \x20\x20\x20\x20saveConfig();\n\
          }\n\
          function saveConfig() {\n\
          \x20\x20\x20\x20fetch(\"/api/users\");\n\
          }\n\
-         app.get(\"/api/users\", handleUsers);\n").unwrap();
+         app.get(\"/api/users\", handleUsers);\n",
+    )
+    .unwrap();
 
     let prog = r#"
 rel fns(sym: text).
@@ -103,30 +109,42 @@ loop_cycle(member, n) <- cyc(rep, member), cyc_size(rep, n), n > 1.
 
     // Route extracted.
     let rt = out.split("? route").nth(1).unwrap_or("");
-    assert!(rt.contains("/api/users") && rt.contains("handleUsers"),
-        "route must be extracted:\n{rt}");
+    assert!(
+        rt.contains("/api/users") && rt.contains("handleUsers"),
+        "route must be extracted:\n{rt}"
+    );
 
     // Fetch call attributed to saveConfig.
     let fe = out.split("? fetch_edge").nth(1).unwrap_or("");
-    assert!(fe.contains("/api/users") && fe.contains("saveConfig"),
-        "fetch_edge must link saveConfig to the URL:\n{fe}");
+    assert!(
+        fe.contains("/api/users") && fe.contains("saveConfig"),
+        "fetch_edge must link saveConfig to the URL:\n{fe}"
+    );
 
     // Virtual http_edge resolves to handleUsers.
     let he = out.split("? http_edge").nth(1).unwrap_or("");
-    assert!(he.contains("saveConfig") && he.contains("handleUsers"),
-        "http_edge must link saveConfig → handleUsers:\n{he}");
+    assert!(
+        he.contains("saveConfig") && he.contains("handleUsers"),
+        "http_edge must link saveConfig → handleUsers:\n{he}"
+    );
 
     // The union has both edges.
     let ae = out.split("? all_edge").nth(1).unwrap_or("");
-    assert!(ae.contains("saveConfig") && ae.contains("handleUsers"),
-        "all_edge must contain both nodes:\n{ae}");
+    assert!(
+        ae.contains("saveConfig") && ae.contains("handleUsers"),
+        "all_edge must contain both nodes:\n{ae}"
+    );
 
     // SCC finds the 2-member cycle.
     let lc = out.split("? loop_cycle").nth(1).unwrap_or("");
-    assert!(lc.contains("(2 rows)"),
-        "exactly 2 members in the loopback cycle:\n{lc}");
-    assert!(lc.contains("saveConfig") && lc.contains("handleUsers"),
-        "cycle contains both functions:\n{lc}");
+    assert!(
+        lc.contains("(2 rows)"),
+        "exactly 2 members in the loopback cycle:\n{lc}"
+    );
+    assert!(
+        lc.contains("saveConfig") && lc.contains("handleUsers"),
+        "cycle contains both functions:\n{lc}"
+    );
 }
 
 /// A deeper chain: handler A calls B calls fetch→A. Same cycle, one more hop,
@@ -134,14 +152,17 @@ loop_cycle(member, n) <- cyc(rep, member), cyc_size(rep, n), n > 1.
 #[test]
 fn http_loopback_with_intermediary() {
     let d = sandbox("deep");
-    fs::write(d.join("src/app.ts"),
+    fs::write(
+        d.join("src/app.ts"),
         "function listUsers() {\n\
          \x20\x20\x20\x20validate();\n\
          }\n\
          function validate() {\n\
          \x20\x20\x20\x20fetch(\"/api/list\");\n\
          }\n\
-         app.get(\"/api/list\", listUsers);\n").unwrap();
+         app.get(\"/api/list\", listUsers);\n",
+    )
+    .unwrap();
 
     let prog = r#"
 rel fns(sym: text).
@@ -176,8 +197,12 @@ loop_cycle(member, n) <- cyc(rep, member), cyc_size(rep, n), n > 1.
     assert_eq!(code, 0, "dl failed:\n{err}");
 
     let lc = out.split("? loop_cycle").nth(1).unwrap_or("");
-    assert!(lc.contains("(2 rows)"),
-        "2-member cycle through the intermediary:\n{lc}");
-    assert!(lc.contains("listUsers") && lc.contains("validate"),
-        "cycle spans both functions:\n{lc}");
+    assert!(
+        lc.contains("(2 rows)"),
+        "2-member cycle through the intermediary:\n{lc}"
+    );
+    assert!(
+        lc.contains("listUsers") && lc.contains("validate"),
+        "cycle spans both functions:\n{lc}"
+    );
 }

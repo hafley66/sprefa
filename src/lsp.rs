@@ -25,15 +25,14 @@ use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
     CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    CallHierarchyServerCapability, Diagnostic, DiagnosticSeverity, DocumentHighlight,
-    DocumentHighlightKind, DocumentHighlightParams, DocumentSymbol, DocumentSymbolParams,
-    GotoDefinitionParams, Location, OneOf, Position, PublishDiagnosticsParams, Range,
-    ReferenceParams, ServerCapabilities, SymbolInformation, SymbolKind,
-    TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
+    CallHierarchyServerCapability, Diagnostic, DiagnosticSeverity, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, DocumentHighlight, DocumentHighlightKind, DocumentHighlightParams,
+    DocumentSymbol, DocumentSymbolParams, GotoDefinitionParams, Location, OneOf, Position,
+    PublishDiagnosticsParams, Range, ReferenceParams, ServerCapabilities, SymbolInformation,
+    SymbolKind, TextDocumentPositionParams, TextDocumentSyncCapability, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TypeHierarchyItem,
-    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams,
-    Uri, WorkspaceSymbolParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    TypeHierarchyPrepareParams, TypeHierarchySubtypesParams, TypeHierarchySupertypesParams, Uri,
+    WorkspaceSymbolParams,
 };
 use std::collections::HashMap;
 
@@ -43,7 +42,10 @@ use crate::{ast, db};
 use tree_sitter::Parser;
 
 pub fn run_lsp(
-    programs: &[String], db_path: Option<&str>, db_defaulted: bool, root: PathBuf,
+    programs: &[String],
+    db_path: Option<&str>,
+    db_defaulted: bool,
+    root: PathBuf,
     diag_db: Option<PathBuf>,
 ) -> Result<()> {
     // Stand up the connection and complete the initialize handshake FIRST: the
@@ -53,12 +55,14 @@ pub fn run_lsp(
     // sends no rootUri (older clients, a bare stdio pipe under test).
     let (connection, io_threads) = Connection::stdio();
     let caps = ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Options(TextDocumentSyncOptions {
-            open_close: Some(true),
-            change: Some(TextDocumentSyncKind::NONE),
-            save: Some(TextDocumentSyncSaveOptions::Supported(true)),
-            ..Default::default()
-        })),
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::NONE),
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                ..Default::default()
+            },
+        )),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         // B2 nearly-free navigation: all three read existing rels, all
@@ -81,7 +85,10 @@ pub fn run_lsp(
     };
     let mut caps_value = serde_json::to_value(caps)?;
     if let Some(obj) = caps_value.as_object_mut() {
-        obj.insert("typeHierarchyProvider".to_string(), serde_json::Value::Bool(true));
+        obj.insert(
+            "typeHierarchyProvider".to_string(),
+            serde_json::Value::Bool(true),
+        );
     }
     let init_params = connection.initialize(caps_value)?;
     let root = client_root_uri(&init_params).unwrap_or(root);
@@ -133,7 +140,13 @@ pub fn run_lsp(
         (Some(abs), type_diags_to_diagrows(&type_diags, &src))
     } else {
         for d in &type_diags {
-            tracing::warn!("{}:1: {}[{}]: {}", d.path, d.severity.as_str(), d.code, d.msg);
+            tracing::warn!(
+                "{}:1: {}[{}]: {}",
+                d.path,
+                d.severity.as_str(),
+                d.code,
+                d.msg
+            );
         }
         (None, Vec::new())
     };
@@ -141,8 +154,8 @@ pub fn run_lsp(
     // the protocol channel. `diag` is a derived relation, populated by the
     // fixpoint during tick regardless of any query. We read it via eng.diags().
     // Drop `gen` rules too: a diagnostics tick must never write files.
-    prog.items.retain(|i| !matches!(i,
-        crate::ast::Item::Query(_) | crate::ast::Item::Gen(_)));
+    prog.items
+        .retain(|i| !matches!(i, crate::ast::Item::Query(_) | crate::ast::Item::Gen(_)));
     let conn = db::open(db_path)?;
     let mut eng = Engine::new(conn, root.clone());
     // Serve the SAME repo set the daemon does (config `[[repos]]`/`[[org]]`, or a
@@ -185,7 +198,8 @@ pub fn run_lsp(
     if crate::daemon::enabled_for(&root) && (db_path.is_none() || db_defaulted) {
         let root_clone = root.clone();
         let push_sender = connection.sender.clone();
-        std::thread::Builder::new().name("dl-lsp-subscriber".into())
+        std::thread::Builder::new()
+            .name("dl-lsp-subscriber".into())
             .spawn(move || spawn_daemon_subscriber(root_clone, push_sender))?;
     }
 
@@ -197,9 +211,15 @@ pub fn run_lsp(
         // don't flicker.
         if let Message::Notification(ref n) = msg {
             if n.method == "dl/diagChanged" {
-                let paths: Vec<String> = n.params.get("paths")
+                let paths: Vec<String> = n
+                    .params
+                    .get("paths")
                     .and_then(|p| p.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if paths.is_empty() {
                     if let Err(e) = publish(&connection, &eng, &root, None) {
@@ -297,15 +317,25 @@ pub fn run_lsp(
                             publish(&connection, &eng, &root, None)?;
                         }
                     }
-                    _ => { if connection.handle_shutdown(&req)? { break; } }
+                    _ => {
+                        if connection.handle_shutdown(&req)? {
+                            break;
+                        }
+                    }
                 }
             }
             Message::Notification(not) => {
                 let touched: Option<PathBuf> = match not.method.as_str() {
-                    "textDocument/didSave" => serde_json::from_value::<DidSaveTextDocumentParams>(not.params)
-                        .ok().and_then(|p| uri_to_path(&p.text_document.uri)),
-                    "textDocument/didOpen" => serde_json::from_value::<DidOpenTextDocumentParams>(not.params)
-                        .ok().and_then(|p| uri_to_path(&p.text_document.uri)),
+                    "textDocument/didSave" => {
+                        serde_json::from_value::<DidSaveTextDocumentParams>(not.params)
+                            .ok()
+                            .and_then(|p| uri_to_path(&p.text_document.uri))
+                    }
+                    "textDocument/didOpen" => {
+                        serde_json::from_value::<DidOpenTextDocumentParams>(not.params)
+                            .ok()
+                            .and_then(|p| uri_to_path(&p.text_document.uri))
+                    }
                     _ => None,
                 };
                 if let Some(abs) = touched {
@@ -339,7 +369,11 @@ fn client_root_uri(init_params: &serde_json::Value) -> Option<PathBuf> {
         let p = PathBuf::from(percent_decode(rest));
         Some(p.canonicalize().unwrap_or(p))
     };
-    if let Some(p) = init_params.get("rootUri").and_then(|v| v.as_str()).and_then(to_path) {
+    if let Some(p) = init_params
+        .get("rootUri")
+        .and_then(|v| v.as_str())
+        .and_then(to_path)
+    {
         return Some(p);
     }
     init_params
@@ -359,25 +393,35 @@ fn client_root_uri(init_params: &serde_json::Value) -> Option<PathBuf> {
 /// daemon = no push; the LSP still works save-driven).
 fn spawn_daemon_subscriber(root: PathBuf, sender: crossbeam_channel::Sender<lsp_server::Message>) {
     use crate::daemon;
-    if !daemon::enabled_for(&root) { return; }
+    if !daemon::enabled_for(&root) {
+        return;
+    }
     if !daemon::is_running() {
         let _ = daemon::ensure_singleton();
     }
     // Register this workspace root with the singleton so its engine ticks + pushes.
     let _ = daemon::add_root(&root);
-    let client = match daemon::connect() { Ok(c) => c, Err(_) => return };
+    let client = match daemon::connect() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
     // The push stream is process-wide; each notification's params carry a
     // `root` field so the client can tell which engine moved.
     let _ = client.watch(|note| {
         // Forward the JSON-RPC notification's params through to the LSP main
         // loop. The synthetic method name (`dl/diagChanged`) is what the main
         // loop matches on; the params carry the changed-paths array.
-        let params = note.get("params").cloned().unwrap_or(serde_json::Value::Null);
+        let params = note
+            .get("params")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
         sender
-            .send(lsp_server::Message::Notification(lsp_server::Notification {
-                method: "dl/diagChanged".into(),
-                params,
-            }))
+            .send(lsp_server::Message::Notification(
+                lsp_server::Notification {
+                    method: "dl/diagChanged".into(),
+                    params,
+                },
+            ))
             .is_ok()
     });
 }
@@ -455,11 +499,14 @@ fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf)
 /// `tracing` and the loop keeps polling. Ends only when the connection's
 /// sender is closed (the LSP session shut down).
 fn diag_db_poll_loop(
-    diag_db_path: PathBuf, cwd: PathBuf, sender: crossbeam_channel::Sender<Message>,
+    diag_db_path: PathBuf,
+    cwd: PathBuf,
+    sender: crossbeam_channel::Sender<Message>,
 ) {
     let mut conn: Option<rusqlite::Connection> = None;
     let mut last_data_version: Option<i64> = None;
-    let mut last_published_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut last_published_paths: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     loop {
         if conn.is_none() {
             match open_diag_db_conn(&diag_db_path) {
@@ -477,7 +524,8 @@ fn diag_db_poll_loop(
         match poll_diag_v5_once(conn.as_ref().unwrap(), &mut last_data_version) {
             Ok(Some(rows)) => {
                 let by_path = group_diag_v5_rows(rows);
-                let current_paths: std::collections::HashSet<String> = by_path.keys().cloned().collect();
+                let current_paths: std::collections::HashSet<String> =
+                    by_path.keys().cloned().collect();
                 let mut send_failed = false;
                 for (path, diagnostics) in by_path {
                     if publish_diag_v5_path(&sender, &cwd, &path, diagnostics).is_err() {
@@ -534,7 +582,10 @@ fn open_diag_db_conn(diag_db_path: &Path) -> Result<rusqlite::Connection> {
 /// reads as zero rows (the node-side runtime may not have created it yet);
 /// any other sqlite/IO error propagates to the caller, which logs it, drops
 /// the connection, and retries next cycle.
-fn poll_diag_v5_once(conn: &rusqlite::Connection, last_data_version: &mut Option<i64>) -> Result<Option<Vec<DiagV5Row>>> {
+fn poll_diag_v5_once(
+    conn: &rusqlite::Connection,
+    last_data_version: &mut Option<i64>,
+) -> Result<Option<Vec<DiagV5Row>>> {
     let data_version: i64 = conn.query_row("PRAGMA data_version", [], |row| row.get(0))?;
     if *last_data_version == Some(data_version) {
         return Ok(None);
@@ -542,7 +593,9 @@ fn poll_diag_v5_once(conn: &rusqlite::Connection, last_data_version: &mut Option
     *last_data_version = Some(data_version);
 
     let query_result = conn
-        .prepare("SELECT path, line, col, end_line, end_col, severity, code, msg, hint FROM diag_v5")
+        .prepare(
+            "SELECT path, line, col, end_line, end_col, severity, code, msg, hint FROM diag_v5",
+        )
         .and_then(|mut stmt| {
             stmt.query_map([], |row| {
                 Ok(DiagV5Row {
@@ -564,7 +617,9 @@ fn poll_diag_v5_once(conn: &rusqlite::Connection, last_data_version: &mut Option
         // The view isn't there yet (node-side runtime hasn't created it, or
         // this poll raced a DROP/recreate) — treat exactly like zero rows,
         // per the pinned mode contract, rather than surfacing an error.
-        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => Vec::new(),
+        Err(rusqlite::Error::SqliteFailure(_, Some(msg))) if msg.contains("no such table") => {
+            Vec::new()
+        }
         Err(e) => return Err(e.into()),
     };
     Ok(Some(rows))
@@ -574,7 +629,10 @@ fn poll_diag_v5_once(conn: &rusqlite::Connection, last_data_version: &mut Option
 fn group_diag_v5_rows(rows: Vec<DiagV5Row>) -> HashMap<String, Vec<Diagnostic>> {
     let mut by_path: HashMap<String, Vec<Diagnostic>> = HashMap::new();
     for row in rows {
-        by_path.entry(row.path.clone()).or_default().push(diag_v5_to_diagnostic(row));
+        by_path
+            .entry(row.path.clone())
+            .or_default()
+            .push(diag_v5_to_diagnostic(row));
     }
     by_path
 }
@@ -605,7 +663,14 @@ fn diag_v5_to_diagnostic(row: DiagV5Row) -> Diagnostic {
         _ => row.msg,
     };
     let code = (!row.code.is_empty()).then(|| lsp_types::NumberOrString::String(row.code));
-    Diagnostic { range, severity: Some(diag_v5_severity(&row.severity)), code, source: Some("dl".into()), message, ..Default::default() }
+    Diagnostic {
+        range,
+        severity: Some(diag_v5_severity(&row.severity)),
+        code,
+        source: Some("dl".into()),
+        message,
+        ..Default::default()
+    }
 }
 
 /// Publish one file's diagnostics (possibly empty, for retraction) by
@@ -614,12 +679,25 @@ fn diag_v5_to_diagnostic(row: DiagV5Row) -> Diagnostic {
 /// `sender`. Returns `Err` only when the channel itself is closed (the
 /// caller treats that as "the session ended, stop polling").
 fn publish_diag_v5_path(
-    sender: &crossbeam_channel::Sender<Message>, cwd: &Path, path: &str, diagnostics: Vec<Diagnostic>,
+    sender: &crossbeam_channel::Sender<Message>,
+    cwd: &Path,
+    path: &str,
+    diagnostics: Vec<Diagnostic>,
 ) -> std::result::Result<(), crossbeam_channel::SendError<Message>> {
     let file_path = Path::new(path);
-    let abs = if file_path.is_absolute() { file_path.to_path_buf() } else { cwd.join(file_path) };
-    let Some(uri) = path_to_uri(&abs) else { return Ok(()); };
-    let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
+    let abs = if file_path.is_absolute() {
+        file_path.to_path_buf()
+    } else {
+        cwd.join(file_path)
+    };
+    let Some(uri) = path_to_uri(&abs) else {
+        return Ok(());
+    };
+    let params = PublishDiagnosticsParams {
+        uri,
+        diagnostics,
+        version: None,
+    };
     let notification = Notification {
         method: "textDocument/publishDiagnostics".into(),
         params: serde_json::to_value(params).unwrap_or_default(),
@@ -630,7 +708,12 @@ fn publish_diag_v5_path(
 /// Query `diag` (optionally for one file), group by path, and send one
 /// publishDiagnostics per file. The ticked file is always published even with
 /// zero rows, so a fixed lint clears its old squiggles.
-fn publish(connection: &Connection, eng: &Engine, root: &Path, only_abs: Option<&Path>) -> Result<()> {
+fn publish(
+    connection: &Connection,
+    eng: &Engine,
+    root: &Path,
+    only_abs: Option<&Path>,
+) -> Result<()> {
     let only_rel: Option<String> = only_abs.and_then(|a| rel_of(root, a));
     let rows = eng.diags(only_rel.as_deref())?;
     // Session mute filter: drop any diag whose code the editor silenced via
@@ -638,9 +721,13 @@ fn publish(connection: &Connection, eng: &Engine, root: &Path, only_abs: Option<
     // reads `eng.diags` directly) is unaffected — see the module doc.
     let muted = eng.muted_codes()?;
     let mut by: HashMap<String, Vec<Diagnostic>> = HashMap::new();
-    if let Some(r) = &only_rel { by.entry(r.clone()).or_default(); }
+    if let Some(r) = &only_rel {
+        by.entry(r.clone()).or_default();
+    }
     for d in rows {
-        if muted.contains(&d.code) { continue; }
+        if muted.contains(&d.code) {
+            continue;
+        }
         by.entry(d.path.clone()).or_default().push(to_diag(d));
     }
     // Extraction type-drops: a file whose rows the file/dir/path checks dropped
@@ -649,14 +736,24 @@ fn publish(connection: &Connection, eng: &Engine, root: &Path, only_abs: Option<
     // when this is a single-file republish so we never resurrect another file's
     // stale drop.
     for d in eng.extraction_drops() {
-        if muted.contains(&d.code) { continue; }
+        if muted.contains(&d.code) {
+            continue;
+        }
         if only_rel.as_deref().map_or(true, |r| r == d.path) {
-            by.entry(d.path.clone()).or_default().push(to_diag(d.clone()));
+            by.entry(d.path.clone())
+                .or_default()
+                .push(to_diag(d.clone()));
         }
     }
     for (path, diagnostics) in by {
-        let Some(uri) = path_to_uri(&root.join(&path)) else { continue };
-        let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
+        let Some(uri) = path_to_uri(&root.join(&path)) else {
+            continue;
+        };
+        let params = PublishDiagnosticsParams {
+            uri,
+            diagnostics,
+            version: None,
+        };
         connection.sender.send(Message::Notification(Notification {
             method: "textDocument/publishDiagnostics".into(),
             params: serde_json::to_value(params)?,
@@ -669,9 +766,15 @@ fn publish(connection: &Connection, eng: &Engine, root: &Path, only_abs: Option<
 /// Always sends (even with zero rows) so a fixed brand error clears. Separate from
 /// `publish` because the program file need not live under the scan root.
 fn publish_program(connection: &Connection, prog_abs: &Path, diags: &[DiagRow]) -> Result<()> {
-    let Some(uri) = path_to_uri(prog_abs) else { return Ok(()); };
+    let Some(uri) = path_to_uri(prog_abs) else {
+        return Ok(());
+    };
     let diagnostics: Vec<Diagnostic> = diags.iter().cloned().map(to_diag).collect();
-    let params = PublishDiagnosticsParams { uri, diagnostics, version: None };
+    let params = PublishDiagnosticsParams {
+        uri,
+        diagnostics,
+        version: None,
+    };
     connection.sender.send(Message::Notification(Notification {
         method: "textDocument/publishDiagnostics".into(),
         params: serde_json::to_value(params)?,
@@ -692,7 +795,8 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
     };
     let hit = resolve_span(eng, root, &params.text_document_position_params);
     let locations: Vec<Location> = match hit {
-        Some((path, _id, text, _lo, _hi)) => eng.definition_targets(&path, &text)
+        Some((path, _id, text, _lo, _hi)) => eng
+            .definition_targets(&path, &text)
             .unwrap_or_default()
             .into_iter()
             .filter_map(|(dst, line)| {
@@ -708,7 +812,10 @@ fn handle_definition(eng: &Engine, root: &Path, req: &Request) -> Response {
     if locations.is_empty() {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
-    Response::new_ok(req.id.clone(), serde_json::to_value(locations).unwrap_or_default())
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(locations).unwrap_or_default(),
+    )
 }
 
 /// textDocument/hover over the ref spine: cursor -> innermost located span ->
@@ -725,20 +832,28 @@ fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
     };
     let hit = resolve_span(eng, root, &params);
     let entity = hit.as_ref().and_then(|(path, _id, text, lo, hi)| {
-        eng.hover(path, text).unwrap_or(None).map(|md| (path.clone(), *lo, *hi, md))
+        eng.hover(path, text)
+            .unwrap_or(None)
+            .map(|md| (path.clone(), *lo, *hi, md))
     });
     // hover_note lookup needs the rel path even when the entity resolver found
     // nothing (the cursor may sit on unlocated text a note still covers) — the
     // entity hit's path when present, else resolved independently from the URI.
-    let note_path = entity.as_ref().map(|(path, ..)| path.clone())
+    let note_path = entity
+        .as_ref()
+        .map(|(path, ..)| path.clone())
         .or_else(|| resolve_rel_path(root, &params.text_document.uri));
     let notes: Vec<String> = match &note_path {
-        Some(path) => eng.hover_notes_at(path, params.position.line, params.position.character)
+        Some(path) => eng
+            .hover_notes_at(path, params.position.line, params.position.character)
             .unwrap_or_default(),
         None => Vec::new(),
     };
 
-    let md = match (entity.as_ref().map(|(_, _, _, md)| md.clone()), notes.is_empty()) {
+    let md = match (
+        entity.as_ref().map(|(_, _, _, md)| md.clone()),
+        notes.is_empty(),
+    ) {
         (Some(entity_md), true) => entity_md,
         (Some(entity_md), false) => format!("{entity_md}\n\n---\n\n{}", notes.join("\n\n---\n\n")),
         (None, false) => notes.join("\n\n---\n\n"),
@@ -757,7 +872,10 @@ fn handle_hover(eng: &Engine, root: &Path, req: &Request) -> Response {
             value: md,
         }),
     };
-    Response::new_ok(req.id.clone(), serde_json::to_value(hover).unwrap_or_default())
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(hover).unwrap_or_default(),
+    )
 }
 
 /// `Uri` -> repo-relative path, WITHOUT resolving a located span (unlike
@@ -787,7 +905,11 @@ fn count_sql(sql: &str) -> String {
 /// Run the count subquery and read the single scalar back.
 fn run_count(eng: &Engine, sql: &str, params: &[serde_json::Value]) -> Result<i64> {
     let rows = eng.query_sql(&count_sql(sql), params)?;
-    Ok(rows.first().and_then(|r| r.first()).and_then(|v| v.as_i64()).unwrap_or(0))
+    Ok(rows
+        .first()
+        .and_then(|r| r.first())
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0))
 }
 
 /// Custom request `dl/query`: SQL against the engine's SQLite, the same surface
@@ -811,11 +933,23 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
     let Some(sql) = req.params.get("sql").and_then(|v| v.as_str()) else {
         return Response::new_err(req.id.clone(), -32602, "missing sql".into());
     };
-    let params: Vec<serde_json::Value> = req.params.get("params")
-        .and_then(|v| v.as_array()).cloned().unwrap_or_default();
-    let count = req.params.get("count").and_then(|v| v.as_bool()).unwrap_or(false);
+    let params: Vec<serde_json::Value> = req
+        .params
+        .get("params")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let count = req
+        .params
+        .get("count")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let limit = req.params.get("limit").and_then(|v| v.as_i64());
-    let offset = req.params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+    let offset = req
+        .params
+        .get("offset")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
 
     // count mode: just the total, no rows.
     if count {
@@ -834,8 +968,10 @@ fn handle_query(eng: &Engine, req: &Request) -> Response {
             Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
         };
         return match run_count(eng, sql, &params) {
-            Ok(total) => Response::new_ok(req.id.clone(),
-                serde_json::json!({ "rows": rows, "total": total })),
+            Ok(total) => Response::new_ok(
+                req.id.clone(),
+                serde_json::json!({ "rows": rows, "total": total }),
+            ),
             Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
         };
     }
@@ -861,8 +997,11 @@ fn handle_hook_event(eng: &mut Engine, prog: &ast::Program, req: &Request) -> Re
         p.get("seq").and_then(|v| v.as_i64()),
         p.get("json").and_then(|v| v.as_str()),
     ) else {
-        return Response::new_err(req.id.clone(), -32602,
-            "dl/hookEvent needs kind, session, seq, json".into());
+        return Response::new_err(
+            req.id.clone(),
+            -32602,
+            "dl/hookEvent needs kind, session, seq, json".into(),
+        );
     };
     let run = (|| -> anyhow::Result<()> {
         eng.insert_hook_event(kind, session, seq, json)?;
@@ -891,31 +1030,40 @@ fn is_toggle_command(req: &Request) -> bool {
 ///     powering the quick-pick.
 /// Muting is session/db-scoped and never affects `--check` (see the module doc).
 fn handle_execute_command(eng: &mut Engine, req: &Request) -> Response {
-    let command = req.params.get("command").and_then(|c| c.as_str()).unwrap_or("");
+    let command = req
+        .params
+        .get("command")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
     let args = req.params.get("arguments").and_then(|a| a.as_array());
     match command {
         "dl.toggleDiagCode" => {
             let Some(code) = args.and_then(|a| a.first()).and_then(|v| v.as_str()) else {
-                return Response::new_err(req.id.clone(), -32602,
-                    "dl.toggleDiagCode needs a code string argument".into());
+                return Response::new_err(
+                    req.id.clone(),
+                    -32602,
+                    "dl.toggleDiagCode needs a code string argument".into(),
+                );
             };
             match eng.toggle_diag_mute(code) {
-                Ok(muted) => Response::new_ok(req.id.clone(),
-                    serde_json::json!({ "code": code, "muted": muted })),
+                Ok(muted) => Response::new_ok(
+                    req.id.clone(),
+                    serde_json::json!({ "code": code, "muted": muted }),
+                ),
                 Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
             }
         }
         "dl.listDiagCodes" => match eng.diag_code_states() {
             Ok(states) => {
-                let list: Vec<serde_json::Value> = states.into_iter()
+                let list: Vec<serde_json::Value> = states
+                    .into_iter()
                     .map(|(code, muted)| serde_json::json!({ "code": code, "muted": muted }))
                     .collect();
                 Response::new_ok(req.id.clone(), serde_json::json!(list))
             }
             Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
         },
-        other => Response::new_err(req.id.clone(), -32601,
-            format!("unknown command: {other}")),
+        other => Response::new_err(req.id.clone(), -32601, format!("unknown command: {other}")),
     }
 }
 
@@ -940,12 +1088,17 @@ fn handle_references(eng: &Engine, root: &Path, req: &Request) -> Response {
     let roots = eng.repo_roots();
     let mut locations = Vec::new();
     for hit in lens.declarations.iter().chain(lens.uses.iter()) {
-        if let Some(loc) = refhit_location(&roots, root, hit) { locations.push(loc); }
+        if let Some(loc) = refhit_location(&roots, root, hit) {
+            locations.push(loc);
+        }
     }
     if locations.is_empty() {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
-    Response::new_ok(req.id.clone(), serde_json::to_value(locations).unwrap_or_default())
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(locations).unwrap_or_default(),
+    )
 }
 
 /// Custom request `dl/refs`: the grouped references lens (declarations, uses,
@@ -956,11 +1109,18 @@ fn handle_references(eng: &Engine, root: &Path, req: &Request) -> Response {
 /// `RefLens`, or null when the cursor is not on a located identifier.
 fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
     let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req
+        .params
+        .get("character")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
     let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
         Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
     } else {
-        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+        req.params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| root.join(p))
     };
     let Some(abs) = abs else {
         return Response::new_err(req.id.clone(), -32602, "dl/refs needs a uri or path".into());
@@ -969,8 +1129,10 @@ fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     };
     match eng.refs_lens(&rel, byte as usize) {
-        Ok(Some(lens)) => Response::new_ok(req.id.clone(),
-            serde_json::to_value(lens).unwrap_or(serde_json::Value::Null)),
+        Ok(Some(lens)) => Response::new_ok(
+            req.id.clone(),
+            serde_json::to_value(lens).unwrap_or(serde_json::Value::Null),
+        ),
         Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
     }
@@ -987,21 +1149,34 @@ fn handle_refs(eng: &Engine, root: &Path, req: &Request) -> Response {
 /// nothing else — no fact write, no tick.
 fn handle_locate(eng: &Engine, root: &Path, req: &Request) -> Response {
     let line = req.params.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-    let character = req.params.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let character = req
+        .params
+        .get("character")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
     let abs: Option<PathBuf> = if let Some(uri) = req.params.get("uri").and_then(|v| v.as_str()) {
         Uri::from_str(uri).ok().and_then(|u| uri_to_path(&u))
     } else {
-        req.params.get("path").and_then(|v| v.as_str()).map(|p| root.join(p))
+        req.params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|p| root.join(p))
     };
     let Some(abs) = abs else {
-        return Response::new_err(req.id.clone(), -32602, "dl/locate needs a uri or path".into());
+        return Response::new_err(
+            req.id.clone(),
+            -32602,
+            "dl/locate needs a uri or path".into(),
+        );
     };
     let Some((rel, byte)) = resolve_abs_byte(root, &abs, Position::new(line, character)) else {
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     };
     match eng.locate(&rel, byte as usize) {
-        Ok(Some(hit)) => Response::new_ok(req.id.clone(),
-            serde_json::to_value(hit).unwrap_or(serde_json::Value::Null)),
+        Ok(Some(hit)) => Response::new_ok(
+            req.id.clone(),
+            serde_json::to_value(hit).unwrap_or(serde_json::Value::Null),
+        ),
         Ok(None) => Response::new_ok(req.id.clone(), serde_json::Value::Null),
         Err(e) => Response::new_err(req.id.clone(), -32603, e.to_string()),
     }
@@ -1011,13 +1186,16 @@ fn handle_locate(eng: &Engine, root: &Path, req: &Request) -> Response {
 /// (`repo_roots`). An unknown slug falls back to the primary root join, matching
 /// the pre-fix single-repo behavior rather than dropping the hit.
 fn refhit_location(
-    roots: &HashMap<String, PathBuf>, primary: &Path, hit: &crate::engine::RefHit,
+    roots: &HashMap<String, PathBuf>,
+    primary: &Path,
+    hit: &crate::engine::RefHit,
 ) -> Option<Location> {
     let base = roots.get(&hit.repo).map(|p| p.as_path()).unwrap_or(primary);
     let uri = path_to_uri(&base.join(&hit.path))?;
     let range = Range::new(
         Position::new(hit.line, hit.col),
-        Position::new(hit.end_line, hit.end_col));
+        Position::new(hit.end_line, hit.end_col),
+    );
     Some(Location { uri, range })
 }
 
@@ -1039,13 +1217,17 @@ fn handle_document_highlight(eng: &Engine, root: &Path, req: &Request) -> Respon
     // One file read to turn byte spans into line/col ranges (the spans are all in
     // this file by construction).
     let content = std::fs::read_to_string(root.join(&rel)).unwrap_or_default();
-    let highlights: Vec<DocumentHighlight> = spans.into_iter().map(|(lo, hi)| {
-        DocumentHighlight {
+    let highlights: Vec<DocumentHighlight> = spans
+        .into_iter()
+        .map(|(lo, hi)| DocumentHighlight {
             range: span_to_range(&content, lo, hi),
             kind: Some(DocumentHighlightKind::TEXT),
-        }
-    }).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(highlights).unwrap_or_default())
+        })
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(highlights).unwrap_or_default(),
+    )
 }
 
 /// workspace/symbol (B2b): query -> `type_entity` and callable names matching the
@@ -1057,24 +1239,32 @@ fn handle_workspace_symbol(eng: &Engine, root: &Path, req: &Request) -> Response
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
-    let rows = eng.workspace_symbols(&params.query, 200).unwrap_or_default();
+    let rows = eng
+        .workspace_symbols(&params.query, 200)
+        .unwrap_or_default();
     let roots = eng.repo_roots();
     #[allow(deprecated)] // SymbolInformation::deprecated is a required legacy field
-    let symbols: Vec<SymbolInformation> = rows.iter().filter_map(|row| {
-        let base = roots.get(&row.repo).map(|p| p.as_path()).unwrap_or(root);
-        let uri = path_to_uri(&base.join(&row.file))?;
-        let line0 = (row.line - 1).max(0) as u32;
-        let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
-        Some(SymbolInformation {
-            name: row.name.clone(),
-            kind: symbol_kind(&row.kind),
-            tags: None,
-            deprecated: None,
-            location: Location { uri, range },
-            container_name: (!row.container.is_empty()).then(|| row.container.clone()),
+    let symbols: Vec<SymbolInformation> = rows
+        .iter()
+        .filter_map(|row| {
+            let base = roots.get(&row.repo).map(|p| p.as_path()).unwrap_or(root);
+            let uri = path_to_uri(&base.join(&row.file))?;
+            let line0 = (row.line - 1).max(0) as u32;
+            let range = Range::new(Position::new(line0, 0), Position::new(line0, 0));
+            Some(SymbolInformation {
+                name: row.name.clone(),
+                kind: symbol_kind(&row.kind),
+                tags: None,
+                deprecated: None,
+                location: Location { uri, range },
+                container_name: (!row.container.is_empty()).then(|| row.container.clone()),
+            })
         })
-    }).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(symbols).unwrap_or_default())
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(symbols).unwrap_or_default(),
+    )
 }
 
 /// textDocument/documentSymbol (B2c): `type_entity` rows for the file, nested via
@@ -1098,7 +1288,10 @@ fn handle_document_symbol(eng: &Engine, root: &Path, req: &Request) -> Response 
         return Response::new_ok(req.id.clone(), serde_json::Value::Null);
     }
     let tree = build_symbol_tree(&rows);
-    Response::new_ok(req.id.clone(), serde_json::to_value(tree).unwrap_or_default())
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(tree).unwrap_or_default(),
+    )
 }
 
 /// Nest the flat `type_entity` rows into a `DocumentSymbol` tree by the `parent`
@@ -1111,18 +1304,25 @@ fn build_symbol_tree(rows: &[crate::engine::SymbolRow]) -> Vec<DocumentSymbol> {
     let mut roots: Vec<usize> = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         if !row.parent.is_empty() && in_file.contains(row.parent.as_str()) {
-            children_of.entry(row.parent.clone()).or_default().push(index);
+            children_of
+                .entry(row.parent.clone())
+                .or_default()
+                .push(index);
         } else {
             roots.push(index);
         }
     }
     roots.sort_by_key(|&index| rows[index].line);
-    roots.into_iter().map(|index| symbol_node(index, rows, &children_of)).collect()
+    roots
+        .into_iter()
+        .map(|index| symbol_node(index, rows, &children_of))
+        .collect()
 }
 
 /// Build one `DocumentSymbol` node (with its children) for `rows[index]`.
 fn symbol_node(
-    index: usize, rows: &[crate::engine::SymbolRow],
+    index: usize,
+    rows: &[crate::engine::SymbolRow],
     children_of: &HashMap<String, Vec<usize>>,
 ) -> DocumentSymbol {
     let row = &rows[index];
@@ -1130,7 +1330,10 @@ fn symbol_node(
         Some(child_indices) => {
             let mut ordered = child_indices.clone();
             ordered.sort_by_key(|&child| rows[child].line);
-            ordered.into_iter().map(|child| symbol_node(child, rows, children_of)).collect()
+            ordered
+                .into_iter()
+                .map(|child| symbol_node(child, rows, children_of))
+                .collect()
         }
         None => Vec::new(),
     };
@@ -1145,7 +1348,11 @@ fn symbol_node(
         deprecated: None,
         range,
         selection_range: range,
-        children: if children.is_empty() { None } else { Some(children) },
+        children: if children.is_empty() {
+            None
+        } else {
+            Some(children)
+        },
     }
 }
 
@@ -1174,9 +1381,14 @@ fn symbol_kind(kind: &str) -> SymbolKind {
 /// line — the `to_diag` "no column info" convention) and zero-width
 /// `selection_range` at the declaration line (no column info in either tier).
 fn hierarchy_uri_range(
-    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+    roots: &HashMap<String, PathBuf>,
+    primary: &Path,
+    item: &HierarchyItem,
 ) -> Option<(Uri, Range, Range)> {
-    let base = roots.get(&item.repo).map(|p| p.as_path()).unwrap_or(primary);
+    let base = roots
+        .get(&item.repo)
+        .map(|p| p.as_path())
+        .unwrap_or(primary);
     let uri = path_to_uri(&base.join(&item.file))?;
     let selection_range = Range::new(Position::new(item.line, 0), Position::new(item.line, 0));
     let end_line = item.end_line.max(item.line) + 1;
@@ -1188,7 +1400,9 @@ fn hierarchy_uri_range(
 /// into `data` so `incomingCalls`/`outgoingCalls` need no re-resolution by
 /// position (the prepare/incoming/outgoing split is otherwise stateless here).
 fn call_hierarchy_item(
-    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+    roots: &HashMap<String, PathBuf>,
+    primary: &Path,
+    item: &HierarchyItem,
 ) -> Option<CallHierarchyItem> {
     let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
     Some(CallHierarchyItem {
@@ -1196,7 +1410,9 @@ fn call_hierarchy_item(
         kind: symbol_kind(&item.kind),
         tags: None,
         detail: None,
-        uri, range, selection_range,
+        uri,
+        range,
+        selection_range,
         data: serde_json::to_value(item).ok(),
     })
 }
@@ -1204,7 +1420,9 @@ fn call_hierarchy_item(
 /// `HierarchyItem` -> `TypeHierarchyItem`, same `data` round-trip as
 /// `call_hierarchy_item`.
 fn type_hierarchy_item(
-    roots: &HashMap<String, PathBuf>, primary: &Path, item: &HierarchyItem,
+    roots: &HashMap<String, PathBuf>,
+    primary: &Path,
+    item: &HierarchyItem,
 ) -> Option<TypeHierarchyItem> {
     let (uri, range, selection_range) = hierarchy_uri_range(roots, primary, item)?;
     Some(TypeHierarchyItem {
@@ -1212,7 +1430,9 @@ fn type_hierarchy_item(
         kind: symbol_kind(&item.kind),
         tags: None,
         detail: None,
-        uri, range, selection_range,
+        uri,
+        range,
+        selection_range,
         data: serde_json::to_value(item).ok(),
     })
 }
@@ -1234,7 +1454,8 @@ fn hierarchy_from_ranges(edge: &crate::engine::HierarchyCallEdge, item_range: Ra
     if edge.from_lines.is_empty() {
         return vec![item_range];
     }
-    edge.from_lines.iter()
+    edge.from_lines
+        .iter()
         .map(|&line| Range::new(Position::new(line, 0), Position::new(line, 0)))
         .collect()
 }
@@ -1269,7 +1490,8 @@ fn handle_call_hierarchy_prepare(eng: &Engine, root: &Path, req: &Request) -> Re
 /// call_hierarchy_incoming` — no closure, tier-matched to how the item
 /// resolved).
 fn handle_call_hierarchy_incoming(eng: &Engine, root: &Path, req: &Request) -> Response {
-    let params: CallHierarchyIncomingCallsParams = match serde_json::from_value(req.params.clone()) {
+    let params: CallHierarchyIncomingCallsParams = match serde_json::from_value(req.params.clone())
+    {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
@@ -1281,18 +1503,25 @@ fn handle_call_hierarchy_incoming(eng: &Engine, root: &Path, req: &Request) -> R
         Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
     };
     let roots = eng.repo_roots();
-    let calls: Vec<CallHierarchyIncomingCall> = edges.iter().filter_map(|edge| {
-        let from = call_hierarchy_item(&roots, root, &edge.item)?;
-        let from_ranges = hierarchy_from_ranges(edge, from.range);
-        Some(CallHierarchyIncomingCall { from, from_ranges })
-    }).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+    let calls: Vec<CallHierarchyIncomingCall> = edges
+        .iter()
+        .filter_map(|edge| {
+            let from = call_hierarchy_item(&roots, root, &edge.item)?;
+            let from_ranges = hierarchy_from_ranges(edge, from.range);
+            Some(CallHierarchyIncomingCall { from, from_ranges })
+        })
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(calls).unwrap_or_default(),
+    )
 }
 
 /// `callHierarchy/outgoingCalls` (B5): same shape as
 /// `handle_call_hierarchy_incoming`, the callee direction.
 fn handle_call_hierarchy_outgoing(eng: &Engine, root: &Path, req: &Request) -> Response {
-    let params: CallHierarchyOutgoingCallsParams = match serde_json::from_value(req.params.clone()) {
+    let params: CallHierarchyOutgoingCallsParams = match serde_json::from_value(req.params.clone())
+    {
         Ok(p) => p,
         Err(e) => return Response::new_err(req.id.clone(), -32602, e.to_string()),
     };
@@ -1304,12 +1533,18 @@ fn handle_call_hierarchy_outgoing(eng: &Engine, root: &Path, req: &Request) -> R
         Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
     };
     let roots = eng.repo_roots();
-    let calls: Vec<CallHierarchyOutgoingCall> = edges.iter().filter_map(|edge| {
-        let to = call_hierarchy_item(&roots, root, &edge.item)?;
-        let from_ranges = hierarchy_from_ranges(edge, to.range);
-        Some(CallHierarchyOutgoingCall { to, from_ranges })
-    }).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(calls).unwrap_or_default())
+    let calls: Vec<CallHierarchyOutgoingCall> = edges
+        .iter()
+        .filter_map(|edge| {
+            let to = call_hierarchy_item(&roots, root, &edge.item)?;
+            let from_ranges = hierarchy_from_ranges(edge, to.range);
+            Some(CallHierarchyOutgoingCall { to, from_ranges })
+        })
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(calls).unwrap_or_default(),
+    )
 }
 
 /// `textDocument/prepareTypeHierarchy` (B5): cursor -> a type-shaped
@@ -1352,9 +1587,14 @@ fn handle_type_hierarchy_supertypes(eng: &Engine, root: &Path, req: &Request) ->
         Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
     };
     let roots = eng.repo_roots();
-    let items: Vec<TypeHierarchyItem> = supers.iter()
-        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
+    let items: Vec<TypeHierarchyItem> = supers
+        .iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s))
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(items).unwrap_or_default(),
+    )
 }
 
 /// `typeHierarchy/subtypes` (B5): same shape as
@@ -1372,9 +1612,14 @@ fn handle_type_hierarchy_subtypes(eng: &Engine, root: &Path, req: &Request) -> R
         Err(e) => return Response::new_err(req.id.clone(), -32603, e.to_string()),
     };
     let roots = eng.repo_roots();
-    let items: Vec<TypeHierarchyItem> = subs.iter()
-        .filter_map(|s| type_hierarchy_item(&roots, root, s)).collect();
-    Response::new_ok(req.id.clone(), serde_json::to_value(items).unwrap_or_default())
+    let items: Vec<TypeHierarchyItem> = subs
+        .iter()
+        .filter_map(|s| type_hierarchy_item(&roots, root, s))
+        .collect();
+    Response::new_ok(
+        req.id.clone(),
+        serde_json::to_value(items).unwrap_or_default(),
+    )
 }
 
 /// Send the outbound `dl/graphChanged` pulse (A5 push-refresh v1). Params is a
@@ -1392,9 +1637,11 @@ fn send_graph_changed(connection: &Connection) -> Result<()> {
 /// (repo-relative path, string_id, text, lo, hi). Reads the file from disk
 /// (save-driven: disk is truth, same as extraction) to convert the position to
 /// a byte offset.
-fn resolve_span(eng: &Engine, root: &Path, pos: &TextDocumentPositionParams)
-    -> Option<(String, String, String, u32, u32)>
-{
+fn resolve_span(
+    eng: &Engine,
+    root: &Path,
+    pos: &TextDocumentPositionParams,
+) -> Option<(String, String, String, u32, u32)> {
     let abs = uri_to_path(&pos.text_document.uri)?;
     // Canonicalize before stripping: root is canonical (macOS /var -> /private/var)
     // but client URIs need not be.
@@ -1438,7 +1685,8 @@ fn position_to_byte(content: &str, pos: Position) -> Option<u32> {
     }
     let rest = &content[line_start..];
     let line_end = rest.find('\n').unwrap_or(rest.len());
-    let col_bytes: usize = rest[..line_end].chars()
+    let col_bytes: usize = rest[..line_end]
+        .chars()
         .take(pos.character as usize)
         .map(|c| c.len_utf8())
         .sum();
@@ -1460,19 +1708,32 @@ fn span_to_range(content: &str, lo: u32, hi: u32) -> Range {
 /// stays at line 1: it has no single offending literal to point at, only the whole
 /// program. The `path` is the `.dl` program file (already set on the TypeDiag).
 fn type_diags_to_diagrows(diags: &[ast::TypeDiag], src: &str) -> Vec<DiagRow> {
-    diags.iter().map(|d| {
-        let (line, col) = if d.span == (0, 0) { (1, 0) } else { byte_to_line_col(src, d.span.0) };
-        let (end_line, end_col) = if d.span == (0, 0) { (1, 0) } else { byte_to_line_col(src, d.span.1) };
-        DiagRow {
-            path: d.path.clone(),
-            line: line as i64, col: col as i64,
-            end_line: end_line as i64, end_col: end_col as i64,
-            severity: d.severity.as_str().to_string(),
-            code: d.code.clone(),
-            msg: d.msg.clone(),
-            hint: None,
-        }
-    }).collect()
+    diags
+        .iter()
+        .map(|d| {
+            let (line, col) = if d.span == (0, 0) {
+                (1, 0)
+            } else {
+                byte_to_line_col(src, d.span.0)
+            };
+            let (end_line, end_col) = if d.span == (0, 0) {
+                (1, 0)
+            } else {
+                byte_to_line_col(src, d.span.1)
+            };
+            DiagRow {
+                path: d.path.clone(),
+                line: line as i64,
+                col: col as i64,
+                end_line: end_line as i64,
+                end_col: end_col as i64,
+                severity: d.severity.as_str().to_string(),
+                code: d.code.clone(),
+                msg: d.msg.clone(),
+                hint: None,
+            }
+        })
+        .collect()
 }
 
 /// Resolve a UTF-8 byte offset into the `.dl` source to (1-based line, 0-based
@@ -1484,8 +1745,13 @@ fn byte_to_line_col(src: &str, byte: u32) -> (u32, u32) {
     let mut line = 1u32;
     let mut line_start = 0usize;
     for (i, b) in src.bytes().enumerate() {
-        if i >= byte { break; }
-        if b == b'\n' { line += 1; line_start = i + 1; }
+        if i >= byte {
+            break;
+        }
+        if b == b'\n' {
+            line += 1;
+            line_start = i + 1;
+        }
     }
     let col = src[line_start..byte].chars().count() as u32;
     (line, col)
@@ -1505,20 +1771,31 @@ fn to_diag(d: DiagRow) -> Diagnostic {
         Range::new(Position::new(line0, 0), Position::new(line0 + 1, 0))
     } else {
         let end0 = (d.end_line - 1).max(0) as u32;
-        Range::new(Position::new(line0, d.col.max(0) as u32),
-                   Position::new(end0, d.end_col.max(0) as u32))
+        Range::new(
+            Position::new(line0, d.col.max(0) as u32),
+            Position::new(end0, d.end_col.max(0) as u32),
+        )
     };
     let message = match &d.hint {
         Some(h) => format!("{}\nhint: {h}", d.msg),
         None => d.msg,
     };
     let code = (!d.code.is_empty()).then(|| lsp_types::NumberOrString::String(d.code));
-    Diagnostic { range, severity, code, source: Some("dl".into()), message, ..Default::default() }
+    Diagnostic {
+        range,
+        severity,
+        code,
+        source: Some("dl".into()),
+        message,
+        ..Default::default()
+    }
 }
 
 /// abs path -> path relative to root, forward-slashed (matches stored diag.path).
 fn rel_of(root: &Path, abs: &Path) -> Option<String> {
-    abs.strip_prefix(root).ok().map(|r| r.to_string_lossy().replace('\\', "/"))
+    abs.strip_prefix(root)
+        .ok()
+        .map(|r| r.to_string_lossy().replace('\\', "/"))
 }
 
 /// `file:///abs/path` -> PathBuf, percent-decoded.
@@ -1540,10 +1817,13 @@ fn percent_decode(s: &str) -> String {
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
             if let Ok(byte) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(byte); i += 3; continue;
+                out.push(byte);
+                i += 3;
+                continue;
             }
         }
-        out.push(b[i]); i += 1;
+        out.push(b[i]);
+        i += 1;
     }
     String::from_utf8_lossy(&out).into_owned()
 }
@@ -1552,8 +1832,9 @@ fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
         match b {
-            b'/' | b'-' | b'.' | b'_' | b'~' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' =>
-                out.push(b as char),
+            b'/' | b'-' | b'.' | b'_' | b'~' | b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' => {
+                out.push(b as char)
+            }
             _ => out.push_str(&format!("%{b:02X}")),
         }
     }
@@ -1585,8 +1866,14 @@ fn publish_dl_parse_errors(connection: &Connection, abs: &Path) -> Result<()> {
             let (end_line, end_col) = byte_to_line_col(&source_text, *end_byte as u32);
             Diagnostic {
                 range: Range {
-                    start: Position { line, character: col },
-                    end: Position { line: end_line, character: end_col },
+                    start: Position {
+                        line,
+                        character: col,
+                    },
+                    end: Position {
+                        line: end_line,
+                        character: end_col,
+                    },
                 },
                 severity: Some(DiagnosticSeverity::ERROR),
                 source: Some("dl".to_string()),
@@ -1595,8 +1882,8 @@ fn publish_dl_parse_errors(connection: &Connection, abs: &Path) -> Result<()> {
             }
         })
         .collect();
-    let file_uri =
-        Uri::from_str(&format!("file://{}", abs.display())).unwrap_or(Uri::from_str("file:///").unwrap());
+    let file_uri = Uri::from_str(&format!("file://{}", abs.display()))
+        .unwrap_or(Uri::from_str("file:///").unwrap());
     let params = PublishDiagnosticsParams {
         uri: file_uri,
         diagnostics: diags,
@@ -1619,10 +1906,7 @@ fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usiz
         let current_node = cursor.node();
         if current_node.is_error() {
             let (start_byte, end_byte) = (current_node.start_byte(), current_node.end_byte());
-            let snippet = source_text
-                .get(start_byte..end_byte)
-                .unwrap_or("")
-                .trim();
+            let snippet = source_text.get(start_byte..end_byte).unwrap_or("").trim();
             let message = if snippet.is_empty() {
                 "unexpected end of input".to_string()
             } else {
@@ -1647,22 +1931,34 @@ fn collect_parse_errors(node: tree_sitter::Node, source_text: &str) -> Vec<(usiz
 
 #[cfg(test)]
 mod tests {
-    use crate::lower::txt_tbl;
     use super::{count_sql, paged_sql};
+    use crate::lower::txt_tbl;
 
     #[test]
     fn paged_sql_wraps_as_subquery_with_placeholders() {
         assert_eq!(
-            paged_sql(&format!("SELECT method FROM {} ORDER BY ts", txt_tbl("query_log"))),
-            format!("SELECT * FROM (SELECT method FROM {} ORDER BY ts) LIMIT ? OFFSET ?", txt_tbl("query_log")),
+            paged_sql(&format!(
+                "SELECT method FROM {} ORDER BY ts",
+                txt_tbl("query_log")
+            )),
+            format!(
+                "SELECT * FROM (SELECT method FROM {} ORDER BY ts) LIMIT ? OFFSET ?",
+                txt_tbl("query_log")
+            ),
         );
     }
 
     #[test]
     fn count_sql_wraps_as_count_subquery() {
         assert_eq!(
-            count_sql(&format!("SELECT method FROM {} WHERE method = ?", txt_tbl("query_log"))),
-            format!("SELECT COUNT(*) FROM (SELECT method FROM {} WHERE method = ?)", txt_tbl("query_log")),
+            count_sql(&format!(
+                "SELECT method FROM {} WHERE method = ?",
+                txt_tbl("query_log")
+            )),
+            format!(
+                "SELECT COUNT(*) FROM (SELECT method FROM {} WHERE method = ?)",
+                txt_tbl("query_log")
+            ),
         );
     }
 }

@@ -26,7 +26,10 @@ fn main() {
         .flag_if_supported("-Wno-unused-but-set-variable")
         .warnings(false)
         .compile("tree_sitter_gotmpl");
-    println!("cargo:rerun-if-changed={}", gotmpl.join("parser.c").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        gotmpl.join("parser.c").display()
+    );
 
     // dockerfile: parser.c + external scanner.c.
     let dockerfile = root.join("dockerfile");
@@ -38,8 +41,14 @@ fn main() {
         .flag_if_supported("-Wno-unused-but-set-variable")
         .warnings(false)
         .compile("tree_sitter_dockerfile");
-    println!("cargo:rerun-if-changed={}", dockerfile.join("parser.c").display());
-    println!("cargo:rerun-if-changed={}", dockerfile.join("scanner.c").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        dockerfile.join("parser.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        dockerfile.join("scanner.c").display()
+    );
 
     embed_corpus(Path::new(env!("CARGO_MANIFEST_DIR")));
 }
@@ -49,21 +58,33 @@ fn main() {
 /// download with no source tree. Generates `$OUT_DIR/embedded_corpus.rs` with
 /// two `include_str!`-backed arrays; include_str! makes each file a rebuild dep.
 fn embed_corpus(manifest: &Path) {
-    let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("embedded_corpus.rs");
+    let out =
+        std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("embedded_corpus.rs");
     let mut s = String::new();
 
     // examples/*.dl (flat) -> (filename, body)
     let mut ex: Vec<std::path::PathBuf> = std::fs::read_dir(manifest.join("examples"))
-        .into_iter().flatten().filter_map(|e| e.ok()).map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "dl")).collect();
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "dl"))
+        .collect();
     ex.sort();
     s.push_str("pub static EMBEDDED_EXAMPLES: &[(&str, &str)] = &[\n");
     for p in &ex {
         let name = p.file_name().unwrap().to_string_lossy().into_owned();
-        s.push_str(&format!("    ({:?}, include_str!({:?})),\n", name, p.display().to_string()));
+        s.push_str(&format!(
+            "    ({:?}, include_str!({:?})),\n",
+            name,
+            p.display().to_string()
+        ));
     }
     s.push_str("];\n");
-    println!("cargo:rerun-if-changed={}", manifest.join("examples").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest.join("examples").display()
+    );
 
     // std/**/*.dl (recursive) -> ("std/<rel>", body)
     let std_root = manifest.join("std");
@@ -72,7 +93,11 @@ fn embed_corpus(manifest: &Path) {
     std_files.sort();
     s.push_str("pub static EMBEDDED_STD: &[(&str, &str)] = &[\n");
     for (rel, abs) in &std_files {
-        s.push_str(&format!("    ({:?}, include_str!({:?})),\n", format!("std/{rel}"), abs));
+        s.push_str(&format!(
+            "    ({:?}, include_str!({:?})),\n",
+            format!("std/{rel}"),
+            abs
+        ));
     }
     s.push_str("];\n");
     println!("cargo:rerun-if-changed={}", std_root.display());
@@ -90,7 +115,9 @@ fn assert_vsix_version_parity() {
     let crate_ver = env!("CARGO_PKG_VERSION");
     let pkg = Path::new(env!("CARGO_MANIFEST_DIR")).join("editors/vscode-dl/package.json");
     println!("cargo:rerun-if-changed={}", pkg.display());
-    let Ok(text) = std::fs::read_to_string(&pkg) else { return };
+    let Ok(text) = std::fs::read_to_string(&pkg) else {
+        return;
+    };
     // First top-level `"version": "X"` line (dependency ranges are keyed by
     // package name, so the version key appears once).
     let ext_ver = text.lines().find_map(|raw| {
@@ -110,7 +137,9 @@ fn assert_vsix_version_parity() {
 
 /// Recursively collect `*.dl` under `dir`, pushing (path-relative-to-base, abspath).
 fn collect_dl(dir: &Path, base: &Path, out: &mut Vec<(String, String)>) {
-    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return;
+    };
     for e in rd.filter_map(|e| e.ok()) {
         let p = e.path();
         if p.is_dir() {

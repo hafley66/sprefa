@@ -34,15 +34,14 @@ pub fn run_tray(d: Arc<Daemon>) -> Result<()> {
     let n_roots = d.roots.lock().map(|r| r.len()).unwrap_or(0);
     let header = MenuItem::new(format!("sprefa — {home_label}"), false, None);
     let status = MenuItem::new(
-        format!("Config tick #{}", d.config.tick_count.load(Ordering::Relaxed)),
+        format!(
+            "Config tick #{}",
+            d.config.tick_count.load(Ordering::Relaxed)
+        ),
         false,
         None,
     );
-    let program = MenuItem::new(
-        format!("Serving {n_roots} root(s)"),
-        false,
-        None,
-    );
+    let program = MenuItem::new(format!("Serving {n_roots} root(s)"), false, None);
     let quit = MenuItem::new("Quit sprefa daemon", true, None);
 
     let menu = Menu::new();

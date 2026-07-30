@@ -27,10 +27,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// A bind feeds a later join atom AND a negation, through a CHAINED second
@@ -56,13 +59,26 @@ fn bind_feeds_join_negation_and_chains() {
         "  callee = replace(stripped, \".\", \"::\"),\n",
         "  known_fn(callee),\n",
         "  !blocked(callee).\n",
-        "? resolved(caller, callee).\n");
+        "? resolved(caller, callee).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "bind chain must run:\n{err}");
-    assert!(out.contains("pkg::util::helper"), "known + unblocked callee kept:\n{out}");
-    assert!(!out.contains("banned"), "negation on the bind var drops the blocked row:\n{out}");
-    assert!(!out.contains("unknown"), "join on the bind var drops the unknown row:\n{out}");
-    assert!(out.contains("(1 rows)"), "exactly one resolved edge:\n{out}");
+    assert!(
+        out.contains("pkg::util::helper"),
+        "known + unblocked callee kept:\n{out}"
+    );
+    assert!(
+        !out.contains("banned"),
+        "negation on the bind var drops the blocked row:\n{out}"
+    );
+    assert!(
+        !out.contains("unknown"),
+        "join on the bind var drops the unknown row:\n{out}"
+    );
+    assert!(
+        out.contains("(1 rows)"),
+        "exactly one resolved edge:\n{out}"
+    );
 }
 
 /// Text `+` in the head AND in a body bind: URL building from variables, the
@@ -75,10 +91,14 @@ fn text_concat_in_head_and_bind() {
         "base_url(\"api.example.com\").\n",
         "rel endpoint(url: text, label: text).\n",
         "endpoint(url, \"svc: \" + host) <- base_url(host), url = \"https://\" + host + \"/v1\".\n",
-        "? endpoint(url, label).\n");
+        "? endpoint(url, label).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "text concat must run:\n{err}");
-    assert!(out.contains("https://api.example.com/v1"), "bind concat:\n{out}");
+    assert!(
+        out.contains("https://api.example.com/v1"),
+        "bind concat:\n{out}"
+    );
     assert!(out.contains("svc: api.example.com"), "head concat:\n{out}");
 }
 
@@ -91,7 +111,8 @@ fn int_plus_int_stays_addition() {
         "hit(4).\n",
         "rel next_line(value: int).\n",
         "next_line(line + 1) <- hit(line).\n",
-        "? next_line(value).\n");
+        "? next_line(value).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("5"), "4 + 1 = 5, not \"41\":\n{out}");
@@ -107,12 +128,16 @@ fn mixed_plus_is_a_typecheck_error() {
         "item(\"widget\", 3).\n",
         "rel label(text_out: text).\n",
         "label(name + count) <- item(name, count).\n",
-        "? label(text_out).\n");
+        "? label(text_out).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     let all = format!("{out}{err}");
     assert_ne!(code, 0, "mixed + must fail:\n{all}");
     assert!(all.contains("plus-mismatch"), "diag code expected:\n{all}");
-    assert!(all.contains("interpolation") || all.contains("int(.."), "message names the fix:\n{all}");
+    assert!(
+        all.contains("interpolation") || all.contains("int(.."),
+        "message names the fix:\n{all}"
+    );
 }
 
 /// A bind in a SOURCE rule body stays refused (no second evaluator), and the
@@ -128,11 +153,18 @@ fn source_rule_bind_refused_with_pointed_message() {
         "exts(path, ext) <- scan(\"WORK\", \"src/*.rs\", path, rev),\n",
         "  match(path, rev, /fn /, line),\n",
         "  ext = split(path, \".\", -1).\n",
-        "? exts(path, ext).\n");
+        "? exts(path, ext).\n"
+    );
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "source-rule bind must refuse:\n{err}");
-    assert!(err.contains("put the expression in the rule head"), "head-inline fix named:\n{err}");
-    assert!(err.contains("derived-rule bodies only"), "derived-rule alternative named:\n{err}");
+    assert!(
+        err.contains("put the expression in the rule head"),
+        "head-inline fix named:\n{err}"
+    );
+    assert!(
+        err.contains("derived-rule bodies only"),
+        "derived-rule alternative named:\n{err}"
+    );
 }
 
 /// The realistic case: the call_edge_bare-style suffix strip written head-inline
@@ -154,8 +186,11 @@ fn suffix_strip_bind_matches_head_inline() {
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "{err}");
     let block = |rel: &str| -> Vec<String> {
-        out.split(&format!("? {rel} =>")).nth(1).unwrap()
-            .lines().skip(1)
+        out.split(&format!("? {rel} =>"))
+            .nth(1)
+            .unwrap()
+            .lines()
+            .skip(1)
             .map(|line| line.trim().to_string())
             .take_while(|line| !line.is_empty() && !line.starts_with('?'))
             .collect()
@@ -163,6 +198,12 @@ fn suffix_strip_bind_matches_head_inline() {
     let (mut inline_rows, mut bound_rows) = (block("bare_inline"), block("bare_bound"));
     inline_rows.sort();
     bound_rows.sort();
-    assert_eq!(inline_rows, bound_rows, "head-inline and body-bind rows must be identical:\n{out}");
-    assert!(inline_rows.iter().any(|row| row.contains("pkg::helper")), "{out}");
+    assert_eq!(
+        inline_rows, bound_rows,
+        "head-inline and body-bind rows must be identical:\n{out}"
+    );
+    assert!(
+        inline_rows.iter().any(|row| row.contains("pkg::helper")),
+        "{out}"
+    );
 }

@@ -294,7 +294,11 @@ fn derived_rule_edit_rebuilds_only_the_moved_subgraph() {
         .iter()
         .filter_map(|r| r.first().and_then(|v| v.as_str()).map(String::from))
         .collect();
-    assert_eq!(words, vec!["one".to_string()], "extra rows derived from da: {words:?}");
+    assert_eq!(
+        words,
+        vec!["one".to_string()],
+        "extra rows derived from da: {words:?}"
+    );
 }
 
 /// Timing ceiling: a tiny program's full tick is well under a generous bound.

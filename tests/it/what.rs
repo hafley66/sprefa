@@ -66,7 +66,10 @@ fn what_name_hits_two_families() {
     let d = sandbox("two_fam");
     let (code, out, err) = run_verb(&d, &["what", "lookup"]);
     assert_eq!(code, 0, "what failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("type_entity"), "type family hit missing: {out}");
+    assert!(
+        out.contains("type_entity"),
+        "type family hit missing: {out}"
+    );
     assert!(out.contains("call_def"), "call family hit missing: {out}");
     // A name anchor with no `*` reports match_kind = exact.
     assert!(out.contains("exact"), "match_kind exact missing: {out}");
@@ -87,8 +90,14 @@ fn what_path_line_lists_call_site_and_enclosing_def() {
     let (code, out, err) = run_verb(&d, &["what", "src/repo.ts:5"]);
     assert_eq!(code, 0, "what failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("call_site"), "call_site row missing: {out}");
-    assert!(out.contains("callee=lookup"), "callee detail missing: {out}");
-    assert!(out.contains("enclosing_def"), "enclosing def missing: {out}");
+    assert!(
+        out.contains("callee=lookup"),
+        "callee detail missing: {out}"
+    );
+    assert!(
+        out.contains("enclosing_def"),
+        "enclosing def missing: {out}"
+    );
 }
 
 #[test]
@@ -98,8 +107,14 @@ fn summary_is_non_empty() {
     assert_eq!(code, 0, "summary failed:\nstdout={out}\nstderr={err}");
     assert!(out.contains("entity"), "entity section missing: {out}");
     assert!(out.contains("Repo"), "Repo entity missing: {out}");
-    assert!(out.contains("doc_coverage"), "doc_coverage metric missing: {out}");
-    assert!(out.contains("comment_nodes"), "comment_nodes metric missing: {out}");
+    assert!(
+        out.contains("doc_coverage"),
+        "doc_coverage metric missing: {out}"
+    );
+    assert!(
+        out.contains("comment_nodes"),
+        "comment_nodes metric missing: {out}"
+    );
 }
 
 #[test]
@@ -107,9 +122,15 @@ fn summary_reports_imports() {
     // repo.ts imports model.ts; model.ts is imported by repo.ts.
     let d = sandbox("imports");
     let (_c, out_repo, _e) = run_verb(&d, &["summary", "src/repo.ts"]);
-    assert!(out_repo.contains("import_out"), "expected an outbound import: {out_repo}");
+    assert!(
+        out_repo.contains("import_out"),
+        "expected an outbound import: {out_repo}"
+    );
     let (_c, out_model, _e) = run_verb(&d, &["summary", "src/model.ts"]);
-    assert!(out_model.contains("import_in"), "expected an inbound import: {out_model}");
+    assert!(
+        out_model.contains("import_in"),
+        "expected an inbound import: {out_model}"
+    );
 }
 
 #[test]
@@ -118,8 +139,14 @@ fn what_paging_limit_offset() {
     let d = sandbox("paging");
     let (code, page0, err) = run_verb(&d, &["what", "*", "--limit", "1", "--offset", "0"]);
     assert_eq!(code, 0, "what failed:\nstdout={page0}\nstderr={err}");
-    assert!(page0.contains("(1 rows)"), "limit 1 should print one row: {page0}");
-    assert!(page0.contains("showing 0-1 of"), "paging footer missing: {page0}");
+    assert!(
+        page0.contains("(1 rows)"),
+        "limit 1 should print one row: {page0}"
+    );
+    assert!(
+        page0.contains("showing 0-1 of"),
+        "paging footer missing: {page0}"
+    );
     // The total must exceed the shown page (the fixture has several names).
     assert!(
         !page0.contains("of 1 total"),
@@ -127,11 +154,17 @@ fn what_paging_limit_offset() {
     );
 
     let (_c, page1, _e) = run_verb(&d, &["what", "*", "--limit", "1", "--offset", "1"]);
-    assert!(page1.contains("showing 1-2 of"), "offset footer missing: {page1}");
+    assert!(
+        page1.contains("showing 1-2 of"),
+        "offset footer missing: {page1}"
+    );
     // Page 1 must differ from page 0 (offset advanced the window).
     let row0 = data_row(&page0);
     let row1 = data_row(&page1);
-    assert_ne!(row0, row1, "offset did not advance the page:\np0={page0}\np1={page1}");
+    assert_ne!(
+        row0, row1,
+        "offset did not advance the page:\np0={page0}\np1={page1}"
+    );
 }
 
 /// The first data row (the line after the tab-separated header), for comparing

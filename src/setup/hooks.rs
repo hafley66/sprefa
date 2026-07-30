@@ -58,14 +58,18 @@ pub(super) fn wire_git_hook(journal: &mut SetupJournal, dir: &Path) {
         }
         #[cfg(unix)]
         {
-            if journal.make_executable(&hook).is_err() { return; }
+            if journal.make_executable(&hook).is_err() {
+                return;
+            }
         }
         println!("[dl setup] wrote {}", hook.display());
     }
     match journal.git_hooks_path(dir) {
         Ok(true) => println!("[dl setup] git core.hooksPath -> .githooks"),
         Ok(false) => {}
-        Err(_) => println!("[dl setup] could not set core.hooksPath; run: git config core.hooksPath .githooks"),
+        Err(_) => println!(
+            "[dl setup] could not set core.hooksPath; run: git config core.hooksPath .githooks"
+        ),
     }
 }
 
@@ -122,15 +126,23 @@ pub(super) fn wire_claude_hook(journal: &mut SetupJournal, dir: &Path) {
         None,
         &cfg,
     );
-    if !post_added { journal.record_hook(dir, &cfg, "PostToolUse", "dl --hook"); }
-    if !prompt_added { journal.record_hook(dir, &cfg, "UserPromptSubmit", "dl --hook"); }
+    if !post_added {
+        journal.record_hook(dir, &cfg, "PostToolUse", "dl --hook");
+    }
+    if !prompt_added {
+        journal.record_hook(dir, &cfg, "UserPromptSubmit", "dl --hook");
+    }
     if !post_added && !prompt_added {
         return; // nothing changed (both already present) — leave the file as is
     }
     if let Ok(_) = serde_json::to_string_pretty(&v) {
         let mut added = Vec::new();
-        if post_added { added.push(("PostToolUse".into(), "dl --hook".into())); }
-        if prompt_added { added.push(("UserPromptSubmit".into(), "dl --hook".into())); }
+        if post_added {
+            added.push(("PostToolUse".into(), "dl --hook".into()));
+        }
+        if prompt_added {
+            added.push(("UserPromptSubmit".into(), "dl --hook".into()));
+        }
         if journal.hook_config(dir, &cfg, &v, &added).is_ok() {
             println!("[dl setup] claude code hooks -> {}", cfg.display());
             println!(
@@ -191,15 +203,26 @@ pub(super) fn wire_codex_hook(journal: &mut SetupJournal, dir: &Path) {
         None,
         &cfg,
     );
-    if !post_added { journal.record_hook(dir, &cfg, "PostToolUse", "dl --hook --dialect codex"); }
-    if !prompt_added { journal.record_hook(dir, &cfg, "UserPromptSubmit", "dl --hook --dialect codex"); }
+    if !post_added {
+        journal.record_hook(dir, &cfg, "PostToolUse", "dl --hook --dialect codex");
+    }
+    if !prompt_added {
+        journal.record_hook(dir, &cfg, "UserPromptSubmit", "dl --hook --dialect codex");
+    }
     if !post_added && !prompt_added {
         return; // both already present — leave the file as is
     }
     if let Ok(_) = serde_json::to_string_pretty(&v) {
         let mut added = Vec::new();
-        if post_added { added.push(("PostToolUse".into(), "dl --hook --dialect codex".into())); }
-        if prompt_added { added.push(("UserPromptSubmit".into(), "dl --hook --dialect codex".into())); }
+        if post_added {
+            added.push(("PostToolUse".into(), "dl --hook --dialect codex".into()));
+        }
+        if prompt_added {
+            added.push((
+                "UserPromptSubmit".into(),
+                "dl --hook --dialect codex".into(),
+            ));
+        }
         if journal.hook_config(dir, &cfg, &v, &added).is_ok() {
             println!("[dl setup] codex hooks -> {}", cfg.display());
             println!(

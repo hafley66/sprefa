@@ -73,7 +73,9 @@ fn governed_paths(home: &Path) -> [PathBuf; 3] {
 /// none of these yet, and a purely-supervised install never creates
 /// `daemon.log` at all (only `spawn_detached` does).
 fn cap_in_place(path: &Path, cap_bytes: u64) -> bool {
-    let Ok(meta) = std::fs::metadata(path) else { return false };
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
     if meta.len() <= cap_bytes {
         return false;
     }
@@ -131,13 +133,30 @@ mod tests {
         std::fs::write(&big, vec![b'x'; 100]).unwrap();
         std::fs::write(&small, vec![b'x'; 5]).unwrap();
 
-        assert!(cap_in_place(&big, 10), "over-cap file must report truncated");
-        assert_eq!(std::fs::metadata(&big).unwrap().len(), 0, "over-cap file truncated to 0");
+        assert!(
+            cap_in_place(&big, 10),
+            "over-cap file must report truncated"
+        );
+        assert_eq!(
+            std::fs::metadata(&big).unwrap().len(),
+            0,
+            "over-cap file truncated to 0"
+        );
 
-        assert!(!cap_in_place(&small, 10), "under-cap file must not be touched");
-        assert_eq!(std::fs::metadata(&small).unwrap().len(), 5, "under-cap file untouched");
+        assert!(
+            !cap_in_place(&small, 10),
+            "under-cap file must not be touched"
+        );
+        assert_eq!(
+            std::fs::metadata(&small).unwrap().len(),
+            5,
+            "under-cap file untouched"
+        );
 
-        assert!(!cap_in_place(&missing, 10), "missing file is a no-op, not a panic");
+        assert!(
+            !cap_in_place(&missing, 10),
+            "missing file is a no-op, not a panic"
+        );
     }
 
     /// THE crux safety proof this whole design rests on: a writer that opened
@@ -164,12 +183,22 @@ mod tests {
         writer.write_all(b"before-cap line one\n").unwrap();
         writer.write_all(b"before-cap line two\n").unwrap();
         writer.flush().unwrap();
-        assert!(std::fs::metadata(&path).unwrap().len() > 0, "pre-truncate content landed");
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > 0,
+            "pre-truncate content landed"
+        );
 
         // The sweep's side: a SEPARATE fd truncates the SAME path in place —
         // no rename, so the writer's fd still points at the same inode/name.
-        assert!(cap_in_place(&path, 5), "over-cap (cap=5, content > 5 bytes) truncates");
-        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0, "truncated to 0 in place");
+        assert!(
+            cap_in_place(&path, 5),
+            "over-cap (cap=5, content > 5 bytes) truncates"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().len(),
+            0,
+            "truncated to 0 in place"
+        );
 
         // The ORIGINAL O_APPEND handle, never reopened, keeps writing — and
         // must land at offset 0, not at the pre-truncate offset (which would
@@ -197,14 +226,20 @@ mod tests {
     fn rename_would_orphan_an_external_o_append_writer_truncate_does_not() {
         let dir = sandbox("rename_orphan");
         let path = dir.join("launchd-stdout.log");
-        let mut writer = std::fs::OpenOptions::new().create(true).append(true).open(&path).unwrap();
+        let mut writer = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
         writer.write_all(b"line one\n").unwrap();
 
         // Rename the file out from under the writer (what a naive port of
         // `RollingWriter`'s rotation would do).
         let rotated = dir.join("launchd-stdout.log.1");
         std::fs::rename(&path, &rotated).unwrap();
-        writer.write_all(b"line two, still going to the OLD inode\n").unwrap();
+        writer
+            .write_all(b"line two, still going to the OLD inode\n")
+            .unwrap();
         writer.flush().unwrap();
 
         // The original path is either missing or freshly-created-empty by
@@ -213,8 +248,10 @@ mod tests {
         let original_has_writer_output = std::fs::read_to_string(&path)
             .map(|s| s.contains("line two"))
             .unwrap_or(false);
-        assert!(!original_has_writer_output,
-            "a rename-rotated writer's output must NOT reappear under the original path");
+        assert!(
+            !original_has_writer_output,
+            "a rename-rotated writer's output must NOT reappear under the original path"
+        );
         let rotated_content = std::fs::read_to_string(&rotated).unwrap();
         assert!(rotated_content.contains("line two"),
             "the still-open writer's output lands in the renamed (orphaned) file: {rotated_content:?}");
@@ -244,7 +281,10 @@ mod tests {
                 path.display()
             );
         }
-        assert_eq!(std::fs::metadata(&under_cap).unwrap().len(), 4,
-            "sweep must not touch files it does not govern");
+        assert_eq!(
+            std::fs::metadata(&under_cap).unwrap().len(),
+            4,
+            "sweep must not touch files it does not govern"
+        );
     }
 }

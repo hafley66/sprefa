@@ -27,10 +27,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// `docs.md` carries headings `Engine` and `Widget` (plus an `Unrelated` heading
@@ -39,18 +42,26 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
 fn fixture(tag: &str) -> PathBuf {
     let d = sandbox(tag);
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("docs.md"), concat!(
-        "# Engine\n",
-        "Some text.\n",
-        "# Widget\n",
-        "More text.\n",
-        "# NoMatch\n",
-    )).unwrap();
-    fs::write(d.join("src/lib.rs"), concat!(
-        "struct Engine;\n",
-        "struct Widget;\n",
-        "struct Unrelated;\n",
-    )).unwrap();
+    fs::write(
+        d.join("docs.md"),
+        concat!(
+            "# Engine\n",
+            "Some text.\n",
+            "# Widget\n",
+            "More text.\n",
+            "# NoMatch\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        concat!(
+            "struct Engine;\n",
+            "struct Widget;\n",
+            "struct Unrelated;\n",
+        ),
+    )
+    .unwrap();
     d
 }
 
@@ -76,17 +87,26 @@ fn doc_ref_bridges_headings_to_matching_type_entities() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     // Engine heading at line 1 bridges to the Engine struct symbol.
-    assert!(out.contains("docs.md\t1\t") && out.contains("Engine"),
-        "Engine bridge row missing:\n{out}");
+    assert!(
+        out.contains("docs.md\t1\t") && out.contains("Engine"),
+        "Engine bridge row missing:\n{out}"
+    );
     // Widget heading at line 3 bridges to the Widget struct symbol.
-    assert!(out.contains("docs.md\t3\t") && out.contains("Widget"),
-        "Widget bridge row missing:\n{out}");
+    assert!(
+        out.contains("docs.md\t3\t") && out.contains("Widget"),
+        "Widget bridge row missing:\n{out}"
+    );
     // The kind column for a heading bridge is "heading".
-    assert!(out.contains("heading"),
-        "heading kind missing:\n{out}");
+    assert!(out.contains("heading"), "heading kind missing:\n{out}");
     // NoMatch heading has no matching type; Unrelated struct has no matching doc.
-    assert!(!out.contains("NoMatch"), "unmatched heading must not bridge:\n{out}");
-    assert!(!out.contains("Unrelated"), "unmatched struct must not bridge:\n{out}");
+    assert!(
+        !out.contains("NoMatch"),
+        "unmatched heading must not bridge:\n{out}"
+    );
+    assert!(
+        !out.contains("Unrelated"),
+        "unmatched struct must not bridge:\n{out}"
+    );
 }
 
 /// `doc_ref` is empty when the program uses doc relations but not type relations:
@@ -103,8 +123,10 @@ fn doc_ref_empty_without_type_relations() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     // No type relations used -> type_entity unpopulated -> bridge is empty.
-    assert!(!out.contains("Engine") && !out.contains("Widget"),
-        "doc_ref must be empty without type relations:\n{out}");
+    assert!(
+        !out.contains("Engine") && !out.contains("Widget"),
+        "doc_ref must be empty without type relations:\n{out}"
+    );
 }
 
 /// `doc_ref` is a reserved name.
@@ -113,7 +135,10 @@ fn doc_ref_is_reserved() {
     let d = sandbox("reserved");
     let (code, _out, err) = run(&d, "rel doc_ref(a: text).\n");
     assert_ne!(code, 0);
-    assert!(err.contains("built-in"), "reserved-name error expected:\n{err}");
+    assert!(
+        err.contains("built-in"),
+        "reserved-name error expected:\n{err}"
+    );
 }
 
 /// Heading normalization: `## The Engine struct` bridges to `Engine`, not just
@@ -123,17 +148,21 @@ fn doc_ref_is_reserved() {
 fn doc_ref_normalizes_heading_articles_and_kind_words() {
     let d = sandbox("norm");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("docs.md"), concat!(
-        "# The Engine struct\n",
-        "body\n",
-        "# A Widget\n",
-        "# fn do_thing\n",
-    )).unwrap();
-    fs::write(d.join("src/lib.rs"), concat!(
-        "struct Engine;\n",
-        "struct Widget;\n",
-        "fn do_thing() {}\n",
-    )).unwrap();
+    fs::write(
+        d.join("docs.md"),
+        concat!(
+            "# The Engine struct\n",
+            "body\n",
+            "# A Widget\n",
+            "# fn do_thing\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        concat!("struct Engine;\n", "struct Widget;\n", "fn do_thing() {}\n",),
+    )
+    .unwrap();
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"**/*.md\", path, rev), match(path, rev, /./, line).\n",
@@ -146,15 +175,23 @@ fn doc_ref_normalizes_heading_articles_and_kind_words() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     // Three bridges: line 1 -> Engine, line 3 -> Widget, line 4 -> do_thing.
-    assert!(out.contains("docs.md\t1\t") && out.contains("Engine"),
-        "normalized Engine bridge missing:\n{out}");
-    assert!(out.contains("docs.md\t3\t") && out.contains("Widget"),
-        "normalized Widget bridge missing:\n{out}");
-    assert!(out.contains("docs.md\t4\t") && out.contains("do_thing"),
-        "trailing-fn bridge missing:\n{out}");
+    assert!(
+        out.contains("docs.md\t1\t") && out.contains("Engine"),
+        "normalized Engine bridge missing:\n{out}"
+    );
+    assert!(
+        out.contains("docs.md\t3\t") && out.contains("Widget"),
+        "normalized Widget bridge missing:\n{out}"
+    );
+    assert!(
+        out.contains("docs.md\t4\t") && out.contains("do_thing"),
+        "trailing-fn bridge missing:\n{out}"
+    );
     // matched_name preserves the original heading text.
-    assert!(out.contains("The Engine struct"),
-        "matched_name must preserve original heading text:\n{out}");
+    assert!(
+        out.contains("The Engine struct"),
+        "matched_name must preserve original heading text:\n{out}"
+    );
 }
 
 /// Code-block content match: a fenced Rust block that mentions `Engine` and
@@ -165,18 +202,23 @@ fn doc_ref_normalizes_heading_articles_and_kind_words() {
 fn doc_ref_bridges_code_block_mentions() {
     let d = sandbox("block");
     fs::create_dir_all(d.join("src")).unwrap();
-    fs::write(d.join("docs.md"), concat!(
-        "# Examples\n",
-        "```rs\n",
-        "let e = Engine::new();\n",
-        "let w = Widget::default();\n",
-        "let e2 = Engine::clone();\n",
-        "```\n",
-    )).unwrap();
-    fs::write(d.join("src/lib.rs"), concat!(
-        "struct Engine;\n",
-        "struct Widget;\n",
-    )).unwrap();
+    fs::write(
+        d.join("docs.md"),
+        concat!(
+            "# Examples\n",
+            "```rs\n",
+            "let e = Engine::new();\n",
+            "let w = Widget::default();\n",
+            "let e2 = Engine::clone();\n",
+            "```\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("src/lib.rs"),
+        concat!("struct Engine;\n", "struct Widget;\n",),
+    )
+    .unwrap();
     let prog = concat!(
         "rel seen(path: file).\n",
         "seen(path) <- scan(\"WORK\", \"**/*.md\", path, rev), match(path, rev, /./, line).\n",
@@ -189,16 +231,26 @@ fn doc_ref_bridges_code_block_mentions() {
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "stderr: {err}\nstdout: {out}");
     // code_block rows sit at the fence line (2); both symbols bridge.
-    assert!(out.contains("code_block"),
-        "code_block kind missing:\n{out}");
-    assert!(out.contains("docs.md\t2\t"),
-        "row not anchored at fence line:\n{out}");
-    assert!(out.contains("Engine"),
-        "Engine code-block bridge missing:\n{out}");
-    assert!(out.contains("Widget"),
-        "Widget code-block bridge missing:\n{out}");
+    assert!(
+        out.contains("code_block"),
+        "code_block kind missing:\n{out}"
+    );
+    assert!(
+        out.contains("docs.md\t2\t"),
+        "row not anchored at fence line:\n{out}"
+    );
+    assert!(
+        out.contains("Engine"),
+        "Engine code-block bridge missing:\n{out}"
+    );
+    assert!(
+        out.contains("Widget"),
+        "Widget code-block bridge missing:\n{out}"
+    );
     // The matched_name for a code-block row is the identifier token, lowercased
     // in the join but recorded verbatim from the source text.
-    assert!(out.contains("\tEngine\t") || out.contains("\tEngine\n"),
-        "matched_name token 'Engine' missing:\n{out}");
+    assert!(
+        out.contains("\tEngine\t") || out.contains("\tEngine\n"),
+        "matched_name token 'Engine' missing:\n{out}"
+    );
 }

@@ -32,7 +32,9 @@ impl RelKind for QueryLogKind {
         &["query_log"]
     }
     // The query log grows as a side effect of serving; see `RelKind::bookkeeping`.
-    fn bookkeeping(&self) -> bool { true }
+    fn bookkeeping(&self) -> bool {
+        true
+    }
     fn decls(&self) -> Vec<RelDecl> {
         vec![RelDecl {
             name: "query_log".into(),
@@ -56,10 +58,15 @@ impl RelKind for QueryLogKind {
             "_query_log",
             "SELECT ts, source, method, body, params FROM _query_log ORDER BY rowid",
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?, r.get::<_, String>(4)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
         )?;
         // The _txt VIEW has no rowid, so the change check compares sorted
         // multisets; insertion below keeps _query_log's append (rowid) order.
@@ -70,23 +77,40 @@ impl RelKind for QueryLogKind {
                 txt_tbl("query_log")
             ),
             &[],
-            |r| Ok((
-                r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?, r.get::<_, String>(4)?,
-            )),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
         )?;
         let mut have_sorted = have;
         have_sorted.sort();
         let mut want_sorted = want.clone();
         want_sorted.sort();
-        if have_sorted == want_sorted { return Ok(false); }
-        let rows: Vec<Vec<Value>> = want.into_iter()
-            .map(|(ts, source, method, body, params)| vec![
-                Value::Text(ts), Value::Text(source), Value::Text(method),
-                Value::Text(body), Value::Text(params),
-            ])
+        if have_sorted == want_sorted {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = want
+            .into_iter()
+            .map(|(ts, source, method, body, params)| {
+                vec![
+                    Value::Text(ts),
+                    Value::Text(source),
+                    Value::Text(method),
+                    Value::Text(body),
+                    Value::Text(params),
+                ]
+            })
             .collect();
-        eng.refresh_rel("query_log", &["ts", "source", "method", "body", "params"], &rows)?;
+        eng.refresh_rel(
+            "query_log",
+            &["ts", "source", "method", "body", "params"],
+            &rows,
+        )?;
         Ok(true)
     }
 }

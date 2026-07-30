@@ -20,8 +20,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -60,12 +69,18 @@ fn pin_skew_finds_stale_and_diverged_pins() {
     // consumer repo: pins both refs.
     let consumer = d.join("consumer");
     init_repo(&consumer);
-    commit_file(&consumer, "go.mod",
+    commit_file(
+        &consumer,
+        "go.mod",
         "module example.com/consumer\n\ngo 1.22\n\nrequire (\n\
          \texample.com/dep v1.0.0\n\
-         \texample.com/dep v1.0.1-hotfix\n)\n", "c1");
+         \texample.com/dep v1.0.1-hotfix\n)\n",
+        "c1",
+    );
 
-    fs::write(d.join("p.dl"), r#"
+    fs::write(
+        d.join("p.dl"),
+        r#"
 rel module_id(repo: text, module: text).
 module_id(r, mod) <- repo(r, _, _), scan(r, "HEAD", "go.mod", p, rev),
                      match(p, rev, /^module\s+(?<mod>\S+)/, l).
@@ -79,16 +94,31 @@ rel stale_pin(consumer: text, dep: text, ref: text, behind: int).
 stale_pin(a, b, v, n) <- pin(a, b, v), rev_behind(b, v, "HEAD", n, _), n > 0.
 rel diverged_pin(consumer: text, dep: text, ref: text).
 diverged_pin(a, b, v) <- pin(a, b, v), rev_behind(b, v, "HEAD", _, k), k > 0.
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.set_repos(vec![
-        RepoConfig { slug: "dep".into(), root: dep.clone(), url: None, allow_missing: false },
-        RepoConfig { slug: "consumer".into(), root: consumer.clone(), url: None, allow_missing: false },
+        RepoConfig {
+            slug: "dep".into(),
+            root: dep.clone(),
+            url: None,
+            allow_missing: false,
+        },
+        RepoConfig {
+            slug: "consumer".into(),
+            root: consumer.clone(),
+            url: None,
+            allow_missing: false,
+        },
     ]);
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "pin-skew program should typecheck: {diags:?}");
 
     // One-tick-latency hops compose, one tick each: the manifest scan is itself
@@ -100,19 +130,27 @@ diverged_pin(a, b, v) <- pin(a, b, v), rev_behind(b, v, "HEAD", _, k), k > 0.
     eng.tick(&prog, true).unwrap();
 
     let pins = eng.rel_rows("pin", 3);
-    assert!(pins.iter().any(|r| r == &["consumer", "dep", "v1.0.0"]),
-        "manifest seam should yield the internal pin edge: {pins:?}");
+    assert!(
+        pins.iter().any(|r| r == &["consumer", "dep", "v1.0.0"]),
+        "manifest seam should yield the internal pin edge: {pins:?}"
+    );
 
     let stale = eng.rel_rows("stale_pin", 4);
-    let v1 = stale.iter().find(|r| r[2] == "v1.0.0")
+    let v1 = stale
+        .iter()
+        .find(|r| r[2] == "v1.0.0")
         .unwrap_or_else(|| panic!("v1.0.0 should be stale: {stale:?}"));
     assert_eq!(v1[0], "consumer");
     assert_eq!(v1[1], "dep");
     assert_eq!(v1[3], "2", "main moved two commits past v1.0.0: {stale:?}");
 
     let diverged = eng.rel_rows("diverged_pin", 3);
-    assert!(diverged.iter().any(|r| r[2] == "v1.0.1-hotfix"),
-        "the side-branch tag should be diverged: {diverged:?}");
-    assert!(!diverged.iter().any(|r| r[2] == "v1.0.0"),
-        "v1.0.0 is an ancestor of main, not diverged: {diverged:?}");
+    assert!(
+        diverged.iter().any(|r| r[2] == "v1.0.1-hotfix"),
+        "the side-branch tag should be diverged: {diverged:?}"
+    );
+    assert!(
+        !diverged.iter().any(|r| r[2] == "v1.0.0"),
+        "v1.0.0 is an ancestor of main, not diverged: {diverged:?}"
+    );
 }

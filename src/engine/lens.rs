@@ -60,7 +60,11 @@ impl Engine {
              WHERE w.id != '0' AND w.path = ?1 AND w.file_id = ?2 \
                AND w.lo <= ?3 AND ?3 < w.hi \
              ORDER BY (w.hi - w.lo) ASC LIMIT 1",
-            &[SqlVal::from(path), SqlVal::from(fid.to_string()), SqlVal::from(byte as i64)],
+            &[
+                SqlVal::from(path),
+                SqlVal::from(fid.to_string()),
+                SqlVal::from(byte as i64),
+            ],
             |r| {
                 Ok((
                     r.get::<_, i64>(0)?.to_string(),
@@ -153,12 +157,11 @@ impl Engine {
                     txt_tbl("def_target"),
                     meta.cols[*ni].name
                 );
-                let out: Vec<(String, i64)> = self.db.query_rows(
-                    "def_target",
-                    &sql,
-                    &[SqlVal::from(text)],
-                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
-                )?;
+                let out: Vec<(String, i64)> =
+                    self.db
+                        .query_rows("def_target", &sql, &[SqlVal::from(text)], |r| {
+                            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+                        })?;
                 let _ = cols; // (kept for symmetry with diags; unused today)
                 if !out.is_empty() {
                     return Ok(out);
@@ -298,7 +301,11 @@ impl Engine {
                  AND (\"end_line\" > ?2 OR (\"end_line\" = ?2 AND \"end_col\" >= ?3)) \
                  ORDER BY \"md\""
             ),
-            &[SqlVal::from(path), SqlVal::from(line), SqlVal::from(character)],
+            &[
+                SqlVal::from(path),
+                SqlVal::from(line),
+                SqlVal::from(character),
+            ],
             |r| r.get::<_, String>(0),
         ))
     }
@@ -313,7 +320,9 @@ impl Engine {
         let edge = txt_tbl("type_edge");
         let q = |sql: String| -> Option<i64> {
             self.db
-                .query_one("type_edge", &sql, &[SqlVal::from(name)], |r| Ok(r.get::<_, i64>(0)?))
+                .query_one("type_edge", &sql, &[SqlVal::from(name)], |r| {
+                    Ok(r.get::<_, i64>(0)?)
+                })
                 .ok()
         };
         let ca = q(format!(
@@ -343,13 +352,7 @@ impl Engine {
     /// never created). Any prepare/query/row-map error yields an empty vec, so
     /// `refs_lens` degrades to whatever families ARE populated instead of
     /// erroring out. `rel` names the table chiefly read (N+1 counter key).
-    pub(crate) fn try_rows<T, F>(
-        &self,
-        rel: &str,
-        sql: &str,
-        params: &[SqlVal],
-        mut f: F,
-    ) -> Vec<T>
+    pub(crate) fn try_rows<T, F>(&self, rel: &str, sql: &str, params: &[SqlVal], mut f: F) -> Vec<T>
     where
         F: FnMut(&crate::db::SqlRow) -> crate::db::SqlRowResult<T>,
     {

@@ -55,7 +55,10 @@ fn sandbox(file_count: usize, iteration: usize) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "family_scaling_probe_{file_count}_{iteration}_{}_{}",
         std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos(),
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
@@ -77,7 +80,11 @@ fn file_source(index: usize, edited: bool) -> String {
 
 fn write_all(dir: &Path, file_count: usize) {
     for index in 0..file_count {
-        fs::write(dir.join("src").join(format!("file_{index:04}.rs")), file_source(index, false)).unwrap();
+        fs::write(
+            dir.join("src").join(format!("file_{index:04}.rs")),
+            file_source(index, false),
+        )
+        .unwrap();
     }
 }
 
@@ -170,8 +177,13 @@ fn run_and_report(file_count: usize) -> Vec<Sample> {
             .filter_map(|sample| sample.timings.iter().find(|timing| timing.0 == *name))
             .map(|timing| timing.2 as f64 / 1e6)
             .collect();
-        let last_cache_hits =
-            measured.last().unwrap().timings.iter().find(|timing| timing.0 == *name).map(|timing| timing.5);
+        let last_cache_hits = measured
+            .last()
+            .unwrap()
+            .timings
+            .iter()
+            .find(|timing| timing.0 == *name)
+            .map(|timing| timing.5);
         let (derive_min, derive_max) = min_max(&derive_values);
         let (scan_min, scan_max) = min_max(&scan_values);
         per_family.push(json!({
@@ -186,8 +198,14 @@ fn run_and_report(file_count: usize) -> Vec<Sample> {
         }));
     }
 
-    let retract_write_values: Vec<f64> = measured.iter().map(|sample| sample.retract_write_ms).collect();
-    let insert_write_values: Vec<f64> = measured.iter().map(|sample| sample.insert_write_ms).collect();
+    let retract_write_values: Vec<f64> = measured
+        .iter()
+        .map(|sample| sample.retract_write_ms)
+        .collect();
+    let insert_write_values: Vec<f64> = measured
+        .iter()
+        .map(|sample| sample.insert_write_ms)
+        .collect();
     let family_derive_sum_ms: f64 = per_family
         .iter()
         .map(|entry| entry["derive_ms_mean"].as_f64().unwrap())
@@ -225,10 +243,16 @@ fn family_derive_scan_scales_with_corpus_size() {
         // The printed JSON is only meaningful if the router actually reacted
         // at every measured repeat; assert that basic shape before trusting
         // the numbers in it.
-        assert_eq!(samples.len(), WARMUP + REPEATS,
-            "expected {} total samples (warmup+repeats) at {file_count} files", WARMUP + REPEATS);
-        assert!(samples.iter().all(|sample| !sample.timings.is_empty()),
-            "call router produced no per-family timings at {file_count} files");
+        assert_eq!(
+            samples.len(),
+            WARMUP + REPEATS,
+            "expected {} total samples (warmup+repeats) at {file_count} files",
+            WARMUP + REPEATS
+        );
+        assert!(
+            samples.iter().all(|sample| !sample.timings.is_empty()),
+            "call router produced no per-family timings at {file_count} files"
+        );
     }
 }
 

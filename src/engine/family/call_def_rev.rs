@@ -33,7 +33,9 @@ impl Family for CallDefRev {
         let defs = ctx.scan(
             "_call_def",
             "sym_sid",
-            &["repo_sid", "kind_sid", "file_sid", "line", "\"end\"", "rev_sid"],
+            &[
+                "repo_sid", "kind_sid", "file_sid", "line", "\"end\"", "rev_sid",
+            ],
         )?;
         let mut seen: HashSet<[i64; 7]> = HashSet::new();
         for (sym_sid, row) in defs {

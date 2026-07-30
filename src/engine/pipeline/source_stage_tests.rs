@@ -321,9 +321,12 @@ fn stage_tables_are_file_backed_temp_and_connection_local() {
     assert_eq!((temp_store, tables), (1, 3));
     let other = crate::db::open(Some(path.to_str().unwrap())).unwrap();
     assert!(other
-        .query_rows::<()>("_source_stage_row", "SELECT * FROM _source_stage_row", &[], |_| {
-            Ok(())
-        })
+        .query_rows::<()>(
+            "_source_stage_row",
+            "SELECT * FROM _source_stage_row",
+            &[],
+            |_| { Ok(()) }
+        )
         .is_err());
     drop(other);
     drop(db);
@@ -346,10 +349,7 @@ fn ready_row_pages_obey_encoded_byte_budget() {
                 // Distinct per ordinal: identical rows for one owner are
                 // collapsed by the per-owner duplicate filter, and this test
                 // is about the read-side byte budget, not dedup.
-                &[Value::Text(format!(
-                    "{ordinal}{}",
-                    "x".repeat(64 * 1024)
-                ))],
+                &[Value::Text(format!("{ordinal}{}", "x".repeat(64 * 1024)))],
             )
             .unwrap();
     }

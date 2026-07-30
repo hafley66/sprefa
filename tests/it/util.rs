@@ -36,7 +36,9 @@ pub fn hermetic_env(cmd: &mut Command, home: &std::path::Path) {
 /// `None` on connect/transport failure.
 pub fn uds_rpc(sock: &std::path::Path, body: &str) -> Option<String> {
     let mut stream = std::os::unix::net::UnixStream::connect(sock).ok()?;
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(60))).ok()?;
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        .ok()?;
     let request = format!(
         "POST /rpc HTTP/1.1\r\nHost: dl-daemon\r\nContent-Type: application/json\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -69,9 +71,13 @@ impl Drop for DaemonGuard {
 
 impl Deref for DaemonGuard {
     type Target = Child;
-    fn deref(&self) -> &Child { &self.0 }
+    fn deref(&self) -> &Child {
+        &self.0
+    }
 }
 
 impl DerefMut for DaemonGuard {
-    fn deref_mut(&mut self) -> &mut Child { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Child {
+        &mut self.0
+    }
 }

@@ -20,20 +20,28 @@ use super::l2_normalize;
 /// field is overridable via `SPREFA_N2V_*` env in `from_env`.
 #[derive(Clone, Copy, Debug)]
 pub struct N2vConfig {
-    pub dim: usize,        // coordinates per node
-    pub walk_len: usize,   // steps per walk
-    pub num_walks: usize,  // walks started per node
-    pub window: usize,     // skip-gram context radius
-    pub neg: usize,        // negative samples per positive
-    pub epochs: usize,     // passes over the walk corpus
-    pub lr: f32,           // SGD learning rate
-    pub seed: u64,         // RNG seed (determinism)
+    pub dim: usize,       // coordinates per node
+    pub walk_len: usize,  // steps per walk
+    pub num_walks: usize, // walks started per node
+    pub window: usize,    // skip-gram context radius
+    pub neg: usize,       // negative samples per positive
+    pub epochs: usize,    // passes over the walk corpus
+    pub lr: f32,          // SGD learning rate
+    pub seed: u64,        // RNG seed (determinism)
 }
 
 impl Default for N2vConfig {
     fn default() -> Self {
-        N2vConfig { dim: 128, walk_len: 40, num_walks: 10, window: 5,
-                    neg: 5, epochs: 1, lr: 0.025, seed: 0x5eed_1337 }
+        N2vConfig {
+            dim: 128,
+            walk_len: 40,
+            num_walks: 10,
+            window: 5,
+            neg: 5,
+            epochs: 1,
+            lr: 0.025,
+            seed: 0x5eed_1337,
+        }
     }
 }
 
@@ -42,15 +50,30 @@ impl N2vConfig {
     /// WINDOW, NEG, EPOCHS, LR, SEED). Unset fields keep the default.
     pub fn from_env() -> Self {
         let mut c = N2vConfig::default();
-        let u = |k: &str, d: usize| std::env::var(k).ok().and_then(|s| s.parse().ok()).unwrap_or(d);
+        let u = |k: &str, d: usize| {
+            std::env::var(k)
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(d)
+        };
         c.dim = u("SPREFA_N2V_DIM", c.dim);
         c.walk_len = u("SPREFA_N2V_WALKLEN", c.walk_len);
         c.num_walks = u("SPREFA_N2V_NUMWALKS", c.num_walks);
         c.window = u("SPREFA_N2V_WINDOW", c.window);
         c.neg = u("SPREFA_N2V_NEG", c.neg);
         c.epochs = u("SPREFA_N2V_EPOCHS", c.epochs);
-        if let Some(lr) = std::env::var("SPREFA_N2V_LR").ok().and_then(|s| s.parse().ok()) { c.lr = lr; }
-        if let Some(sd) = std::env::var("SPREFA_N2V_SEED").ok().and_then(|s| s.parse().ok()) { c.seed = sd; }
+        if let Some(lr) = std::env::var("SPREFA_N2V_LR")
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            c.lr = lr;
+        }
+        if let Some(sd) = std::env::var("SPREFA_N2V_SEED")
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            c.seed = sd;
+        }
         c
     }
 }
@@ -66,9 +89,13 @@ impl Rng {
         z ^ (z >> 31)
     }
     /// Uniform in [0, n).
-    fn below(&mut self, n: usize) -> usize { (self.next_u64() % n as u64) as usize }
+    fn below(&mut self, n: usize) -> usize {
+        (self.next_u64() % n as u64) as usize
+    }
     /// Uniform f32 in [0, 1).
-    fn unit(&mut self) -> f32 { (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32 }
+    fn unit(&mut self) -> f32 {
+        (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
+    }
 }
 
 /// Directed edges -> (node id list, CSR-ish adjacency by node index). Edges are
@@ -80,7 +107,9 @@ fn build_adj(edges: &[(String, String)]) -> (Vec<String>, Vec<Vec<u32>>) {
     let mut idx: HashMap<String, u32> = HashMap::new();
     let mut ids: Vec<String> = Vec::new();
     let intern = |s: &str, ids: &mut Vec<String>, idx: &mut HashMap<String, u32>| -> u32 {
-        if let Some(&i) = idx.get(s) { return i; }
+        if let Some(&i) = idx.get(s) {
+            return i;
+        }
         let i = ids.len() as u32;
         ids.push(s.to_string());
         idx.insert(s.to_string(), i);
@@ -109,7 +138,9 @@ fn walks(adj: &[Vec<u32>], cfg: &N2vConfig, rng: &mut Rng) -> Vec<Vec<u32>> {
             w.push(cur);
             for _ in 1..cfg.walk_len {
                 let nbrs = &adj[cur as usize];
-                if nbrs.is_empty() { break; }
+                if nbrs.is_empty() {
+                    break;
+                }
                 cur = nbrs[rng.below(nbrs.len())];
                 w.push(cur);
             }
@@ -120,7 +151,9 @@ fn walks(adj: &[Vec<u32>], cfg: &N2vConfig, rng: &mut Rng) -> Vec<Vec<u32>> {
 }
 
 #[inline]
-fn sigmoid(x: f32) -> f32 { 1.0 / (1.0 + (-x).exp()) }
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + (-x).exp())
+}
 
 /// Skip-gram with negative sampling. `inp` is the embedding we keep (one row per
 /// node); `out` is the throwaway context matrix. For each (center, context) pair
@@ -129,7 +162,9 @@ fn sigmoid(x: f32) -> f32 { 1.0 / (1.0 + (-x).exp()) }
 fn skipgram(walks: &[Vec<u32>], n_nodes: usize, cfg: &N2vConfig, rng: &mut Rng) -> Vec<Vec<f32>> {
     let d = cfg.dim;
     // Small symmetric init in [-0.5/d, 0.5/d), the usual word2vec scheme.
-    let mut inp: Vec<f32> = (0..n_nodes * d).map(|_| (rng.unit() - 0.5) / d as f32).collect();
+    let mut inp: Vec<f32> = (0..n_nodes * d)
+        .map(|_| (rng.unit() - 0.5) / d as f32)
+        .collect();
     let mut out: Vec<f32> = vec![0.0; n_nodes * d];
 
     for _ in 0..cfg.epochs {
@@ -139,12 +174,17 @@ fn skipgram(walks: &[Vec<u32>], n_nodes: usize, cfg: &N2vConfig, rng: &mut Rng) 
                 let hi = (i + cfg.window + 1).min(w.len());
                 let c = center as usize * d;
                 for j in lo..hi {
-                    if j == i { continue; }
+                    if j == i {
+                        continue;
+                    }
                     let ctx = w[j] as usize;
                     // one positive (label 1) + neg negatives (label 0)
                     for s in 0..=cfg.neg {
-                        let (target, label) = if s == 0 { (ctx, 1.0f32) }
-                                              else { (rng.below(n_nodes), 0.0f32) };
+                        let (target, label) = if s == 0 {
+                            (ctx, 1.0f32)
+                        } else {
+                            (rng.below(n_nodes), 0.0f32)
+                        };
                         let t = target * d;
                         let dot: f32 = (0..d).map(|k| inp[c + k] * out[t + k]).sum();
                         let g = (label - sigmoid(dot)) * cfg.lr;
@@ -161,18 +201,22 @@ fn skipgram(walks: &[Vec<u32>], n_nodes: usize, cfg: &N2vConfig, rng: &mut Rng) 
         }
     }
 
-    (0..n_nodes).map(|i| {
-        let mut v = inp[i * d..(i + 1) * d].to_vec();
-        l2_normalize(&mut v);
-        v
-    }).collect()
+    (0..n_nodes)
+        .map(|i| {
+            let mut v = inp[i * d..(i + 1) * d].to_vec();
+            l2_normalize(&mut v);
+            v
+        })
+        .collect()
 }
 
 /// End to end: directed edge list -> `(node_id, L2-normalized vector)` pool,
 /// ready for the same cosine KNN the text `similar` rel uses.
 pub fn embed_graph(edges: &[(String, String)], cfg: &N2vConfig) -> Vec<(String, Vec<f32>)> {
     let (ids, adj) = build_adj(edges);
-    if ids.is_empty() { return Vec::new(); }
+    if ids.is_empty() {
+        return Vec::new();
+    }
     let mut rng = Rng(cfg.seed);
     let ws = walks(&adj, cfg, &mut rng);
     let vecs = skipgram(&ws, ids.len(), cfg, &mut rng);
@@ -183,7 +227,9 @@ pub fn embed_graph(edges: &[(String, String)], cfg: &N2vConfig) -> Vec<(String, 
 mod tests {
     use super::*;
 
-    fn cos(a: &[f32], b: &[f32]) -> f32 { a.iter().zip(b).map(|(x, y)| x * y).sum() }
+    fn cos(a: &[f32], b: &[f32]) -> f32 {
+        a.iter().zip(b).map(|(x, y)| x * y).sum()
+    }
 
     /// Two 4-cliques joined by a single bridge edge. After training, two nodes in
     /// the same clique must be closer than two nodes across the bridge — the whole
@@ -194,23 +240,40 @@ mod tests {
         // one bridge a0-b0. Undirected => add both directions.
         let mut edges: Vec<(String, String)> = Vec::new();
         let mut clique = |p: &str, edges: &mut Vec<(String, String)>| {
-            for i in 0..4 { for j in 0..4 { if i != j {
-                edges.push((format!("{p}{i}"), format!("{p}{j}")));
-            }}}
+            for i in 0..4 {
+                for j in 0..4 {
+                    if i != j {
+                        edges.push((format!("{p}{i}"), format!("{p}{j}")));
+                    }
+                }
+            }
         };
         clique("a", &mut edges);
         clique("b", &mut edges);
         edges.push(("a0".into(), "b0".into()));
         edges.push(("b0".into(), "a0".into()));
 
-        let cfg = N2vConfig { dim: 32, walk_len: 20, num_walks: 40, window: 4,
-                              neg: 5, epochs: 3, lr: 0.05, seed: 1 };
+        let cfg = N2vConfig {
+            dim: 32,
+            walk_len: 20,
+            num_walks: 40,
+            window: 4,
+            neg: 5,
+            epochs: 3,
+            lr: 0.05,
+            seed: 1,
+        };
         // @recompute unguarded: unit test of the primitive, not a reactive rule
         let pool = embed_graph(&edges, &cfg);
-        let get = |name: &str| pool.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone()).unwrap();
+        let get = |name: &str| {
+            pool.iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
 
-        let within = cos(&get("a1"), &get("a2"));   // same clique
-        let across = cos(&get("a1"), &get("b1"));   // different clique
+        let within = cos(&get("a1"), &get("a2")); // same clique
+        let across = cos(&get("a1"), &get("b1")); // different clique
         let within_fmt = format!("{within:.3}");
         let across_fmt = format!("{across:.3}");
         tracing::debug!(
@@ -218,7 +281,9 @@ mod tests {
             across = %across_fmt,
             "[node2vec] within-cluster cos={within_fmt}  across-cluster cos={across_fmt}"
         );
-        assert!(within > across,
-            "within-cluster cos {within:.3} should exceed across-cluster cos {across:.3}");
+        assert!(
+            within > across,
+            "within-cluster cos {within:.3} should exceed across-cluster cos {across:.3}"
+        );
     }
 }

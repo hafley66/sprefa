@@ -17,12 +17,19 @@ use sprefa_v5::prepare_paths;
 /// the program's `effect_cmd(kind, template)` rows, arity from the @async heads.
 fn shell_exec(eng: &Engine, prog: &sprefa_v5::ast::Program) -> ShellEffectExec {
     let mut templates = HashMap::new();
-    for row in eng.query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[]).unwrap() {
+    for row in eng
+        .query_sql("SELECT kind, template FROM rel_effect_cmd_txt", &[])
+        .unwrap()
+    {
         let kind = row[0].as_str().unwrap().to_string();
         let tmpl = row[1].as_str().unwrap().to_string();
         templates.insert(kind, tmpl);
     }
-    ShellEffectExec { templates, n_out: async_effect_arity(prog), cwd: eng.root() }
+    ShellEffectExec {
+        templates,
+        n_out: async_effect_arity(prog),
+        cwd: eng.root(),
+    }
 }
 
 #[test]
@@ -33,8 +40,16 @@ fn poll_head_caches_live_git_head() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let git = |args: &[&str]| {
-        let ok = Command::new("git").args(args).current_dir(&dir).output().unwrap();
-        assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+        let ok = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(
+            ok.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&ok.stderr)
+        );
     };
     git(&["init", "-q"]);
     git(&["config", "user.email", "t@t"]);
@@ -43,7 +58,12 @@ fn poll_head_caches_live_git_head() {
     git(&["add", "."]);
     git(&["commit", "-qm", "one"]);
     let want = String::from_utf8(
-        Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&dir).output().unwrap().stdout,
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&dir)
+            .output()
+            .unwrap()
+            .stdout,
     )
     .unwrap()
     .trim()
@@ -66,7 +86,9 @@ fn poll_head_caches_live_git_head() {
         .unwrap();
     assert_eq!(pending, 1, "one queued effect after the first clock tick");
     assert!(
-        eng.query_sql("SELECT * FROM rel_head_at", &[]).unwrap().is_empty(),
+        eng.query_sql("SELECT * FROM rel_head_at", &[])
+            .unwrap()
+            .is_empty(),
         "no cached head before the drain"
     );
 
@@ -77,10 +99,16 @@ fn poll_head_caches_live_git_head() {
 
     // Tick 2: the cached oid is readable, and it matches the real HEAD.
     eng.tick(&prog, true).unwrap();
-    let got = eng.query_sql("SELECT name, oid FROM rel_head_at_txt", &[]).unwrap();
+    let got = eng
+        .query_sql("SELECT name, oid FROM rel_head_at_txt", &[])
+        .unwrap();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0][0].as_str().unwrap(), "self");
-    assert_eq!(got[0][1].as_str().unwrap(), want, "cached the live HEAD oid");
+    assert_eq!(
+        got[0][1].as_str().unwrap(),
+        want,
+        "cached the live HEAD oid"
+    );
 
     // Idempotence: re-firing the same request (HEAD unmoved) does not re-run the
     // command — the digest id collides, the queue holds.
@@ -103,7 +131,11 @@ fn per_row_cwd_routes_each_effect_to_its_repo() {
         let r = base.join(name);
         std::fs::create_dir_all(&r).unwrap();
         let git = |args: &[&str]| {
-            Command::new("git").args(args).current_dir(&r).output().unwrap();
+            Command::new("git")
+                .args(args)
+                .current_dir(&r)
+                .output()
+                .unwrap();
         };
         git(&["init", "-q"]);
         git(&["config", "user.email", "t@t"]);
@@ -112,7 +144,12 @@ fn per_row_cwd_routes_each_effect_to_its_repo() {
         git(&["add", "."]);
         git(&["commit", "-qm", content]);
         let oid = String::from_utf8(
-            Command::new("git").args(["rev-parse", "HEAD"]).current_dir(&r).output().unwrap().stdout,
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&r)
+                .output()
+                .unwrap()
+                .stdout,
         )
         .unwrap()
         .trim()
@@ -149,15 +186,29 @@ fn per_row_cwd_routes_each_effect_to_its_repo() {
 
     eng.tick(&prog, true).unwrap();
     let exec = shell_exec(&eng, &prog);
-    assert_eq!(eng.drain_effects(&prog, &exec).unwrap(), 2, "both repos polled");
+    assert_eq!(
+        eng.drain_effects(&prog, &exec).unwrap(),
+        2,
+        "both repos polled"
+    );
     eng.tick(&prog, true).unwrap();
 
-    let mut got = eng.query_sql("SELECT name, oid FROM rel_head_at_txt ORDER BY name", &[]).unwrap();
+    let mut got = eng
+        .query_sql("SELECT name, oid FROM rel_head_at_txt ORDER BY name", &[])
+        .unwrap();
     got.sort_by(|x, y| x[0].as_str().cmp(&y[0].as_str()));
     assert_eq!(got[0][0].as_str().unwrap(), "a");
-    assert_eq!(got[0][1].as_str().unwrap(), oid_a, "repo a's head, from dir a");
+    assert_eq!(
+        got[0][1].as_str().unwrap(),
+        oid_a,
+        "repo a's head, from dir a"
+    );
     assert_eq!(got[1][0].as_str().unwrap(), "b");
-    assert_eq!(got[1][1].as_str().unwrap(), oid_b, "repo b's head, from dir b");
+    assert_eq!(
+        got[1][1].as_str().unwrap(),
+        oid_b,
+        "repo b's head, from dir b"
+    );
 
     let _ = std::fs::remove_dir_all(&base);
 }

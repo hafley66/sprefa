@@ -1,7 +1,13 @@
 fn main() {
     let src_dir = std::path::Path::new("src");
-    println!("cargo:rerun-if-changed={}", src_dir.join("parser.c").display());
-    println!("cargo:rerun-if-changed={}", src_dir.join("tree_sitter/parser.h").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        src_dir.join("parser.c").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        src_dir.join("tree_sitter/parser.h").display()
+    );
 
     let mut build = cc::Build::new();
     build

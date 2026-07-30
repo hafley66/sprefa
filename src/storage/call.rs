@@ -284,15 +284,17 @@ fn apply_sqlite_call_owner_delta_inner(
             "SELECT schema_version, complete, generation, module_digest, scip_digest \
              FROM _call_delta_marker WHERE singleton = 1",
         )?;
-        statement.query_row([], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, Vec<u8>>(3)?,
-                row.get::<_, Vec<u8>>(4)?,
-            ))
-        }).optional()?
+        statement
+            .query_row([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                    row.get::<_, Vec<u8>>(4)?,
+                ))
+            })
+            .optional()?
     };
     let Some((schema_version, complete, generation, module_digest, scip_digest)) = marker else {
         return Ok(CallDeltaOutcome::Unsupported("call-baseline-incomplete"));
@@ -307,10 +309,14 @@ fn apply_sqlite_call_owner_delta_inner(
         return Ok(CallDeltaOutcome::Unsupported("call-scip-active"));
     }
     if scip_digest.as_slice() != delta.scip_dependency_digest {
-        return Ok(CallDeltaOutcome::Unsupported("call-scip-dependency-changed"));
+        return Ok(CallDeltaOutcome::Unsupported(
+            "call-scip-dependency-changed",
+        ));
     }
     if module_digest.as_slice() != delta.module_dependency_digest {
-        return Ok(CallDeltaOutcome::Unsupported("call-module-dependency-changed"));
+        return Ok(CallDeltaOutcome::Unsupported(
+            "call-module-dependency-changed",
+        ));
     }
 
     let repo_sid = StringId::of(&delta.owner.repo).sqlite();
@@ -335,9 +341,11 @@ fn apply_sqlite_call_owner_delta_inner(
             "SELECT owner_id, def_digest FROM _call_owner \
              WHERE repo_sid = ?1 AND rev_sid = ?2 AND path_sid = ?3",
         )?;
-        statement.query_row([repo_sid, rev_sid, path_sid], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
-        }).optional()?
+        statement
+            .query_row([repo_sid, rev_sid, path_sid], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+            })
+            .optional()?
     };
     let Some((owner_id, old_def_digest)) = existing else {
         return Ok(CallDeltaOutcome::Unsupported("call-owner-missing"));
@@ -356,11 +364,17 @@ fn apply_sqlite_call_owner_delta_inner(
     ] {
         Storage::execute(db, &format!("DELETE FROM {table}"))?;
     }
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO _call_delta_callee(callee_sid) \
+    Storage::execute(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO _call_delta_callee(callee_sid) \
          SELECT callee_sid FROM _call_raw_site WHERE owner_id = {owner_id}"
-    ))?;
-    let new_callees: Vec<Vec<Value>> = delta.owner.sites.iter()
+        ),
+    )?;
+    let new_callees: Vec<Vec<Value>> = delta
+        .owner
+        .sites
+        .iter()
         .map(|site| vec![Value::Int(StringId::of(&site.callee).sqlite())])
         .collect();
     Storage::insert_rows(db, "_call_delta_callee", &["callee_sid"], &new_callees)?;
@@ -377,11 +391,17 @@ fn apply_sqlite_call_owner_delta_inner(
     }
 
     collect_sqlite_call_affected_keys(db, owner_id)?;
-    Storage::execute(db, &format!(
-        "DELETE FROM _call_resolution WHERE site_id IN (\
+    Storage::execute(
+        db,
+        &format!(
+            "DELETE FROM _call_resolution WHERE site_id IN (\
          SELECT site_id FROM _call_raw_site WHERE owner_id = {owner_id})"
-    ))?;
-    Storage::execute(db, &format!("DELETE FROM _call_raw_site WHERE owner_id = {owner_id}"))?;
+        ),
+    )?;
+    Storage::execute(
+        db,
+        &format!("DELETE FROM _call_raw_site WHERE owner_id = {owner_id}"),
+    )?;
     insert_sqlite_call_delta_sites(db, owner_id, repo_sid, rev_sid, &delta.owner)?;
     collect_sqlite_call_affected_keys(db, owner_id)?;
     reproject_sqlite_call_affected_keys(db)?;
@@ -394,9 +414,8 @@ fn apply_sqlite_call_owner_delta_inner(
         "UPDATE _call_owner SET fact_digest_sid = ?1, generation = ?2 WHERE owner_id = ?3",
     )?;
     update_owner.execute([fact_digest_sid, next_generation, owner_id])?;
-    let mut update_marker = db.prepare(
-        "UPDATE _call_delta_marker SET generation = ?1 WHERE singleton = 1",
-    )?;
+    let mut update_marker =
+        db.prepare("UPDATE _call_delta_marker SET generation = ?1 WHERE singleton = 1")?;
     update_marker.execute([next_generation])?;
     Ok(CallDeltaOutcome::Applied)
 }
@@ -438,25 +457,34 @@ fn ensure_sqlite_call_delta_temp_tables(db: &Db) -> Result<()> {
 }
 
 fn collect_sqlite_call_affected_keys(db: &Db, owner_id: i64) -> Result<()> {
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO _call_affected_site \
+    Storage::execute(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO _call_affected_site \
          SELECT o.repo_sid, s.caller_sid, s.callee_sid, s.file_sid, s.line \
          FROM _call_raw_site AS s JOIN _call_owner AS o USING(owner_id) \
          WHERE s.owner_id = {owner_id}"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO _call_affected_kind \
+        ),
+    )?;
+    Storage::execute(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO _call_affected_kind \
          SELECT caller_sid, classification_sid FROM _call_raw_site \
          WHERE owner_id = {owner_id} AND classification_sid IS NOT NULL AND caller_sid != 0"
-    ))?;
-    Storage::execute(db, &format!(
-        "INSERT OR IGNORE INTO _call_affected_edge_rev \
+        ),
+    )?;
+    Storage::execute(
+        db,
+        &format!(
+            "INSERT OR IGNORE INTO _call_affected_edge_rev \
          SELECT s.caller_sid, r.callee_sid, r.kind_sid, o.rev_sid \
          FROM _call_resolution AS r \
          JOIN _call_raw_site AS s USING(site_id) \
          JOIN _call_owner AS o USING(owner_id) \
          WHERE s.owner_id = {owner_id}"
-    ))?;
+        ),
+    )?;
     Storage::execute(
         db,
         "INSERT OR IGNORE INTO _call_affected_edge \
@@ -483,7 +511,8 @@ fn insert_sqlite_call_delta_sites(
             Value::Int(sink.sym(&site.occurrence).cell()),
             Value::Int(sink.sym(&site.caller).cell()),
             Value::Int(sink.sym(&site.callee).cell()),
-            site.classification.as_deref()
+            site.classification
+                .as_deref()
                 .map(|kind| Value::Int(sink.sym(kind).cell()))
                 .unwrap_or(Value::Null),
             Value::Int(sink.sym(&site.file).cell()),
@@ -495,7 +524,16 @@ fn insert_sqlite_call_delta_sites(
     Storage::insert_rows(
         db,
         "_call_raw_site",
-        &["site_id", "owner_id", "occurrence_sid", "caller_sid", "callee_sid", "classification_sid", "file_sid", "line"],
+        &[
+            "site_id",
+            "owner_id",
+            "occurrence_sid",
+            "caller_sid",
+            "callee_sid",
+            "classification_sid",
+            "file_sid",
+            "line",
+        ],
         &rows,
     )?;
     Storage::execute(db, &format!(
@@ -616,7 +654,8 @@ fn replace_sqlite_call_baseline(
             Value::Int(sink.sym(&bucket.rev).cell()),
             Value::Int(sink.sym(&bucket.name).cell()),
             Value::Int(bucket.candidate_count as i64),
-            bucket.unique_sym
+            bucket
+                .unique_sym
                 .as_deref()
                 .map(|sym| Value::Int(sink.sym(sym).cell()))
                 .unwrap_or(Value::Null),
@@ -627,28 +666,51 @@ fn replace_sqlite_call_baseline(
     Storage::insert_rows(
         db,
         "_call_raw_site",
-        &["site_id", "owner_id", "occurrence_sid", "caller_sid", "callee_sid", "classification_sid", "file_sid", "line"],
+        &[
+            "site_id",
+            "owner_id",
+            "occurrence_sid",
+            "caller_sid",
+            "callee_sid",
+            "classification_sid",
+            "file_sid",
+            "line",
+        ],
         &site_rows,
     )?;
     Storage::insert_rows(
         db,
         "_call_resolution",
-        &["site_id", "callee_sid", "kind_sid", "resolution_sid", "dependency_sid"],
+        &[
+            "site_id",
+            "callee_sid",
+            "kind_sid",
+            "resolution_sid",
+            "dependency_sid",
+        ],
         &resolution_rows,
     )?;
     Storage::insert_rows(
         db,
         "_call_def_bucket",
-        &["repo_sid", "rev_sid", "name_sid", "candidate_count", "unique_sym_sid"],
+        &[
+            "repo_sid",
+            "rev_sid",
+            "name_sid",
+            "candidate_count",
+            "unique_sym_sid",
+        ],
         &bucket_rows,
     )?;
-    Storage::execute(db,
+    Storage::execute(
+        db,
         "INSERT INTO _call_edge_support(caller_sid, callee_sid, kind_sid, rev_sid, support_count) \
          SELECT s.caller_sid, r.callee_sid, r.kind_sid, o.rev_sid, COUNT(*) \
          FROM _call_resolution AS r \
          JOIN _call_raw_site AS s USING(site_id) \
          JOIN _call_owner AS o USING(owner_id) \
-         GROUP BY s.caller_sid, r.callee_sid, r.kind_sid, o.rev_sid")?;
+         GROUP BY s.caller_sid, r.callee_sid, r.kind_sid, o.rev_sid",
+    )?;
     insert_sqlite_call_marker(
         db,
         generation,
@@ -679,7 +741,8 @@ fn insert_sqlite_call_owners(
             params.push(rusqlite::types::Value::Integer(generation));
             params.push(rusqlite::types::Value::Blob(digest.to_vec()));
         }
-        db.prepare(&sql)?.execute(rusqlite::params_from_iter(params))?;
+        db.prepare(&sql)?
+            .execute(rusqlite::params_from_iter(params))?;
     }
     Ok(())
 }
@@ -766,15 +829,21 @@ fn sweep_sqlite_gone_call_inputs(db: &Db) -> Result<usize> {
     ensure_sqlite_call_delta_schema(db)?;
     const GONE: &str = "rev_sid NOT IN (SELECT sprf_sym(rev) FROM _live_rev_scope)";
     let mut moved = 0usize;
-    moved += Storage::execute(db, &format!(
-        "DELETE FROM _call_resolution WHERE site_id IN (\
+    moved += Storage::execute(
+        db,
+        &format!(
+            "DELETE FROM _call_resolution WHERE site_id IN (\
          SELECT s.site_id FROM _call_raw_site AS s JOIN _call_owner AS o USING(owner_id) \
          WHERE o.{GONE})"
-    ))?;
-    moved += Storage::execute(db, &format!(
-        "DELETE FROM _call_raw_site WHERE owner_id IN (\
+        ),
+    )?;
+    moved += Storage::execute(
+        db,
+        &format!(
+            "DELETE FROM _call_raw_site WHERE owner_id IN (\
          SELECT owner_id FROM _call_owner WHERE {GONE})"
-    ))?;
+        ),
+    )?;
     moved += Storage::execute(db, &format!("DELETE FROM _call_owner WHERE {GONE}"))?;
     moved += Storage::execute(db, &format!("DELETE FROM _call_def WHERE {GONE}"))?;
     moved += Storage::execute(db, &format!("DELETE FROM _call_def_bucket WHERE {GONE}"))?;
@@ -826,7 +895,9 @@ fn replace_sqlite_call_def(db: &Db, defs: &[CallDefBaseline]) -> Result<()> {
     Storage::insert_rows(
         db,
         "_call_def",
-        &["sym_sid", "name_sid", "repo_sid", "kind_sid", "file_sid", "line", "end", "rev_sid"],
+        &[
+            "sym_sid", "name_sid", "repo_sid", "kind_sid", "file_sid", "line", "end", "rev_sid",
+        ],
         &rows,
     )?;
     Ok(())
@@ -845,17 +916,23 @@ mod tests {
 
     impl CallStore for RecordingStore {
         fn persist_call_family(&self, _write: CallFamilyWrite<'_>) -> Result<()> {
-            self.operations.borrow_mut().push("persist_call_family".to_string());
+            self.operations
+                .borrow_mut()
+                .push("persist_call_family".to_string());
             Ok(())
         }
 
         fn sweep_gone_call_inputs(&self) -> Result<usize> {
-            self.operations.borrow_mut().push("sweep_gone_call_inputs".to_string());
+            self.operations
+                .borrow_mut()
+                .push("sweep_gone_call_inputs".to_string());
             Ok(0)
         }
 
         fn apply_call_owner_delta(&self, _delta: CallOwnerDelta) -> Result<CallDeltaOutcome> {
-            self.operations.borrow_mut().push("apply_call_owner_delta".to_string());
+            self.operations
+                .borrow_mut()
+                .push("apply_call_owner_delta".to_string());
             Ok(CallDeltaOutcome::Applied)
         }
     }
@@ -863,59 +940,96 @@ mod tests {
     #[test]
     fn call_family_is_one_logical_storage_operation() {
         let store = RecordingStore::default();
-        store.persist_call_family(CallFamilyWrite {
-            owners: &[],
-            def_buckets: &[],
-            defs: &[],
-            scip_dependency_digest: [0; 32],
-            module_dependency_digest: [0; 32],
-        }).unwrap();
+        store
+            .persist_call_family(CallFamilyWrite {
+                owners: &[],
+                def_buckets: &[],
+                defs: &[],
+                scip_dependency_digest: [0; 32],
+                module_dependency_digest: [0; 32],
+            })
+            .unwrap();
 
         let operations = store.operations.borrow();
         assert_eq!(operations.as_slice(), ["persist_call_family"]);
     }
 
     fn table_info(db: &Db, table: &str) -> Vec<(String, String, i64)> {
-        let mut statement = db.prepare(&format!("PRAGMA table_info('{table}')")).unwrap();
-        statement.query_map([], |row| {
-            Ok((row.get(1)?, row.get(2)?, row.get(5)?))
-        }).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        let mut statement = db
+            .prepare(&format!("PRAGMA table_info('{table}')"))
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(1)?, row.get(2)?, row.get(5)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     }
 
     fn unique_indexes(db: &Db, table: &str) -> Vec<Vec<String>> {
-        let mut statement = db.prepare(&format!("PRAGMA index_list('{table}')")).unwrap();
-        let names: Vec<String> = statement.query_map([], |row| {
-            let unique: i64 = row.get(2)?;
-            if unique != 0 {
-                Ok(Some(row.get::<_, String>(1)?))
-            } else {
-                Ok(None)
-            }
-        }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
-            .into_iter().flatten().collect();
-        names.into_iter().map(|name| {
-            let mut statement = db.prepare(&format!("PRAGMA index_info('{name}')")).unwrap();
-            statement.query_map([], |row| row.get(2)).unwrap()
-                .collect::<rusqlite::Result<_>>().unwrap()
-        }).collect()
+        let mut statement = db
+            .prepare(&format!("PRAGMA index_list('{table}')"))
+            .unwrap();
+        let names: Vec<String> = statement
+            .query_map([], |row| {
+                let unique: i64 = row.get(2)?;
+                if unique != 0 {
+                    Ok(Some(row.get::<_, String>(1)?))
+                } else {
+                    Ok(None)
+                }
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .into_iter()
+            .flatten()
+            .collect();
+        names
+            .into_iter()
+            .map(|name| {
+                let mut statement = db.prepare(&format!("PRAGMA index_info('{name}')")).unwrap();
+                statement
+                    .query_map([], |row| row.get(2))
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap()
+            })
+            .collect()
     }
 
     fn all_indexes(db: &Db, table: &str) -> Vec<Vec<String>> {
-        let mut statement = db.prepare(&format!("PRAGMA index_list('{table}')")).unwrap();
-        let names: Vec<String> = statement.query_map([], |row| row.get(1)).unwrap()
-            .collect::<rusqlite::Result<_>>().unwrap();
-        names.into_iter().map(|name| {
-            let mut statement = db.prepare(&format!("PRAGMA index_info('{name}')")).unwrap();
-            statement.query_map([], |row| row.get(2)).unwrap()
-                .collect::<rusqlite::Result<_>>().unwrap()
-        }).collect()
+        let mut statement = db
+            .prepare(&format!("PRAGMA index_list('{table}')"))
+            .unwrap();
+        let names: Vec<String> = statement
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        names
+            .into_iter()
+            .map(|name| {
+                let mut statement = db.prepare(&format!("PRAGMA index_info('{name}')")).unwrap();
+                statement
+                    .query_map([], |row| row.get(2))
+                    .unwrap()
+                    .collect::<rusqlite::Result<_>>()
+                    .unwrap()
+            })
+            .collect()
     }
 
     fn foreign_keys(db: &Db, table: &str) -> Vec<(String, String, String, String)> {
-        let mut statement = db.prepare(&format!("PRAGMA foreign_key_list('{table}')")).unwrap();
-        statement.query_map([], |row| {
-            Ok((row.get(3)?, row.get(2)?, row.get(4)?, row.get(6)?))
-        }).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+        let mut statement = db
+            .prepare(&format!("PRAGMA foreign_key_list('{table}')"))
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((row.get(3)?, row.get(2)?, row.get(4)?, row.get(6)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
     }
 
     fn delta_site(path: &str, line: u32, callee: &str, classification: &str) -> CallSiteBaseline {
@@ -947,40 +1061,62 @@ mod tests {
         ensure_sqlite_call_delta_schema(&db).unwrap();
         let mut owners = vec![
             CallOwnerBaseline {
-                repo: "repo".into(), rev: "WORK".into(), path: "a.rs".into(),
-                fact_digest: "old-a".into(), def_digest: [1; 32],
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                path: "a.rs".into(),
+                fact_digest: "old-a".into(),
+                def_digest: [1; 32],
                 sites: vec![delta_site("a.rs", 10, "target", "read")],
             },
             CallOwnerBaseline {
-                repo: "repo".into(), rev: "WORK".into(), path: "b.rs".into(),
-                fact_digest: "old-b".into(), def_digest: [2; 32],
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                path: "b.rs".into(),
+                fact_digest: "old-b".into(),
+                def_digest: [2; 32],
                 sites: vec![delta_site("b.rs", 20, "target", "read")],
             },
         ];
         if extra_rev {
             owners.push(CallOwnerBaseline {
-                repo: "repo".into(), rev: "HEAD".into(), path: "head.rs".into(),
-                fact_digest: "head".into(), def_digest: [3; 32], sites: Vec::new(),
+                repo: "repo".into(),
+                rev: "HEAD".into(),
+                path: "head.rs".into(),
+                fact_digest: "head".into(),
+                def_digest: [3; 32],
+                sites: Vec::new(),
             });
         }
         let mut buckets = vec![
             CallDefBucketBaseline {
-                repo: "repo".into(), rev: "WORK".into(), name: "target".into(),
-                candidate_count: 1, unique_sym: Some("repo::target".into()),
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                name: "target".into(),
+                candidate_count: 1,
+                unique_sym: Some("repo::target".into()),
             },
             CallDefBucketBaseline {
-                repo: "repo".into(), rev: "WORK".into(), name: "other".into(),
-                candidate_count: 1, unique_sym: Some("repo::other".into()),
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                name: "other".into(),
+                candidate_count: 1,
+                unique_sym: Some("repo::other".into()),
             },
             CallDefBucketBaseline {
-                repo: "repo".into(), rev: "WORK".into(), name: "ambiguous".into(),
-                candidate_count: 2, unique_sym: None,
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                name: "ambiguous".into(),
+                candidate_count: 2,
+                unique_sym: None,
             },
         ];
         if extra_rev {
             buckets.push(CallDefBucketBaseline {
-                repo: "repo".into(), rev: "HEAD".into(), name: "target".into(),
-                candidate_count: 1, unique_sym: Some("repo::target".into()),
+                repo: "repo".into(),
+                rev: "HEAD".into(),
+                name: "target".into(),
+                candidate_count: 1,
+                unique_sym: Some("repo::target".into()),
             });
         }
         replace_sqlite_call_baseline(&db, &owners, &buckets, &[0; 32], &[5; 32]).unwrap();
@@ -1008,7 +1144,8 @@ mod tests {
                 ("repo::other", "other", "fn", "b.rs", 3, 9, "WORK"),
                 ("repo::target", "target", "fn", "a.rs", 5, 8, "HEAD"),
             ];
-            let defs: Vec<CallDefBaseline> = defs_data.iter()
+            let defs: Vec<CallDefBaseline> = defs_data
+                .iter()
                 .map(|&(sym, name, kind, file, line, end, rev)| CallDefBaseline {
                     repo: "repo".into(),
                     sym: sym.into(),
@@ -1024,16 +1161,19 @@ mod tests {
 
             let mut sink = SymSink::new();
             let repo_cell = sink.sym("repo").cell();
-            let def_rev_rows: Vec<Vec<Value>> = defs_data.iter()
-                .map(|&(sym, _name, kind, file, line, end, rev)| vec![
-                    Value::Int(repo_cell),
-                    Value::Int(sink.sym(sym).cell()),
-                    Value::Int(sink.sym(kind).cell()),
-                    Value::Int(sink.sym(file).cell()),
-                    Value::Int(line as i64),
-                    Value::Int(end as i64),
-                    Value::Int(sink.sym(rev).cell()),
-                ])
+            let def_rev_rows: Vec<Vec<Value>> = defs_data
+                .iter()
+                .map(|&(sym, _name, kind, file, line, end, rev)| {
+                    vec![
+                        Value::Int(repo_cell),
+                        Value::Int(sink.sym(sym).cell()),
+                        Value::Int(sink.sym(kind).cell()),
+                        Value::Int(sink.sym(file).cell()),
+                        Value::Int(line as i64),
+                        Value::Int(end as i64),
+                        Value::Int(sink.sym(rev).cell()),
+                    ]
+                })
                 .collect();
             Storage::flush_syms(&db, &mut sink).unwrap();
             db.execute_batch(
@@ -1045,7 +1185,8 @@ mod tests {
                 "rel_call_def_rev",
                 &["repo", "sym", "kind", "file", "line", "end", "rev"],
                 &def_rev_rows,
-            ).unwrap();
+            )
+            .unwrap();
             db.execute_batch(
                 "INSERT OR IGNORE INTO rel_call_def SELECT DISTINCT repo, sym, kind, file, line, \"end\" FROM rel_call_def_rev;",
             ).unwrap();
@@ -1056,8 +1197,11 @@ mod tests {
     fn delta_for(callee: &str, def_digest: [u8; 32], scip: [u8; 32]) -> CallOwnerDelta {
         CallOwnerDelta {
             owner: CallOwnerBaseline {
-                repo: "repo".into(), rev: "WORK".into(), path: "a.rs".into(),
-                fact_digest: "new-a".into(), def_digest,
+                repo: "repo".into(),
+                rev: "WORK".into(),
+                path: "a.rs".into(),
+                fact_digest: "new-a".into(),
+                def_digest,
                 sites: vec![delta_site("a.rs", 11, callee, "write")],
             },
             scip_dependency_digest: scip,
@@ -1079,38 +1223,58 @@ mod tests {
                (SELECT COUNT(*) FROM _call_edge_support)",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     #[test]
     fn call_owner_delta_reprojects_affected_keys_and_retains_duplicate_support() {
         let db = delta_test_db(false);
-        assert_eq!(CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap(), CallDeltaOutcome::Applied);
+        assert_eq!(
+            CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap(),
+            CallDeltaOutcome::Applied
+        );
         assert_eq!(delta_snapshot(&db), (2, 2, 2, 2));
-        let target_support: i64 = db.query_row(
-            "SELECT support_count FROM _call_edge_support WHERE callee_sid = ?1",
-            [StringId::of("repo::target").sqlite()],
-            |row| row.get(0),
-        ).unwrap();
-        assert_eq!(target_support, 1, "the untouched duplicate owner was retracted");
+        let target_support: i64 = db
+            .query_row(
+                "SELECT support_count FROM _call_edge_support WHERE callee_sid = ?1",
+                [StringId::of("repo::target").sqlite()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            target_support, 1,
+            "the untouched duplicate owner was retracted"
+        );
         // Owned-table check (not `rel_call_kind`, which the storage layer no
         // longer writes): a.rs's site reclassified read -> write, b.rs's stays
         // read, so the owned set carries both kinds.
         let kinds: Vec<i64> = {
-            let mut statement = db.prepare(
-                "SELECT DISTINCT classification_sid FROM _call_raw_site \
+            let mut statement = db
+                .prepare(
+                    "SELECT DISTINCT classification_sid FROM _call_raw_site \
                  WHERE classification_sid IS NOT NULL ORDER BY classification_sid",
-            ).unwrap();
-            statement.query_map([], |row| row.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap()
+                )
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
         };
-        let mut expected = vec![StringId::of("read").sqlite(), StringId::of("write").sqlite()];
+        let mut expected = vec![
+            StringId::of("read").sqlite(),
+            StringId::of("write").sqlite(),
+        ];
         expected.sort();
         assert_eq!(kinds, expected);
-        let fact_sid: i64 = db.query_row(
-            "SELECT fact_digest_sid FROM _call_owner WHERE path_sid = ?1",
-            [StringId::of("a.rs").sqlite()],
-            |row| row.get(0),
-        ).unwrap();
+        let fact_sid: i64 = db
+            .query_row(
+                "SELECT fact_digest_sid FROM _call_owner WHERE path_sid = ?1",
+                [StringId::of("a.rs").sqlite()],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(fact_sid, StringId::of("new-a").sqlite());
     }
 
@@ -1118,18 +1282,24 @@ mod tests {
     fn call_owner_delta_without_foreign_keys_leaves_no_orphan_resolutions() {
         let db = delta_test_db(false);
         db.execute_batch("PRAGMA foreign_keys = OFF").unwrap();
-        assert_eq!(db.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(
+            db.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
 
         assert_eq!(
             CallStore::apply_call_owner_delta(&db, delta_for("other", [1; 32], [0; 32])).unwrap(),
             CallDeltaOutcome::Applied,
         );
-        let orphan_resolutions: i64 = db.query_row(
-            "SELECT COUNT(*) FROM _call_resolution AS r \
+        let orphan_resolutions: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM _call_resolution AS r \
              LEFT JOIN _call_raw_site AS s USING(site_id) WHERE s.site_id IS NULL",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(orphan_resolutions, 0);
         assert_eq!(delta_snapshot(&db), (2, 2, 2, 2));
     }
@@ -1137,17 +1307,37 @@ mod tests {
     #[test]
     fn call_owner_delta_unsupported_preflights_do_not_mutate() {
         for (db, delta, reason) in [
-            (delta_test_db(false), delta_for("other", [9; 32], [0; 32]), "call-definition-changed"),
-            (delta_test_db(false), delta_for("other", [1; 32], [7; 32]), "call-scip-active"),
-            (delta_test_db(false), delta_for("ambiguous", [1; 32], [0; 32]), "call-ambiguous-callee"),
-            (delta_test_db(true), delta_for("other", [1; 32], [0; 32]), "call-non-work-baseline"),
+            (
+                delta_test_db(false),
+                delta_for("other", [9; 32], [0; 32]),
+                "call-definition-changed",
+            ),
+            (
+                delta_test_db(false),
+                delta_for("other", [1; 32], [7; 32]),
+                "call-scip-active",
+            ),
+            (
+                delta_test_db(false),
+                delta_for("ambiguous", [1; 32], [0; 32]),
+                "call-ambiguous-callee",
+            ),
+            (
+                delta_test_db(true),
+                delta_for("other", [1; 32], [0; 32]),
+                "call-non-work-baseline",
+            ),
         ] {
             let before = delta_snapshot(&db);
             assert_eq!(
                 CallStore::apply_call_owner_delta(&db, delta).unwrap(),
                 CallDeltaOutcome::Unsupported(reason),
             );
-            assert_eq!(delta_snapshot(&db), before, "unsupported {reason} mutated permanent state");
+            assert_eq!(
+                delta_snapshot(&db),
+                before,
+                "unsupported {reason} mutated permanent state"
+            );
         }
     }
 
@@ -1158,7 +1348,8 @@ mod tests {
             "PRAGMA foreign_keys = ON; \
              CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL); \
              INSERT INTO _strings(id, content) VALUES (0, '');",
-        ).unwrap();
+        )
+        .unwrap();
         ensure_sqlite_call_delta_schema(&db).unwrap();
         let owners = vec![CallOwnerBaseline {
             repo: "repo".into(),
@@ -1217,7 +1408,8 @@ mod tests {
             &buckets,
             &scip_dependency_digest,
             &module_dependency_digest,
-        ).unwrap();
+        )
+        .unwrap();
 
         for (table, expected) in [
             ("_call_owner", 1),
@@ -1226,58 +1418,77 @@ mod tests {
             ("_call_edge_support", 1),
             ("_call_def_bucket", 2),
         ] {
-            let count: i64 = db.query_row(
-                &format!("SELECT COUNT(*) FROM {table}"),
-                [],
-                |row| row.get(0),
-            ).unwrap();
+            let count: i64 = db
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
             assert_eq!(count, expected, "unexpected {table} baseline count");
         }
-        let support: i64 = db.query_row(
-            "SELECT support_count FROM _call_edge_support",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let support: i64 = db
+            .query_row("SELECT support_count FROM _call_edge_support", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(support, 2);
-        let rev_sid: i64 = db.query_row(
-            "SELECT rev_sid FROM _call_edge_support",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let rev_sid: i64 = db
+            .query_row("SELECT rev_sid FROM _call_edge_support", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(rev_sid, StringId::of("WORK").sqlite());
         let classified: Vec<i64> = {
-            let mut statement = db.prepare(
-                "SELECT classification_sid FROM _call_raw_site ORDER BY line",
-            ).unwrap();
-            statement.query_map([], |row| row.get(0)).unwrap()
-                .collect::<rusqlite::Result<_>>().unwrap()
+            let mut statement = db
+                .prepare("SELECT classification_sid FROM _call_raw_site ORDER BY line")
+                .unwrap();
+            statement
+                .query_map([], |row| row.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
         };
-        assert_eq!(classified, [
-            StringId::of("write").sqlite(),
-            StringId::of("read").sqlite(),
-        ]);
+        assert_eq!(
+            classified,
+            [
+                StringId::of("write").sqlite(),
+                StringId::of("read").sqlite(),
+            ]
+        );
         let bucket_rows: Vec<(i64, Option<i64>)> = {
             let mut statement = db.prepare(
                 "SELECT candidate_count, unique_sym_sid FROM _call_def_bucket ORDER BY candidate_count",
             ).unwrap();
-            statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap()
-                .collect::<rusqlite::Result<_>>().unwrap()
+            statement
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
         };
-        assert_eq!(bucket_rows, vec![
-            (1, Some(StringId::of("repo::src/b.rs::function::target").sqlite())),
-            (2, None),
-        ]);
-        let marker: (i64, i64) = db.query_row(
-            "SELECT generation, complete FROM _call_delta_marker WHERE singleton = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        assert_eq!(
+            bucket_rows,
+            vec![
+                (
+                    1,
+                    Some(StringId::of("repo::src/b.rs::function::target").sqlite())
+                ),
+                (2, None),
+            ]
+        );
+        let marker: (i64, i64) = db
+            .query_row(
+                "SELECT generation, complete FROM _call_delta_marker WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(marker, (1, 1));
-        let dependency_digests: (Vec<u8>, Vec<u8>) = db.query_row(
-            "SELECT scip_digest, module_digest FROM _call_delta_marker WHERE singleton = 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let dependency_digests: (Vec<u8>, Vec<u8>) = db
+            .query_row(
+                "SELECT scip_digest, module_digest FROM _call_delta_marker WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(dependency_digests.0, scip_dependency_digest);
         assert_eq!(dependency_digests.1, module_dependency_digest);
     }
@@ -1289,7 +1500,8 @@ mod tests {
             "PRAGMA foreign_keys = ON; \
              CREATE TABLE _strings (id INTEGER PRIMARY KEY, content TEXT NOT NULL); \
              INSERT INTO _strings(id, content) VALUES (1, 'sid');",
-        ).unwrap();
+        )
+        .unwrap();
         ensure_sqlite_call_delta_schema(&db).unwrap();
 
         let tables = [
@@ -1314,26 +1526,28 @@ mod tests {
         // file, line, end, rev) that the CallDefRev/CallDef families project.
         let call_def_columns = table_info(&db, "_call_def");
         assert_eq!(
-            call_def_columns.len(), 8,
+            call_def_columns.len(),
+            8,
             "_call_def must carry the 8-col def-site shape: {call_def_columns:?}",
         );
 
-        for (table, id) in [
-            ("_call_owner", "owner_id"),
-            ("_call_raw_site", "site_id"),
-        ] {
+        for (table, id) in [("_call_owner", "owner_id"), ("_call_raw_site", "site_id")] {
             let columns = table_info(&db, table);
-            assert!(columns.iter().any(|(name, ty, pk)| {
-                name == id && ty == "INTEGER" && *pk == 1
-            }), "{table}.{id} is not an INTEGER PRIMARY KEY: {columns:?}");
+            assert!(
+                columns
+                    .iter()
+                    .any(|(name, ty, pk)| { name == id && ty == "INTEGER" && *pk == 1 }),
+                "{table}.{id} is not an INTEGER PRIMARY KEY: {columns:?}"
+            );
         }
 
         assert!(unique_indexes(&db, "_call_owner").contains(&vec![
-            "repo_sid".into(), "rev_sid".into(), "path_sid".into(),
+            "repo_sid".into(),
+            "rev_sid".into(),
+            "path_sid".into(),
         ]));
-        assert!(unique_indexes(&db, "_call_raw_site").contains(&vec![
-            "owner_id".into(), "occurrence_sid".into(),
-        ]));
+        assert!(unique_indexes(&db, "_call_raw_site")
+            .contains(&vec!["owner_id".into(), "occurrence_sid".into(),]));
         let raw_site_indexes = all_indexes(&db, "_call_raw_site");
         assert!(raw_site_indexes.contains(&vec!["callee_sid".into(), "owner_id".into()]));
         assert!(raw_site_indexes.contains(&vec!["caller_sid".into(), "owner_id".into()]));
@@ -1349,16 +1563,25 @@ mod tests {
             let columns = table_info(&db, table);
             let foreign_keys = foreign_keys(&db, table);
             for (column, _, _) in columns.iter().filter(|(name, _, _)| name.ends_with("_sid")) {
-                assert!(foreign_keys.iter().any(|(from, target, to, _)| {
-                    from == column && target == "_strings" && to == "id"
-                }), "{table}.{column} is not a canonical _strings foreign key: {foreign_keys:?}");
+                assert!(
+                    foreign_keys.iter().any(|(from, target, to, _)| {
+                        from == column && target == "_strings" && to == "id"
+                    }),
+                    "{table}.{column} is not a canonical _strings foreign key: {foreign_keys:?}"
+                );
             }
         }
         assert!(foreign_keys(&db, "_call_raw_site").contains(&(
-            "owner_id".into(), "_call_owner".into(), "owner_id".into(), "CASCADE".into(),
+            "owner_id".into(),
+            "_call_owner".into(),
+            "owner_id".into(),
+            "CASCADE".into(),
         )));
         assert!(foreign_keys(&db, "_call_resolution").contains(&(
-            "site_id".into(), "_call_raw_site".into(), "site_id".into(), "CASCADE".into(),
+            "site_id".into(),
+            "_call_raw_site".into(),
+            "site_id".into(),
+            "CASCADE".into(),
         )));
 
         for (table, key_len) in [
@@ -1367,38 +1590,57 @@ mod tests {
             ("_call_def_bucket", 3),
             ("_call_def", 2),
         ] {
-            let sql: String = db.query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [table],
-                |row| row.get(0),
-            ).unwrap();
-            assert!(sql.contains("WITHOUT ROWID"), "{table} retained a rowid: {sql}");
-            assert!(unique_indexes(&db, table).iter().any(|cols| cols.len() == key_len));
+            let sql: String = db
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                sql.contains("WITHOUT ROWID"),
+                "{table} retained a rowid: {sql}"
+            );
+            assert!(unique_indexes(&db, table)
+                .iter()
+                .any(|cols| cols.len() == key_len));
         }
 
-        let marker_rows: i64 = db.query_row(
-            "SELECT count(*) FROM _call_delta_marker", [], |row| row.get(0),
-        ).unwrap();
-        assert_eq!(marker_rows, 0, "slice one must not claim a populated baseline");
+        let marker_rows: i64 = db
+            .query_row("SELECT count(*) FROM _call_delta_marker", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            marker_rows, 0,
+            "slice one must not claim a populated baseline"
+        );
 
-        assert!(db.exec(
-            "INSERT INTO _call_owner VALUES (1, 1, 1, 1, 1, -1, zeroblob(32))",
-        ).is_err(), "negative owner generation was accepted");
-        db.exec(
-            "INSERT INTO _call_owner VALUES (1, 1, 1, 1, 1, 0, zeroblob(32))",
-        ).unwrap();
-        assert!(db.exec(
-            "INSERT INTO _call_raw_site VALUES (1, 1, 1, 1, 1, NULL, 1, -1)",
-        ).is_err(), "negative source line was accepted");
-        assert!(db.exec(
-            "INSERT INTO _call_edge_support VALUES (1, 1, 1, 1, 0)",
-        ).is_err(), "non-positive edge support was accepted");
+        assert!(
+            db.exec("INSERT INTO _call_owner VALUES (1, 1, 1, 1, 1, -1, zeroblob(32))",)
+                .is_err(),
+            "negative owner generation was accepted"
+        );
+        db.exec("INSERT INTO _call_owner VALUES (1, 1, 1, 1, 1, 0, zeroblob(32))")
+            .unwrap();
+        assert!(
+            db.exec("INSERT INTO _call_raw_site VALUES (1, 1, 1, 1, 1, NULL, 1, -1)",)
+                .is_err(),
+            "negative source line was accepted"
+        );
+        assert!(
+            db.exec("INSERT INTO _call_edge_support VALUES (1, 1, 1, 1, 0)",)
+                .is_err(),
+            "non-positive edge support was accepted"
+        );
         assert!(db.exec(
             "INSERT INTO _call_delta_marker VALUES (1, 1, zeroblob(32), -1, 0, zeroblob(32), zeroblob(32))",
         ).is_err(), "negative marker generation was accepted");
-        assert!(db.exec(
-            "INSERT INTO _call_owner VALUES (2, 99, 1, 1, 1, 0, zeroblob(32))",
-        ).is_err(), "unknown StringId foreign key was accepted");
+        assert!(
+            db.exec("INSERT INTO _call_owner VALUES (2, 99, 1, 1, 1, 0, zeroblob(32))",)
+                .is_err(),
+            "unknown StringId foreign key was accepted"
+        );
     }
 
     /// Differential rail for the family-derive engine (plan
@@ -1414,24 +1656,50 @@ mod tests {
         // Legacy projection: `delta_test_db` populates `rel_call_site` from
         // `_call_raw_site JOIN _call_owner` during setup.
         let legacy: Vec<[i64; 5]> = {
-            let mut s = db.prepare(
-                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, caller, callee, file, line FROM rel_call_site \
                  ORDER BY repo, caller, callee, file, line",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
 
         // Engine path: derive the same relation from the owned tables.
         let (rows, deps) = derive_family(&db, &CallSite).unwrap();
-        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
-        let mut fam: Vec<[i64; 5]> = rows.iter().map(|r| {
-            [ival(&r[0]), ival(&r[1]), ival(&r[2]), ival(&r[3]), ival(&r[4])]
-        }).collect();
+        let ival = |v: &Value| match v {
+            Value::Int(n) => *n,
+            _ => 0,
+        };
+        let mut fam: Vec<[i64; 5]> = rows
+            .iter()
+            .map(|r| {
+                [
+                    ival(&r[0]),
+                    ival(&r[1]),
+                    ival(&r[2]),
+                    ival(&r[3]),
+                    ival(&r[4]),
+                ]
+            })
+            .collect();
         fam.sort();
 
-        assert_eq!(fam, legacy, "CallSite family diverged from legacy call_site projection");
+        assert_eq!(
+            fam, legacy,
+            "CallSite family diverged from legacy call_site projection"
+        );
         assert!(!fam.is_empty(), "family emitted no rows (rail is trivial)");
 
         // Dep capture: the family read both owned tables, by stable PK.
@@ -1440,7 +1708,11 @@ mod tests {
         assert!(read_raw, "family did not capture a dep on _call_raw_site");
         assert!(read_owner, "family did not capture a dep on _call_owner");
         // delta_test_db(false) seeds 2 owners + 2 sites.
-        assert_eq!(deps.len(), 4, "expected 2 owner + 2 site deps, got {deps:?}");
+        assert_eq!(
+            deps.len(),
+            4,
+            "expected 2 owner + 2 site deps, got {deps:?}"
+        );
     }
 
     /// Differential rail for the aggregation tier (plan step 2). `CallEdge`
@@ -1454,27 +1726,49 @@ mod tests {
         let db = delta_test_db(false);
 
         let legacy: Vec<[i64; 3]> = {
-            let mut s = db.prepare(
-                "SELECT caller, callee, kind FROM rel_call_edge \
+            let mut s = db
+                .prepare(
+                    "SELECT caller, callee, kind FROM rel_call_edge \
                  ORDER BY caller, callee, kind",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
         };
 
         let (rows, deps) = derive_family(&db, &CallEdge).unwrap();
-        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
-        let mut fam: Vec<[i64; 3]> = rows.iter().map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+        let ival = |v: &Value| match v {
+            Value::Int(n) => *n,
+            _ => 0,
+        };
+        let mut fam: Vec<[i64; 3]> = rows
+            .iter()
+            .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])])
+            .collect();
         fam.sort();
 
-        assert_eq!(fam, legacy, "CallEdge family diverged from legacy call_edge projection");
+        assert_eq!(
+            fam, legacy,
+            "CallEdge family diverged from legacy call_edge projection"
+        );
         assert!(!fam.is_empty(), "family emitted no rows (rail is trivial)");
 
         // Aggregation proof: the family read the resolution table it counts
         // over, plus the two join inputs.
-        assert!(deps.iter().any(|d| d.rel == "_call_resolution"), "no dep on _call_resolution");
-        assert!(deps.iter().any(|d| d.rel == "_call_raw_site"), "no dep on _call_raw_site");
-        assert!(deps.iter().any(|d| d.rel == "_call_owner"), "no dep on _call_owner");
+        assert!(
+            deps.iter().any(|d| d.rel == "_call_resolution"),
+            "no dep on _call_resolution"
+        );
+        assert!(
+            deps.iter().any(|d| d.rel == "_call_raw_site"),
+            "no dep on _call_raw_site"
+        );
+        assert!(
+            deps.iter().any(|d| d.rel == "_call_owner"),
+            "no dep on _call_owner"
+        );
     }
 
     /// Selectivity rail (plan Verification): the family engine reacts to a real
@@ -1495,24 +1789,36 @@ mod tests {
     fn family_call_edge_rederives_after_delta_via_dep_capture() {
         use crate::engine::family::{derive_family, CallEdge, DepKey};
         let db = delta_test_db(false);
-        let ival = |v: &Value| match v { Value::Int(n) => *n, _ => 0 };
-        let snap = |db: &Db| -> Vec<[i64; 3]> {
-            let mut s = db.prepare(
+        let ival = |v: &Value| match v {
+            Value::Int(n) => *n,
+            _ => 0,
+        };
+        let snap =
+            |db: &Db| -> Vec<[i64; 3]> {
+                let mut s = db.prepare(
                 "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
             ).unwrap();
-            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
-        };
+                s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
         let sort3 = |rows: &[Vec<Value>]| -> Vec<[i64; 3]> {
-            let mut v: Vec<[i64; 3]> = rows.iter()
-                .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+            let mut v: Vec<[i64; 3]> = rows
+                .iter()
+                .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])])
+                .collect();
             v.sort();
             v
         };
 
         // cold: derive edge + capture deps; matches legacy before any change.
         let (cold_rows, cold_deps) = derive_family(&db, &CallEdge).unwrap();
-        assert_eq!(sort3(&cold_rows), snap(&db), "cold family diverged from legacy");
+        assert_eq!(
+            sort3(&cold_rows),
+            snap(&db),
+            "cold family diverged from legacy"
+        );
 
         // apply a real delta: owner a.rs switches its call target -> other.
         // The other call-family tests prove this delta is Accepted.
@@ -1527,28 +1833,58 @@ mod tests {
         let (hot_rows, _hot_deps) = derive_family(&db, &CallEdge).unwrap();
         let hot = sort3(&hot_rows);
         let mut expected_hot = vec![
-            [StringId::of("repo::run").sqlite(), StringId::of("repo::other").sqlite(), StringId::of("call").sqlite()],
-            [StringId::of("repo::run").sqlite(), StringId::of("repo::target").sqlite(), StringId::of("call").sqlite()],
+            [
+                StringId::of("repo::run").sqlite(),
+                StringId::of("repo::other").sqlite(),
+                StringId::of("call").sqlite(),
+            ],
+            [
+                StringId::of("repo::run").sqlite(),
+                StringId::of("repo::target").sqlite(),
+                StringId::of("call").sqlite(),
+            ],
         ];
         expected_hot.sort();
-        assert_eq!(hot, expected_hot, "family diverged from expected post-delta edges");
+        assert_eq!(
+            hot, expected_hot,
+            "family diverged from expected post-delta edges"
+        );
 
         // the family REACTED: support for repo::target dropped (a.rs left),
         // and a new repo::other edge appeared. cold was 1 edge, hot is 2.
         assert_ne!(hot, sort3(&cold_rows), "family did not react to the delta");
-        assert_eq!(hot.len(), 2, "expected 2 post-delta edges (target via b.rs + other via a.rs)");
+        assert_eq!(
+            hot.len(),
+            2,
+            "expected 2 post-delta edges (target via b.rs + other via a.rs)"
+        );
 
         // SELECTIVITY: the cold deps include _call_raw_site rows the delta
         // retracted. The engine's affected-set = captured deps whose row is
         // gone (or new rows not captured). Find the retracted site ids.
-        let cold_site_pks: Vec<i64> = cold_deps.iter()
-            .filter(|d| d.rel == "_call_raw_site").map(|d: &DepKey| d.pk).collect();
-        assert_eq!(cold_site_pks.len(), 2, "cold derive should have read 2 sites");
+        let cold_site_pks: Vec<i64> = cold_deps
+            .iter()
+            .filter(|d| d.rel == "_call_raw_site")
+            .map(|d: &DepKey| d.pk)
+            .collect();
+        assert_eq!(
+            cold_site_pks.len(),
+            2,
+            "cold derive should have read 2 sites"
+        );
         let present: i64 = {
-            let qs = cold_site_pks.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let qs = cold_site_pks
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
             let sql = format!("SELECT COUNT(*) FROM _call_raw_site WHERE site_id IN ({qs})");
-            db.query_row(&sql, rusqlite::params_from_iter(cold_site_pks.iter()), |r| r.get(0))
-                .unwrap()
+            db.query_row(
+                &sql,
+                rusqlite::params_from_iter(cold_site_pks.iter()),
+                |r| r.get(0),
+            )
+            .unwrap()
         };
         // a.rs's old site was retracted by the delta; only b.rs's site remains.
         assert_eq!(present, 1, "dep-capture did not flag the retracted row");
@@ -1561,73 +1897,139 @@ mod tests {
     /// property P4 (capstone cutover) relies on making it the SOLE one.
     #[test]
     fn family_flip_overwrites_legacy_call_rels_identically() {
-        use crate::engine::family::router::FamilyRouter;
         use crate::engine::family::call_families;
+        use crate::engine::family::router::FamilyRouter;
         use crate::lower::tbl;
         use crate::storage::Storage;
         let db = delta_test_db(false);
 
         let legacy_site: Vec<[i64; 5]> = {
-            let mut s = db.prepare(
-                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, caller, callee, file, line FROM rel_call_site \
                  ORDER BY repo, caller, callee, file, line",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
-        let legacy_edge: Vec<[i64; 3]> = {
-            let mut s = db.prepare(
+        let legacy_edge: Vec<[i64; 3]> =
+            {
+                let mut s = db.prepare(
                 "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
             ).unwrap();
-            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
-        };
+                s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
         let legacy_kind: Vec<[i64; 2]> = {
-            let mut s = db.prepare(
-                "SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind",
-            ).unwrap();
+            let mut s = db
+                .prepare("SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind")
+                .unwrap();
             s.query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
         };
         let legacy_edge_rev: Vec<[i64; 4]> = {
-            let mut s = db.prepare(
-                "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
+            let mut s = db
+                .prepare(
+                    "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
                  ORDER BY caller, callee, kind, rev",
-            ).unwrap();
-            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                )
+                .unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
         let legacy_def_rev: Vec<[i64; 7]> = {
-            let mut s = db.prepare(
-                "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
                  ORDER BY repo, sym, kind, file, line, \"end\", rev",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
         let legacy_def: Vec<[i64; 6]> = {
-            let mut s = db.prepare(
-                "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
                  ORDER BY repo, sym, kind, file, line, \"end\"",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
-        assert!(!legacy_site.is_empty(), "fixture precondition: legacy call_site populated");
-        assert!(!legacy_edge.is_empty(), "fixture precondition: legacy call_edge populated");
-        assert!(!legacy_kind.is_empty(), "fixture precondition: legacy call_kind populated");
-        assert!(!legacy_edge_rev.is_empty(), "fixture precondition: legacy call_edge_rev populated");
-        assert!(!legacy_def_rev.is_empty(), "fixture precondition: legacy call_def_rev populated");
-        assert!(!legacy_def.is_empty(), "fixture precondition: legacy call_def populated");
+        assert!(
+            !legacy_site.is_empty(),
+            "fixture precondition: legacy call_site populated"
+        );
+        assert!(
+            !legacy_edge.is_empty(),
+            "fixture precondition: legacy call_edge populated"
+        );
+        assert!(
+            !legacy_kind.is_empty(),
+            "fixture precondition: legacy call_kind populated"
+        );
+        assert!(
+            !legacy_edge_rev.is_empty(),
+            "fixture precondition: legacy call_edge_rev populated"
+        );
+        assert!(
+            !legacy_def_rev.is_empty(),
+            "fixture precondition: legacy call_def_rev populated"
+        );
+        assert!(
+            !legacy_def.is_empty(),
+            "fixture precondition: legacy call_def populated"
+        );
         // The multi-rev fixture makes the collapse observable: one repo::target
         // def at two revs -> two rev rows, one collapsed def row.
         assert!(
             legacy_def_rev.len() > legacy_def.len(),
             "fixture precondition: a rev-collapsed def must exist ({} rev rows, {} def rows)",
-            legacy_def_rev.len(), legacy_def.len(),
+            legacy_def_rev.len(),
+            legacy_def.len(),
         );
 
         // flip: the router derives every hosted family, and we overwrite the
@@ -1638,8 +2040,13 @@ mod tests {
         assert_eq!(
             rerun,
             vec![
-                "call_def", "call_def_rev", "call_edge", "call_edge_rev",
-                "call_kind", "call_name", "call_site",
+                "call_def",
+                "call_def_rev",
+                "call_edge",
+                "call_edge_rev",
+                "call_kind",
+                "call_name",
+                "call_site",
             ],
             "cold derives every hosted family (registry order = sorted by name)",
         );
@@ -1649,10 +2056,18 @@ mod tests {
             router.rows("call_site").unwrap(),
         )
         .unwrap();
-        db.reload_rel(&tbl("call_edge"), &["caller", "callee", "kind"], router.rows("call_edge").unwrap())
-            .unwrap();
-        db.reload_rel(&tbl("call_kind"), &["fn", "kind"], router.rows("call_kind").unwrap())
-            .unwrap();
+        db.reload_rel(
+            &tbl("call_edge"),
+            &["caller", "callee", "kind"],
+            router.rows("call_edge").unwrap(),
+        )
+        .unwrap();
+        db.reload_rel(
+            &tbl("call_kind"),
+            &["fn", "kind"],
+            router.rows("call_kind").unwrap(),
+        )
+        .unwrap();
         db.reload_rel(
             &tbl("call_edge_rev"),
             &["caller", "callee", "kind", "rev"],
@@ -1673,66 +2088,128 @@ mod tests {
         .unwrap();
 
         let family_site: Vec<[i64; 5]> = {
-            let mut s = db.prepare(
-                "SELECT repo, caller, callee, file, line FROM rel_call_site \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, caller, callee, file, line FROM rel_call_site \
                  ORDER BY repo, caller, callee, file, line",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
-        let family_edge: Vec<[i64; 3]> = {
-            let mut s = db.prepare(
+        let family_edge: Vec<[i64; 3]> =
+            {
+                let mut s = db.prepare(
                 "SELECT caller, callee, kind FROM rel_call_edge ORDER BY caller, callee, kind",
             ).unwrap();
-            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
-        };
+                s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?]))
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
 
         let family_kind: Vec<[i64; 2]> = {
-            let mut s = db.prepare(
-                "SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind",
-            ).unwrap();
+            let mut s = db
+                .prepare("SELECT fn, kind FROM rel_call_kind ORDER BY fn, kind")
+                .unwrap();
             s.query_map([], |row| Ok([row.get(0)?, row.get(1)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
         };
         let family_edge_rev: Vec<[i64; 4]> = {
-            let mut s = db.prepare(
-                "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
+            let mut s = db
+                .prepare(
+                    "SELECT caller, callee, kind, rev FROM rel_call_edge_rev \
                  ORDER BY caller, callee, kind, rev",
-            ).unwrap();
-            s.query_map([], |row| Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?]))
-                .unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                )
+                .unwrap();
+            s.query_map([], |row| {
+                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
 
         let family_def_rev: Vec<[i64; 7]> = {
-            let mut s = db.prepare(
-                "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, sym, kind, file, line, \"end\", rev FROM rel_call_def_rev \
                  ORDER BY repo, sym, kind, file, line, \"end\", rev",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
         let family_def: Vec<[i64; 6]> = {
-            let mut s = db.prepare(
-                "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
+            let mut s = db
+                .prepare(
+                    "SELECT repo, sym, kind, file, line, \"end\" FROM rel_call_def \
                  ORDER BY repo, sym, kind, file, line, \"end\"",
-            ).unwrap();
+                )
+                .unwrap();
             s.query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?])
-            }).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap()
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ])
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
         };
 
-        assert_eq!(family_site, legacy_site, "flipped rel_call_site diverged from legacy");
-        assert_eq!(family_edge, legacy_edge, "flipped rel_call_edge diverged from legacy");
-        assert_eq!(family_kind, legacy_kind, "flipped rel_call_kind diverged from legacy");
+        assert_eq!(
+            family_site, legacy_site,
+            "flipped rel_call_site diverged from legacy"
+        );
+        assert_eq!(
+            family_edge, legacy_edge,
+            "flipped rel_call_edge diverged from legacy"
+        );
+        assert_eq!(
+            family_kind, legacy_kind,
+            "flipped rel_call_kind diverged from legacy"
+        );
         assert_eq!(
             family_edge_rev, legacy_edge_rev,
             "flipped rel_call_edge_rev diverged from legacy",
         );
-        assert_eq!(family_def_rev, legacy_def_rev, "flipped rel_call_def_rev diverged from legacy");
-        assert_eq!(family_def, legacy_def, "flipped rel_call_def diverged from legacy");
+        assert_eq!(
+            family_def_rev, legacy_def_rev,
+            "flipped rel_call_def_rev diverged from legacy"
+        );
+        assert_eq!(
+            family_def, legacy_def,
+            "flipped rel_call_def diverged from legacy"
+        );
     }
 
     // ---- reactive router rails -------------------------------------------
@@ -1747,15 +2224,25 @@ mod tests {
         }
     }
     fn sorted3(rows: &[Vec<Value>]) -> Vec<[i64; 3]> {
-        let mut v: Vec<[i64; 3]> =
-            rows.iter().map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])]).collect();
+        let mut v: Vec<[i64; 3]> = rows
+            .iter()
+            .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2])])
+            .collect();
         v.sort();
         v
     }
     fn sorted5(rows: &[Vec<Value>]) -> Vec<[i64; 5]> {
         let mut v: Vec<[i64; 5]> = rows
             .iter()
-            .map(|r| [ival(&r[0]), ival(&r[1]), ival(&r[2]), ival(&r[3]), ival(&r[4])])
+            .map(|r| {
+                [
+                    ival(&r[0]),
+                    ival(&r[1]),
+                    ival(&r[2]),
+                    ival(&r[3]),
+                    ival(&r[4]),
+                ]
+            })
             .collect();
         v.sort();
         v
@@ -1767,7 +2254,13 @@ mod tests {
             .unwrap();
         let mut v: Vec<[i64; 5]> = s
             .query_map([], |row| {
-                Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+                Ok([
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ])
             })
             .unwrap()
             .collect::<rusqlite::Result<_>>()
@@ -1791,33 +2284,57 @@ mod tests {
         let mut router = FamilyRouter::new(vec![&call_site, &call_edge]);
 
         let cold = router.cold(&db).unwrap();
-        assert_eq!(cold, vec!["call_site", "call_edge"], "cold should derive both, in order");
+        assert_eq!(
+            cold,
+            vec!["call_site", "call_edge"],
+            "cold should derive both, in order"
+        );
         let site_cold = sorted5(router.rows("call_site").unwrap());
         let edge_cold = sorted3(router.rows("call_edge").unwrap());
         assert!(!site_cold.is_empty(), "fixture: call_site non-empty");
-        assert_eq!(edge_cold.len(), 1, "fixture: one distinct edge (both sites -> target)");
+        assert_eq!(
+            edge_cold.len(),
+            1,
+            "fixture: one distinct edge (both sites -> target)"
+        );
 
         // resolution-only change: drop every resolution. call_edge collapses to
         // empty; call_site is untouched (it never reads _call_resolution).
-        db.conn().execute("DELETE FROM _call_resolution", []).unwrap();
+        db.conn()
+            .execute("DELETE FROM _call_resolution", [])
+            .unwrap();
 
         let mut changed = std::collections::HashSet::new();
         changed.insert("_call_resolution");
         let rerun = router.react(&db, &changed).unwrap();
 
-        assert_eq!(rerun, vec!["call_edge"], "only CallEdge reads _call_resolution");
+        assert_eq!(
+            rerun,
+            vec!["call_edge"],
+            "only CallEdge reads _call_resolution"
+        );
         assert_eq!(
             sorted5(router.rows("call_site").unwrap()),
             site_cold,
             "CallSite was skipped; its memoized rows must be unchanged",
         );
         let edge_hot = sorted3(router.rows("call_edge").unwrap());
-        assert!(edge_hot.is_empty(), "CallEdge reran: all resolutions gone -> no edges");
-        assert_ne!(edge_hot, edge_cold, "CallEdge output must reflect the change");
+        assert!(
+            edge_hot.is_empty(),
+            "CallEdge reran: all resolutions gone -> no edges"
+        );
+        assert_ne!(
+            edge_hot, edge_cold,
+            "CallEdge output must reflect the change"
+        );
 
         // consistency: the router's rerun rows equal a fresh full derive.
         let (fresh_edge, _) = derive_family(&db, &CallEdge).unwrap();
-        assert_eq!(edge_hot, sorted3(&fresh_edge), "memoized rerun diverged from fresh derive");
+        assert_eq!(
+            edge_hot,
+            sorted3(&fresh_edge),
+            "memoized rerun diverged from fresh derive"
+        );
     }
 
     /// A change to a SHARED input relation (`_call_owner`, read by both
@@ -1836,7 +2353,11 @@ mod tests {
         let mut changed = std::collections::HashSet::new();
         changed.insert("_call_owner");
         let rerun = router.react(&db, &changed).unwrap();
-        assert_eq!(rerun, vec!["call_site", "call_edge"], "both families scan _call_owner");
+        assert_eq!(
+            rerun,
+            vec!["call_site", "call_edge"],
+            "both families scan _call_owner"
+        );
     }
 
     /// A change touching NO family's inputs reruns nothing — every family keeps
@@ -1855,7 +2376,10 @@ mod tests {
         let mut changed = std::collections::HashSet::new();
         changed.insert("_some_other_table");
         let rerun = router.react(&db, &changed).unwrap();
-        assert!(rerun.is_empty(), "no family reads _some_other_table; nothing reruns");
+        assert!(
+            rerun.is_empty(),
+            "no family reads _some_other_table; nothing reruns"
+        );
     }
 
     /// Incremental RETRACTION through the reconcile/render path: removing an
@@ -1876,8 +2400,12 @@ mod tests {
         router.cold(&db).unwrap();
 
         // Establish the table from the cold memo (base state = 2 site rows).
-        db.reload_rel(&tbl("call_site"), &site_cols, router.rows("call_site").unwrap())
-            .unwrap();
+        db.reload_rel(
+            &tbl("call_site"),
+            &site_cols,
+            router.rows("call_site").unwrap(),
+        )
+        .unwrap();
         let cold_rows = snap_site(&db);
         assert_eq!(cold_rows.len(), 2, "fixture: two call sites");
 
@@ -1889,7 +2417,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        db.conn().execute("DELETE FROM _call_raw_site WHERE line = 10", []).unwrap();
+        db.conn()
+            .execute("DELETE FROM _call_raw_site WHERE line = 10", [])
+            .unwrap();
 
         // React + reconcile: call_site's delta must carry exactly one retracted
         // row (the a.rs projection) and no inserts.
@@ -1901,18 +2431,31 @@ mod tests {
             .iter()
             .find(|(name, _)| *name == "call_site")
             .expect("call_site reran");
-        assert_eq!(site_delta.retracted.len(), 1, "exactly one output row retracted");
-        assert!(site_delta.inserted.is_empty(), "no inserts on a pure retraction");
+        assert_eq!(
+            site_delta.retracted.len(),
+            1,
+            "exactly one output row retracted"
+        );
+        assert!(
+            site_delta.inserted.is_empty(),
+            "no inserts on a pure retraction"
+        );
 
         // Render the delta incrementally (retract + insert), NOT a full reload.
-        db.retract_rows(&tbl("call_site"), &site_cols, &site_delta.retracted).unwrap();
-        db.insert_rows(&tbl("call_site"), &site_cols, &site_delta.inserted).unwrap();
+        db.retract_rows(&tbl("call_site"), &site_cols, &site_delta.retracted)
+            .unwrap();
+        db.insert_rows(&tbl("call_site"), &site_cols, &site_delta.inserted)
+            .unwrap();
 
         // The incrementally-maintained table equals a fresh full derive.
         let after = snap_site(&db);
         assert_eq!(after.len(), 1, "one site row remains after retraction");
         let (fresh, _) = derive_family(&db, &CallSite).unwrap();
-        assert_eq!(after, sorted5(&fresh), "incremental render diverged from fresh derive");
+        assert_eq!(
+            after,
+            sorted5(&fresh),
+            "incremental render diverged from fresh derive"
+        );
     }
 
     /// A family with no memo yet (never cold-loaded) always derives on the
@@ -1931,7 +2474,14 @@ mod tests {
         let mut changed = std::collections::HashSet::new();
         changed.insert("_unrelated");
         let rerun = router.react(&db, &changed).unwrap();
-        assert_eq!(rerun, vec!["call_site"], "unmemoized family derives on first react");
-        assert!(!router.rows("call_site").unwrap().is_empty(), "derive populated rows");
+        assert_eq!(
+            rerun,
+            vec!["call_site"],
+            "unmemoized family derives on first react"
+        );
+        assert!(
+            !router.rows("call_site").unwrap().is_empty(),
+            "derive populated rows"
+        );
     }
 }

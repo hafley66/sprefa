@@ -16,11 +16,17 @@ fn py_parse(content: &str) -> Option<tree_sitter::Tree> {
 }
 
 impl TypeLang for PyTypes {
-    fn name(&self) -> &'static str { "python" }
-    fn matches(&self, path: &str) -> bool { path.ends_with(".py") }
+    fn name(&self) -> &'static str {
+        "python"
+    }
+    fn matches(&self, path: &str) -> bool {
+        path.ends_with(".py")
+    }
     // One tree-sitter parse feeds entities + edges + docs.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
-        let Some(tree) = py_parse(content) else { return TypeFacts::default() };
+        let Some(tree) = py_parse(content) else {
+            return TypeFacts::default();
+        };
         let src = content.as_bytes();
         let root = tree.root_node();
         TypeFacts {
@@ -32,7 +38,9 @@ impl TypeLang for PyTypes {
     }
     // A second tree-sitter parse feeds defs + sites, same shape as Kotlin.
     fn extract_calls(&self, file: &str, content: &str) -> CallFacts {
-        let Some(tree) = py_parse(content) else { return CallFacts::default() };
+        let Some(tree) = py_parse(content) else {
+            return CallFacts::default();
+        };
         let src = content.as_bytes();
         let root = tree.root_node();
         CallFacts {
@@ -41,7 +49,9 @@ impl TypeLang for PyTypes {
         }
     }
     fn extract_dataflow(&self, file: &str, content: &str) -> DataflowFacts {
-        let Some(tree) = py_parse(content) else { return DataflowFacts::default() };
+        let Some(tree) = py_parse(content) else {
+            return DataflowFacts::default();
+        };
         py_dataflow_from(tree.root_node(), content.as_bytes(), file)
     }
 }
@@ -79,13 +89,15 @@ fn py_param_name_and_type<'t>(
         "identifier" => (Some(py_text(p, src)), None),
         "typed_parameter" => {
             let mut cur = p.walk();
-            let name = p.named_children(&mut cur)
+            let name = p
+                .named_children(&mut cur)
                 .find(|n| n.kind() == "identifier")
                 .map(|n| py_text(n, src));
             (name, p.child_by_field_name("type"))
         }
         "default_parameter" => {
-            let name = p.child_by_field_name("name")
+            let name = p
+                .child_by_field_name("name")
                 .filter(|n| n.kind() == "identifier")
                 .map(|n| py_text(n, src));
             (name, None)
@@ -96,7 +108,8 @@ fn py_param_name_and_type<'t>(
         }
         "list_splat_pattern" | "dictionary_splat_pattern" => {
             let mut cur = p.walk();
-            let name = p.named_children(&mut cur)
+            let name = p
+                .named_children(&mut cur)
                 .find(|n| n.kind() == "identifier")
                 .map(|n| py_text(n, src));
             (name, None)
@@ -134,7 +147,12 @@ fn py_collect_identifiers_rec(node: tree_sitter::Node, src: &[u8], out: &mut BTr
 /// as noise). `attribute` (`typing.Optional`, `module.Class`) keeps only the
 /// trailing bare name, matching the callee-resolution convention elsewhere.
 /// A string forward-ref (`"Foo"`) is not parsed (non-goal).
-fn py_type_refs(node: tree_sitter::Node, src: &[u8], tparams: &BTreeSet<String>, out: &mut Vec<String>) {
+fn py_type_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
     match node.kind() {
         "identifier" => {
             let name = py_text(node, src);
@@ -169,7 +187,11 @@ fn py_type_refs(node: tree_sitter::Node, src: &[u8], tparams: &BTreeSet<String>,
     }
 }
 
-fn py_type_refs_collect(node: tree_sitter::Node, src: &[u8], tparams: &BTreeSet<String>) -> Vec<String> {
+fn py_type_refs_collect(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+) -> Vec<String> {
     let mut out = Vec::new();
     py_type_refs(node, src, tparams, &mut out);
     out.sort();
@@ -183,11 +205,39 @@ fn py_type_refs_collect(node: tree_sitter::Node, src: &[u8], tparams: &BTreeSet<
 fn is_noise_python(name: &str) -> bool {
     matches!(
         name,
-        "int" | "str" | "float" | "bool" | "bytes" | "complex" | "object" | "type"
-            | "list" | "dict" | "set" | "tuple" | "frozenset" | "None" | "Self"
-            | "Any" | "Optional" | "Union" | "List" | "Dict" | "Tuple" | "Set"
-            | "FrozenSet" | "Callable" | "ClassVar" | "Final" | "Type" | "Sequence"
-            | "Iterable" | "Iterator" | "Mapping" | "Awaitable" | "Coroutine"
+        "int"
+            | "str"
+            | "float"
+            | "bool"
+            | "bytes"
+            | "complex"
+            | "object"
+            | "type"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "frozenset"
+            | "None"
+            | "Self"
+            | "Any"
+            | "Optional"
+            | "Union"
+            | "List"
+            | "Dict"
+            | "Tuple"
+            | "Set"
+            | "FrozenSet"
+            | "Callable"
+            | "ClassVar"
+            | "Final"
+            | "Type"
+            | "Sequence"
+            | "Iterable"
+            | "Iterator"
+            | "Mapping"
+            | "Awaitable"
+            | "Coroutine"
     )
 }
 
@@ -212,14 +262,19 @@ fn py_fn_type(node: tree_sitter::Node, src: &[u8]) -> TypeExpr {
                     continue;
                 }
             }
-            let refs = type_node.map(|t| py_type_refs_collect(t, src, &tparams)).unwrap_or_default();
+            let refs = type_node
+                .map(|t| py_type_refs_collect(t, src, &tparams))
+                .unwrap_or_default();
             params.push(refs.into_iter().map(TypeRef::Named).collect());
         }
     }
-    let ret = node.child_by_field_name("return_type")
+    let ret = node
+        .child_by_field_name("return_type")
         .map(|rt| py_type_refs_collect(rt, src, &tparams))
         .unwrap_or_default()
-        .into_iter().map(TypeRef::Named).collect();
+        .into_iter()
+        .map(TypeRef::Named)
+        .collect();
     TypeExpr { params, ret }
 }
 
@@ -305,10 +360,16 @@ fn walk_py_entities(
 fn py_edges_from(root: tree_sitter::Node, src: &[u8]) -> Vec<TypeEdge> {
     let mut out: BTreeSet<(String, String, &'static str)> = BTreeSet::new();
     walk_py_edges(root, src, &mut out);
-    out.into_iter().map(|(from, to, kind)| TypeEdge { from, to, kind }).collect()
+    out.into_iter()
+        .map(|(from, to, kind)| TypeEdge { from, to, kind })
+        .collect()
 }
 
-fn walk_py_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, String, &'static str)>) {
+fn walk_py_edges(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
     let mut cur = node.walk();
     for child in node.children(&mut cur) {
         let target = py_unwrap_decorated(child);
@@ -330,8 +391,14 @@ fn walk_py_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String
     }
 }
 
-fn py_class_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, String, &'static str)>) {
-    let Some(owner) = node.child_by_field_name("name").map(|n| py_text(n, src)) else { return };
+fn py_class_edges(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
+    let Some(owner) = node.child_by_field_name("name").map(|n| py_text(n, src)) else {
+        return;
+    };
     let tparams = py_collect_type_params(node, src, "type_parameters");
     if let Some(supers) = node.child_by_field_name("superclasses") {
         let mut cur = supers.walk();
@@ -351,7 +418,9 @@ fn py_class_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(Strin
             if stmt.kind() != "expression_statement" {
                 continue;
             }
-            let Some(inner) = stmt.named_child(0) else { continue };
+            let Some(inner) = stmt.named_child(0) else {
+                continue;
+            };
             if inner.kind() != "assignment" {
                 continue;
             }
@@ -364,8 +433,14 @@ fn py_class_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(Strin
     }
 }
 
-fn py_function_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(String, String, &'static str)>) {
-    let Some(owner) = node.child_by_field_name("name").map(|n| py_text(n, src)) else { return };
+fn py_function_edges(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut BTreeSet<(String, String, &'static str)>,
+) {
+    let Some(owner) = node.child_by_field_name("name").map(|n| py_text(n, src)) else {
+        return;
+    };
     let tparams = py_collect_type_params(node, src, "type_parameters");
     if let Some(plist) = node.child_by_field_name("parameters") {
         let mut cur = plist.walk();
@@ -407,7 +482,12 @@ fn py_function_edges(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<(St
 /// Every annotated local assignment (`x: Foo = ...`) anywhere under a function
 /// body, including inside nested defs (same imprecision TS accepts: its body
 /// visitor doesn't stop at a nested closure either).
-fn py_collect_body_annotation_refs(node: tree_sitter::Node, src: &[u8], tparams: &BTreeSet<String>, out: &mut Vec<String>) {
+fn py_collect_body_annotation_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
     if node.kind() == "assignment" {
         if let Some(ty) = node.child_by_field_name("type") {
             out.extend(py_type_refs_collect(ty, src, tparams));
@@ -456,12 +536,20 @@ fn py_walk_call_defs(
             // @callable python function
             // @callable python method
             "function_definition" => {
-                let name = target.child_by_field_name("name").map(|n| py_text(n, src)).unwrap_or_default();
+                let name = target
+                    .child_by_field_name("name")
+                    .map(|n| py_text(n, src))
+                    .unwrap_or_default();
                 let (kind, ekind) = match parent {
                     Some(_) => (CallKind::Method, EntityKind::Method),
                     None => (CallKind::Free, EntityKind::Function),
                 };
-                let end = target.child_by_field_name("body").unwrap_or(target).end_position().row as u32 + 1;
+                let end = target
+                    .child_by_field_name("body")
+                    .unwrap_or(target)
+                    .end_position()
+                    .row as u32
+                    + 1;
                 // `py_flow_fn` lifts EVERY function_definition as Function/None
                 // (even a method), so a lambda in this body joins df under that
                 // sym. A nested `def` is Free (parent None).
@@ -513,7 +601,13 @@ fn py_walk_call_sites(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut
     for child in node.children(&mut cur) {
         if child.kind() == "call" {
             if let Some((callee, line)) = py_callee(child, src) {
-                out.push(CallSite { caller_sym: None, callee, callee_path: None, file: file.to_string(), line });
+                out.push(CallSite {
+                    caller_sym: None,
+                    callee,
+                    callee_path: None,
+                    file: file.to_string(),
+                    line,
+                });
             }
         }
         py_walk_call_sites(child, src, file, out);
@@ -555,7 +649,13 @@ fn py_docs_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Vec<DocFact>
     out
 }
 
-fn walk_py_docs(node: tree_sitter::Node, src: &[u8], file: &str, class_owner: Option<&str>, out: &mut Vec<DocFact>) {
+fn walk_py_docs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    file: &str,
+    class_owner: Option<&str>,
+    out: &mut Vec<DocFact>,
+) {
     let mut cur = node.walk();
     for child in node.children(&mut cur) {
         let target = py_unwrap_decorated(child);
@@ -577,7 +677,11 @@ fn walk_py_docs(node: tree_sitter::Node, src: &[u8], file: &str, class_owner: Op
             }
             "function_definition" => {
                 if let Some(name) = target.child_by_field_name("name").map(|n| py_text(n, src)) {
-                    let kind = if class_owner.is_some() { EntityKind::Method } else { EntityKind::Function };
+                    let kind = if class_owner.is_some() {
+                        EntityKind::Method
+                    } else {
+                        EntityKind::Function
+                    };
                     if let Some(body) = target.child_by_field_name("body") {
                         if let Some(text) = py_docstring_of(body, src) {
                             out.push(DocFact {
@@ -630,7 +734,10 @@ fn py_clean_docstring(raw: &str) -> String {
     } else {
         return trimmed.to_string();
     };
-    let inner = body.strip_prefix(quote).and_then(|r| r.strip_suffix(quote)).unwrap_or(body);
+    let inner = body
+        .strip_prefix(quote)
+        .and_then(|r| r.strip_suffix(quote))
+        .unwrap_or(body);
     py_dedent(inner)
 }
 
@@ -642,7 +749,9 @@ fn py_dedent(text: &str) -> String {
     if lines.len() <= 1 {
         return text.trim().to_string();
     }
-    let min_indent = lines.iter().skip(1)
+    let min_indent = lines
+        .iter()
+        .skip(1)
         .filter(|l| !l.trim().is_empty())
         .map(|l| l.len() - l.trim_start().len())
         .min()
@@ -652,7 +761,11 @@ fn py_dedent(text: &str) -> String {
         if i == 0 {
             out.push(line.trim().to_string());
         } else {
-            out.push(line.get(min_indent.min(line.len())..).unwrap_or("").to_string());
+            out.push(
+                line.get(min_indent.min(line.len())..)
+                    .unwrap_or("")
+                    .to_string(),
+            );
         }
     }
     out.join("\n").trim().to_string()
@@ -679,7 +792,11 @@ fn py_parse_sphinx_tags(text: &str) -> Vec<DocTag> {
                     "return" | "returns" => ("returns", ""),
                     other => (other, head_arg),
                 };
-                out.push(DocTag { tag: tag.to_string(), arg: arg.to_string(), text: body });
+                out.push(DocTag {
+                    tag: tag.to_string(),
+                    arg: arg.to_string(),
+                    text: body,
+                });
                 continue;
             }
         }
@@ -713,7 +830,10 @@ fn py_dataflow_from(root: tree_sitter::Node, src: &[u8], file: &str) -> Dataflow
     // tree-sitter rows are 0-based -> 1-based; `bump_node_lines_1based` also
     // rebuilds each node id so it reconstructs from the stored columns (the
     // coordinate de-intern contract). Loops bump first; nests recompute after.
-    for l in &mut out.loops { l.start += 1; l.end += 1; }
+    for l in &mut out.loops {
+        l.start += 1;
+        l.end += 1;
+    }
     bump_node_lines_1based(&mut out);
     out.nests = compute_nests(&out.nodes, &out.loops);
     out
@@ -737,7 +857,9 @@ fn py_walk_fns(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Datafl
 /// parent, even for a method — matching Kotlin's `kt_flow_fn` exactly (the
 /// dataflow fn_sym is a grouping key, not the entity/call_def sym).
 fn py_flow_fn(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut DataflowFacts) {
-    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
     let name = py_text(name_node, src);
     let fn_sym = mint_sym(file, EntityKind::Function, &name, None);
     let mut scope: std::collections::HashMap<String, NodeIdx> = std::collections::HashMap::new();
@@ -758,7 +880,15 @@ fn py_flow_fn(node: tree_sitter::Node, src: &[u8], file: &str, out: &mut Dataflo
             }
             if let Some(pname) = name_opt {
                 let ppos = p.start_position();
-                let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &pname, &fn_sym);
+                let id = push_node(
+                    out,
+                    file,
+                    ppos.row as u32,
+                    ppos.column as u32,
+                    "param",
+                    &pname,
+                    &fn_sym,
+                );
                 out.param_pos.push((id.clone(), pos));
                 scope.insert(pname, id);
                 pos += 1;
@@ -796,7 +926,15 @@ fn py_flow_stmt(
         "assignment" => py_flow_assignment(node, src, file, fn_sym, scope, out),
         "return_statement" => {
             let pos = node.start_position();
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "ret", "", fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "ret",
+                "",
+                fn_sym,
+            );
             if let Some(val) = node.named_child(0) {
                 let v = py_flow_expr(val, src, file, fn_sym, scope, out);
                 out.edges.push(DfEdge { from: v, to: id });
@@ -823,7 +961,9 @@ fn py_flow_assignment(
     scope: &mut std::collections::HashMap<String, NodeIdx>,
     out: &mut DataflowFacts,
 ) {
-    let Some(right) = node.child_by_field_name("right") else { return };
+    let Some(right) = node.child_by_field_name("right") else {
+        return;
+    };
     let rhs = py_flow_expr(right, src, file, fn_sym, scope, out);
     if let Some(left) = node.child_by_field_name("left") {
         py_bind_pattern(left, rhs, src, file, fn_sym, scope, out);
@@ -848,7 +988,15 @@ fn py_bind_pattern(
         "identifier" => {
             let name = py_text(node, src);
             let pos = node.start_position();
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "let_bind", &name, fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "let_bind",
+                &name,
+                fn_sym,
+            );
             out.edges.push(DfEdge { from: rhs, to: id });
             scope.insert(name, id);
         }
@@ -865,7 +1013,11 @@ fn py_bind_pattern(
 /// Identifiers bound by a `for`/comprehension pattern (tuple unpacking flattens
 /// to every leaf identifier); returns `(name, the identifier's own node)` pairs
 /// so the caller can mint a correctly-positioned `let_bind`.
-fn py_pattern_identifiers<'t>(node: tree_sitter::Node<'t>, src: &[u8], out: &mut Vec<(String, tree_sitter::Node<'t>)>) {
+fn py_pattern_identifiers<'t>(
+    node: tree_sitter::Node<'t>,
+    src: &[u8],
+    out: &mut Vec<(String, tree_sitter::Node<'t>)>,
+) {
     match node.kind() {
         "identifier" => out.push((py_text(node, src), node)),
         "tuple_pattern" | "list_pattern" | "pattern_list" => {
@@ -888,7 +1040,9 @@ fn py_flow_for(
 ) {
     let pos = node.start_position();
     let mut rcur = node.walk();
-    let iter_expr = node.children_by_field_name("right", &mut rcur).find(|n| n.is_named());
+    let iter_expr = node
+        .children_by_field_name("right", &mut rcur)
+        .find(|n| n.is_named());
     let coll = iter_expr.map(|e| py_flow_expr(e, src, file, fn_sym, scope, out));
     let mut var_name = String::new();
     if let Some(left) = node.child_by_field_name("left") {
@@ -896,18 +1050,35 @@ fn py_flow_for(
         py_pattern_identifiers(left, src, &mut names);
         for (i, (name, nnode)) in names.iter().enumerate() {
             let npos = nnode.start_position();
-            let id = push_node(out, file, npos.row as u32, npos.column as u32, "let_bind", name, fn_sym);
+            let id = push_node(
+                out,
+                file,
+                npos.row as u32,
+                npos.column as u32,
+                "let_bind",
+                name,
+                fn_sym,
+            );
             if let Some(c) = &coll {
-                out.edges.push(DfEdge { from: c.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: c.clone(),
+                    to: id.clone(),
+                });
             }
             scope.insert(name.clone(), id);
-            if i == 0 { var_name = name.clone(); }
+            if i == 0 {
+                var_name = name.clone();
+            }
         }
     }
     let end = node.end_position();
     out.loops.push(LoopFact {
-        file: file.into(), start: pos.row as u32, end: end.row as u32,
-        var: var_name, collection: String::new(), fn_sym: fn_sym.into(),
+        file: file.into(),
+        start: pos.row as u32,
+        end: end.row as u32,
+        var: var_name,
+        collection: String::new(),
+        fn_sym: fn_sym.into(),
     });
     if let Some(body) = node.child_by_field_name("body") {
         py_flow_stmt(body, src, file, fn_sym, scope, out);
@@ -928,8 +1099,12 @@ fn py_flow_while(
     }
     let end = node.end_position();
     out.loops.push(LoopFact {
-        file: file.into(), start: pos.row as u32, end: end.row as u32,
-        var: String::new(), collection: String::new(), fn_sym: fn_sym.into(),
+        file: file.into(),
+        start: pos.row as u32,
+        end: end.row as u32,
+        var: String::new(),
+        collection: String::new(),
+        fn_sym: fn_sym.into(),
     });
     if let Some(body) = node.child_by_field_name("body") {
         py_flow_stmt(body, src, file, fn_sym, scope, out);
@@ -960,17 +1135,32 @@ fn py_comprehension_flow(
         match clause.kind() {
             "for_in_clause" => {
                 let mut rcur = clause.walk();
-                let iter_expr = clause.children_by_field_name("right", &mut rcur).find(|n| n.is_named());
+                let iter_expr = clause
+                    .children_by_field_name("right", &mut rcur)
+                    .find(|n| n.is_named());
                 let coll = iter_expr.map(|e| py_flow_expr(e, src, file, fn_sym, scope, out));
                 if let Some(left) = clause.child_by_field_name("left") {
                     let mut names = Vec::new();
                     py_pattern_identifiers(left, src, &mut names);
                     for (name, nnode) in &names {
-                        if loop_var.is_empty() { loop_var = name.clone(); }
+                        if loop_var.is_empty() {
+                            loop_var = name.clone();
+                        }
                         let npos = nnode.start_position();
-                        let id = push_node(out, file, npos.row as u32, npos.column as u32, "let_bind", name, fn_sym);
+                        let id = push_node(
+                            out,
+                            file,
+                            npos.row as u32,
+                            npos.column as u32,
+                            "let_bind",
+                            name,
+                            fn_sym,
+                        );
                         if let Some(c) = &coll {
-                            out.edges.push(DfEdge { from: c.clone(), to: id.clone() });
+                            out.edges.push(DfEdge {
+                                from: c.clone(),
+                                to: id.clone(),
+                            });
                         }
                         scope.insert(name.clone(), id);
                     }
@@ -998,14 +1188,29 @@ fn py_comprehension_flow(
     } else if let Some(body_expr) = node.child_by_field_name("body") {
         fill_ids.push(py_flow_expr(body_expr, src, file, fn_sym, scope, out));
     }
-    let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", "", fn_sym);
+    let id = push_node(
+        out,
+        file,
+        pos.row as u32,
+        pos.column as u32,
+        "new",
+        "",
+        fn_sym,
+    );
     for f in fill_ids {
-        out.edges.push(DfEdge { from: f, to: id.clone() });
+        out.edges.push(DfEdge {
+            from: f,
+            to: id.clone(),
+        });
     }
     let end = node.end_position();
     out.loops.push(LoopFact {
-        file: file.into(), start: pos.row as u32, end: end.row as u32,
-        var: loop_var, collection: String::new(), fn_sym: fn_sym.into(),
+        file: file.into(),
+        start: pos.row as u32,
+        end: end.row as u32,
+        var: loop_var,
+        collection: String::new(),
+        fn_sym: fn_sym.into(),
     });
     id
 }
@@ -1026,14 +1231,33 @@ fn py_flow_expr(
     match node.kind() {
         "identifier" => {
             let name = py_text(node, src);
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "var_read", &name, fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "var_read",
+                &name,
+                fn_sym,
+            );
             if let Some(b) = scope.get(&name) {
-                out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: b.clone(),
+                    to: id.clone(),
+                });
             }
             id
         }
         "true" | "false" | "none" | "integer" | "float" | "string" | "concatenated_string" => {
-            push_node(out, file, pos.row as u32, pos.column as u32, "lit", "", fn_sym)
+            push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "lit",
+                "",
+                fn_sym,
+            )
         }
         // f(args) / recv.method(args): each positional argument flows into the
         // call result with `df_arg` recording its 0-based slot; a keyword
@@ -1046,7 +1270,9 @@ fn py_flow_expr(
             let mut recv: Option<NodeIdx> = None;
             let mut callee_name = String::new();
             match func.map(|f| f.kind()) {
-                Some("identifier") => { callee_name = py_text(func.unwrap(), src); }
+                Some("identifier") => {
+                    callee_name = py_text(func.unwrap(), src);
+                }
                 Some("attribute") => {
                     let f = func.unwrap();
                     if let Some(obj) = f.child_by_field_name("object") {
@@ -1088,14 +1314,32 @@ fn py_flow_expr(
                 }
             }
             let is_ctor = callee_name.chars().next().is_some_and(|c| c.is_uppercase());
-            let (kind, var) = if is_ctor { ("new", callee_name.as_str()) } else { ("call_res", "") };
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, kind, var, fn_sym);
+            let (kind, var) = if is_ctor {
+                ("new", callee_name.as_str())
+            } else {
+                ("call_res", "")
+            };
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                kind,
+                var,
+                fn_sym,
+            );
             if let Some(r) = recv {
-                out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: r.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), -1, r));
             }
             for (p, (name, vid)) in arg_ids.into_iter().enumerate() {
-                out.edges.push(DfEdge { from: vid.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: vid.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), p as i64, vid.clone()));
                 if let Some(n) = name {
                     out.fields.push((id.clone(), n, vid));
@@ -1107,41 +1351,108 @@ fn py_flow_expr(
         // the accessed name so a `df_field` write can be matched against a
         // read of the same field.
         "attribute" => {
-            let obj = node.child_by_field_name("object").map(|o| py_flow_expr(o, src, file, fn_sym, scope, out));
-            let name = node.child_by_field_name("attribute").map(|a| py_text(a, src)).unwrap_or_default();
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "member", &name, fn_sym);
+            let obj = node
+                .child_by_field_name("object")
+                .map(|o| py_flow_expr(o, src, file, fn_sym, scope, out));
+            let name = node
+                .child_by_field_name("attribute")
+                .map(|a| py_text(a, src))
+                .unwrap_or_default();
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "member",
+                &name,
+                fn_sym,
+            );
             if let Some(o) = obj {
-                out.edges.push(DfEdge { from: o, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: o,
+                    to: id.clone(),
+                });
             }
             id
         }
         "subscript" => {
-            let val = node.child_by_field_name("value").map(|v| py_flow_expr(v, src, file, fn_sym, scope, out));
+            let val = node
+                .child_by_field_name("value")
+                .map(|v| py_flow_expr(v, src, file, fn_sym, scope, out));
             let mut cur = node.walk();
             for sub in node.children_by_field_name("subscript", &mut cur) {
                 let _ = py_flow_expr(sub, src, file, fn_sym, scope, out);
             }
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "member", "", fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "member",
+                "",
+                fn_sym,
+            );
             if let Some(v) = val {
-                out.edges.push(DfEdge { from: v, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: v,
+                    to: id.clone(),
+                });
             }
             id
         }
         "binary_operator" | "boolean_operator" | "comparison_operator" => {
             let mut cur = node.walk();
             let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
-            let l = kids.first().map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
-            let r = kids.last().map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "binop", "", fn_sym);
-            if let Some(l) = l { out.edges.push(DfEdge { from: l, to: id.clone() }); }
-            if let Some(r) = r { out.edges.push(DfEdge { from: r, to: id.clone() }); }
+            let l = kids
+                .first()
+                .map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
+            let r = kids
+                .last()
+                .map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "binop",
+                "",
+                fn_sym,
+            );
+            if let Some(l) = l {
+                out.edges.push(DfEdge {
+                    from: l,
+                    to: id.clone(),
+                });
+            }
+            if let Some(r) = r {
+                out.edges.push(DfEdge {
+                    from: r,
+                    to: id.clone(),
+                });
+            }
             id
         }
         "not_operator" | "unary_operator" => {
             let mut cur = node.walk();
-            let v = node.named_children(&mut cur).next().map(|n| py_flow_expr(n, src, file, fn_sym, scope, out));
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "unop", "", fn_sym);
-            if let Some(v) = v { out.edges.push(DfEdge { from: v, to: id.clone() }); }
+            let v = node
+                .named_children(&mut cur)
+                .next()
+                .map(|n| py_flow_expr(n, src, file, fn_sym, scope, out));
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "unop",
+                "",
+                fn_sym,
+            );
+            if let Some(v) = v {
+                out.edges.push(DfEdge {
+                    from: v,
+                    to: id.clone(),
+                });
+            }
             id
         }
         // `<true_expr> if <cond> else <false_expr>`: the value is EITHER
@@ -1150,14 +1461,36 @@ fn py_flow_expr(
         "conditional_expression" => {
             let mut cur = node.walk();
             let kids: Vec<tree_sitter::Node> = node.named_children(&mut cur).collect();
-            let cons = kids.first().map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
+            let cons = kids
+                .first()
+                .map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
             if let Some(cond) = kids.get(1) {
                 let _ = py_flow_expr(*cond, src, file, fn_sym, scope, out);
             }
-            let alt = kids.get(2).map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "cond", "", fn_sym);
-            if let Some(c) = cons { out.edges.push(DfEdge { from: c, to: id.clone() }); }
-            if let Some(a) = alt { out.edges.push(DfEdge { from: a, to: id.clone() }); }
+            let alt = kids
+                .get(2)
+                .map(|n| py_flow_expr(*n, src, file, fn_sym, scope, out));
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "cond",
+                "",
+                fn_sym,
+            );
+            if let Some(c) = cons {
+                out.edges.push(DfEdge {
+                    from: c,
+                    to: id.clone(),
+                });
+            }
+            if let Some(a) = alt {
+                out.edges.push(DfEdge {
+                    from: a,
+                    to: id.clone(),
+                });
+            }
             id
         }
         "parenthesized_expression" | "await" => {
@@ -1165,7 +1498,15 @@ fn py_flow_expr(
             let inner = node.named_children(&mut cur).next();
             match inner {
                 Some(inner) => py_flow_expr(inner, src, file, fn_sym, scope, out),
-                None => push_node(out, file, pos.row as u32, pos.column as u32, "expr", "", fn_sym),
+                None => push_node(
+                    out,
+                    file,
+                    pos.row as u32,
+                    pos.column as u32,
+                    "expr",
+                    "",
+                    fn_sym,
+                ),
             }
         }
         // `lambda params: body`: lift as its OWN fn scope under a synthetic
@@ -1183,7 +1524,15 @@ fn py_flow_expr(
                     let (name_opt, _ty) = py_param_name_and_type(p, src);
                     if let Some(pname) = name_opt {
                         let ppos = p.start_position();
-                        let id = push_node(out, file, ppos.row as u32, ppos.column as u32, "param", &pname, &lam_sym);
+                        let id = push_node(
+                            out,
+                            file,
+                            ppos.row as u32,
+                            ppos.column as u32,
+                            "param",
+                            &pname,
+                            &lam_sym,
+                        );
                         out.param_pos.push((id.clone(), i as u32));
                         scope.insert(pname, id);
                     }
@@ -1192,22 +1541,51 @@ fn py_flow_expr(
             if let Some(body) = node.child_by_field_name("body") {
                 let v = py_flow_expr(body, src, file, &lam_sym, scope, out);
                 let end = node.end_position();
-                let ret = push_node(out, file, end.row as u32, end.column as u32, "ret", "", &lam_sym);
+                let ret = push_node(
+                    out,
+                    file,
+                    end.row as u32,
+                    end.column as u32,
+                    "ret",
+                    "",
+                    &lam_sym,
+                );
                 out.edges.push(DfEdge { from: v, to: ret });
             }
-            push_node(out, file, pos.row as u32, pos.column as u32, "closure", &lam_sym, fn_sym)
+            push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "closure",
+                &lam_sym,
+                fn_sym,
+            )
         }
-        "list_comprehension" | "set_comprehension" | "generator_expression" | "dictionary_comprehension" => {
-            py_comprehension_flow(node, src, file, fn_sym, scope, out)
-        }
+        "list_comprehension"
+        | "set_comprehension"
+        | "generator_expression"
+        | "dictionary_comprehension" => py_comprehension_flow(node, src, file, fn_sym, scope, out),
         "list" | "set" | "tuple" => {
             let mut cur = node.walk();
-            let ids: Vec<NodeIdx> = node.named_children(&mut cur)
+            let ids: Vec<NodeIdx> = node
+                .named_children(&mut cur)
                 .map(|el| py_flow_expr(el, src, file, fn_sym, scope, out))
                 .collect();
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", "", fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "new",
+                "",
+                fn_sym,
+            );
             for v in ids {
-                out.edges.push(DfEdge { from: v, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: v,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1221,9 +1599,11 @@ fn py_flow_expr(
                 match child.kind() {
                     "pair" => {
                         let key = child.child_by_field_name("key");
-                        let val = child.child_by_field_name("value")
+                        let val = child
+                            .child_by_field_name("value")
                             .map(|v| py_flow_expr(v, src, file, fn_sym, scope, out));
-                        let name = key.filter(|k| k.kind() == "string")
+                        let name = key
+                            .filter(|k| k.kind() == "string")
                             .and_then(|k| k.utf8_text(src).ok())
                             .map(|s| s.trim_matches(['"', '\'']).to_string())
                             .unwrap_or_default();
@@ -1240,9 +1620,20 @@ fn py_flow_expr(
                     _ => {}
                 }
             }
-            let id = push_node(out, file, pos.row as u32, pos.column as u32, "new", "", fn_sym);
+            let id = push_node(
+                out,
+                file,
+                pos.row as u32,
+                pos.column as u32,
+                "new",
+                "",
+                fn_sym,
+            );
             for (name, v) in filled {
-                out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: v.clone(),
+                    to: id.clone(),
+                });
                 if !name.is_empty() {
                     out.fields.push((id.clone(), name, v));
                 }
@@ -1255,7 +1646,17 @@ fn py_flow_expr(
             for c in node.named_children(&mut cur) {
                 last = Some(py_flow_expr(c, src, file, fn_sym, scope, out));
             }
-            last.unwrap_or_else(|| push_node(out, file, pos.row as u32, pos.column as u32, "expr", "", fn_sym))
+            last.unwrap_or_else(|| {
+                push_node(
+                    out,
+                    file,
+                    pos.row as u32,
+                    pos.column as u32,
+                    "expr",
+                    "",
+                    fn_sym,
+                )
+            })
         }
     }
 }
@@ -1268,12 +1669,18 @@ mod tests {
     fn python_entities_class_method_function_module() {
         let src = "\"\"\"Module doc.\"\"\"\n\n\nclass Repo:\n    def fetch(self, id: int) -> Report:\n        return Report()\n\n\ndef helper(n: int) -> int:\n    return n\n";
         let es = PyTypes.extract("app.py", src).entities;
-        let module = es.iter().find(|e| e.kind == EntityKind::Module).expect("module entity");
+        let module = es
+            .iter()
+            .find(|e| e.kind == EntityKind::Module)
+            .expect("module entity");
         assert_eq!(module.line, 1);
         let repo = es.iter().find(|e| e.name == "Repo").expect("class entity");
         assert_eq!(repo.kind, EntityKind::Class);
         assert!(repo.parent.is_none());
-        let fetch = es.iter().find(|e| e.name == "fetch").expect("method entity");
+        let fetch = es
+            .iter()
+            .find(|e| e.name == "fetch")
+            .expect("method entity");
         assert_eq!(fetch.kind, EntityKind::Method);
         assert_eq!(fetch.parent.as_deref(), Some(repo.sym.as_str()));
         // self dropped: one param slot only for `id`, which is a builtin (no ref).
@@ -1281,7 +1688,10 @@ mod tests {
         assert_eq!(ty.params.len(), 1, "{ty:?}");
         assert!(ty.params[0].is_empty(), "int is a builtin, no ref: {ty:?}");
         assert_eq!(ty.ret, vec![TypeRef::Named("Report".into())]);
-        let helper = es.iter().find(|e| e.name == "helper").expect("function entity");
+        let helper = es
+            .iter()
+            .find(|e| e.name == "helper")
+            .expect("function entity");
         assert_eq!(helper.kind, EntityKind::Function);
         assert!(helper.parent.is_none());
     }
@@ -1327,16 +1737,36 @@ def make(store):
     return store.save(w)
 ";
         let facts = PyTypes.extract_calls("app.py", src);
-        let render_def = facts.defs.iter().find(|d| d.name == "render").expect("render def");
+        let render_def = facts
+            .defs
+            .iter()
+            .find(|d| d.name == "render")
+            .expect("render def");
         assert_eq!(render_def.kind, CallKind::Method);
-        let make_def = facts.defs.iter().find(|d| d.name == "make").expect("make def");
+        let make_def = facts
+            .defs
+            .iter()
+            .find(|d| d.name == "make")
+            .expect("make def");
         assert_eq!(make_def.kind, CallKind::Free);
         // attribute call: bare trailing name only.
-        assert!(facts.sites.iter().any(|s| s.callee == "helper"), "{:?}", facts.sites);
-        assert!(facts.sites.iter().any(|s| s.callee == "save"), "{:?}", facts.sites);
+        assert!(
+            facts.sites.iter().any(|s| s.callee == "helper"),
+            "{:?}",
+            facts.sites
+        );
+        assert!(
+            facts.sites.iter().any(|s| s.callee == "save"),
+            "{:?}",
+            facts.sites
+        );
         // capitalized bare call is present as a call site too (ctor df_node is
         // a dataflow-layer concept, checked separately below).
-        assert!(facts.sites.iter().any(|s| s.callee == "Widget"), "{:?}", facts.sites);
+        assert!(
+            facts.sites.iter().any(|s| s.callee == "Widget"),
+            "{:?}",
+            facts.sites
+        );
     }
 
     #[test]
@@ -1350,17 +1780,34 @@ def build(xs):
 ";
         let df = PyTypes.extract_dataflow("app.py", src);
         // capitalized call mints a `new` node carrying the type name.
-        let ctor = df.nodes.iter().find(|n| n.kind == "new" && n.var == "Widget").expect("ctor node");
+        let ctor = df
+            .nodes
+            .iter()
+            .find(|n| n.kind == "new" && n.var == "Widget")
+            .expect("ctor node");
         // keyword argument also lands in df_field under its name.
-        assert!(df.fields.iter().any(|(id, name, _)| id == &ctor.id && name == "label"), "{:?}", df.fields);
+        assert!(
+            df.fields
+                .iter()
+                .any(|(id, name, _)| id == &ctor.id && name == "label"),
+            "{:?}",
+            df.fields
+        );
         // list comprehension records a loop span with its loop variable.
         assert!(df.loops.iter().any(|l| l.var == "n"), "{:?}", df.loops);
         // lambda lifts as its own closure scope with a param node.
-        let closure = df.nodes.iter().find(|n| n.kind == "closure").expect("closure node");
+        let closure = df
+            .nodes
+            .iter()
+            .find(|n| n.kind == "closure")
+            .expect("closure node");
         let lam_sym = closure.var.clone();
         assert!(
-            df.nodes.iter().any(|n| n.kind == "param" && n.fn_sym == lam_sym && n.var == "value"),
-            "{:?}", df.nodes
+            df.nodes
+                .iter()
+                .any(|n| n.kind == "param" && n.fn_sym == lam_sym && n.var == "value"),
+            "{:?}",
+            df.nodes
         );
     }
 
@@ -1376,11 +1823,22 @@ def compute(count):
     return count
 ";
         let docs = PyTypes.extract("app.py", src).docs;
-        let doc = docs.iter().find(|d| d.text.starts_with("Compute a thing")).expect("docstring");
-        let param_tag = doc.tags.iter().find(|t| t.tag == "param").expect("param tag");
+        let doc = docs
+            .iter()
+            .find(|d| d.text.starts_with("Compute a thing"))
+            .expect("docstring");
+        let param_tag = doc
+            .tags
+            .iter()
+            .find(|t| t.tag == "param")
+            .expect("param tag");
         assert_eq!(param_tag.arg, "count");
         assert_eq!(param_tag.text, "how many");
-        assert!(doc.tags.iter().any(|t| t.tag == "returns"), "{:?}", doc.tags);
+        assert!(
+            doc.tags.iter().any(|t| t.tag == "returns"),
+            "{:?}",
+            doc.tags
+        );
     }
 
     // ── template_parts ──────────────────────────────────────────────────────

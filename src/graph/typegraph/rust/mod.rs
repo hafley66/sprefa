@@ -4,18 +4,24 @@
 
 use std::collections::BTreeSet;
 
+use syn::spanned::Spanned;
 use syn::{
     AngleBracketedGenericArguments, Fields, GenericArgument, GenericParam, Generics, Item, Path,
     PathArguments, ReturnType, Type, TypeParamBound, WherePredicate,
 };
-use syn::spanned::Spanned;
 
 use super::*;
 
 impl TypeLang for RustTypes {
-    fn name(&self) -> &'static str { "rust" }
-    fn matches(&self, path: &str) -> bool { path.ends_with(".rs") }
-    fn supports_analysis_bundle(&self) -> bool { true }
+    fn name(&self) -> &'static str {
+        "rust"
+    }
+    fn matches(&self, path: &str) -> bool {
+        path.ends_with(".rs")
+    }
+    fn supports_analysis_bundle(&self) -> bool {
+        true
+    }
     // One syn parse feeds both the entity pass and the edge pass.
     fn extract(&self, file: &str, content: &str) -> TypeFacts {
         let Ok(parsed) = syn::parse_file(content) else {
@@ -73,10 +79,13 @@ impl TypeLang for RustTypes {
             sites: rust_call_sites_from(&parsed, file),
         });
         let dataflow = mask.dataflow.then(|| rust_dataflow_from(&parsed, file));
-        AnalysisBundle { types, calls, dataflow }
+        AnalysisBundle {
+            types,
+            calls,
+            dataflow,
+        }
     }
 }
-
 
 pub fn edges(content: &str) -> Vec<TypeEdge> {
     let Ok(file) = syn::parse_file(content) else {
@@ -297,7 +306,6 @@ fn path_name(path: &Path) -> Option<String> {
     }
 }
 
-
 // ── Kotlin ──────────────────────────────────────────────────────────────────
 //
 // The tree-sitter-kotlin grammar folds `interface` into `class_declaration`
@@ -308,7 +316,6 @@ fn path_name(path: &Path) -> Option<String> {
 // properties are "field", enum entries are "variant". Declared type-parameter
 // names are excluded from refs (`Repo<T>(x: T)` has no edge to T), unlike the
 // syn extractor which leaks them — tree-sitter hands us the param list cheap.
-
 
 #[cfg(test)]
 fn rust_entities(file: &str, content: &str) -> Vec<TypeEntity> {
@@ -332,20 +339,41 @@ fn rust_entities_from(parsed: &syn::File, file: &str) -> Vec<TypeEntity> {
 /// module-level `const` is). Non-goals: consts inside `impl`/`mod`/fn bodies,
 /// non-string consts (no entity, no row — same "don't mint for every const"
 /// rule the TS lift follows), and no `as const` equivalent (Rust has none).
-fn rust_const_values_from(parsed: &syn::File, file: &str) -> (Vec<TypeEntity>, Vec<ConstValueFact>) {
+fn rust_const_values_from(
+    parsed: &syn::File,
+    file: &str,
+) -> (Vec<TypeEntity>, Vec<ConstValueFact>) {
     let mut entities = Vec::new();
     let mut consts = Vec::new();
     for item in &parsed.items {
         let Item::Const(c) = item else { continue };
-        let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &*c.expr else { continue };
+        let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(s),
+            ..
+        }) = &*c.expr
+        else {
+            continue;
+        };
         let name = c.ident.to_string();
         let sym = mint_sym(file, EntityKind::Const, &name, None);
         let line = rust_line(c.ident.span());
         entities.push(TypeEntity {
-            sym: sym.clone(), name, kind: EntityKind::Const,
-            parent: None, file: file.to_string(), line, ty: None,
+            sym: sym.clone(),
+            name,
+            kind: EntityKind::Const,
+            parent: None,
+            file: file.to_string(),
+            line,
+            ty: None,
         });
-        consts.push(ConstValueFact { sym, field: String::new(), text: s.value(), kind: "lit", file: file.to_string(), line });
+        consts.push(ConstValueFact {
+            sym,
+            field: String::new(),
+            text: s.value(),
+            kind: "lit",
+            file: file.to_string(),
+            line,
+        });
     }
     (entities, consts)
 }
@@ -359,10 +387,18 @@ fn rust_owner_kinds(parsed: &syn::File) -> std::collections::HashMap<String, Ent
     let mut m = std::collections::HashMap::new();
     for item in &parsed.items {
         match item {
-            Item::Struct(s) => { m.insert(s.ident.to_string(), EntityKind::Struct); }
-            Item::Enum(en) => { m.insert(en.ident.to_string(), EntityKind::Enum); }
-            Item::Union(u) => { m.insert(u.ident.to_string(), EntityKind::Struct); }
-            Item::Trait(t) => { m.insert(t.ident.to_string(), EntityKind::Trait); }
+            Item::Struct(s) => {
+                m.insert(s.ident.to_string(), EntityKind::Struct);
+            }
+            Item::Enum(en) => {
+                m.insert(en.ident.to_string(), EntityKind::Enum);
+            }
+            Item::Union(u) => {
+                m.insert(u.ident.to_string(), EntityKind::Struct);
+            }
+            Item::Trait(t) => {
+                m.insert(t.ident.to_string(), EntityKind::Trait);
+            }
             _ => {}
         }
     }
@@ -383,7 +419,11 @@ fn rust_item_entity(
     // as `Owner.name`, while the stored parent field is the owner's own sym
     // minted with the owner's REAL kind (looked up in `owner_kinds`) so it
     // equality-joins `type_entity.sym`.
-    let mut e = |name: String, line: u32, kind: EntityKind, parent: Option<String>, ty: Option<TypeExpr>| {
+    let mut e = |name: String,
+                 line: u32,
+                 kind: EntityKind,
+                 parent: Option<String>,
+                 ty: Option<TypeExpr>| {
         let parent_sym = parent.as_deref().map(|p| {
             let pk = owner_kinds.get(p).copied().unwrap_or(EntityKind::Struct);
             mint_sym(file, pk, p, None)
@@ -399,11 +439,35 @@ fn rust_item_entity(
         });
     };
     match item {
-        Item::Struct(s) => e(s.ident.to_string(), rust_line(s.ident.span()), EntityKind::Struct, None, None),
-        Item::Enum(en) => e(en.ident.to_string(), rust_line(en.ident.span()), EntityKind::Enum, None, None),
-        Item::Union(u) => e(u.ident.to_string(), rust_line(u.ident.span()), EntityKind::Struct, None, None),
+        Item::Struct(s) => e(
+            s.ident.to_string(),
+            rust_line(s.ident.span()),
+            EntityKind::Struct,
+            None,
+            None,
+        ),
+        Item::Enum(en) => e(
+            en.ident.to_string(),
+            rust_line(en.ident.span()),
+            EntityKind::Enum,
+            None,
+            None,
+        ),
+        Item::Union(u) => e(
+            u.ident.to_string(),
+            rust_line(u.ident.span()),
+            EntityKind::Struct,
+            None,
+            None,
+        ),
         Item::Trait(t) => {
-            e(t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None, None);
+            e(
+                t.ident.to_string(),
+                rust_line(t.ident.span()),
+                EntityKind::Trait,
+                None,
+                None,
+            );
             let owner = Some(t.ident.to_string());
             for ti in &t.items {
                 // Only default methods (a body inside the trait block) get an
@@ -462,16 +526,64 @@ fn rust_docs_from(parsed: &syn::File, file: &str) -> Vec<DocFact> {
 
 fn rust_item_docs(item: &Item, file: &str, out: &mut Vec<DocFact>) {
     match item {
-        Item::Struct(s) => push_doc(out, file, &s.attrs, &s.ident.to_string(), rust_line(s.ident.span()), EntityKind::Struct, None),
-        Item::Enum(en) => push_doc(out, file, &en.attrs, &en.ident.to_string(), rust_line(en.ident.span()), EntityKind::Enum, None),
-        Item::Union(u) => push_doc(out, file, &u.attrs, &u.ident.to_string(), rust_line(u.ident.span()), EntityKind::Struct, None),
-        Item::Trait(t) => push_doc(out, file, &t.attrs, &t.ident.to_string(), rust_line(t.ident.span()), EntityKind::Trait, None),
-        Item::Fn(f) => push_doc(out, file, &f.attrs, &f.sig.ident.to_string(), rust_line(f.sig.ident.span()), EntityKind::Function, None),
+        Item::Struct(s) => push_doc(
+            out,
+            file,
+            &s.attrs,
+            &s.ident.to_string(),
+            rust_line(s.ident.span()),
+            EntityKind::Struct,
+            None,
+        ),
+        Item::Enum(en) => push_doc(
+            out,
+            file,
+            &en.attrs,
+            &en.ident.to_string(),
+            rust_line(en.ident.span()),
+            EntityKind::Enum,
+            None,
+        ),
+        Item::Union(u) => push_doc(
+            out,
+            file,
+            &u.attrs,
+            &u.ident.to_string(),
+            rust_line(u.ident.span()),
+            EntityKind::Struct,
+            None,
+        ),
+        Item::Trait(t) => push_doc(
+            out,
+            file,
+            &t.attrs,
+            &t.ident.to_string(),
+            rust_line(t.ident.span()),
+            EntityKind::Trait,
+            None,
+        ),
+        Item::Fn(f) => push_doc(
+            out,
+            file,
+            &f.attrs,
+            &f.sig.ident.to_string(),
+            rust_line(f.sig.ident.span()),
+            EntityKind::Function,
+            None,
+        ),
         Item::Impl(i) => {
             let owner = primary_type(&i.self_ty);
             for ii in &i.items {
                 if let syn::ImplItem::Fn(m) = ii {
-                    push_doc(out, file, &m.attrs, &m.sig.ident.to_string(), rust_line(m.sig.ident.span()), EntityKind::Method, owner.as_deref());
+                    push_doc(
+                        out,
+                        file,
+                        &m.attrs,
+                        &m.sig.ident.to_string(),
+                        rust_line(m.sig.ident.span()),
+                        EntityKind::Method,
+                        owner.as_deref(),
+                    );
                 }
             }
         }
@@ -479,9 +591,19 @@ fn rust_item_docs(item: &Item, file: &str, out: &mut Vec<DocFact>) {
     }
 }
 
-fn push_doc(out: &mut Vec<DocFact>, file: &str, attrs: &[syn::Attribute], name: &str, line: u32, kind: EntityKind, parent: Option<&str>) {
+fn push_doc(
+    out: &mut Vec<DocFact>,
+    file: &str,
+    attrs: &[syn::Attribute],
+    name: &str,
+    line: u32,
+    kind: EntityKind,
+    parent: Option<&str>,
+) {
     let lines = rust_doc_lines(attrs);
-    if lines.is_empty() { return; }
+    if lines.is_empty() {
+        return;
+    }
     let text = lines.join("\n");
     out.push(DocFact {
         sym: mint_sym(file, kind, name, parent),
@@ -496,9 +618,15 @@ fn push_doc(out: &mut Vec<DocFact>, file: &str, attrs: &[syn::Attribute], name: 
 fn rust_doc_lines(attrs: &[syn::Attribute]) -> Vec<String> {
     let mut lines = Vec::new();
     for a in attrs {
-        if !a.path().is_ident("doc") { continue; }
+        if !a.path().is_ident("doc") {
+            continue;
+        }
         if let syn::Meta::NameValue(nv) = &a.meta {
-            if let syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) = &nv.value {
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(s),
+                ..
+            }) = &nv.value
+            {
                 let v = s.value();
                 lines.push(v.strip_prefix(' ').unwrap_or(&v).to_string());
             }
@@ -534,7 +662,11 @@ fn rust_fn_type(sig: &syn::Signature) -> TypeExpr {
 // attribute to the enclosing named def. ---
 
 fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
-    let mut v = RustCallDefs { file, stack: Vec::new(), out: Vec::new() };
+    let mut v = RustCallDefs {
+        file,
+        stack: Vec::new(),
+        out: Vec::new(),
+    };
     for item in &parsed.items {
         match item {
             // Top-level free fn: Free callable, then walk the body for nested
@@ -544,7 +676,13 @@ fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
                 let name = f.sig.ident.to_string();
                 let sym = mint_sym(file, EntityKind::Function, &name, None);
                 let end = f.block.span().end().line as u32;
-                v.emit(sym.clone(), name, CallKind::Free, rust_line(f.sig.ident.span()), end);
+                v.emit(
+                    sym.clone(),
+                    name,
+                    CallKind::Free,
+                    rust_line(f.sig.ident.span()),
+                    end,
+                );
                 v.walk_body(&sym, &f.block);
             }
             // Impl method: Method keyed to the impl's primary type (existing
@@ -557,7 +695,13 @@ fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
                         let name = m.sig.ident.to_string();
                         let sym = mint_sym(file, EntityKind::Method, &name, owner.as_deref());
                         let end = m.block.span().end().line as u32;
-                        v.emit(sym.clone(), name, CallKind::Method, rust_line(m.sig.ident.span()), end);
+                        v.emit(
+                            sym.clone(),
+                            name,
+                            CallKind::Method,
+                            rust_line(m.sig.ident.span()),
+                            end,
+                        );
                         v.walk_body(&sym, &m.block);
                     }
                 }
@@ -576,7 +720,13 @@ fn rust_call_defs_from(parsed: &syn::File, file: &str) -> Vec<CallDef> {
                             Some(block) => block.span().end().line as u32,
                             None => m.sig.span().end().line as u32,
                         };
-                        v.emit(sym.clone(), name, CallKind::Method, rust_line(m.sig.ident.span()), end);
+                        v.emit(
+                            sym.clone(),
+                            name,
+                            CallKind::Method,
+                            rust_line(m.sig.ident.span()),
+                            end,
+                        );
                         if let Some(block) = &m.default {
                             v.walk_body(&sym, block);
                         }
@@ -605,7 +755,14 @@ struct RustCallDefs<'a> {
 
 impl<'a> RustCallDefs<'a> {
     fn emit(&mut self, sym: String, name: String, kind: CallKind, line: u32, end: u32) {
-        self.out.push(CallDef { sym, name, kind, file: self.file.to_string(), line, end });
+        self.out.push(CallDef {
+            sym,
+            name,
+            kind,
+            file: self.file.to_string(),
+            line,
+            end,
+        });
     }
     fn cur(&self) -> &str {
         self.stack.last().map(String::as_str).unwrap_or("")
@@ -627,7 +784,13 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for RustCallDefs<'a> {
         let name = f.sig.ident.to_string();
         let sym = mint_sym(self.file, EntityKind::Function, &name, None);
         let end = f.block.span().end().line as u32;
-        self.emit(sym.clone(), name, CallKind::Free, rust_line(f.sig.ident.span()), end);
+        self.emit(
+            sym.clone(),
+            name,
+            CallKind::Free,
+            rust_line(f.sig.ident.span()),
+            end,
+        );
         self.walk_body(&sym, &f.block);
     }
     // A closure (`|x| ...`). Sym is `lambda_sym(enclosing, "<line>_<col>")` — the
@@ -653,7 +816,10 @@ impl<'ast, 'a> syn::visit::Visit<'ast> for RustCallDefs<'a> {
 /// `self.foo.bar` -> "bar". Used to key the bare-name resolver the same way
 /// `type_link` resolves a type reference.
 fn rust_call_sites_from(parsed: &syn::File, file: &str) -> Vec<CallSite> {
-    let mut v = CallCollector { file, sites: Vec::new() };
+    let mut v = CallCollector {
+        file,
+        sites: Vec::new(),
+    };
     syn::visit::visit_file(&mut v, parsed);
     v.sites
 }
@@ -756,8 +922,15 @@ fn rust_dataflow_from(parsed: &syn::File, file: &str) -> DataflowFacts {
                 for ii in &i.items {
                     if let syn::ImplItem::Fn(m) = ii {
                         let sym = match &owner {
-                            Some(o) => mint_sym(file, EntityKind::Method, &m.sig.ident.to_string(), Some(o)),
-                            None => mint_sym(file, EntityKind::Function, &m.sig.ident.to_string(), None),
+                            Some(o) => mint_sym(
+                                file,
+                                EntityKind::Method,
+                                &m.sig.ident.to_string(),
+                                Some(o),
+                            ),
+                            None => {
+                                mint_sym(file, EntityKind::Function, &m.sig.ident.to_string(), None)
+                            }
                         };
                         flow_fn_body(&sym, &m.sig, &m.block, file, &mut out);
                     }
@@ -788,7 +961,10 @@ fn flow_fn_body(
     for arg in &sig.inputs {
         if let syn::FnArg::Typed(pt) = arg {
             if let syn::Pat::Ident(pi) = &*pt.pat {
-                let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+                let (l, c) = (
+                    pi.ident.span().start().line as u32,
+                    pi.ident.span().start().column as u32,
+                );
                 let id = push_node(out, file, l, c, "param", &pi.ident.to_string(), fn_sym);
                 out.param_pos.push((id.clone(), pos));
                 scope.insert(pi.ident.to_string(), id);
@@ -809,7 +985,10 @@ fn flow_fn_body(
     let mut loop_breaks: Vec<(Option<String>, Vec<NodeIdx>)> = Vec::new();
     if let Some((tail, l, c)) = flow_block(block, file, fn_sym, &mut scope, out, &mut loop_breaks) {
         let ret = push_node(out, file, l, c, "ret", "", fn_sym);
-        out.edges.push(DfEdge { from: tail, to: ret });
+        out.edges.push(DfEdge {
+            from: tail,
+            to: ret,
+        });
     }
 }
 
@@ -834,7 +1013,10 @@ fn flow_block(
                     // bind every ident in the pattern (handles `let (a, b) = pair`),
                     // each tainted by the rhs conservatively.
                     for (_, bid) in bind_pat(&loc.pat, file, fn_sym, scope, out) {
-                        out.edges.push(DfEdge { from: rhs.clone(), to: bid });
+                        out.edges.push(DfEdge {
+                            from: rhs.clone(),
+                            to: bid,
+                        });
                     }
                 }
             }
@@ -851,7 +1033,6 @@ fn flow_block(
     }
     tail
 }
-
 
 /// A call expression whose callee is a bare path with a capitalized last
 /// segment is a tuple-struct or enum-variant constructor (`Foo(x)`,
@@ -874,14 +1055,32 @@ fn ctor_name(e: &syn::Expr) -> Option<String> {
 /// may miss ad-hoc allocators behind wrappers or macros.
 fn is_allocator_call(e: &syn::Expr) -> bool {
     if let syn::Expr::Path(p) = e {
-        let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+        let segs: Vec<String> = p
+            .path
+            .segments
+            .iter()
+            .map(|s| s.ident.to_string())
+            .collect();
         let full = segs.join("::");
         if full.ends_with("::new") {
-            return segs.iter().any(|s| matches!(s.as_str(),
-                "Vec" | "HashMap" | "BTreeMap" | "HashSet" | "BTreeSet" | "VecDeque"
-                | "String" | "LinkedList"));
+            return segs.iter().any(|s| {
+                matches!(
+                    s.as_str(),
+                    "Vec"
+                        | "HashMap"
+                        | "BTreeMap"
+                        | "HashSet"
+                        | "BTreeSet"
+                        | "VecDeque"
+                        | "String"
+                        | "LinkedList"
+                )
+            });
         }
-        if matches!(full.as_str(), "Vec::with_capacity" | "HashMap::with_capacity" | "String::with_capacity") {
+        if matches!(
+            full.as_str(),
+            "Vec::with_capacity" | "HashMap::with_capacity" | "String::with_capacity"
+        ) {
             return true;
         }
     }
@@ -893,8 +1092,10 @@ fn is_allocator_call(e: &syn::Expr) -> bool {
 /// cheap-Copy type does not allocate, but the false positive is benign for a
 /// suspect-list filter.
 fn is_allocator_method(ident: &syn::Ident) -> bool {
-    matches!(ident.to_string().as_str(),
-        "collect" | "to_vec" | "to_string" | "to_owned" | "clone" | "format")
+    matches!(
+        ident.to_string().as_str(),
+        "collect" | "to_vec" | "to_string" | "to_owned" | "clone" | "format"
+    )
 }
 
 /// Post-order value flow for one expression. Returns the node id for `e` and
@@ -915,10 +1116,18 @@ fn flow_expr(
     match e {
         // a read of a variable: flow from its binding slot to this read.
         syn::Expr::Path(p) => {
-            let name = p.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+            let name = p
+                .path
+                .segments
+                .last()
+                .map(|s| s.ident.to_string())
+                .unwrap_or_default();
             let id = push_node(out, file, line, col, "var_read", &name, fn_sym);
             if let Some(b) = scope.get(&name) {
-                out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: b.clone(),
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -936,7 +1145,9 @@ fn flow_expr(
         // `Some(x)`) — those become `new` nodes carrying the type name, since
         // they build a value rather than resolve through the call graph.
         syn::Expr::Call(c) => {
-            if is_allocator_call(&c.func) { out.allocators.insert(fn_sym.to_string()); }
+            if is_allocator_call(&c.func) {
+                out.allocators.insert(fn_sym.to_string());
+            }
             let ctor = ctor_name(&c.func);
             let mut children = Vec::new();
             for arg in &c.args {
@@ -948,7 +1159,10 @@ fn flow_expr(
             };
             let id = push_node(out, file, line, col, kind, var, fn_sym);
             for (pos, child) in children.into_iter().enumerate() {
-                out.edges.push(DfEdge { from: child.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: child.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), pos as i64, child));
             }
             id
@@ -958,7 +1172,9 @@ fn flow_expr(
         // `self` in `df_param`), args count 0.. so they align with the
         // callee's typed params.
         syn::Expr::MethodCall(m) => {
-            if is_allocator_method(&m.method) { out.allocators.insert(fn_sym.to_string()); }
+            if is_allocator_method(&m.method) {
+                out.allocators.insert(fn_sym.to_string());
+            }
             let recv = flow_expr(&m.receiver, file, fn_sym, scope, out, loop_breaks);
             let mut children = Vec::new();
             for arg in &m.args {
@@ -968,11 +1184,25 @@ fn flow_expr(
             // start — the same line the call-site extractor records, so the
             // (file, line) call_node join holds for a multiline builder chain.
             let msp = m.method.span().start();
-            let id = push_node(out, file, msp.line as u32, msp.column as u32, "call_res", "", fn_sym);
-            out.edges.push(DfEdge { from: recv.clone(), to: id.clone() });
+            let id = push_node(
+                out,
+                file,
+                msp.line as u32,
+                msp.column as u32,
+                "call_res",
+                "",
+                fn_sym,
+            );
+            out.edges.push(DfEdge {
+                from: recv.clone(),
+                to: id.clone(),
+            });
             out.args.push((id.clone(), -1, recv));
             for (pos, child) in children.into_iter().enumerate() {
-                out.edges.push(DfEdge { from: child.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: child.clone(),
+                    to: id.clone(),
+                });
                 out.args.push((id.clone(), pos as i64, child));
             }
             id
@@ -982,7 +1212,12 @@ fn flow_expr(
         // field-sensitive half the blanket edge can't express. A functional-
         // update base flows in under the pseudo-field "..".
         syn::Expr::Struct(s) => {
-            let ty = s.path.segments.last().map(|sg| sg.ident.to_string()).unwrap_or_default();
+            let ty = s
+                .path
+                .segments
+                .last()
+                .map(|sg| sg.ident.to_string())
+                .unwrap_or_default();
             let mut filled: Vec<(String, NodeIdx)> = Vec::new();
             for f in &s.fields {
                 let v = flow_expr(&f.expr, file, fn_sym, scope, out, loop_breaks);
@@ -992,14 +1227,23 @@ fn flow_expr(
                 };
                 filled.push((name, v));
             }
-            let base = s.rest.as_ref().map(|r| flow_expr(r, file, fn_sym, scope, out, loop_breaks));
+            let base = s
+                .rest
+                .as_ref()
+                .map(|r| flow_expr(r, file, fn_sym, scope, out, loop_breaks));
             let id = push_node(out, file, line, col, "new", &ty, fn_sym);
             for (name, v) in filled {
-                out.edges.push(DfEdge { from: v.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: v.clone(),
+                    to: id.clone(),
+                });
                 out.fields.push((id.clone(), name, v));
             }
             if let Some(b) = base {
-                out.edges.push(DfEdge { from: b.clone(), to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: b.clone(),
+                    to: id.clone(),
+                });
                 out.fields.push((id.clone(), "..".into(), b));
             }
             id
@@ -1014,28 +1258,43 @@ fn flow_expr(
                 syn::Member::Unnamed(i) => i.index.to_string(),
             };
             let id = push_node(out, file, line, col, "member", &name, fn_sym);
-            out.edges.push(DfEdge { from: base, to: id.clone() });
+            out.edges.push(DfEdge {
+                from: base,
+                to: id.clone(),
+            });
             id
         }
         syn::Expr::Paren(p) => flow_expr(&p.expr, file, fn_sym, scope, out, loop_breaks),
         syn::Expr::Reference(r) => {
             let inner = flow_expr(&r.expr, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "borrow", "", fn_sym);
-            out.edges.push(DfEdge { from: inner, to: id.clone() });
+            out.edges.push(DfEdge {
+                from: inner,
+                to: id.clone(),
+            });
             id
         }
         syn::Expr::Binary(b) => {
             let l = flow_expr(&b.left, file, fn_sym, scope, out, loop_breaks);
             let r = flow_expr(&b.right, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "binop", "", fn_sym);
-            out.edges.push(DfEdge { from: l, to: id.clone() });
-            out.edges.push(DfEdge { from: r, to: id.clone() });
+            out.edges.push(DfEdge {
+                from: l,
+                to: id.clone(),
+            });
+            out.edges.push(DfEdge {
+                from: r,
+                to: id.clone(),
+            });
             id
         }
         syn::Expr::Unary(u) => {
             let inner = flow_expr(&u.expr, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "unop", "", fn_sym);
-            out.edges.push(DfEdge { from: inner, to: id.clone() });
+            out.edges.push(DfEdge {
+                from: inner,
+                to: id.clone(),
+            });
             id
         }
         // transparent pass-through: the ? operator does not alter value flow.
@@ -1046,7 +1305,10 @@ fn flow_expr(
             let id = push_node(out, file, line, col, "ret", "", fn_sym);
             if let Some(inner) = &r.expr {
                 let v = flow_expr(inner, file, fn_sym, scope, out, loop_breaks);
-                out.edges.push(DfEdge { from: v, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: v,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1067,7 +1329,10 @@ fn flow_expr(
             let id = push_node(out, file, line, col, "break", "", fn_sym);
             if let Some(value_expr) = &brk.expr {
                 let value_id = flow_expr(value_expr, file, fn_sym, scope, out, loop_breaks);
-                out.edges.push(DfEdge { from: value_id, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: value_id,
+                    to: id.clone(),
+                });
                 let target_label = brk.label.as_ref().map(|lt| lt.ident.to_string());
                 let frame = match &target_label {
                     Some(label) => loop_breaks
@@ -1091,12 +1356,17 @@ fn flow_expr(
             // the whole collection taints each bound element conservatively
             // (a tuple element derives from the iterator's yield value).
             for (_, bid) in &binds {
-                out.edges.push(DfEdge { from: coll.clone(), to: bid.clone() });
+                out.edges.push(DfEdge {
+                    from: coll.clone(),
+                    to: bid.clone(),
+                });
             }
             let lvar = binds.first().map(|(n, _)| n.clone()).unwrap_or_default();
             let end = f.body.span().end().line as u32;
             out.loops.push(LoopFact {
-                file: file.into(), start: line, end,
+                file: file.into(),
+                start: line,
+                end,
                 var: lvar.clone(),
                 collection: String::new(),
                 fn_sym: fn_sym.into(),
@@ -1114,9 +1384,18 @@ fn flow_expr(
         // yield a break value either.
         syn::Expr::While(w) => {
             let _ = flow_expr(&w.cond, file, fn_sym, scope, out, loop_breaks);
-            if let syn::Expr::Let(l) = &*w.cond { let _ = bind_pat(&l.pat, file, fn_sym, scope, out); }
+            if let syn::Expr::Let(l) = &*w.cond {
+                let _ = bind_pat(&l.pat, file, fn_sym, scope, out);
+            }
             let end = w.body.span().end().line as u32;
-            out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
+            out.loops.push(LoopFact {
+                file: file.into(),
+                start: line,
+                end,
+                var: String::new(),
+                collection: String::new(),
+                fn_sym: fn_sym.into(),
+            });
             flow_block(&w.body, file, fn_sym, scope, out, loop_breaks);
             push_node(out, file, line, col, "loop", "", fn_sym)
         }
@@ -1130,14 +1409,26 @@ fn flow_expr(
         // this loop's own node, mirroring the if/match/block tail routing.
         syn::Expr::Loop(l) => {
             let end = l.body.span().end().line as u32;
-            out.loops.push(LoopFact { file: file.into(), start: line, end, var: String::new(), collection: String::new(), fn_sym: fn_sym.into() });
+            out.loops.push(LoopFact {
+                file: file.into(),
+                start: line,
+                end,
+                var: String::new(),
+                collection: String::new(),
+                fn_sym: fn_sym.into(),
+            });
             let label = l.label.as_ref().map(|lbl| lbl.name.ident.to_string());
             loop_breaks.push((label, Vec::new()));
             flow_block(&l.body, file, fn_sym, scope, out, loop_breaks);
-            let (_, break_tails) = loop_breaks.pop().expect("Expr::Loop popping the frame it just pushed");
+            let (_, break_tails) = loop_breaks
+                .pop()
+                .expect("Expr::Loop popping the frame it just pushed");
             let id = push_node(out, file, line, col, "loop", "", fn_sym);
             for tail in break_tails {
-                out.edges.push(DfEdge { from: tail, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: tail,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1154,10 +1445,16 @@ fn flow_expr(
                 .map(|(_, els)| flow_expr(els, file, fn_sym, scope, out, loop_breaks));
             let id = push_node(out, file, line, col, "if", "", fn_sym);
             if let Some((t, _, _)) = then_tail {
-                out.edges.push(DfEdge { from: t, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: t,
+                    to: id.clone(),
+                });
             }
             if let Some(e) = else_tail {
-                out.edges.push(DfEdge { from: e, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: e,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1170,16 +1467,24 @@ fn flow_expr(
             let mut arm_tails = Vec::new();
             for arm in &m.arms {
                 for (_, bid) in bind_pat(&arm.pat, file, fn_sym, scope, out) {
-                    out.edges.push(DfEdge { from: scrut.clone(), to: bid });
+                    out.edges.push(DfEdge {
+                        from: scrut.clone(),
+                        to: bid,
+                    });
                 }
-                if let Some((_, g)) = &arm.guard { let _ = flow_expr(g, file, fn_sym, scope, out, loop_breaks); }
+                if let Some((_, g)) = &arm.guard {
+                    let _ = flow_expr(g, file, fn_sym, scope, out, loop_breaks);
+                }
                 arm_tails.push(flow_expr(&arm.body, file, fn_sym, scope, out, loop_breaks));
             }
             // Arm tails flow into the `match` node: a value-position match
             // carries every arm's value to the consumer (same as `if` above).
             let id = push_node(out, file, line, col, "match", "", fn_sym);
             for t in arm_tails {
-                out.edges.push(DfEdge { from: t, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: t,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1189,7 +1494,10 @@ fn flow_expr(
             let tail = flow_block(&b.block, file, fn_sym, scope, out, loop_breaks);
             let id = push_node(out, file, line, col, "block", "", fn_sym);
             if let Some((t, _, _)) = tail {
-                out.edges.push(DfEdge { from: t, to: id.clone() });
+                out.edges.push(DfEdge {
+                    from: t,
+                    to: id.clone(),
+                });
             }
             id
         }
@@ -1214,7 +1522,15 @@ fn flow_expr(
                 };
                 if let syn::Pat::Ident(pi) = ident_pat {
                     let sp = pi.ident.span().start();
-                    let id = push_node(out, file, sp.line as u32, sp.column as u32, "param", &pi.ident.to_string(), &lam_sym);
+                    let id = push_node(
+                        out,
+                        file,
+                        sp.line as u32,
+                        sp.column as u32,
+                        "param",
+                        &pi.ident.to_string(),
+                        &lam_sym,
+                    );
                     out.param_pos.push((id.clone(), pos));
                     scope.insert(pi.ident.to_string(), id);
                 } else {
@@ -1228,10 +1544,21 @@ fn flow_expr(
             // a `loop` written inside the closure pushes/pops onto this one.
             let mut closure_loop_breaks: Vec<(Option<String>, Vec<NodeIdx>)> = Vec::new();
             let body_val = match c.body.as_ref() {
-                syn::Expr::Block(b) => flow_block(&b.block, file, &lam_sym, scope, out, &mut closure_loop_breaks),
+                syn::Expr::Block(b) => flow_block(
+                    &b.block,
+                    file,
+                    &lam_sym,
+                    scope,
+                    out,
+                    &mut closure_loop_breaks,
+                ),
                 other => {
                     let sp = other.span().start();
-                    Some((flow_expr(other, file, &lam_sym, scope, out, &mut closure_loop_breaks), sp.line as u32, sp.column as u32))
+                    Some((
+                        flow_expr(other, file, &lam_sym, scope, out, &mut closure_loop_breaks),
+                        sp.line as u32,
+                        sp.column as u32,
+                    ))
                 }
             };
             if let Some((v, l, cl)) = body_val {
@@ -1243,7 +1570,17 @@ fn flow_expr(
         // `lhs = rhs`: flow rhs, rebind a write slot so later reads see the new
         // value (taint-correct for reassignment). Compound assignment (`+=`) and
         // macros fall through to the conservative default below.
-        syn::Expr::Assign(a) => assign_flow(&a.left, &a.right, file, line, col, fn_sym, scope, out, loop_breaks),
+        syn::Expr::Assign(a) => assign_flow(
+            &a.left,
+            &a.right,
+            file,
+            line,
+            col,
+            fn_sym,
+            scope,
+            out,
+            loop_breaks,
+        ),
         // macros (format!/println!), verbatim, and remaining variants: syn exposes
         // these as token streams or non-Expr children, so mint a node but don't
         // chase. Conservative — may miss flows into macro args, never invents.
@@ -1278,24 +1615,35 @@ fn bind_pat_rec(
 ) {
     match pat {
         syn::Pat::Ident(pi) => {
-            let (l, c) = (pi.ident.span().start().line as u32, pi.ident.span().start().column as u32);
+            let (l, c) = (
+                pi.ident.span().start().line as u32,
+                pi.ident.span().start().column as u32,
+            );
             let bind = push_node(out, file, l, c, "let_bind", &pi.ident.to_string(), fn_sym);
             scope.insert(pi.ident.to_string(), bind.clone());
             acc.push((pi.ident.to_string(), bind));
         }
         syn::Pat::Tuple(t) => {
-            for e in &t.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+            for e in &t.elems {
+                bind_pat_rec(e, file, fn_sym, scope, out, acc);
+            }
         }
         syn::Pat::TupleStruct(ts) => {
-            for e in &ts.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+            for e in &ts.elems {
+                bind_pat_rec(e, file, fn_sym, scope, out, acc);
+            }
         }
         syn::Pat::Struct(s) => {
-            for f in &s.fields { bind_pat_rec(&f.pat, file, fn_sym, scope, out, acc); }
+            for f in &s.fields {
+                bind_pat_rec(&f.pat, file, fn_sym, scope, out, acc);
+            }
         }
         syn::Pat::Reference(r) => bind_pat_rec(&r.pat, file, fn_sym, scope, out, acc),
         syn::Pat::Paren(p) => bind_pat_rec(&p.pat, file, fn_sym, scope, out, acc),
         syn::Pat::Slice(s) => {
-            for e in &s.elems { bind_pat_rec(e, file, fn_sym, scope, out, acc); }
+            for e in &s.elems {
+                bind_pat_rec(e, file, fn_sym, scope, out, acc);
+            }
         }
         _ => {}
     }
@@ -1319,14 +1667,16 @@ fn assign_flow(
     if let syn::Expr::Path(p) = lhs {
         if let Some(name) = p.path.segments.last().map(|s| s.ident.to_string()) {
             let id = push_node(out, file, line, col, "var_write", &name, fn_sym);
-            out.edges.push(DfEdge { from: r.clone(), to: id.clone() });
+            out.edges.push(DfEdge {
+                from: r.clone(),
+                to: id.clone(),
+            });
             scope.insert(name, id.clone());
             return id;
         }
     }
     r
 }
-
 
 #[cfg(test)]
 mod tests;

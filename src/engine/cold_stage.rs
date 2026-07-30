@@ -130,7 +130,11 @@ impl Engine {
                 &[],
                 |r| {
                     Ok((
-                        (r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+                        (
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, String>(2)?,
+                        ),
                         r.get::<_, i64>(3)?,
                     ))
                 },
@@ -188,7 +192,12 @@ impl Engine {
 
     fn cold_corpus_file_count(&self) -> i64 {
         self.db
-            .query_one("_file", "SELECT COUNT(*) FROM _file", &[], |r| Ok(r.get(0)?))
+            .query_one(
+                "_file",
+                "SELECT COUNT(*) FROM _file",
+                &[],
+                |r| Ok(r.get(0)?),
+            )
             .unwrap_or(0)
     }
 
@@ -268,8 +277,12 @@ impl Engine {
         let count = families.len();
         let mut rows: Vec<Vec<Value>> = Vec::new();
         let mut jobs: Vec<ColdJob> = Vec::new();
-        let mut push = |family: &str, shard: u32, n_shards: u32, priority: i64,
-                        rows: &mut Vec<Vec<Value>>, jobs: &mut Vec<ColdJob>| {
+        let mut push = |family: &str,
+                        shard: u32,
+                        n_shards: u32,
+                        priority: i64,
+                        rows: &mut Vec<Vec<Value>>,
+                        jobs: &mut Vec<ColdJob>| {
             rows.push(vec![
                 Value::Text(family.to_string()),
                 Value::Int(shard as i64),
@@ -278,11 +291,22 @@ impl Engine {
                 Value::Null,
                 Value::Null,
             ]);
-            jobs.push(ColdJob { family: family.to_string(), shard, priority });
+            jobs.push(ColdJob {
+                family: family.to_string(),
+                shard,
+                priority,
+            });
         };
         // scip first (feeds the call/type resolution ladder), above every family.
         if self.cold_pre_extract_used(prog) {
-            push(COLD_SCIP_FAMILY, 0, 1, (count + 1) as i64, &mut rows, &mut jobs);
+            push(
+                COLD_SCIP_FAMILY,
+                0,
+                1,
+                (count + 1) as i64,
+                &mut rows,
+                &mut jobs,
+            );
         }
         for (idx, fam) in families.iter().enumerate() {
             let n_shards = self.cold_shard_count(fam.name(), fam.shardable_cold())?;
@@ -293,7 +317,14 @@ impl Engine {
         }
         self.db.insert_rows(
             "_cold_node",
-            &["family", "shard", "n_shards", "state", "input_digest", "done_at"],
+            &[
+                "family",
+                "shard",
+                "n_shards",
+                "state",
+                "input_digest",
+                "done_at",
+            ],
             &rows,
         )?;
         Ok(jobs)
@@ -327,7 +358,11 @@ impl Engine {
                     .map(|idx| self.cold_family_priority(*idx, count))
                     .unwrap_or(0)
             };
-            jobs.push(ColdJob { family, shard, priority });
+            jobs.push(ColdJob {
+                family,
+                shard,
+                priority,
+            });
         }
         jobs.sort_by(|a, b| b.priority.cmp(&a.priority));
         Ok(jobs)
@@ -400,7 +435,10 @@ impl Engine {
                 let slices = self.cold_chunk_slices_of(files)?;
                 let slice = slices.get(shard as usize).cloned().unwrap_or_default();
                 tracing::debug!(
-                    family, shard, slice_files = slice.len(), total_slices = slices.len(),
+                    family,
+                    shard,
+                    slice_files = slice.len(),
+                    total_slices = slices.len(),
                     "[cold-chunk] running chunk"
                 );
                 match family {
@@ -408,7 +446,9 @@ impl Engine {
                     "comment-rels" => self.refresh_comment_rels_slice(&slice)?,
                     "template-rels" => self.refresh_template_rels_slice(&slice)?,
                     "unresolved-rels" => self.refresh_unresolved_rel_slice(&slice)?,
-                    other => bail!("cold-chunk: family '{other}' is shardable but has no slice refresh"),
+                    other => {
+                        bail!("cold-chunk: family '{other}' is shardable but has no slice refresh")
+                    }
                 }
             } else {
                 fam.refresh(self)?;
@@ -418,7 +458,11 @@ impl Engine {
         self.db.exec_params(
             "_cold_node",
             "UPDATE _cold_node SET state='done', done_at=?3 WHERE family=?1 AND shard=?2",
-            &[SqlVal::Text(family.into()), SqlVal::Int(shard as i64), SqlVal::Int(now)],
+            &[
+                SqlVal::Text(family.into()),
+                SqlVal::Int(shard as i64),
+                SqlVal::Int(now),
+            ],
         )?;
         // Cold-start progress is always see-able: one verdict line per node
         // (stderr + perf.jsonl), N/M cumulative.
@@ -477,8 +521,11 @@ impl Engine {
         if exists == 0 {
             return Ok(());
         }
-        let mut used: std::collections::HashSet<&'static str> =
-            self.cold_families(prog).iter().map(|fam| fam.name()).collect();
+        let mut used: std::collections::HashSet<&'static str> = self
+            .cold_families(prog)
+            .iter()
+            .map(|fam| fam.name())
+            .collect();
         // The scip-index node is not an extract family but is a valid cold node.
         if self.cold_pre_extract_used(prog) {
             used.insert(COLD_SCIP_FAMILY);

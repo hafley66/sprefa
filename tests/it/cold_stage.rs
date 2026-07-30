@@ -74,7 +74,11 @@ const COMPARE_RELS: &[&str] = &[
 
 /// Drain every seeded cold node in canonical priority order (module before
 /// type/call), the same order the single-flight daemon worker claims them.
-fn drain_all(eng: &mut Engine, prog: &sprefa_v5::ast::Program, mut staged: Vec<(String, u32, i64)>) {
+fn drain_all(
+    eng: &mut Engine,
+    prog: &sprefa_v5::ast::Program,
+    mut staged: Vec<(String, u32, i64)>,
+) {
     staged.sort_by(|a, b| b.2.cmp(&a.2));
     for (family, shard, _) in &staged {
         eng.run_cold_node(prog, family, *shard).unwrap();
@@ -94,25 +98,55 @@ fn blank_slate_seeds_without_inline_extract_or_derived() {
 
     let report = eng.tick_report(&prog, true).unwrap();
     assert!(report.cold_pending, "seed tick reports cold_pending");
-    assert!(!report.cold_staged.is_empty(), "seed tick handed back cold nodes");
+    assert!(
+        !report.cold_staged.is_empty(),
+        "seed tick handed back cold nodes"
+    );
     assert!(!report.is_settled(), "a cold-pending tick is never settled");
 
     // Extract families did NOT run inline:
-    assert_eq!(eng.count_rows("call_edge").unwrap(), 0, "call_edge not extracted on the seed tick");
-    assert_eq!(eng.count_rows("type_edge").unwrap(), 0, "type_edge not extracted on the seed tick");
-    assert_eq!(eng.count_rows("module_edge_rev").unwrap(), 0, "module not extracted on the seed tick");
+    assert_eq!(
+        eng.count_rows("call_edge").unwrap(),
+        0,
+        "call_edge not extracted on the seed tick"
+    );
+    assert_eq!(
+        eng.count_rows("type_edge").unwrap(),
+        0,
+        "type_edge not extracted on the seed tick"
+    );
+    assert_eq!(
+        eng.count_rows("module_edge_rev").unwrap(),
+        0,
+        "module not extracted on the seed tick"
+    );
     // Derived layer NOT rebuilt:
-    assert_eq!(eng.count_rows("calls_reach").unwrap(), 0, "derived not rebuilt on the seed tick");
+    assert_eq!(
+        eng.count_rows("calls_reach").unwrap(),
+        0,
+        "derived not rebuilt on the seed tick"
+    );
 
     // Every seeded node is pending, one shard each (wholesale this arc).
-    let rows = eng.query_sql("SELECT state, n_shards FROM _cold_node", &[]).unwrap();
+    let rows = eng
+        .query_sql("SELECT state, n_shards FROM _cold_node", &[])
+        .unwrap();
     assert!(!rows.is_empty(), "nodes seeded");
-    assert!(rows.iter().all(|r| r[0] == json!("pending")), "all nodes pending: {rows:?}");
-    assert!(rows.iter().all(|r| r[1] == json!(1)), "wholesale => n_shards=1: {rows:?}");
+    assert!(
+        rows.iter().all(|r| r[0] == json!("pending")),
+        "all nodes pending: {rows:?}"
+    );
+    assert!(
+        rows.iter().all(|r| r[1] == json!(1)),
+        "wholesale => n_shards=1: {rows:?}"
+    );
     // module/type/call are among the seeded families.
     let staged: Vec<String> = report.cold_staged.iter().map(|j| j.0.clone()).collect();
     for want in ["module-rels", "type-rels", "call-rels"] {
-        assert!(staged.contains(&want.to_string()), "expected {want} seeded, got {staged:?}");
+        assert!(
+            staged.contains(&want.to_string()),
+            "expected {want} seeded, got {staged:?}"
+        );
     }
 }
 
@@ -139,18 +173,30 @@ fn staged_drain_then_completion_matches_inline() {
     let report = eng_staged.tick_report(&prog, true).unwrap();
     assert!(report.cold_pending, "staged seed tick is cold-pending");
     drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
-    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after drain");
+    assert!(
+        eng_staged.cold_nodes_complete().unwrap(),
+        "all nodes done after drain"
+    );
     // Completion tick: cold no longer in progress -> normal blank-slate rebuild.
     eng_staged.tick(&prog, true).unwrap();
 
     // Sanity: the staged path actually extracted + derived something.
-    assert!(eng_staged.count_rows("call_edge").unwrap() > 0, "staged call graph is non-empty");
-    assert!(eng_staged.count_rows("calls_reach").unwrap() > 0, "staged derived closure non-empty");
+    assert!(
+        eng_staged.count_rows("call_edge").unwrap() > 0,
+        "staged call graph is non-empty"
+    );
+    assert!(
+        eng_staged.count_rows("calls_reach").unwrap() > 0,
+        "staged derived closure non-empty"
+    );
 
     for rel in COMPARE_RELS {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng_staged.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -181,9 +227,13 @@ fn crash_recovery_reruns_only_pending_nodes() {
         let report = eng.tick_report(&prog, true).unwrap();
         let mut staged = report.cold_staged.clone();
         staged.sort_by(|a, b| b.2.cmp(&a.2));
-        assert!(staged.len() >= 2, "need >=2 nodes to test partial drain: {staged:?}");
+        assert!(
+            staged.len() >= 2,
+            "need >=2 nodes to test partial drain: {staged:?}"
+        );
         first_family = staged[0].0.clone();
-        eng.run_cold_node(&prog, &first_family, staged[0].1).unwrap();
+        eng.run_cold_node(&prog, &first_family, staged[0].1)
+            .unwrap();
         // engine dropped here — db (with the done node) persists on disk.
     }
 
@@ -209,12 +259,18 @@ fn crash_recovery_reruns_only_pending_nodes() {
 
     // Finish the remaining nodes + completion tick, then confirm equivalence.
     drain_all(&mut eng2, &prog, report2.cold_staged.clone());
-    assert!(eng2.cold_nodes_complete().unwrap(), "all nodes done after resume drain");
+    assert!(
+        eng2.cold_nodes_complete().unwrap(),
+        "all nodes done after resume drain"
+    );
     eng2.tick(&prog, true).unwrap();
     for rel in COMPARE_RELS {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng2.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "post-recovery rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -225,7 +281,11 @@ fn crash_recovery_reruns_only_pending_nodes() {
 /// (no process-global env override — the file-count cap does the splitting).
 fn write_many_files(dir: &Path, n: usize) {
     for idx in 0..n {
-        let prev = if idx == 0 { "0".to_string() } else { format!("f{}(idx)", idx - 1) };
+        let prev = if idx == 0 {
+            "0".to_string()
+        } else {
+            format!("f{}(idx)", idx - 1)
+        };
         fs::write(
             dir.join(format!("src/f{idx}.rs")),
             format!(
@@ -250,9 +310,19 @@ df_touch(node) <- df_node(node, _kind, _var, _fn, _file, _line, _).
 "#;
 
 const COMPARE_RELS_DF: &[&str] = &[
-    "call_edge", "call_edge_rev", "call_site", "type_edge", "type_entity",
-    "df_node", "df_node_repo", "df_edge", "df_param", "df_node_rev",
-    "calls_reach", "type_reach", "df_touch",
+    "call_edge",
+    "call_edge_rev",
+    "call_site",
+    "type_edge",
+    "type_entity",
+    "df_node",
+    "df_node_repo",
+    "df_edge",
+    "df_param",
+    "df_node_rev",
+    "calls_reach",
+    "type_reach",
+    "df_touch",
 ];
 
 fn parse_df() -> sprefa_v5::ast::Program {
@@ -287,25 +357,47 @@ fn chunked_dataflow_drain_matches_inline() {
 
     // Dataflow split into multiple chunks; call/type stayed wholesale (1 shard).
     let df_shards = eng_staged
-        .query_sql("SELECT DISTINCT n_shards FROM _cold_node WHERE family='dataflow-rels'", &[])
+        .query_sql(
+            "SELECT DISTINCT n_shards FROM _cold_node WHERE family='dataflow-rels'",
+            &[],
+        )
         .unwrap();
     assert_eq!(df_shards.len(), 1, "one n_shards value for dataflow");
     let n_df_shards = df_shards[0][0].as_i64().unwrap();
-    assert!(n_df_shards >= 3, "dataflow chunked into >=3 slices, got {n_df_shards}");
+    assert!(
+        n_df_shards >= 3,
+        "dataflow chunked into >=3 slices, got {n_df_shards}"
+    );
     let call_shards = eng_staged
-        .query_sql("SELECT n_shards FROM _cold_node WHERE family='call-rels'", &[])
+        .query_sql(
+            "SELECT n_shards FROM _cold_node WHERE family='call-rels'",
+            &[],
+        )
         .unwrap();
-    assert_eq!(call_shards[0][0], json!(1), "call stays wholesale (1 shard)");
+    assert_eq!(
+        call_shards[0][0],
+        json!(1),
+        "call stays wholesale (1 shard)"
+    );
 
     drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
-    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after chunked drain");
+    assert!(
+        eng_staged.cold_nodes_complete().unwrap(),
+        "all nodes done after chunked drain"
+    );
     eng_staged.tick(&prog, true).unwrap();
 
-    assert!(eng_staged.count_rows("df_node").unwrap() > 0, "chunked dataflow non-empty");
+    assert!(
+        eng_staged.count_rows("df_node").unwrap() > 0,
+        "chunked dataflow non-empty"
+    );
     for rel in COMPARE_RELS_DF {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng_staged.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -350,7 +442,10 @@ fn crash_mid_chunk_reruns_only_pending_chunks() {
             }
             eng.run_cold_node(&prog, family, *shard).unwrap();
         }
-        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+        assert!(
+            !eng.cold_nodes_complete().unwrap(),
+            "not complete: one chunk left"
+        );
         // engine dropped → db persists with the drained chunks done.
     }
 
@@ -360,8 +455,11 @@ fn crash_mid_chunk_reruns_only_pending_chunks() {
     eng2.poll_loop = true;
     let report2 = eng2.tick_report(&prog, true).unwrap();
     assert!(report2.cold_pending, "resume tick is cold-pending");
-    let reenqueued: Vec<(String, u32)> =
-        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    let reenqueued: Vec<(String, u32)> = report2
+        .cold_staged
+        .iter()
+        .map(|j| (j.0.clone(), j.1))
+        .collect();
     assert_eq!(
         reenqueued,
         vec![("dataflow-rels".to_string(), last_df_shard)],
@@ -374,16 +472,29 @@ fn crash_mid_chunk_reruns_only_pending_chunks() {
     let pending = eng2
         .query_sql("SELECT COUNT(*) FROM _cold_node WHERE state != 'done'", &[])
         .unwrap();
-    assert_eq!(pending[0][0], json!(1), "exactly one chunk pending on resume");
-    assert!(done[0][0].as_i64().unwrap() >= 1, "drained chunks stayed done");
+    assert_eq!(
+        pending[0][0],
+        json!(1),
+        "exactly one chunk pending on resume"
+    );
+    assert!(
+        done[0][0].as_i64().unwrap() >= 1,
+        "drained chunks stayed done"
+    );
 
     drain_all(&mut eng2, &prog, report2.cold_staged.clone());
-    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    assert!(
+        eng2.cold_nodes_complete().unwrap(),
+        "complete after resume drain"
+    );
     eng2.tick(&prog, true).unwrap();
     for rel in COMPARE_RELS_DF {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng2.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "post-recovery rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -441,24 +552,42 @@ fn chunked_comment_drain_matches_inline() {
     eng_staged.poll_loop = true;
 
     let report = eng_staged.tick_report(&prog, true).unwrap();
-    assert!(report.cold_pending, "comment chunk seed tick is cold-pending");
+    assert!(
+        report.cold_pending,
+        "comment chunk seed tick is cold-pending"
+    );
 
     let comment_shards = eng_staged
-        .query_sql("SELECT n_shards FROM _cold_node WHERE family='comment-rels'", &[])
+        .query_sql(
+            "SELECT n_shards FROM _cold_node WHERE family='comment-rels'",
+            &[],
+        )
         .unwrap();
     assert!(!comment_shards.is_empty(), "comment-rels node(s) seeded");
     let n_comment_shards = comment_shards[0][0].as_i64().unwrap();
-    assert!(n_comment_shards >= 3, "comment chunked into >=3 slices, got {n_comment_shards}");
+    assert!(
+        n_comment_shards >= 3,
+        "comment chunked into >=3 slices, got {n_comment_shards}"
+    );
 
     drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
-    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after chunked comment drain");
+    assert!(
+        eng_staged.cold_nodes_complete().unwrap(),
+        "all nodes done after chunked comment drain"
+    );
     eng_staged.tick(&prog, true).unwrap();
 
-    assert!(eng_staged.count_rows("comment_node").unwrap() > 0, "chunked comment_node non-empty");
+    assert!(
+        eng_staged.count_rows("comment_node").unwrap() > 0,
+        "chunked comment_node non-empty"
+    );
     for rel in COMPARE_RELS_COMMENT {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng_staged.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -500,7 +629,10 @@ fn crash_mid_chunk_reruns_only_pending_comment_chunks() {
             }
             eng.run_cold_node(&prog, family, *shard).unwrap();
         }
-        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+        assert!(
+            !eng.cold_nodes_complete().unwrap(),
+            "not complete: one chunk left"
+        );
     }
 
     let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
@@ -508,8 +640,11 @@ fn crash_mid_chunk_reruns_only_pending_comment_chunks() {
     eng2.poll_loop = true;
     let report2 = eng2.tick_report(&prog, true).unwrap();
     assert!(report2.cold_pending, "resume tick is cold-pending");
-    let reenqueued: Vec<(String, u32)> =
-        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    let reenqueued: Vec<(String, u32)> = report2
+        .cold_staged
+        .iter()
+        .map(|j| (j.0.clone(), j.1))
+        .collect();
     assert_eq!(
         reenqueued,
         vec![("comment-rels".to_string(), last_comment_shard)],
@@ -517,12 +652,18 @@ fn crash_mid_chunk_reruns_only_pending_comment_chunks() {
     );
 
     drain_all(&mut eng2, &prog, report2.cold_staged.clone());
-    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    assert!(
+        eng2.cold_nodes_complete().unwrap(),
+        "complete after resume drain"
+    );
     eng2.tick(&prog, true).unwrap();
     for rel in COMPARE_RELS_COMMENT {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng2.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "post-recovery rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -552,8 +693,12 @@ rel unresolved_touch(file: text).
 unresolved_touch(file) <- unresolved(file, line, reason, detail).
 "#;
 
-const COMPARE_RELS_TS: &[&str] =
-    &["template_parts", "unresolved", "template_touch", "unresolved_touch"];
+const COMPARE_RELS_TS: &[&str] = &[
+    "template_parts",
+    "unresolved",
+    "template_touch",
+    "unresolved_touch",
+];
 
 fn parse_ts() -> sprefa_v5::ast::Program {
     parse::parse(lex::lex(PROG_TS).unwrap()).unwrap()
@@ -585,7 +730,10 @@ fn chunked_template_unresolved_drain_matches_inline() {
 
     for family in ["template-rels", "unresolved-rels"] {
         let shards = eng_staged
-            .query_sql(&format!("SELECT n_shards FROM _cold_node WHERE family='{family}'"), &[])
+            .query_sql(
+                &format!("SELECT n_shards FROM _cold_node WHERE family='{family}'"),
+                &[],
+            )
             .unwrap();
         assert!(!shards.is_empty(), "{family} node(s) seeded");
         let n = shards[0][0].as_i64().unwrap();
@@ -593,15 +741,27 @@ fn chunked_template_unresolved_drain_matches_inline() {
     }
 
     drain_all(&mut eng_staged, &prog, report.cold_staged.clone());
-    assert!(eng_staged.cold_nodes_complete().unwrap(), "all nodes done after chunked ts drain");
+    assert!(
+        eng_staged.cold_nodes_complete().unwrap(),
+        "all nodes done after chunked ts drain"
+    );
     eng_staged.tick(&prog, true).unwrap();
 
-    assert!(eng_staged.count_rows("template_parts").unwrap() > 0, "chunked template_parts non-empty");
-    assert!(eng_staged.count_rows("unresolved").unwrap() > 0, "chunked unresolved non-empty");
+    assert!(
+        eng_staged.count_rows("template_parts").unwrap() > 0,
+        "chunked template_parts non-empty"
+    );
+    assert!(
+        eng_staged.count_rows("unresolved").unwrap() > 0,
+        "chunked unresolved non-empty"
+    );
     for rel in COMPARE_RELS_TS {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng_staged.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -644,7 +804,10 @@ fn crash_mid_chunk_reruns_only_pending_template_chunks() {
             }
             eng.run_cold_node(&prog, family, *shard).unwrap();
         }
-        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+        assert!(
+            !eng.cold_nodes_complete().unwrap(),
+            "not complete: one chunk left"
+        );
     }
 
     let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
@@ -652,8 +815,11 @@ fn crash_mid_chunk_reruns_only_pending_template_chunks() {
     eng2.poll_loop = true;
     let report2 = eng2.tick_report(&prog, true).unwrap();
     assert!(report2.cold_pending, "resume tick is cold-pending");
-    let reenqueued: Vec<(String, u32)> =
-        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    let reenqueued: Vec<(String, u32)> = report2
+        .cold_staged
+        .iter()
+        .map(|j| (j.0.clone(), j.1))
+        .collect();
     assert_eq!(
         reenqueued,
         vec![("template-rels".to_string(), last_template_shard)],
@@ -661,12 +827,18 @@ fn crash_mid_chunk_reruns_only_pending_template_chunks() {
     );
 
     drain_all(&mut eng2, &prog, report2.cold_staged.clone());
-    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    assert!(
+        eng2.cold_nodes_complete().unwrap(),
+        "complete after resume drain"
+    );
     eng2.tick(&prog, true).unwrap();
     for rel in COMPARE_RELS_TS {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng2.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "post-recovery rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -708,7 +880,10 @@ fn crash_mid_chunk_reruns_only_pending_unresolved_chunks() {
             }
             eng.run_cold_node(&prog, family, *shard).unwrap();
         }
-        assert!(!eng.cold_nodes_complete().unwrap(), "not complete: one chunk left");
+        assert!(
+            !eng.cold_nodes_complete().unwrap(),
+            "not complete: one chunk left"
+        );
     }
 
     let conn2 = db::open(Some(db_path.to_str().unwrap())).unwrap();
@@ -716,8 +891,11 @@ fn crash_mid_chunk_reruns_only_pending_unresolved_chunks() {
     eng2.poll_loop = true;
     let report2 = eng2.tick_report(&prog, true).unwrap();
     assert!(report2.cold_pending, "resume tick is cold-pending");
-    let reenqueued: Vec<(String, u32)> =
-        report2.cold_staged.iter().map(|j| (j.0.clone(), j.1)).collect();
+    let reenqueued: Vec<(String, u32)> = report2
+        .cold_staged
+        .iter()
+        .map(|j| (j.0.clone(), j.1))
+        .collect();
     assert_eq!(
         reenqueued,
         vec![("unresolved-rels".to_string(), last_unresolved_shard)],
@@ -725,12 +903,18 @@ fn crash_mid_chunk_reruns_only_pending_unresolved_chunks() {
     );
 
     drain_all(&mut eng2, &prog, report2.cold_staged.clone());
-    assert!(eng2.cold_nodes_complete().unwrap(), "complete after resume drain");
+    assert!(
+        eng2.cold_nodes_complete().unwrap(),
+        "complete after resume drain"
+    );
     eng2.tick(&prog, true).unwrap();
     for rel in COMPARE_RELS_TS {
         let inline = eng_inline.count_rows(rel).unwrap();
         let staged = eng2.count_rows(rel).unwrap();
-        assert_eq!(inline, staged, "post-recovery rel `{rel}`: inline={inline} staged={staged}");
+        assert_eq!(
+            inline, staged,
+            "post-recovery rel `{rel}`: inline={inline} staged={staged}"
+        );
     }
 }
 
@@ -794,19 +978,15 @@ fn measure_comment_template_unresolved_chunking_receipt() {
          chunked({shards_after} nodes)={comment_after}ms longest-single-node (was {shards_before} node)"
     );
 
-    let (template_before, tshards_before) =
-        run_family(&ts_dir, PROG_TS, true, "template-rels");
-    let (template_after, tshards_after) =
-        run_family(&ts_dir, PROG_TS, false, "template-rels");
+    let (template_before, tshards_before) = run_family(&ts_dir, PROG_TS, true, "template-rels");
+    let (template_after, tshards_after) = run_family(&ts_dir, PROG_TS, false, "template-rels");
     println!(
         "[receipt] template-rels: wholesale(1 node)={template_before}ms  \
          chunked({tshards_after} nodes)={template_after}ms longest-single-node (was {tshards_before} node)"
     );
 
-    let (unresolved_before, ushards_before) =
-        run_family(&ts_dir, PROG_TS, true, "unresolved-rels");
-    let (unresolved_after, ushards_after) =
-        run_family(&ts_dir, PROG_TS, false, "unresolved-rels");
+    let (unresolved_before, ushards_before) = run_family(&ts_dir, PROG_TS, true, "unresolved-rels");
+    let (unresolved_after, ushards_after) = run_family(&ts_dir, PROG_TS, false, "unresolved-rels");
     println!(
         "[receipt] unresolved-rels: wholesale(1 node)={unresolved_before}ms  \
          chunked({ushards_after} nodes)={unresolved_after}ms longest-single-node (was {ushards_before} node)"
@@ -834,7 +1014,11 @@ fn measure_longest_cold_node() {
     let report = eng.tick_report(&prog, true).unwrap();
     let mut staged = report.cold_staged.clone();
     staged.sort_by(|a, b| b.2.cmp(&a.2));
-    println!("[receipt] corpus root={}  nodes={}", root.display(), staged.len());
+    println!(
+        "[receipt] corpus root={}  nodes={}",
+        root.display(),
+        staged.len()
+    );
     let mut longest = (String::new(), 0u128);
     let mut per_family: std::collections::HashMap<String, u128> = std::collections::HashMap::new();
     for (family, shard, _) in &staged {
@@ -851,7 +1035,10 @@ fn measure_longest_cold_node() {
     for (family, ms) in &fam {
         println!("[receipt] family {family}: {ms}ms total across its nodes");
     }
-    println!("[receipt] LONGEST single node: {} = {}ms", longest.0, longest.1);
+    println!(
+        "[receipt] LONGEST single node: {} = {}ms",
+        longest.0, longest.1
+    );
     // Completion tick: must SKIP dataflow (chunks saved the digest) — measure it.
     assert!(eng.cold_nodes_complete().unwrap());
     let df_before = eng.count_rows("df_node").unwrap();
@@ -864,7 +1051,10 @@ fn measure_longest_cold_node() {
         df_before,
         df_after
     );
-    assert_eq!(df_before, df_after, "chunk-written df rows survive the completion tick");
+    assert_eq!(
+        df_before, df_after,
+        "chunk-written df rows survive the completion tick"
+    );
 }
 
 /// A `--no-daemon` (one-shot) cold run is unchanged: the inline path runs, no
@@ -882,12 +1072,19 @@ fn no_daemon_cold_run_stays_inline() {
     assert!(report.cold_staged.is_empty(), "one-shot tick seeds nothing");
 
     // Extraction + derive happened inline in this one tick.
-    assert!(eng.count_rows("call_edge").unwrap() > 0, "inline extracted the call graph");
-    assert!(eng.count_rows("calls_reach").unwrap() > 0, "inline built the derived closure");
+    assert!(
+        eng.count_rows("call_edge").unwrap() > 0,
+        "inline extracted the call graph"
+    );
+    assert!(
+        eng.count_rows("calls_reach").unwrap() > 0,
+        "inline built the derived closure"
+    );
 
     // The staging table was never touched on the one-shot path.
     assert!(
-        eng.query_sql("SELECT COUNT(*) FROM _cold_node", &[]).is_err(),
+        eng.query_sql("SELECT COUNT(*) FROM _cold_node", &[])
+            .is_err(),
         "_cold_node must not exist after a one-shot run"
     );
 }

@@ -130,9 +130,11 @@ fn governor_toggle_caps_cpu_concurrency() {
     // deliberately capturing a clean timing receipt by hand.
     if std::env::var_os("SPREFA_BUDGET_CPU_STRICT_LOAD").is_some() {
         let load = load_per_core();
-        assert!(load <= 0.5,
+        assert!(
+            load <= 0.5,
             "machine load {load:.2}/core too high for this timing receipt — needs a quiet machine \
-             (unset SPREFA_BUDGET_CPU_STRICT_LOAD to run without this precondition)");
+             (unset SPREFA_BUDGET_CPU_STRICT_LOAD to run without this precondition)"
+        );
     }
     let dir = sandbox("toggle");
     let state = dir.join("state");

@@ -19,11 +19,18 @@ pub(crate) fn desugar_regex_holes(src: &str) -> String {
     while let Some(c) = chars.next() {
         if c == '\\' {
             out.push(c);
-            if let Some(c2) = chars.next() { out.push(c2); }
+            if let Some(c2) = chars.next() {
+                out.push(c2);
+            }
         } else if c == '$' {
             let mut name = String::new();
             while let Some(&c2) = chars.peek() {
-                if c2.is_ascii_alphanumeric() || c2 == '_' { name.push(c2); chars.next(); } else { break; }
+                if c2.is_ascii_alphanumeric() || c2 == '_' {
+                    name.push(c2);
+                    chars.next();
+                } else {
+                    break;
+                }
             }
             if name.is_empty() || name.as_bytes()[0].is_ascii_digit() {
                 out.push('$');

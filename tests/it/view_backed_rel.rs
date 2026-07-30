@@ -38,8 +38,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn init_git(d: &Path) {
@@ -115,14 +124,35 @@ const CONVERTED: &[(&str, &[&str])] = &[
     ("df_arg", &["call", "pos", "arg"]),
     ("df_field", &["id", "field", "value"]),
     ("type_edge", &["from", "to", "kind", "repo"]),
-    ("module_unresolved", &["file", "specifier", "reason", "line"]),
-    ("module_binding_resolved", &["file", "local", "source", "dst"]),
-    ("module_binding", &["file", "local_name", "source_module", "imported_name", "kind"]),
-    ("const_value", &["repo", "sym", "field", "text", "kind", "file", "line"]),
+    (
+        "module_unresolved",
+        &["file", "specifier", "reason", "line"],
+    ),
+    (
+        "module_binding_resolved",
+        &["file", "local", "source", "dst"],
+    ),
+    (
+        "module_binding",
+        &[
+            "file",
+            "local_name",
+            "source_module",
+            "imported_name",
+            "kind",
+        ],
+    ),
+    (
+        "const_value",
+        &["repo", "sym", "field", "text", "kind", "file", "line"],
+    ),
 ];
 
 fn quoted(cols: &[&str]) -> String {
-    cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+    cols.iter()
+        .map(|c| format!("\"{c}\""))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn count(conn: &Connection, sql: &str) -> i64 {
@@ -175,7 +205,10 @@ fn converted_rel_views_are_row_identical_to_the_old_table_across_two_revs() {
     // The corpus spans two distinct revs (sanity: the data-driven base scan
     // resolved and the twins carry both).
     assert!(
-        count(&vconn, "SELECT COUNT(DISTINCT rev) FROM rel_df_node_repo_rev") >= 2,
+        count(
+            &vconn,
+            "SELECT COUNT(DISTINCT rev) FROM rel_df_node_repo_rev"
+        ) >= 2,
         "fixture must populate df_node_repo_rev across two distinct revs"
     );
 
@@ -194,11 +227,16 @@ fn converted_rel_views_are_row_identical_to_the_old_table_across_two_revs() {
         let old = format!("old_{rel}");
         // The legacy full-row-PK table shape (no key() narrowing on any of these
         // rels) + the exact pre-change rebuild write.
-        vconn.execute_batch(&format!("DROP TABLE IF EXISTS {old};")).unwrap();
+        vconn
+            .execute_batch(&format!("DROP TABLE IF EXISTS {old};"))
+            .unwrap();
         vconn
             .execute_batch(&format!(
                 "CREATE TABLE {old} ({}, PRIMARY KEY ({pk_sql}));",
-                cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ")
+                cols.iter()
+                    .map(|c| format!("\"{c}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
             .unwrap();
         vconn
@@ -215,21 +253,36 @@ fn converted_rel_views_are_row_identical_to_the_old_table_across_two_revs() {
             &vconn,
             &format!("SELECT COUNT(*) FROM (SELECT {cols_sql} FROM {old} EXCEPT SELECT {cols_sql} FROM rel_{rel})"),
         );
-        assert_eq!(view_minus_old, 0, "{rel}: view has rows the old table did not");
-        assert_eq!(old_minus_view, 0, "{rel}: old table has rows the view does not");
+        assert_eq!(
+            view_minus_old, 0,
+            "{rel}: view has rows the old table did not"
+        );
+        assert_eq!(
+            old_minus_view, 0,
+            "{rel}: old table has rows the view does not"
+        );
         proven += 1;
     }
 
     // Coverage floor: the dataflow trio + type_edge must actually be populated
     // and proven (a fixture that silently extracted nothing would pass every
     // EXCEPT vacuously otherwise).
-    for rel in ["df_node_repo", "df_arg", "df_field", "type_edge", "const_value"] {
+    for rel in [
+        "df_node_repo",
+        "df_arg",
+        "df_field",
+        "type_edge",
+        "const_value",
+    ] {
         assert!(
             count(&vconn, &format!("SELECT COUNT(*) FROM rel_{rel}")) > 0,
             "{rel} view must carry rows in this fixture"
         );
     }
-    assert!(proven >= 5, "expected at least 5 converted rels proven, got {proven}");
+    assert!(
+        proven >= 5,
+        "expected at least 5 converted rels proven, got {proven}"
+    );
 
     // DISTINCT is genuinely exercised: some logical (id, repo) row appears at
     // BOTH revs in the twin, so the view collapsed a duplicate the twin held

@@ -26,12 +26,20 @@ impl RelKind for EmbedKind {
         &["similar"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "similar".into(),
+        vec![RelDecl {
+            name: "similar".into(),
             // a/b carry opaque StringId handles (the decimal sid the `string`/
             // `span_at` builtins consume), NOT sym text — `raw` so text-is-sym
             // does not double-intern the handle into a fresh _strings row.
-            cols: vec![Col::raw("a", Type::Text), Col::raw("b", Type::Text), col("score", Type::Int)], group: "embed",
-            doc: "content-addressed nearest-neighbor pairs from the embedding backend, with score", ..Default::default() }]
+            cols: vec![
+                Col::raw("a", Type::Text),
+                Col::raw("b", Type::Text),
+                col("score", Type::Int),
+            ],
+            group: "embed",
+            doc: "content-addressed nearest-neighbor pairs from the embedding backend, with score",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in embedding-similarity relation (similar)"
@@ -43,8 +51,10 @@ impl RelKind for EmbedKind {
     fn refresh(&self, eng: &Engine) -> Result<bool> {
         let embedder = crate::embed::make(None)?;
         let backend = embedder.name().to_string();
-        let max: usize = std::env::var("SPREFA_EMBED_MAX").ok()
-            .and_then(|s| s.parse().ok()).unwrap_or(4096);
+        let max: usize = std::env::var("SPREFA_EMBED_MAX")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(4096);
 
         // Content with no vector for THIS backend. Capped: only the first `max`
         // un-embedded strings are encoded per tick (the rest catch up next tick).
@@ -72,10 +82,14 @@ impl RelKind for EmbedKind {
             for ((sid, _), mut v) in to_embed.iter().cloned().zip(vecs) {
                 crate::embed::l2_normalize(&mut v);
                 rows.push(vec![
-                    Value::Text(sid), Value::Text(backend.clone()),
-                    Value::Int(dim), Value::Text(crate::embed::encode_vec(&v))]);
+                    Value::Text(sid),
+                    Value::Text(backend.clone()),
+                    Value::Int(dim),
+                    Value::Text(crate::embed::encode_vec(&v)),
+                ]);
             }
-            eng.db.insert_rows("_embeddings", &["sid", "backend", "dim", "vec"], &rows)?;
+            eng.db
+                .insert_rows("_embeddings", &["sid", "backend", "dim", "vec"], &rows)?;
         }
 
         // Steady state: no new content AND `similar` already built -> no recompute.
@@ -85,7 +99,9 @@ impl RelKind for EmbedKind {
             &[],
             |r| Ok(r.get(0)?),
         )?;
-        if to_embed.is_empty() && similar_rows > 0 { return Ok(false); }
+        if to_embed.is_empty() && similar_rows > 0 {
+            return Ok(false);
+        }
 
         refresh_similar_rel(eng, &backend, max)?;
         Ok(true)
@@ -97,21 +113,28 @@ impl RelKind for EmbedKind {
 /// vectors are L2-normalized at store time so cosine is a dot product. `score` =
 /// round(cosine * 1e6) as Int. Shares the `knn_rows` chokepoint with node2vec.
 fn refresh_similar_rel(eng: &Engine, backend: &str, max: usize) -> Result<()> {
-    let k: usize = std::env::var("SPREFA_SIMILAR_K").ok()
-        .and_then(|s| s.parse().ok()).unwrap_or(8);
-    let pool: Vec<(String, Vec<f32>)> = eng.db.query_rows(
-        "_embeddings",
-        "SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2",
-        &[SqlVal::from(backend), SqlVal::from(max as i64)],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
-    )?
+    let k: usize = std::env::var("SPREFA_SIMILAR_K")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8);
+    let pool: Vec<(String, Vec<f32>)> = eng
+        .db
+        .query_rows(
+            "_embeddings",
+            "SELECT sid, vec FROM _embeddings WHERE backend = ?1 LIMIT ?2",
+            &[SqlVal::from(backend), SqlVal::from(max as i64)],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )?
         .into_iter()
         .map(|(sid, txt)| (sid, crate::embed::parse_vec(&txt)))
         .collect();
     if pool.len() > 2000 {
         let n = pool.len();
-        tracing::debug!(n, "[similar] brute-force KNN over {n} vectors (O(n^2)); \
-                   cap with SPREFA_EMBED_MAX or wire sqlite-vec");
+        tracing::debug!(
+            n,
+            "[similar] brute-force KNN over {n} vectors (O(n^2)); \
+                   cap with SPREFA_EMBED_MAX or wire sqlite-vec"
+        );
     }
     let rows = knn_rows(&pool, k);
     eng.refresh_rel("similar", &["a", "b", "score"], &rows)?;

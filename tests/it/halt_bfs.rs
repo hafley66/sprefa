@@ -28,33 +28,62 @@ fn run(dir: &PathBuf, prog: &str, force_sql: bool) -> String {
 fn run_with_trace(dir: &PathBuf, prog: &str, force_sql: bool, trace: bool) -> (String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut cmd = Command::new(DL);
-    cmd.arg(dir.join("p.dl")).current_dir(dir)
-        .arg("--db").arg(dir.join(if force_sql { "sql.db" } else { "nat.db" }).to_str().unwrap())
+    cmd.arg(dir.join("p.dl"))
+        .current_dir(dir)
+        .arg("--db")
+        .arg(
+            dir.join(if force_sql { "sql.db" } else { "nat.db" })
+                .to_str()
+                .unwrap(),
+        )
         .env("DL_NO_DAEMON", "1")
         .env("SPREFA_CONFIG", "/nonexistent/x.toml");
-    if trace { cmd.env("DL_BFS_TRACE", "1"); }
-    if force_sql { cmd.env("DL_NO_HALT_BFS", "1"); }
+    if trace {
+        cmd.env("DL_BFS_TRACE", "1");
+    }
+    if force_sql {
+        cmd.env("DL_NO_HALT_BFS", "1");
+    }
     let out = cmd.output().expect("run dl");
-    assert!(out.status.success(), "dl failed; stderr={}", String::from_utf8_lossy(&out.stderr));
-    (String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    assert!(
+        out.status.success(),
+        "dl failed; stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn run_discovered(dir: &PathBuf, force_sql: bool) -> (String, String) {
     let db_path = dir.join(if force_sql { "sql.db" } else { "nat.db" });
     let mut command = Command::new(DL);
-    command.current_dir(dir)
-        .arg("--db").arg(db_path.to_str().unwrap())
+    command
+        .current_dir(dir)
+        .arg("--db")
+        .arg(db_path.to_str().unwrap())
         .env("DL_NO_DAEMON", "1")
         .env("SPREFA_CONFIG", "/nonexistent/x.toml")
         .env("DL_BFS_TRACE", "1");
-    if force_sql { command.env("DL_NO_HALT_BFS", "1"); }
+    if force_sql {
+        command.env("DL_NO_HALT_BFS", "1");
+    }
     let output = command.output().expect("run discovered dl");
-    assert!(output.status.success(), "discovered dl failed; stderr={}", String::from_utf8_lossy(&output.stderr));
-    (String::from_utf8_lossy(&output.stdout).into_owned(), String::from_utf8_lossy(&output.stderr).into_owned())
+    assert!(
+        output.status.success(),
+        "discovered dl failed; stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
 }
 
 fn rows_of(stdout: &str, head: &str) -> Vec<String> {
-    let mut out: Vec<String> = stdout.lines()
+    let mut out: Vec<String> = stdout
+        .lines()
         .skip_while(|l| !l.starts_with(&format!("? {head} =>")))
         .skip(1)
         .take_while(|l| !l.is_empty())
@@ -151,7 +180,11 @@ fn native_halt_bfs_recursion_matches_sql_over_dense_edges() {
         native, sql,
         "native halt-BFS diverged from SQL over dense edges\nnative={native:?}\nsql={sql:?}"
     );
-    assert_eq!(native.len(), 4, "expected a 4-row non-vacuous closure, got {native:?}");
+    assert_eq!(
+        native.len(),
+        4,
+        "expected a 4-row non-vacuous closure, got {native:?}"
+    );
 }
 
 const DEPTH_PROG: &str = r#"
@@ -176,7 +209,11 @@ fn native_halt_bfs_matches_hand_computed_contraction() {
     let dir = sandbox("hand");
     let got = rows_of(&run(&dir, PROG, false), "reach");
     // p: s->a (halt, stop) => {a}. q: b->t, b->a (halt, stop) => {a, t}.
-    assert_eq!(got, vec!["p\ta", "q\ta", "q\tt"], "native contraction mismatch");
+    assert_eq!(
+        got,
+        vec!["p\ta", "q\ta", "q\tt"],
+        "native contraction mismatch"
+    );
 }
 
 #[test]
@@ -185,7 +222,10 @@ fn native_halt_bfs_row_identical_to_sql_fixpoint() {
     let dir_s = sandbox("sql");
     let native = rows_of(&run(&dir_n, PROG, false), "reach");
     let sql = rows_of(&run(&dir_s, PROG, true), "reach");
-    assert_eq!(native, sql, "native BFS diverged from SQL fixpoint\nnative={native:?}\nsql={sql:?}");
+    assert_eq!(
+        native, sql,
+        "native BFS diverged from SQL fixpoint\nnative={native:?}\nsql={sql:?}"
+    );
 }
 
 #[test]
@@ -200,24 +240,51 @@ fn native_depth_walk_rows_match_sql_including_depth() {
 
     let native_op = rows_of(&run(&native_dir, DEPTH_PROG, false), "op_reach_node");
     let sql_op = rows_of(&run(&sql_dir, DEPTH_PROG, true), "op_reach_node");
-    assert_eq!(native_op, sql_op, "op depth rows diverged\nnative={native_op:?}\nsql={sql_op:?}");
-    let native_entry_raw = raw_depth_rows(&native_dir.join("nat.db"), "entry_reach_node", "node, d");
+    assert_eq!(
+        native_op, sql_op,
+        "op depth rows diverged\nnative={native_op:?}\nsql={sql_op:?}"
+    );
+    let native_entry_raw =
+        raw_depth_rows(&native_dir.join("nat.db"), "entry_reach_node", "node, d");
     let sql_entry_raw = raw_depth_rows(&sql_dir.join("sql.db"), "entry_reach_node", "node, d");
     let native_op_raw = raw_depth_rows(&native_dir.join("nat.db"), "op_reach_node", "op, n, d");
     let sql_op_raw = raw_depth_rows(&sql_dir.join("sql.db"), "op_reach_node", "op, n, d");
-    assert_eq!(native_entry_raw, sql_entry_raw, "entry raw rows diverged, including depth");
-    assert_eq!(native_op_raw, sql_op_raw, "op raw rows diverged, including depth");
-    assert!(native_entry_raw.iter().any(|row| row.ends_with("\t0")), "entry rows must include depth 0: {native_entry_raw:?}");
-    assert!(native_op_raw.iter().any(|row| row.ends_with("\t0")), "op rows must include depth 0: {native_op_raw:?}");
-    assert_eq!(native_trace.matches("[bfs-cache] load edge=flow_edge").count(), 1, "flow_edge should load once per tick:\n{native_trace}");
-    assert!(native_trace.contains("[bfs-cache] reuse edge=flow_edge"), "second reach walk should reuse flow_edge:\n{native_trace}");
+    assert_eq!(
+        native_entry_raw, sql_entry_raw,
+        "entry raw rows diverged, including depth"
+    );
+    assert_eq!(
+        native_op_raw, sql_op_raw,
+        "op raw rows diverged, including depth"
+    );
+    assert!(
+        native_entry_raw.iter().any(|row| row.ends_with("\t0")),
+        "entry rows must include depth 0: {native_entry_raw:?}"
+    );
+    assert!(
+        native_op_raw.iter().any(|row| row.ends_with("\t0")),
+        "op rows must include depth 0: {native_op_raw:?}"
+    );
+    assert_eq!(
+        native_trace
+            .matches("[bfs-cache] load edge=flow_edge")
+            .count(),
+        1,
+        "flow_edge should load once per tick:\n{native_trace}"
+    );
+    assert!(
+        native_trace.contains("[bfs-cache] reuse edge=flow_edge"),
+        "second reach walk should reuse flow_edge:\n{native_trace}"
+    );
 }
 
 #[test]
 fn discovered_duplicate_origins_still_fire_native_port_walk() {
     let directory = sandbox("duplicate_origins");
     fs::create_dir_all(directory.join(".dl")).unwrap();
-    fs::write(directory.join(".dl/10-root-a.dl"), r#"
+    fs::write(
+        directory.join(".dl/10-root-a.dl"),
+        r#"
 rel edge(from: text, to: text).
 edge("s", "a"). edge("a", "b").
 rel halt(node: text, kind: text).
@@ -227,13 +294,25 @@ seed("p", "s").
 rel reach(port: text, node: text).
 reach(port, node) <- seed(port, start), edge(start, node).
 ? reach(port, node).
-"#).unwrap();
-    fs::write(directory.join(".dl/20-root-b.dl"), r#"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        directory.join(".dl/20-root-b.dl"),
+        r#"
 reach(port, node) <- seed(port, start), edge(start, node).
 reach(port, node) <- reach(port, mid), !halt(mid, _), edge(mid, node).
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let (native_stdout, native_stderr) = run_discovered(&directory, false);
     let (sql_stdout, _) = run_discovered(&directory, true);
-    assert_eq!(rows_of(&native_stdout, "reach"), rows_of(&sql_stdout, "reach"));
-    assert!(native_stderr.contains("[bfs] reach:"), "native recognizer did not fire:\n{native_stderr}");
+    assert_eq!(
+        rows_of(&native_stdout, "reach"),
+        rows_of(&sql_stdout, "reach")
+    );
+    assert!(
+        native_stderr.contains("[bfs] reach:"),
+        "native recognizer did not fire:\n{native_stderr}"
+    );
 }

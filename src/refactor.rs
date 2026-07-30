@@ -30,11 +30,21 @@ pub fn splice_file(content: &str, edits: &[Edit]) -> Result<String> {
     let mut prev_lo = u32::MAX; // lo of the last (higher-offset) edit applied
     for e in ordered {
         if e.hi > prev_lo {
-            bail!("overlapping edits in {} near byte {}..{}", e.path, e.lo, e.hi);
+            bail!(
+                "overlapping edits in {} near byte {}..{}",
+                e.path,
+                e.lo,
+                e.hi
+            );
         }
         let (lo, hi) = (e.lo as usize, e.hi as usize);
         if hi > out.len() || !out.is_char_boundary(lo) || !out.is_char_boundary(hi) {
-            bail!("edit span {}..{} out of bounds / not a char boundary in {}", lo, hi, e.path);
+            bail!(
+                "edit span {}..{} out of bounds / not a char boundary in {}",
+                lo,
+                hi,
+                e.path
+            );
         }
         out.replace_range(lo..hi, &e.new_text);
         prev_lo = e.lo;
@@ -55,7 +65,8 @@ fn mod_decl_re(name: &str) -> regex::Regex {
     regex::Regex::new(&format!(
         r"(?m)^[ \t]*((?:pub(?:\([^)]*\))?[ \t]+)?)mod[ \t]+{}[ \t]*;[ \t]*\r?\n?",
         regex::escape(name)
-    )).unwrap()
+    ))
+    .unwrap()
 }
 
 /// Remove `mod <name>;` from a parent module file's content. Returns the
@@ -76,9 +87,13 @@ pub fn remove_mod_decl(content: &str, name: &str) -> Option<(String, String)> {
 /// Append `mod <name>;` to a parent module file's content (no-op when already
 /// declared). End-of-file placement is always syntactically valid.
 pub fn add_mod_decl(content: &str, name: &str, vis: &str) -> String {
-    if mod_decl_re(name).is_match(content) { return content.to_string(); }
+    if mod_decl_re(name).is_match(content) {
+        return content.to_string();
+    }
     let mut out = content.to_string();
-    if !out.is_empty() && !out.ends_with('\n') { out.push('\n'); }
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
     out.push_str(&format!("{vis}mod {name};\n"));
     out
 }
@@ -88,9 +103,12 @@ pub fn add_mod_decl(content: &str, name: &str, vis: &str) -> String {
 /// rename — the caller warns loudly.
 pub fn child_mod_decls(content: &str) -> Vec<String> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| regex::Regex::new(
-        r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;").unwrap());
-    re.captures_iter(content).map(|c| c[1].to_string()).collect()
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?m)^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;").unwrap()
+    });
+    re.captures_iter(content)
+        .map(|c| c[1].to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -98,7 +116,13 @@ mod tests {
     use super::*;
 
     fn ed(lo: u32, hi: u32, old: &str, new: &str) -> Edit {
-        Edit { path: "src/a.rs".into(), lo, hi, old_text: old.into(), new_text: new.into() }
+        Edit {
+            path: "src/a.rs".into(),
+            lo,
+            hi,
+            old_text: old.into(),
+            new_text: new.into(),
+        }
     }
 
     #[test]
@@ -108,11 +132,24 @@ mod tests {
         let foo_lo = content.find("crate::utils::Foo").unwrap() as u32;
         let bar_lo = content.find("crate::utils::Bar").unwrap() as u32;
         let edits = vec![
-            ed(foo_lo, foo_lo + 17, "crate::utils::Foo", "crate::helpers::utils::Foo"),
-            ed(bar_lo, bar_lo + 17, "crate::utils::Bar", "crate::helpers::utils::Bar"),
+            ed(
+                foo_lo,
+                foo_lo + 17,
+                "crate::utils::Foo",
+                "crate::helpers::utils::Foo",
+            ),
+            ed(
+                bar_lo,
+                bar_lo + 17,
+                "crate::utils::Bar",
+                "crate::helpers::utils::Bar",
+            ),
         ];
         let out = splice_file(content, &edits).unwrap();
-        assert_eq!(out, "use crate::helpers::utils::Foo;\nuse crate::helpers::utils::Bar;\n");
+        assert_eq!(
+            out,
+            "use crate::helpers::utils::Foo;\nuse crate::helpers::utils::Bar;\n"
+        );
     }
 
     #[test]
@@ -143,7 +180,10 @@ mod tests {
         // `mod utils_extra;` must not match `utils`
         assert!(remove_mod_decl("mod utils_extra;\n", "utils").is_none());
 
-        assert_eq!(add_mod_decl("fn x() {}", "utils", "pub "), "fn x() {}\npub mod utils;\n");
+        assert_eq!(
+            add_mod_decl("fn x() {}", "utils", "pub "),
+            "fn x() {}\npub mod utils;\n"
+        );
         // already declared -> no-op
         assert_eq!(add_mod_decl(lib, "utils", ""), lib);
     }
@@ -157,9 +197,27 @@ mod tests {
     #[test]
     fn groups_by_file() {
         let edits = vec![
-            Edit { path: "b.rs".into(), lo: 0, hi: 1, old_text: "x".into(), new_text: "y".into() },
-            Edit { path: "a.rs".into(), lo: 0, hi: 1, old_text: "x".into(), new_text: "y".into() },
-            Edit { path: "a.rs".into(), lo: 2, hi: 3, old_text: "x".into(), new_text: "y".into() },
+            Edit {
+                path: "b.rs".into(),
+                lo: 0,
+                hi: 1,
+                old_text: "x".into(),
+                new_text: "y".into(),
+            },
+            Edit {
+                path: "a.rs".into(),
+                lo: 0,
+                hi: 1,
+                old_text: "x".into(),
+                new_text: "y".into(),
+            },
+            Edit {
+                path: "a.rs".into(),
+                lo: 2,
+                hi: 3,
+                old_text: "x".into(),
+                new_text: "y".into(),
+            },
         ];
         let g = group_by_file(edits);
         assert_eq!(g.len(), 2);

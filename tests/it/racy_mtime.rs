@@ -76,7 +76,11 @@ const CONTENT_B: &str = "pub struct Bbbbb {}\n";
 
 #[test]
 fn same_second_same_length_edit_is_rehashed_not_hidden_by_the_fast_path() {
-    assert_eq!(CONTENT_A.len(), CONTENT_B.len(), "test fixture must hold size fixed");
+    assert_eq!(
+        CONTENT_A.len(),
+        CONTENT_B.len(),
+        "test fixture must hold size fixed"
+    );
 
     let d = sandbox("hazard");
     let path = d.join("src/a.rs");
@@ -95,9 +99,15 @@ fn same_second_same_length_edit_is_rehashed_not_hidden_by_the_fast_path() {
     // one real wall-clock second.
     let observed_mtime = fs::metadata(&path).unwrap().modified().unwrap();
     fs::write(&path, CONTENT_B).unwrap();
-    File::open(&path).unwrap().set_modified(observed_mtime).unwrap();
+    File::open(&path)
+        .unwrap()
+        .set_modified(observed_mtime)
+        .unwrap();
     assert_eq!(fs::metadata(&path).unwrap().len(), CONTENT_A.len() as u64);
-    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), observed_mtime);
+    assert_eq!(
+        fs::metadata(&path).unwrap().modified().unwrap(),
+        observed_mtime
+    );
 
     eng.tick(&prog, true).unwrap();
     let hash_b = file_hash(&eng, "src/a.rs");
@@ -137,6 +147,12 @@ fn unchanged_file_outside_the_racy_window_stays_stable_across_ticks() {
     eng.tick(&prog, true).unwrap();
     let hash2 = file_hash(&eng, "src/a.rs");
 
-    assert_eq!(hash0, hash1, "an unchanged file's stored hash must not move tick 1 -> 2");
-    assert_eq!(hash1, hash2, "an unchanged file's stored hash must not move tick 2 -> 3");
+    assert_eq!(
+        hash0, hash1,
+        "an unchanged file's stored hash must not move tick 1 -> 2"
+    );
+    assert_eq!(
+        hash1, hash2,
+        "an unchanged file's stored hash must not move tick 2 -> 3"
+    );
 }

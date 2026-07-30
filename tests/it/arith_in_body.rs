@@ -23,10 +23,13 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 /// Negated body atom with arithmetic: `!step(url, idx + 1)` keeps rows whose
@@ -43,12 +46,16 @@ fn negated_body_atom_arithmetic() {
         "step(\"b\", 6).\n",
         "rel gap(url: text, idx: int).\n",
         "gap(url, idx) <- step(url, idx), !step(url, idx + 1).\n",
-        "? gap(url, idx).\n");
+        "? gap(url, idx).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "negated body-atom arithmetic must run:\n{err}");
     assert!(out.contains("a\t3"), "a,3 has no successor:\n{out}");
     assert!(out.contains("b\t6"), "b,6 has no successor:\n{out}");
-    assert!(!out.contains("a\t1") && !out.contains("a\t2"), "a,1 and a,2 have successors:\n{out}");
+    assert!(
+        !out.contains("a\t1") && !out.contains("a\t2"),
+        "a,1 and a,2 have successors:\n{out}"
+    );
     assert!(!out.contains("b\t5"), "b,5 has a successor:\n{out}");
     assert!(out.contains("(2 rows)"), "exactly two gap rows:\n{out}");
 }
@@ -71,7 +78,8 @@ fn positive_body_atom_arithmetic() {
         "next(\"b\", 6).\n",
         "rel follow(url: text, idx: int).\n",
         "follow(url, idx) <- base(url, idx), next(url, idx + 1).\n",
-        "? follow(url, idx).\n");
+        "? follow(url, idx).\n"
+    );
     let (code, out, err) = run(&dir, prog);
     assert_eq!(code, 0, "positive body-atom arithmetic must run:\n{err}");
     assert!(out.contains("a\t1"), "a,1 matched by next a,2:\n{out}");
@@ -79,5 +87,8 @@ fn positive_body_atom_arithmetic() {
     assert!(out.contains("b\t5"), "b,5 matched by next b,6:\n{out}");
     assert!(!out.contains("a\t3"), "a,3 has no next a,4:\n{out}");
     assert!(!out.contains("b\t6"), "b,6 has no next b,7:\n{out}");
-    assert!(out.contains("(3 rows)"), "exactly three follow rows:\n{out}");
+    assert!(
+        out.contains("(3 rows)"),
+        "exactly three follow rows:\n{out}"
+    );
 }

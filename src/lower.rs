@@ -3,8 +3,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 
-pub fn tbl(name: &str) -> String { format!("rel_{name}") }
-pub fn txt_tbl(name: &str) -> String { format!("rel_{name}_txt") }
+pub fn tbl(name: &str) -> String {
+    format!("rel_{name}")
+}
+pub fn txt_tbl(name: &str) -> String {
+    format!("rel_{name}_txt")
+}
 
 /// Pass-through string builtins: (dsl name, sql UDF, arity). All text->text,
 /// registered in db.rs::register_string_fns. Shared with typecheck (the known-fn
@@ -21,7 +25,9 @@ pub const STR_FNS: &[(&str, &str, usize)] = &[
     ("norm", "sprf_norm", 1),
 ];
 
-fn esc(s: &str) -> String { s.replace('\'', "''") }
+fn esc(s: &str) -> String {
+    s.replace('\'', "''")
+}
 
 /// Decode a `sym` (interned StringId INTEGER) cell to its text through
 /// `_strings`. An indexed point lookup on the INTEGER PRIMARY KEY — used only
@@ -129,10 +135,16 @@ fn sym_eq_lit(cell: &str, s: &str) -> String {
 /// an int compare; sym vs text hashes the TEXT side (`sprf_sym`) so the sym
 /// side never decodes; everything else is plain equality.
 #[derive(Clone, Copy, Debug)]
-struct VarTy { ty: Type, interned: bool, coord: bool }
+struct VarTy {
+    ty: Type,
+    interned: bool,
+    coord: bool,
+}
 type TyEnv = HashMap<String, VarTy>;
 
-fn var_ty(tys: &TyEnv, var: &str) -> Option<Type> { tys.get(var).map(|t| t.ty) }
+fn var_ty(tys: &TyEnv, var: &str) -> Option<Type> {
+    tys.get(var).map(|t| t.ty)
+}
 fn var_interned(tys: &TyEnv, var: &str) -> bool {
     tys.get(var).is_some_and(|t| t.interned)
 }
@@ -142,13 +154,21 @@ fn var_coord(tys: &TyEnv, var: &str) -> bool {
 fn term_interned(term: &Term, tys: &TyEnv) -> bool {
     match term {
         Term::Var(v) => var_interned(tys, v),
-        Term::Call { name, args } if name == "sym" && args.len() == 1 => term_interned(&args[0], tys),
+        Term::Call { name, args } if name == "sym" && args.len() == 1 => {
+            term_interned(&args[0], tys)
+        }
         _ => false,
     }
 }
 
-fn eq_cond(a_sql: &str, a_ty: Option<Type>, a_interned: bool,
-           b_sql: &str, b_ty: Option<Type>, b_interned: bool) -> String {
+fn eq_cond(
+    a_sql: &str,
+    a_ty: Option<Type>,
+    a_interned: bool,
+    b_sql: &str,
+    b_ty: Option<Type>,
+    b_interned: bool,
+) -> String {
     if a_ty.is_some_and(|t| t.textish()) && b_ty.is_some_and(|t| t.textish()) {
         return match (a_interned, b_interned) {
             // One side is a dense interned column, the other raw text: hash the
@@ -167,7 +187,12 @@ fn eq_cond(a_sql: &str, a_ty: Option<Type>, a_interned: bool,
 /// sym-typed var (int pass-through) or a text literal (compile-time hash) —
 /// a computed/text value has no `_strings` row to decode later, so it bails
 /// with the fix. Text-ish columns decode sym vars; everything else is plain.
-fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
+fn head_term_sql(
+    term: &Term,
+    col: &Col,
+    canon: &HashMap<String, String>,
+    tys: &TyEnv,
+) -> Result<String> {
     if col.interned() {
         // A df-coordinate id column stores the hash but never interns the text,
         // so a literal/computed value written into it hashes with `sprf_sym`
@@ -182,12 +207,19 @@ fn head_term_sql(term: &Term, col: &Col, canon: &HashMap<String, String>, tys: &
         // coord column uses pure `sprf_sym` (its id is a `_df_node_dict`
         // surrogate, not a sym-dict one). A pass-through interned source var
         // already carries its dense id. Storage normalization, 2026-07-21.
-        let hash_fn = if col.coord { "sprf_sym" } else { "sprf_sym_intern" };
+        let hash_fn = if col.coord {
+            "sprf_sym"
+        } else {
+            "sprf_sym_intern"
+        };
         return match term {
             Term::Str(s) => Ok(format!("{hash_fn}('{}')", esc(s))),
             Term::Var(v) if var_interned(tys, v) => term_sql(term, canon, tys),
-            Term::Call { name, args } if name == "sym" && args.len() == 1
-                && term_interned(&args[0], tys) => term_sql(&args[0], canon, tys),
+            Term::Call { name, args }
+                if name == "sym" && args.len() == 1 && term_interned(&args[0], tys) =>
+            {
+                term_sql(&args[0], canon, tys)
+            }
             _ => Ok(format!("{hash_fn}({})", term_sql_text(term, canon, tys)?)),
         };
     }
@@ -208,12 +240,14 @@ fn term_sql_text(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Resu
     }
     if let Term::Var(v) = t {
         if var_coord(tys, v) {
-            let cell = canon.get(v)
+            let cell = canon
+                .get(v)
                 .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
             return Ok(coord_decode(cell));
         }
         if var_interned(tys, v) {
-            let cell = canon.get(v)
+            let cell = canon
+                .get(v)
                 .ok_or_else(|| anyhow::anyhow!("unbound variable {v}"))?;
             return Ok(sym_decode(cell));
         }
@@ -231,13 +265,19 @@ fn lit_sql(t: &Term) -> Option<String> {
 
 /// SQL string concatenation for an interpolated term: literals quoted, vars are
 /// the canonical column reference. `"${ty}::${name}"` -> `ty_col || '::' || name_col`.
-fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
+fn interp_sql(
+    parts: &[InterpPart],
+    canon: &HashMap<String, String>,
+    tys: &TyEnv,
+) -> Result<String> {
     let mut pieces = Vec::new();
     for p in parts {
         pieces.push(match p {
             InterpPart::Lit(s) => format!("'{}'", esc(s)),
             InterpPart::Var(v) => {
-                let cell = canon.get(v).cloned()
+                let cell = canon
+                    .get(v)
+                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("unbound variable {v} in interpolation"))?;
                 // Interpolation consumes text: a coord id reconstructs, a sym
                 // var decodes here.
@@ -245,7 +285,11 @@ fn interp_sql(parts: &[InterpPart], canon: &HashMap<String, String>, tys: &TyEnv
             }
         });
     }
-    Ok(if pieces.is_empty() { "''".into() } else { pieces.join(" || ") })
+    Ok(if pieces.is_empty() {
+        "''".into()
+    } else {
+        pieces.join(" || ")
+    })
 }
 
 /// Static type of a term at lower time, from the body's var->column-type map.
@@ -257,7 +301,11 @@ fn term_ty(t: &Term, tys: &TyEnv) -> Option<Type> {
         Term::Var(v) => var_ty(tys, v),
         Term::Str(_) | Term::Interp(_) => Some(Type::Text),
         Term::Int(_) => Some(Type::Int),
-        Term::Call { name, .. } => Some(if matches!(name.as_str(), "int" | "len" | "lines") { Type::Int } else { Type::Text }),
+        Term::Call { name, .. } => Some(if matches!(name.as_str(), "int" | "len" | "lines") {
+            Type::Int
+        } else {
+            Type::Text
+        }),
         Term::Arith { op, lhs, rhs } => match op {
             ArithOp::Add => match (term_ty(lhs, tys), term_ty(rhs, tys)) {
                 (Some(Type::Int), Some(Type::Int)) => Some(Type::Int),
@@ -273,7 +321,9 @@ fn term_ty(t: &Term, tys: &TyEnv) -> Option<Type> {
 
 fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<String> {
     match t {
-        Term::Var(v) => canon.get(v).cloned()
+        Term::Var(v) => canon
+            .get(v)
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound variable {v}")),
         Term::Str(_) | Term::Int(_) => Ok(lit_sql(t).unwrap()),
         Term::Interp(parts) => interp_sql(parts, canon, tys),
@@ -283,7 +333,11 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<St
         // Mixed is a typecheck error upstream; the lower-time bail is the
         // backstop for paths typecheck cannot see. Unknown-typed sides keep the
         // legacy numeric `+` (a fully-unknown `+` was numeric before this fork).
-        Term::Arith { op: ArithOp::Add, lhs, rhs } => {
+        Term::Arith {
+            op: ArithOp::Add,
+            lhs,
+            rhs,
+        } => {
             let (lt, rt) = (term_ty(lhs, tys), term_ty(rhs, tys));
             let text = |t: Option<Type>| t.is_some_and(|x| x != Type::Int);
             let sql_op = match (lt, rt) {
@@ -294,18 +348,31 @@ fn term_sql(t: &Term, canon: &HashMap<String, String>, tys: &TyEnv) -> Result<St
             };
             // Text concat consumes text: text operands decode.
             if sql_op == "||" {
-                return Ok(format!("({} || {})",
-                    term_sql_text(lhs, canon, tys)?, term_sql_text(rhs, canon, tys)?));
+                return Ok(format!(
+                    "({} || {})",
+                    term_sql_text(lhs, canon, tys)?,
+                    term_sql_text(rhs, canon, tys)?
+                ));
             }
-            Ok(format!("({} {sql_op} {})", term_sql(lhs, canon, tys)?, term_sql(rhs, canon, tys)?))
+            Ok(format!(
+                "({} {sql_op} {})",
+                term_sql(lhs, canon, tys)?,
+                term_sql(rhs, canon, tys)?
+            ))
         }
         Term::Arith { op, lhs, rhs } => Ok(format!(
-            "({} {} {})", term_sql(lhs, canon, tys)?, op.sql(), term_sql(rhs, canon, tys)?)),
+            "({} {} {})",
+            term_sql(lhs, canon, tys)?,
+            op.sql(),
+            term_sql(rhs, canon, tys)?
+        )),
         Term::Call { name, args } => {
             // Every function consumes decoded text (string fns; int() decodes
             // then casts) — sym args decode at the argument boundary.
-            let arg_sqls: Vec<String> = args.iter()
-                .map(|a| term_sql_text(a, canon, tys)).collect::<Result<_>>()?;
+            let arg_sqls: Vec<String> = args
+                .iter()
+                .map(|a| term_sql_text(a, canon, tys))
+                .collect::<Result<_>>()?;
             match name.as_str() {
                 // SQLite native: replace(X, Y, Z) replaces all Y in X with Z.
                 "replace" if args.len() == 3 =>
@@ -436,9 +503,10 @@ fn resolve_rev_terms(terms: &mut [Term], cols: &[Col], resolved_work: &str) {
 /// to a computed expression (`callee = replace(callee_q, ".", "::")`), and a
 /// negation referencing that var must see it in canon — with Neg first the var
 /// minted an unconstrained subquery local instead of a join.
-fn body_sql(body: &[BodyItem], rels: &Rels)
-    -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)>
-{
+fn body_sql(
+    body: &[BodyItem],
+    rels: &Rels,
+) -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)> {
     body_sql_ex(body, rels, &HashMap::new())
 }
 
@@ -451,29 +519,41 @@ fn body_sql(body: &[BodyItem], rels: &Rels)
 /// snapshot (rows new as of the previous iteration) while every other
 /// occurrence still reads the full accumulated relation. See engine
 /// `rebuild_derived`.
-fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String>)
-    -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)>
-{
+fn body_sql_ex(
+    body: &[BodyItem],
+    rels: &Rels,
+    overrides: &HashMap<usize, String>,
+) -> Result<(HashMap<String, String>, TyEnv, Vec<String>, Vec<String>)> {
     let mut canon: HashMap<String, String> = HashMap::new();
     let mut tys: TyEnv = HashMap::new();
     let mut wheres: Vec<String> = Vec::new();
     let mut froms: Vec<String> = Vec::new();
-    let computed_vars: HashSet<String> = body.iter().filter_map(|item| match item {
-        BodyItem::Cmp(c) if c.op == CmpOp::Eq => match (&c.lhs, &c.rhs) {
-            (Term::Var(v), rhs) if v != "_" && has_computation(rhs) => Some(v.clone()),
-            (lhs, Term::Var(v)) if v != "_" && has_computation(lhs) => Some(v.clone()),
+    let computed_vars: HashSet<String> = body
+        .iter()
+        .filter_map(|item| match item {
+            BodyItem::Cmp(c) if c.op == CmpOp::Eq => match (&c.lhs, &c.rhs) {
+                (Term::Var(v), rhs) if v != "_" && has_computation(rhs) => Some(v.clone()),
+                (lhs, Term::Var(v)) if v != "_" && has_computation(lhs) => Some(v.clone()),
+                _ => None,
+            },
             _ => None,
-        },
-        _ => None,
-    }).collect();
+        })
+        .collect();
     let mut deferred: Vec<(String, String, Type, bool)> = Vec::new();
     let mut k = 0usize;
 
     for item in body {
         if let BodyItem::Pos(a) = item {
-            let meta = rels.get(&a.rel).ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
+            let meta = rels
+                .get(&a.rel)
+                .ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
             if a.terms.len() != meta.cols.len() {
-                bail!("relation {} expects {} cols, got {}", a.rel, meta.cols.len(), a.terms.len());
+                bail!(
+                    "relation {} expects {} cols, got {}",
+                    a.rel,
+                    meta.cols.len(),
+                    a.terms.len()
+                );
             }
             let alias = format!("r{k}");
             let src = overrides.get(&k).cloned().unwrap_or_else(|| tbl(&a.rel));
@@ -482,31 +562,51 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                 let cell = format!("{alias}.\"{}\"", meta.col_name(pos));
                 match term {
                     Term::Var(v) if computed_vars.contains(v) && !canon.contains_key(v) => {
-                        deferred.push((v.clone(), cell, meta.cols[pos].ty, meta.cols[pos].interned()));
+                        deferred.push((
+                            v.clone(),
+                            cell,
+                            meta.cols[pos].ty,
+                            meta.cols[pos].interned(),
+                        ));
                     }
                     Term::Var(v) => match canon.get(v) {
                         Some(prev) => wheres.push(eq_cond(
-                            &cell, Some(meta.cols[pos].ty), meta.cols[pos].interned(),
-                            prev, var_ty(&tys, v), var_interned(&tys, v))),
+                            &cell,
+                            Some(meta.cols[pos].ty),
+                            meta.cols[pos].interned(),
+                            prev,
+                            var_ty(&tys, v),
+                            var_interned(&tys, v),
+                        )),
                         None => {
                             canon.insert(v.clone(), cell);
-                            tys.insert(v.clone(), VarTy {
-                                ty: meta.cols[pos].ty,
-                                interned: meta.cols[pos].interned(),
-                                coord: meta.cols[pos].coord,
-                            });
+                            tys.insert(
+                                v.clone(),
+                                VarTy {
+                                    ty: meta.cols[pos].ty,
+                                    interned: meta.cols[pos].interned(),
+                                    coord: meta.cols[pos].coord,
+                                },
+                            );
                         }
                     },
                     // A text literal against a sym column filters by its
                     // dense `_sym_dict` surrogate (or raw hash) — an int compare,
                     // no decode.
-                    Term::Str(s) if meta.cols[pos].interned() =>
-                        wheres.push(sym_eq_lit(&cell, s)),
-                    Term::Str(_) | Term::Int(_) => wheres.push(format!("{cell} = {}", lit_sql(term).unwrap())),
-                    Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
+                    Term::Str(s) if meta.cols[pos].interned() => wheres.push(sym_eq_lit(&cell, s)),
+                    Term::Str(_) | Term::Int(_) => {
+                        wheres.push(format!("{cell} = {}", lit_sql(term).unwrap()))
+                    }
+                    Term::Interp(_) => {
+                        bail!("interpolated string only allowed in a rule head, not a body atom")
+                    }
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-                    Term::Arith { .. } => wheres.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?)),
-                    Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
+                    Term::Arith { .. } => {
+                        wheres.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?))
+                    }
+                    Term::Call { .. } => bail!(
+                        "function call only allowed in a rule head or comparison, not a body atom"
+                    ),
                     Term::Wild => {}
                 }
             }
@@ -524,32 +624,50 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
             // for split/replace). Literal `x = "foo"` stays a WHERE filter.
             if c.op == CmpOp::Eq {
                 let bound = match (&c.lhs, &c.rhs) {
-                    (Term::Var(v), rhs) if v != "_" && !canon.contains_key(v) && has_computation(rhs) => {
+                    (Term::Var(v), rhs)
+                        if v != "_" && !canon.contains_key(v) && has_computation(rhs) =>
+                    {
                         let e = term_sql(rhs, &canon, &tys)?;
                         if let Some(t) = term_ty(rhs, &tys) {
-                            tys.insert(v.clone(), VarTy { ty: t, interned: false, coord: false });
+                            tys.insert(
+                                v.clone(),
+                                VarTy {
+                                    ty: t,
+                                    interned: false,
+                                    coord: false,
+                                },
+                            );
                         }
                         canon.insert(v.clone(), e);
                         true
                     }
-                    (lhs, Term::Var(v)) if v != "_" && !canon.contains_key(v) && has_computation(lhs) => {
+                    (lhs, Term::Var(v))
+                        if v != "_" && !canon.contains_key(v) && has_computation(lhs) =>
+                    {
                         let e = term_sql(lhs, &canon, &tys)?;
                         if let Some(t) = term_ty(lhs, &tys) {
-                            tys.insert(v.clone(), VarTy { ty: t, interned: false, coord: false });
+                            tys.insert(
+                                v.clone(),
+                                VarTy {
+                                    ty: t,
+                                    interned: false,
+                                    coord: false,
+                                },
+                            );
                         }
                         canon.insert(v.clone(), e);
                         true
                     }
                     _ => false,
                 };
-                if bound { continue; }
+                if bound {
+                    continue;
+                }
             }
             let (lt, rt) = (term_ty(&c.lhs, &tys), term_ty(&c.rhs, &tys));
             let lhs_interned = term_interned(&c.lhs, &tys);
             let rhs_interned = term_interned(&c.rhs, &tys);
-            if matches!(c.op, CmpOp::Eq | CmpOp::Ne)
-                && (lhs_interned || rhs_interned)
-            {
+            if matches!(c.op, CmpOp::Eq | CmpOp::Ne) && (lhs_interned || rhs_interned) {
                 let l = match &c.lhs {
                     Term::Str(s) if rhs_interned => sym_lit(s),
                     _ => term_sql(&c.lhs, &canon, &tys)?,
@@ -558,9 +676,19 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                     Term::Str(s) if lhs_interned => sym_lit(s),
                     _ => term_sql(&c.rhs, &canon, &tys)?,
                 };
-                let eq = eq_cond(&l, lt, lhs_interned || (matches!(&c.lhs, Term::Str(_)) && rhs_interned),
-                    &r, rt, rhs_interned || (matches!(&c.rhs, Term::Str(_)) && lhs_interned));
-                wheres.push(if c.op == CmpOp::Eq { eq } else { format!("NOT ({eq})") });
+                let eq = eq_cond(
+                    &l,
+                    lt,
+                    lhs_interned || (matches!(&c.lhs, Term::Str(_)) && rhs_interned),
+                    &r,
+                    rt,
+                    rhs_interned || (matches!(&c.rhs, Term::Str(_)) && lhs_interned),
+                );
+                wheres.push(if c.op == CmpOp::Eq {
+                    eq
+                } else {
+                    format!("NOT ({eq})")
+                });
                 continue;
             }
             // Ordering (or non-sym compare): text sides decode to text.
@@ -571,18 +699,32 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
     }
 
     for (v, cell, ty, interned) in deferred {
-        let prev = canon.get(&v)
+        let prev = canon
+            .get(&v)
             .ok_or_else(|| anyhow::anyhow!("computed variable {v} was not bound"))?;
-        wheres.push(eq_cond(&cell, Some(ty), interned, prev,
-            var_ty(&tys, &v), var_interned(&tys, &v)));
+        wheres.push(eq_cond(
+            &cell,
+            Some(ty),
+            interned,
+            prev,
+            var_ty(&tys, &v),
+            var_interned(&tys, &v),
+        ));
     }
 
     let mut neg_m = 0usize;
     for item in body {
         if let BodyItem::Neg(a) = item {
-            let meta = rels.get(&a.rel).ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
+            let meta = rels
+                .get(&a.rel)
+                .ok_or_else(|| anyhow::anyhow!("unknown relation {}", a.rel))?;
             if a.terms.len() != meta.cols.len() {
-                bail!("relation {} expects {} cols, got {}", a.rel, meta.cols.len(), a.terms.len());
+                bail!(
+                    "relation {} expects {} cols, got {}",
+                    a.rel,
+                    meta.cols.len(),
+                    a.terms.len()
+                );
             }
             let alias = format!("ax{neg_m}");
             let mut local: HashMap<String, String> = HashMap::new();
@@ -592,26 +734,46 @@ fn body_sql_ex(body: &[BodyItem], rels: &Rels, overrides: &HashMap<usize, String
                 match term {
                     Term::Var(v) => {
                         if let Some(outer) = canon.get(v) {
-                            sub.push(eq_cond(&cell, Some(meta.cols[pos].ty), meta.cols[pos].interned(),
-                                outer, var_ty(&tys, v), var_interned(&tys, v)));
+                            sub.push(eq_cond(
+                                &cell,
+                                Some(meta.cols[pos].ty),
+                                meta.cols[pos].interned(),
+                                outer,
+                                var_ty(&tys, v),
+                                var_interned(&tys, v),
+                            ));
                         } else if let Some(prev) = local.get(v) {
                             sub.push(format!("{cell} = {prev}"));
                         } else {
                             local.insert(v.clone(), cell);
                         }
                     }
-                    Term::Str(s) if meta.cols[pos].interned() =>
-                        sub.push(sym_eq_lit(&cell, s)),
-                    Term::Str(_) | Term::Int(_) => sub.push(format!("{cell} = {}", lit_sql(term).unwrap())),
-                    Term::Interp(_) => bail!("interpolated string only allowed in a rule head, not a body atom"),
+                    Term::Str(s) if meta.cols[pos].interned() => sub.push(sym_eq_lit(&cell, s)),
+                    Term::Str(_) | Term::Int(_) => {
+                        sub.push(format!("{cell} = {}", lit_sql(term).unwrap()))
+                    }
+                    Term::Interp(_) => {
+                        bail!("interpolated string only allowed in a rule head, not a body atom")
+                    }
                     Term::PathLit { .. } => bail!("path literal not normalized before lowering"),
-                    Term::Arith { .. } => sub.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?)),
-                    Term::Call { .. } => bail!("function call only allowed in a rule head or comparison, not a body atom"),
+                    Term::Arith { .. } => {
+                        sub.push(format!("{cell} = {}", term_sql(term, &canon, &tys)?))
+                    }
+                    Term::Call { .. } => bail!(
+                        "function call only allowed in a rule head or comparison, not a body atom"
+                    ),
                     Term::Wild => {}
                 }
             }
-            let cond = if sub.is_empty() { "1=1".to_string() } else { sub.join(" AND ") };
-            wheres.push(format!("NOT EXISTS (SELECT 1 FROM {} {alias} WHERE {cond})", tbl(&a.rel)));
+            let cond = if sub.is_empty() {
+                "1=1".to_string()
+            } else {
+                sub.join(" AND ")
+            };
+            wheres.push(format!(
+                "NOT EXISTS (SELECT 1 FROM {} {alias} WHERE {cond})",
+                tbl(&a.rel)
+            ));
             neg_m += 1;
         }
     }
@@ -639,9 +801,20 @@ pub fn lower_body_projection(body: &[BodyItem], rels: &Rels, vars: &[String]) ->
     // digest, e.g. a wildcard-bucket `clock(secs, _)` salt) still needs the body
     // as an emission gate: project a constant so satisfiability yields exactly
     // one row and an empty body result emits nothing.
-    if exprs.is_empty() { exprs.push("1 AS \"__gate\"".to_string()); }
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
-    Ok(format!("SELECT DISTINCT {} FROM {}{}", exprs.join(", "), froms.join(", "), where_sql))
+    if exprs.is_empty() {
+        exprs.push("1 AS \"__gate\"".to_string());
+    }
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
+    Ok(format!(
+        "SELECT DISTINCT {} FROM {}{}",
+        exprs.join(", "),
+        froms.join(", "),
+        where_sql
+    ))
 }
 
 // ARCH {"url":"30-lower","role":"compile"}
@@ -655,19 +828,29 @@ pub fn lower_rule(rule: &Rule, rels: &Rels) -> Result<String> {
 /// `target = carry_<rel>` and `extra = [("tx", "<next_tx>")]` so the body's rows
 /// land in the carry buffer stamped with the next generation instead of in the
 /// head relation this tick. Existing callers go through `lower_rule` unchanged.
-pub fn lower_rule_to(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)]) -> Result<String> {
+pub fn lower_rule_to(
+    rule: &Rule,
+    rels: &Rels,
+    target: &str,
+    extra: &[(String, String)],
+) -> Result<String> {
     lower_rule_to_ex(rule, rels, target, extra, &HashMap::new())
 }
 
 /// Every occurrence index (the `k` in body_sql_ex's `overrides`) of a
 /// positive body atom whose relation name is in `comp_rels` — the semi-naive
 /// engine's recursive-atom occurrences for this rule, in body order.
-pub fn recursive_occurrences(rule: &Rule, comp_rels: &std::collections::HashSet<String>) -> Vec<(usize, String)> {
+pub fn recursive_occurrences(
+    rule: &Rule,
+    comp_rels: &std::collections::HashSet<String>,
+) -> Vec<(usize, String)> {
     let mut k = 0usize;
     let mut out = Vec::new();
     for item in &rule.body {
         if let BodyItem::Pos(a) = item {
-            if comp_rels.contains(&a.rel) { out.push((k, a.rel.clone())); }
+            if comp_rels.contains(&a.rel) {
+                out.push((k, a.rel.clone()));
+            }
             k += 1;
         }
     }
@@ -677,7 +860,13 @@ pub fn recursive_occurrences(rule: &Rule, comp_rels: &std::collections::HashSet<
 /// `lower_rule_to` with the semi-naive `overrides` seam threaded through the
 /// body: `overrides[&k]` replaces the k-th positive body atom's table (see
 /// `body_sql_ex`). Empty overrides is byte-identical to `lower_rule_to`.
-pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String, String)], overrides: &HashMap<usize, String>) -> Result<String> {
+pub fn lower_rule_to_ex(
+    rule: &Rule,
+    rels: &Rels,
+    target: &str,
+    extra: &[(String, String)],
+    overrides: &HashMap<usize, String>,
+) -> Result<String> {
     let (canon, tys, froms, mut wheres) = body_sql_ex(&rule.body, rels, overrides)?;
 
     // a ground fact (empty body) lowers to a FROM-less SELECT of literals;
@@ -686,15 +875,31 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         bail!("rule {} has no positive body atom (unsafe)", rule.head.rel);
     }
 
-    let head_meta = rels.get(&rule.head.rel)
+    let head_meta = rels
+        .get(&rule.head.rel)
         .ok_or_else(|| anyhow::anyhow!("unknown head relation {}", rule.head.rel))?;
     if rule.head.terms.len() != head_meta.cols.len() {
-        bail!("head {} expects {} cols, got {}", rule.head.rel, head_meta.cols.len(), rule.head.terms.len());
+        bail!(
+            "head {} expects {} cols, got {}",
+            rule.head.rel,
+            head_meta.cols.len(),
+            rule.head.terms.len()
+        );
     }
-    let mut cols: Vec<String> = head_meta.cols.iter().map(|c| format!("\"{}\"", c.name)).collect();
-    for (n, _) in extra { cols.push(format!("\"{n}\"")); }
+    let mut cols: Vec<String> = head_meta
+        .cols
+        .iter()
+        .map(|c| format!("\"{}\"", c.name))
+        .collect();
+    for (n, _) in extra {
+        cols.push(format!("\"{n}\""));
+    }
     let extra_vals: Vec<String> = extra.iter().map(|(_, v)| v.clone()).collect();
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
 
     // Lattice merge path: a `key(...) merge(MaxBy(col))` relation lowers to an
     // UPSERT keyed on the declared FD, replacing the stored row's non-key columns
@@ -709,36 +914,59 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
     if let Some(merge) = &head_meta.merge {
         let (mc, cmp) = merge.col_and_cmp();
         if rule.has_agg() {
-            bail!("rel {} has both an aggregate head and merge(...); pick one", rule.head.rel);
+            bail!(
+                "rel {} has both an aggregate head and merge(...); pick one",
+                rule.head.rel
+            );
         }
-        let key = head_meta.key.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("rel {} has merge(...) without key(...)", rule.head.rel))?;
+        let key = head_meta.key.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("rel {} has merge(...) without key(...)", rule.head.rel)
+        })?;
         let key_cols: Vec<String> = key.iter().map(|c| format!("\"{c}\"")).collect();
         // Non-key columns to copy on a winning conflict: every user column not in
         // the key, in declaration order, plus any extra columns (e.g. carry tx).
         let mut non_key: Vec<String> = Vec::new();
         for c in &head_meta.cols {
-            if !key.contains(&c.name) { non_key.push(c.name.clone()); }
+            if !key.contains(&c.name) {
+                non_key.push(c.name.clone());
+            }
         }
-        for (n, _) in extra { non_key.push(n.clone()); }
+        for (n, _) in extra {
+            non_key.push(n.clone());
+        }
         let mut exprs = Vec::new();
         for (term, col) in rule.head.terms.iter().zip(head_meta.cols.iter()) {
-            if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
+            if matches!(term, Term::Wild) {
+                exprs.push("NULL".into());
+                continue;
+            }
             let source = term_sql_text(term, &canon, &tys)?;
             let e = head_term_sql(term, col, &canon, &tys)?;
-            if has_call(term) { wheres.push(format!("{source} IS NOT NULL")); }
+            if has_call(term) {
+                wheres.push(format!("{source} IS NOT NULL"));
+            }
             exprs.push(e);
         }
         exprs.extend(extra_vals.iter().cloned());
-        let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
+        let from_sql = if froms.is_empty() {
+            String::new()
+        } else {
+            format!(" FROM {}", froms.join(", "))
+        };
         // SQLite parses `FROM t ON CONFLICT` as a join (ON = join condition),
         // so the UPSERT clause must be preceded by a terminated SELECT. A bare
         // `FROM t` with no WHERE leaves `ON CONFLICT` ambiguous and fails with
         // "near DO: syntax error". Always emit a WHERE — `WHERE 1` when the
         // body has no constraints — so the SELECT body closes before ON CONFLICT.
-        let where_sql = if wheres.is_empty() { " WHERE 1".to_string() } else { format!(" WHERE {}", wheres.join(" AND ")) };
-        let set_clause: Vec<String> = non_key.iter()
-            .map(|c| format!("\"{c}\" = excluded.\"{c}\"")).collect();
+        let where_sql = if wheres.is_empty() {
+            " WHERE 1".to_string()
+        } else {
+            format!(" WHERE {}", wheres.join(" AND "))
+        };
+        let set_clause: Vec<String> = non_key
+            .iter()
+            .map(|c| format!("\"{c}\" = excluded.\"{c}\""))
+            .collect();
         return Ok(format!(
             "INSERT INTO {} ({}) SELECT {}{}{} ON CONFLICT({}) DO UPDATE SET {} WHERE excluded.\"{}\" {} \"{}\"",
             target,
@@ -768,8 +996,9 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                         // carry StringIds in the base table, but SQLite's JSON
                         // aggregate must see the decoded value (otherwise it
                         // serializes the integer id, and json() cannot nest it).
-                        _ if matches!(f, AggFn::JsonGroupArray | AggFn::JsonGroupObject) =>
-                            term_sql_text(term, &canon, &tys)?,
+                        _ if matches!(f, AggFn::JsonGroupArray | AggFn::JsonGroupObject) => {
+                            term_sql_text(term, &canon, &tys)?
+                        }
                         _ => term_sql(term, &canon, &tys)?,
                     };
                     match f {
@@ -791,7 +1020,9 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                             let json = format!("json_group_array({arg} ORDER BY {arg})");
                             exprs.push(if head_meta.cols[i].interned() {
                                 format!("sprf_sym_intern({json})")
-                            } else { json });
+                            } else {
+                                json
+                            });
                         }
                         AggFn::JsonGroupObject => {
                             if matches!(term, Term::Wild) {
@@ -801,13 +1032,17 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                                 .ok_or_else(|| anyhow::anyhow!(
                                     "json_group_object expects (key, value) — the value arg is missing"))?;
                             let val_sql = term_sql_text(val, &canon, &tys)?;
-                            let json = format!("json_group_object({arg}, {val_sql} ORDER BY {arg})");
+                            let json =
+                                format!("json_group_object({arg}, {val_sql} ORDER BY {arg})");
                             exprs.push(if head_meta.cols[i].interned() {
                                 format!("sprf_sym_intern({json})")
-                            } else { json });
+                            } else {
+                                json
+                            });
                         }
-                        AggFn::Count | AggFn::Min | AggFn::Max =>
-                            exprs.push(format!("{}({arg})", f.sql())),
+                        AggFn::Count | AggFn::Min | AggFn::Max => {
+                            exprs.push(format!("{}({arg})", f.sql()))
+                        }
                     }
                 }
                 None => {
@@ -817,7 +1052,11 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
                 }
             }
         }
-        let group_sql = if group.is_empty() { String::new() } else { format!(" GROUP BY {}", group.join(", ")) };
+        let group_sql = if group.is_empty() {
+            String::new()
+        } else {
+            format!(" GROUP BY {}", group.join(", "))
+        };
         exprs.extend(extra_vals.iter().cloned());
         return Ok(format!(
             "INSERT OR IGNORE INTO {} ({}) SELECT {} FROM {}{}{}",
@@ -840,7 +1079,10 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         // typecheck's `recursive-null-pad` diag + the `rebuild_derived` bail
         // (both via `Rule::head_null_pads`), so this arm never runs for a
         // recursive component.
-        if matches!(term, Term::Wild) { exprs.push("NULL".into()); continue; }
+        if matches!(term, Term::Wild) {
+            exprs.push("NULL".into());
+            continue;
+        }
         let source = term_sql_text(term, &canon, &tys)?;
         let e = head_term_sql(term, col, &canon, &tys)?;
         // A head term containing a Call (split/replace) may evaluate to NULL
@@ -849,13 +1091,23 @@ pub fn lower_rule_to_ex(rule: &Rule, rels: &Rels, target: &str, extra: &[(String
         // NULL), so convergence breaks. Guard: filter NULL-producing head
         // expressions out of the SELECT entirely. The row drops, which is the
         // intended "no match" semantics.
-        if has_call(term) { wheres.push(format!("{source} IS NOT NULL")); }
+        if has_call(term) {
+            wheres.push(format!("{source} IS NOT NULL"));
+        }
         exprs.push(e);
     }
 
     exprs.extend(extra_vals.iter().cloned());
-    let from_sql = if froms.is_empty() { String::new() } else { format!(" FROM {}", froms.join(", ")) };
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    let from_sql = if froms.is_empty() {
+        String::new()
+    } else {
+        format!(" FROM {}", froms.join(", "))
+    };
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
     Ok(format!(
         "INSERT OR IGNORE INTO {} ({}) SELECT {}{}{}",
         target,
@@ -888,41 +1140,66 @@ fn has_computation(t: &Term) -> bool {
 /// `SELECT DISTINCT v1, v2, ... FROM ... WHERE ... ORDER BY <all>`.
 /// `vars` are the variables the gen templates reference, target vars first.
 pub fn lower_gen(vars: &[String], body: &[BodyItem], rels: &Rels) -> Result<String> {
-    if let Some(b) = body.iter().find(|b|
-        !matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
+    if let Some(b) = body
+        .iter()
+        .find(|b| !matches!(b, BodyItem::Pos(_) | BodyItem::Neg(_) | BodyItem::Cmp(_)))
     {
         bail!("gen body must be derived-style (relation atoms and comparisons only), got {b:?}");
     }
     let (canon, tys, froms, wheres) = body_sql(body, rels)?;
-    if froms.is_empty() { bail!("gen body has no positive atom"); }
+    if froms.is_empty() {
+        bail!("gen body has no positive atom");
+    }
     let mut sel = Vec::new();
     for v in vars {
         let cell = term_sql_text(&Term::Var(v.clone()), &canon, &tys)?;
         sel.push(format!("{cell} AS \"{v}\""));
     }
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
     if sel.is_empty() {
         // A constant gen row (no template holes). Legitimate for a fully-
         // generated file: a title / header / separator line has no variables,
         // and there's no static file to put it in. DISTINCT collapses the body's
         // rows to exactly one, so the line is emitted once.
-        return Ok(format!("SELECT DISTINCT 1 FROM {}{}", froms.join(", "), where_sql));
+        return Ok(format!(
+            "SELECT DISTINCT 1 FROM {}{}",
+            froms.join(", "),
+            where_sql
+        ));
     }
     let order: Vec<String> = (1..=vars.len()).map(|i| i.to_string()).collect();
-    Ok(format!("SELECT DISTINCT {} FROM {}{} ORDER BY {}",
-        sel.join(", "), froms.join(", "), where_sql, order.join(", ")))
+    Ok(format!(
+        "SELECT DISTINCT {} FROM {}{} ORDER BY {}",
+        sel.join(", "),
+        froms.join(", "),
+        where_sql,
+        order.join(", ")
+    ))
 }
 
 /// Lower a query to (sql, headers).
 pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
-    let meta = rels.get(&q.head.rel)
+    let meta = rels
+        .get(&q.head.rel)
         .ok_or_else(|| anyhow::anyhow!("unknown relation {}", q.head.rel))?;
     if q.head.terms.len() != meta.cols.len() {
-        bail!("query {} expects {} cols, got {}", q.head.rel, meta.cols.len(), q.head.terms.len());
+        bail!(
+            "query {} expects {} cols, got {}",
+            q.head.rel,
+            meta.cols.len(),
+            q.head.terms.len()
+        );
     }
     // A query head carrying one or more aggregate calls switches from
     // SELECT DISTINCT to GROUP BY (the rule-head aggregate shape, positional).
-    let has_agg = q.head.terms.iter()
+    let has_agg = q
+        .head
+        .terms
+        .iter()
         .any(|t| matches!(t, Term::Call { name, .. } if AggFn::parse(name).is_some()));
     if has_agg {
         return lower_query_agg(q, meta);
@@ -972,13 +1249,30 @@ pub fn lower_query(q: &Query, rels: &Rels) -> Result<(String, Vec<String>)> {
         }
     }
     if sel.is_empty() {
-        sel = meta.cols.iter().map(|col| {
-            let cell = format!("{from_tbl}.\"{}\"", col.name);
-            if col.interned() { sym_decode(&cell) } else { cell }
-        }).collect();
+        sel = meta
+            .cols
+            .iter()
+            .map(|col| {
+                let cell = format!("{from_tbl}.\"{}\"", col.name);
+                if col.interned() {
+                    sym_decode(&cell)
+                } else {
+                    cell
+                }
+            })
+            .collect();
     }
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
-    let sql = format!("SELECT DISTINCT {} FROM {}{} ORDER BY 1", sel.join(", "), tbl(&q.head.rel), where_sql);
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
+    let sql = format!(
+        "SELECT DISTINCT {} FROM {}{} ORDER BY 1",
+        sel.join(", "),
+        tbl(&q.head.rel),
+        where_sql
+    );
     Ok((sql, headers))
 }
 
@@ -994,8 +1288,15 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
     let terms = &q.head.terms;
     // Group-by var names bound at a plain (non-aggregate) position. An aggregate
     // output label may not collide with one of these, nor with another label.
-    let group_vars: HashSet<&str> = terms.iter()
-        .filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None })
+    let group_vars: HashSet<&str> = terms
+        .iter()
+        .filter_map(|t| {
+            if let Term::Var(v) = t {
+                Some(v.as_str())
+            } else {
+                None
+            }
+        })
         .collect();
     let mut labels: HashSet<String> = HashSet::new();
 
@@ -1011,7 +1312,9 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
     // group var or another aggregate label.
     let take_label = |args: &[Term], labels: &mut HashSet<String>| -> Result<String> {
         let Some(Term::Var(name)) = args.first() else {
-            bail!("aggregate argument must be a variable naming the output column, e.g. count(total)");
+            bail!(
+                "aggregate argument must be a variable naming the output column, e.g. count(total)"
+            );
         };
         if group_vars.contains(name.as_str()) {
             bail!("aggregate output label `{name}` collides with a column var bound elsewhere in the query head; rename it");
@@ -1023,7 +1326,9 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
     };
 
     for i in 0..terms.len() {
-        if consumed[i] { continue; }
+        if consumed[i] {
+            continue;
+        }
         let raw_cell = format!("\"{}\"", meta.col_name(i));
         let cell = format!("{}.\"{}\"", tbl(&q.head.rel), meta.col_name(i));
         let display_cell = decode_cell(&cell, meta.cols[i].interned(), meta.cols[i].coord);
@@ -1092,17 +1397,29 @@ fn lower_query_agg(q: &Query, meta: &RelMeta) -> Result<(String, Vec<String>)> {
         }
     }
 
-    let where_sql = if wheres.is_empty() { String::new() } else { format!(" WHERE {}", wheres.join(" AND ")) };
+    let where_sql = if wheres.is_empty() {
+        String::new()
+    } else {
+        format!(" WHERE {}", wheres.join(" AND "))
+    };
     // Zero grouped columns (all wildcards + aggregates) = a whole-rel aggregate:
     // one row, no GROUP BY, no ORDER BY.
     let (group_sql, order_sql) = if group_cells.is_empty() {
         (String::new(), String::new())
     } else {
-        (format!(" GROUP BY {}", group_cells.join(", ")),
-         format!(" ORDER BY {}", order_cells.join(", ")))
+        (
+            format!(" GROUP BY {}", group_cells.join(", ")),
+            format!(" ORDER BY {}", order_cells.join(", ")),
+        )
     };
-    let sql = format!("SELECT {} FROM {}{}{}{}",
-        sel.join(", "), tbl(&q.head.rel), where_sql, group_sql, order_sql);
+    let sql = format!(
+        "SELECT {} FROM {}{}{}{}",
+        sel.join(", "),
+        tbl(&q.head.rel),
+        where_sql,
+        group_sql,
+        order_sql
+    );
     Ok((sql, headers))
 }
 
@@ -1117,8 +1434,18 @@ mod tests {
         let mut rule = None;
         for item in prog.items {
             match item {
-                Item::Rel(d) => { rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() }); }
-                Item::Rule(r) if !r.body.is_empty() => { rule = Some(r); }
+                Item::Rel(d) => {
+                    rels.insert(
+                        d.name.clone(),
+                        RelMeta {
+                            cols: d.cols.clone(),
+                            ..Default::default()
+                        },
+                    );
+                }
+                Item::Rule(r) if !r.body.is_empty() => {
+                    rule = Some(r);
+                }
                 _ => {}
             }
         }
@@ -1131,8 +1458,18 @@ mod tests {
         let mut query = None;
         for item in prog.items {
             match item {
-                Item::Rel(d) => { rels.insert(d.name.clone(), RelMeta { cols: d.cols.clone(), ..Default::default() }); }
-                Item::Query(q) => { query = Some(q); }
+                Item::Rel(d) => {
+                    rels.insert(
+                        d.name.clone(),
+                        RelMeta {
+                            cols: d.cols.clone(),
+                            ..Default::default()
+                        },
+                    );
+                }
+                Item::Query(q) => {
+                    query = Some(q);
+                }
                 _ => {}
             }
         }
@@ -1146,15 +1483,27 @@ mod tests {
     fn query_agg_json_group_array_groups_and_orders() {
         let (q, rels) = query_and_rels(concat!(
             "rel member(group_col: text, name: text).\n",
-            "? member(group_col, json_group_array(names)).\n"));
+            "? member(group_col, json_group_array(names)).\n"
+        ));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_array(COALESCE((SELECT content FROM _strings")
-            && sql.contains("ORDER BY COALESCE((SELECT content FROM _strings")
-            && sql.contains("AS \"names\""),
-            "array agg decodes and orders inside the call, labeled by the arg var: {sql}");
-        assert!(sql.contains("GROUP BY \"group_col\""), "group key present: {sql}");
-        assert!(sql.contains("ORDER BY COALESCE((SELECT content FROM _strings"), "deterministic decoded order by group: {sql}");
-        assert!(!sql.contains("DISTINCT"), "no DISTINCT under GROUP BY: {sql}");
+        assert!(
+            sql.contains("json_group_array(COALESCE((SELECT content FROM _strings")
+                && sql.contains("ORDER BY COALESCE((SELECT content FROM _strings")
+                && sql.contains("AS \"names\""),
+            "array agg decodes and orders inside the call, labeled by the arg var: {sql}"
+        );
+        assert!(
+            sql.contains("GROUP BY \"group_col\""),
+            "group key present: {sql}"
+        );
+        assert!(
+            sql.contains("ORDER BY COALESCE((SELECT content FROM _strings"),
+            "deterministic decoded order by group: {sql}"
+        );
+        assert!(
+            !sql.contains("DISTINCT"),
+            "no DISTINCT under GROUP BY: {sql}"
+        );
         assert_eq!(headers, vec!["group_col".to_string(), "names".to_string()]);
     }
 
@@ -1163,17 +1512,25 @@ mod tests {
     fn query_agg_count_sum_shape() {
         let (q, rels) = query_and_rels(concat!(
             "rel hit(bucket: text, amount: int).\n",
-            "? hit(bucket, count(total)).\n"));
+            "? hit(bucket, count(total)).\n"
+        ));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("COUNT(\"amount\") AS \"total\""), "count over column i: {sql}");
+        assert!(
+            sql.contains("COUNT(\"amount\") AS \"total\""),
+            "count over column i: {sql}"
+        );
         assert!(sql.contains("GROUP BY \"bucket\""), "{sql}");
         assert_eq!(headers, vec!["bucket".to_string(), "total".to_string()]);
 
         let (q, rels) = query_and_rels(concat!(
             "rel hit(bucket: text, amount: int).\n",
-            "? hit(bucket, sum(total)).\n"));
+            "? hit(bucket, sum(total)).\n"
+        ));
         let (sql, _) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("COALESCE(SUM(rel_hit.\"amount\"), 0) AS \"total\""), "empty-sum pinned to 0: {sql}");
+        assert!(
+            sql.contains("COALESCE(SUM(rel_hit.\"amount\"), 0) AS \"total\""),
+            "empty-sum pinned to 0: {sql}"
+        );
     }
 
     /// Zero group vars (all wildcards + one aggregate) = a whole-rel aggregate:
@@ -1182,11 +1539,18 @@ mod tests {
     fn query_agg_whole_rel_no_group_by() {
         let (q, rels) = query_and_rels(concat!(
             "rel hit(bucket: text, amount: int).\n",
-            "? hit(_, count(total)).\n"));
+            "? hit(_, count(total)).\n"
+        ));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
         assert!(sql.contains("COUNT(\"amount\") AS \"total\""), "{sql}");
-        assert!(!sql.contains("GROUP BY"), "no group by for whole-rel aggregate: {sql}");
-        assert!(!sql.contains("ORDER BY"), "no order by for one-row aggregate: {sql}");
+        assert!(
+            !sql.contains("GROUP BY"),
+            "no group by for whole-rel aggregate: {sql}"
+        );
+        assert!(
+            !sql.contains("ORDER BY"),
+            "no order by for one-row aggregate: {sql}"
+        );
         assert_eq!(headers, vec!["total".to_string()]);
     }
 
@@ -1195,10 +1559,17 @@ mod tests {
     fn query_agg_literal_filter_plus_group() {
         let (q, rels) = query_and_rels(concat!(
             "rel line(kind: text, item: text, price: int).\n",
-            "? line(\"food\", item, sum(total)).\n"));
+            "? line(\"food\", item, sum(total)).\n"
+        ));
         let (sql, _) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains(&sym_eq_lit("\"kind\"", "food")), "literal filters: {sql}");
-        assert!(sql.contains("GROUP BY \"item\""), "grouped by the surviving var: {sql}");
+        assert!(
+            sql.contains(&sym_eq_lit("\"kind\"", "food")),
+            "literal filters: {sql}"
+        );
+        assert!(
+            sql.contains("GROUP BY \"item\""),
+            "grouped by the surviving var: {sql}"
+        );
     }
 
     /// json_group_object(key, value) consumes column i (key) and column i+1
@@ -1207,12 +1578,15 @@ mod tests {
     fn query_agg_json_group_object_two_column() {
         let (q, rels) = query_and_rels(concat!(
             "rel line(order_id: text, item: text, price: int).\n",
-            "? line(order_id, json_group_object(items, prices), _).\n"));
+            "? line(order_id, json_group_object(items, prices), _).\n"
+        ));
         let (sql, headers) = lower_query(&q, &rels).unwrap();
-        assert!(sql.contains("json_group_object(COALESCE((SELECT content FROM _strings")
-            && sql.contains("\"price\" ORDER BY COALESCE((SELECT content FROM _strings")
-            && sql.contains("AS \"items\""),
-            "key = col i, value = col i+1, ordered by decoded key: {sql}");
+        assert!(
+            sql.contains("json_group_object(COALESCE((SELECT content FROM _strings")
+                && sql.contains("\"price\" ORDER BY COALESCE((SELECT content FROM _strings")
+                && sql.contains("AS \"items\""),
+            "key = col i, value = col i+1, ordered by decoded key: {sql}"
+        );
         assert!(sql.contains("GROUP BY \"order_id\""), "{sql}");
         assert_eq!(headers, vec!["order_id".to_string(), "items".to_string()]);
     }
@@ -1223,10 +1597,13 @@ mod tests {
     fn query_agg_json_group_object_missing_wildcard_bails() {
         let (q, rels) = query_and_rels(concat!(
             "rel line(order_id: text, item: text).\n",
-            "? line(order_id, json_group_object(items, prices)).\n"));
+            "? line(order_id, json_group_object(items, prices)).\n"
+        ));
         let e = lower_query(&q, &rels).unwrap_err().to_string();
-        assert!(e.contains("consumes two columns") && e.contains("put _ at the value column"),
-            "shaped two-column error: {e}");
+        assert!(
+            e.contains("consumes two columns") && e.contains("put _ at the value column"),
+            "shaped two-column error: {e}"
+        );
     }
 
     /// An aggregate output label colliding with a bound group var is refused.
@@ -1234,9 +1611,13 @@ mod tests {
     fn query_agg_label_collision_bails() {
         let (q, rels) = query_and_rels(concat!(
             "rel hit(bucket: text, amount: int).\n",
-            "? hit(bucket, count(bucket)).\n"));
+            "? hit(bucket, count(bucket)).\n"
+        ));
         let e = lower_query(&q, &rels).unwrap_err().to_string();
-        assert!(e.contains("collides") && e.contains("rename"), "collision named: {e}");
+        assert!(
+            e.contains("collides") && e.contains("rename"),
+            "collision named: {e}"
+        );
     }
 
     /// A non-aggregate function call in a query head keeps the existing bail.
@@ -1244,9 +1625,13 @@ mod tests {
     fn query_non_agg_call_still_bails() {
         let (q, rels) = query_and_rels(concat!(
             "rel raw(name: text).\n",
-            "? raw(replace(name, \"a\", \"b\")).\n"));
+            "? raw(replace(name, \"a\", \"b\")).\n"
+        ));
         let e = lower_query(&q, &rels).unwrap_err().to_string();
-        assert!(e.contains("function call not supported in a query head"), "{e}");
+        assert!(
+            e.contains("function call not supported in a query head"),
+            "{e}"
+        );
     }
 
     /// A body bind inlines the computed expression into every use site: the
@@ -1259,8 +1644,15 @@ mod tests {
             "rel resolved(caller: text, callee: text).\n",
             "resolved(caller, callee) <- raw_edge(caller, callee_q), callee = replace(callee_q, \".\", \"::\").\n"));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("replace(") && sql.contains("callee_q") && sql.contains("sprf_sym_intern"), "inlined expr: {sql}");
-        assert_eq!(sql.matches("FROM rel_raw_edge").count(), 1, "single relation FROM: {sql}");
+        assert!(
+            sql.contains("replace(") && sql.contains("callee_q") && sql.contains("sprf_sym_intern"),
+            "inlined expr: {sql}"
+        );
+        assert_eq!(
+            sql.matches("FROM rel_raw_edge").count(),
+            1,
+            "single relation FROM: {sql}"
+        );
     }
 
     /// `+` dispatch: text + text lowers to `||`, int + int stays `+`.
@@ -1269,16 +1661,24 @@ mod tests {
         let (rule, rels) = rule_and_rels(concat!(
             "rel base_url(host: text).\n",
             "rel endpoint(url: text).\n",
-            "endpoint(\"https://\" + host) <- base_url(host).\n"));
+            "endpoint(\"https://\" + host) <- base_url(host).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("'https://' ||") && sql.contains("content FROM _strings"), "text + lowers to ||: {sql}");
+        assert!(
+            sql.contains("'https://' ||") && sql.contains("content FROM _strings"),
+            "text + lowers to ||: {sql}"
+        );
 
         let (rule, rels) = rule_and_rels(concat!(
             "rel hit(line: int).\n",
             "rel next_line(value: int).\n",
-            "next_line(line + 1) <- hit(line).\n"));
+            "next_line(line + 1) <- hit(line).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("r0.\"line\" + 1"), "int + stays addition: {sql}");
+        assert!(
+            sql.contains("r0.\"line\" + 1"),
+            "int + stays addition: {sql}"
+        );
     }
 
     /// json aggregates lower to `json_group_array/object(... ORDER BY key)` —
@@ -1289,7 +1689,8 @@ mod tests {
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(g: text, name: text).\n",
             "rel arr(g: text, names: text).\n",
-            "arr(g, json_group_array(name)) <- src(g, name).\n"));
+            "arr(g, json_group_array(name)) <- src(g, name).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
         // text columns are interned: json (a text consumer) must see the decoded
         // value, and the interned head column re-interns the assembled json.
@@ -1297,19 +1698,31 @@ mod tests {
         // coordinate fallback; build the expected text from it so the two stay in
         // sync.
         let name_txt = sym_decode("r0.\"name\"");
-        assert!(sql.contains(&format!("sprf_sym_intern(json_group_array({name_txt} ORDER BY {name_txt}))")),
-            "array agg decodes input, orders inside the call, re-interns: {sql}");
-        assert!(sql.contains("GROUP BY r0.\"g\""), "group key present: {sql}");
+        assert!(
+            sql.contains(&format!(
+                "sprf_sym_intern(json_group_array({name_txt} ORDER BY {name_txt}))"
+            )),
+            "array agg decodes input, orders inside the call, re-interns: {sql}"
+        );
+        assert!(
+            sql.contains("GROUP BY r0.\"g\""),
+            "group key present: {sql}"
+        );
 
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(g: text, k: text, v: text).\n",
             "rel obj(g: text, payload: text).\n",
-            "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"));
+            "obj(g, json_group_object(k, v)) <- src(g, k, v).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
         let k_txt = sym_decode("r0.\"k\"");
         let v_txt = sym_decode("r0.\"v\"");
-        assert!(sql.contains(&format!("sprf_sym_intern(json_group_object({k_txt}, {v_txt} ORDER BY {k_txt}))")),
-            "object agg decodes key + value, orders by key, re-interns: {sql}");
+        assert!(
+            sql.contains(&format!(
+                "sprf_sym_intern(json_group_object({k_txt}, {v_txt} ORDER BY {k_txt}))"
+            )),
+            "object agg decodes key + value, orders by key, re-interns: {sql}"
+        );
     }
 
     /// The json scalar constructors lower to their SQLite natives; odd-arity
@@ -1319,24 +1732,38 @@ mod tests {
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(a: text, b: text).\n",
             "rel out(payload: text).\n",
-            "out(json_object(\"k\", a, \"j\", b)) <- src(a, b).\n"));
+            "out(json_object(\"k\", a, \"j\", b)) <- src(a, b).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_object('k'") && sql.contains("'j'") && sql.contains("sprf_sym_intern"), "json_object native: {sql}");
+        assert!(
+            sql.contains("json_object('k'")
+                && sql.contains("'j'")
+                && sql.contains("sprf_sym_intern"),
+            "json_object native: {sql}"
+        );
 
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(a: text).\n",
             "rel out(payload: text).\n",
-            "out(json_array(a)) <- src(a).\n"));
+            "out(json_array(a)) <- src(a).\n"
+        ));
         let sql = lower_rule(&rule, &rels).unwrap();
-        assert!(sql.contains("json_array(") && sql.contains("sprf_sym_intern"), "json_array native: {sql}");
+        assert!(
+            sql.contains("json_array(") && sql.contains("sprf_sym_intern"),
+            "json_array native: {sql}"
+        );
 
         // Odd-arity json_object: no matching arm -> the mis-arity bail.
         let (rule, rels) = rule_and_rels(concat!(
             "rel src(a: text, b: text, c: text).\n",
             "rel out(payload: text).\n",
-            "out(json_object(a, b, c)) <- src(a, b, c).\n"));
+            "out(json_object(a, b, c)) <- src(a, b, c).\n"
+        ));
         let e = lower_rule(&rule, &rels).unwrap_err().to_string();
-        assert!(e.contains("mis-arity") || e.contains("json_object"), "odd json_object bails: {e}");
+        assert!(
+            e.contains("mis-arity") || e.contains("json_object"),
+            "odd json_object bails: {e}"
+        );
     }
 
     /// A bind var referenced inside a NEGATION joins the outer row (Cmp pass

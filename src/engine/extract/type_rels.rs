@@ -352,8 +352,10 @@ impl Engine {
             &link_rev_rows,
             &all_rev_refs,
         )?;
-        rows_changed |= self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
-        rows_changed |= self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
+        rows_changed |=
+            self.refresh_rel("doc_comment", &["repo", "sym", "line", "text"], &doc_rows)?;
+        rows_changed |=
+            self.refresh_rel("doc_tag", &["repo", "sym", "tag", "arg", "text"], &tag_rows)?;
         rows_changed |= self.refresh_rel_for_revs(
             "const_value_rev",
             &[

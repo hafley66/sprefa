@@ -13,7 +13,7 @@ use anyhow::Result;
 use serde_json::{Map, Value as Json};
 
 use sprefa_v5::db;
-use sprefa_v5::engine::{Engine, EffectExec};
+use sprefa_v5::engine::{EffectExec, Engine};
 use sprefa_v5::prepare_paths;
 
 use crate::clock_lock::{clear_now, set_now, CLOCK_LOCK};
@@ -27,7 +27,8 @@ fn sandbox(tag: &str) -> PathBuf {
 
 fn count(db_path: &Path, table: &str) -> i64 {
     let conn = db::open(Some(db_path.to_str().unwrap())).unwrap();
-    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap()
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap()
 }
 
 /// Echoes the bound `n` as the single output slot.
@@ -79,14 +80,22 @@ fn every_fires_on_boundary_only() {
     // t=1035: 1035/30=34 (same as 34 — 30s quiet), 1035/60=17 (same — 60s quiet).
     set_now(1035);
     eng.tick(&prog, true).unwrap();
-    assert_eq!(count(&dbp, "rel_tick30"), 0, "still inside the next 30s bucket");
+    assert_eq!(
+        count(&dbp, "rel_tick30"),
+        0,
+        "still inside the next 30s bucket"
+    );
     assert_eq!(count(&dbp, "rel_tick60"), 0, "still inside the 60s bucket");
 
     // t=1050: 1050/30=35 (30s crossed), 1050/60=17 (60s NOT crossed). only 30s.
     set_now(1050);
     eng.tick(&prog, true).unwrap();
     assert_eq!(count(&dbp, "rel_tick30"), 1, "30s crossed at 1050");
-    assert_eq!(count(&dbp, "rel_tick60"), 0, "60s boundary is 1080, not yet");
+    assert_eq!(
+        count(&dbp, "rel_tick60"),
+        0,
+        "60s boundary is 1080, not yet"
+    );
 
     std::env::remove_var("DL_NOW_SECS");
 }
@@ -119,7 +128,11 @@ fn every_gated_async_fanout_under_load() {
     let t = Instant::now();
     eng.tick(&prog, true).unwrap();
     let boundary_ms = t.elapsed().as_secs_f64() * 1000.0;
-    assert_eq!(count(&dbp, "pending_effect"), N as i64, "full fanout on the boundary");
+    assert_eq!(
+        count(&dbp, "pending_effect"),
+        N as i64,
+        "full fanout on the boundary"
+    );
 
     // Quiet tick (same 5s bucket): gate empty, NO new pending rows, and it stays
     // cheap — the 500-row join is not re-emitted because every(5) is empty.
@@ -127,7 +140,11 @@ fn every_gated_async_fanout_under_load() {
     let t = Instant::now();
     eng.tick(&prog, true).unwrap();
     let quiet_ms = t.elapsed().as_secs_f64() * 1000.0;
-    assert_eq!(count(&dbp, "pending_effect"), N as i64, "quiet tick queues nothing new");
+    assert_eq!(
+        count(&dbp, "pending_effect"),
+        N as i64,
+        "quiet tick queues nothing new"
+    );
 
     // Drain off-tick (parallel), then read back on the next tick.
     let n = eng.drain_effects(&prog, &EchoExec).unwrap();
@@ -143,13 +160,21 @@ fn every_gated_async_fanout_under_load() {
     let t = Instant::now();
     eng.tick(&prog, true).unwrap();
     let deep_quiet_ms = t.elapsed().as_secs_f64() * 1000.0;
-    assert_eq!(count(&dbp, "pending_effect"), N as i64, "deep-quiet tick is a no-op for the clock");
+    assert_eq!(
+        count(&dbp, "pending_effect"),
+        N as i64,
+        "deep-quiet tick is a no-op for the clock"
+    );
 
     // Next boundary (5005/5=1001, was 1000): every(5) fires again, but the same
     // 500 requests collide on their digest id — no duplicate queue, no re-fire.
     set_now(5005);
     eng.tick(&prog, true).unwrap();
-    assert_eq!(count(&dbp, "pending_effect"), N as i64, "re-fire is idempotent on digest");
+    assert_eq!(
+        count(&dbp, "pending_effect"),
+        N as i64,
+        "re-fire is idempotent on digest"
+    );
     assert_eq!(count(&dbp, "rel_resp"), N as i64, "responses unchanged");
 
     eprintln!(
@@ -183,8 +208,13 @@ fn clock_holds_current_bucket_persistently() {
 
     let bucket = |dbp: &Path| -> Vec<i64> {
         let conn = db::open(Some(dbp.to_str().unwrap())).unwrap();
-        let mut s = conn.prepare("SELECT b FROM rel_cbucket_txt ORDER BY b").unwrap();
-        s.query_map([], |r| r.get::<_, i64>(0)).unwrap().filter_map(|x| x.ok()).collect()
+        let mut s = conn
+            .prepare("SELECT b FROM rel_cbucket_txt ORDER BY b")
+            .unwrap();
+        s.query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .collect()
     };
 
     // t=1000: bucket 1000/30 = 33, present.

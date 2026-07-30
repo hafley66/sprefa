@@ -108,7 +108,10 @@ fn who_calls_reports_the_call_site_line_not_the_decl_line() {
     let (code, out, err) = run_verb(&d, &["q", "who-calls", "lookup"]);
     assert_eq!(code, 0, "who-calls failed:\nstdout={out}\nstderr={err}");
     // The call to lookup() is on line 7 (1-based); find()'s own decl is line 3.
-    assert!(out.contains('7'), "expected the call-site line (7) in output: {out}");
+    assert!(
+        out.contains('7'),
+        "expected the call-site line (7) in output: {out}"
+    );
     assert!(
         !out.contains("\t3\t") && !out.trim().lines().any(|l| l.split('\t').any(|c| c == "3")),
         "reported the decl line (3) instead of the call-site line: {out}"
@@ -129,8 +132,14 @@ fn unknown_verb_exits_two() {
     let d = sandbox("unknown");
     let (code, _out, err) = run_verb(&d, &["q", "no-such-verb", "lookup"]);
     assert_eq!(code, 2, "unknown verb must exit 2: {err}");
-    assert!(err.contains("unknown verb"), "message names the problem: {err}");
-    assert!(err.contains("who-calls"), "message lists the real verbs: {err}");
+    assert!(
+        err.contains("unknown verb"),
+        "message names the problem: {err}"
+    );
+    assert!(
+        err.contains("who-calls"),
+        "message lists the real verbs: {err}"
+    );
 }
 
 #[test]
@@ -138,8 +147,14 @@ fn bare_q_lists_verbs() {
     let d = sandbox("list");
     let (code, out, _err) = run_verb(&d, &["q"]);
     assert_eq!(code, 0, "bare `dl q` should succeed: {out}");
-    assert!(out.contains("who-calls"), "verb listing missing who-calls: {out}");
-    assert!(out.contains("where-defined"), "verb listing missing where-defined: {out}");
+    assert!(
+        out.contains("who-calls"),
+        "verb listing missing who-calls: {out}"
+    );
+    assert!(
+        out.contains("where-defined"),
+        "verb listing missing where-defined: {out}"
+    );
 }
 
 #[test]
@@ -153,8 +168,14 @@ fn verb_catalog_rel_lists_the_verbs() {
         .output()
         .expect("run dl inline");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("who-calls"), "verb_catalog missing who-calls: {stdout}");
-    assert!(stdout.contains("where-defined"), "verb_catalog missing where-defined: {stdout}");
+    assert!(
+        stdout.contains("who-calls"),
+        "verb_catalog missing who-calls: {stdout}"
+    );
+    assert!(
+        stdout.contains("where-defined"),
+        "verb_catalog missing where-defined: {stdout}"
+    );
 }
 
 // ---------- daemon path ------------------------------------------------------
@@ -174,7 +195,11 @@ impl DaemonBox {
         fs::create_dir_all(root.join(".dl")).unwrap();
         write_fixture(&root);
         // A trivial served program; the verb snippet carries its own scan block.
-        fs::write(root.join(".dl/serve.dl"), "rel noop(x: int).\nnoop(1).\n? noop(x).\n").unwrap();
+        fs::write(
+            root.join(".dl/serve.dl"),
+            "rel noop(x: int).\nnoop(1).\n? noop(x).\n",
+        )
+        .unwrap();
         DaemonBox { home, root }
     }
     fn sock(&self) -> PathBuf {
@@ -236,12 +261,21 @@ fn daemon_q_runs_both_verbs() {
     let who = q_rpc(&b.sock(), &b.root, "who-calls", "lookup");
     let who_rows = who["result"]["rows"].as_array().expect("who-calls rows");
     let who_flat = serde_json::to_string(who_rows).unwrap();
-    assert!(who_flat.contains("find"), "who-calls via daemon missing `find`: {who}");
+    assert!(
+        who_flat.contains("find"),
+        "who-calls via daemon missing `find`: {who}"
+    );
 
     let wd = q_rpc(&b.sock(), &b.root, "where-defined", "lookup");
     let wd_rows = wd["result"]["rows"].as_array().expect("where-defined rows");
     let wd_flat = serde_json::to_string(wd_rows).unwrap();
-    assert!(wd_flat.contains("model.ts"), "where-defined via daemon missing model.ts: {wd}");
+    assert!(
+        wd_flat.contains("model.ts"),
+        "where-defined via daemon missing model.ts: {wd}"
+    );
     // Count-first contract: the envelope carries the pre-paging total.
-    assert!(wd["result"]["total"].as_u64().is_some(), "total missing: {wd}");
+    assert!(
+        wd["result"]["total"].as_u64().is_some(),
+        "total missing: {wd}"
+    );
 }

@@ -69,7 +69,11 @@ fn append(line: &Value) {
             let _ = std::fs::rename(path, rotated);
         }
     }
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let mut buf = line.to_string();
         buf.push('\n');
         let _ = f.write_all(buf.as_bytes());
@@ -119,7 +123,8 @@ struct FieldGrab {
 
 impl tracing::field::Visit for FieldGrab {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.fields.insert(field.name().to_string(), Value::String(value.to_string()));
+        self.fields
+            .insert(field.name().to_string(), Value::String(value.to_string()));
     }
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
         self.fields.insert(field.name().to_string(), json!(value));
@@ -131,7 +136,10 @@ impl tracing::field::Visit for FieldGrab {
         self.fields.insert(field.name().to_string(), json!(value));
     }
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.fields.insert(field.name().to_string(), Value::String(format!("{value:?}")));
+        self.fields.insert(
+            field.name().to_string(),
+            Value::String(format!("{value:?}")),
+        );
     }
 }
 
@@ -156,8 +164,18 @@ impl<S: tracing::Subscriber> Layer<S> for EventLayer {
             .and_then(|v| v.as_str())
             .and_then(|s| serde_json::from_str::<Value>(s).ok())
             .unwrap_or(Value::Null);
-        let kind = grab.fields.get("kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let root = grab.fields.get("root").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let kind = grab
+            .fields
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let root = grab
+            .fields
+            .get("root")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         append(&json!({
             "ts": now_ms(),
             "pid": std::process::id(),
@@ -174,18 +192,31 @@ impl<S: tracing::Subscriber> Layer<S> for EventLayer {
 /// substring and `root` substring. `limit` caps the returned rows (from the
 /// end). Reads the file only — no socket, no lock — so it answers while the
 /// daemon is wedged, matching `why`'s contract.
-pub fn read(home: &Path, kind_filter: Option<&str>, root_filter: Option<&str>, limit: usize) -> Vec<Value> {
+pub fn read(
+    home: &Path,
+    kind_filter: Option<&str>,
+    root_filter: Option<&str>,
+    limit: usize,
+) -> Vec<Value> {
     let mut rows: Vec<Value> = Vec::new();
     for generation in ["events.jsonl.1", "events.jsonl"] {
         let path = home.join(generation);
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         for line in text.lines() {
-            let Ok(value) = serde_json::from_str::<Value>(line) else { continue };
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
             if let Some(want) = kind_filter {
-                if !value["kind"].as_str().unwrap_or("").contains(want) { continue; }
+                if !value["kind"].as_str().unwrap_or("").contains(want) {
+                    continue;
+                }
             }
             if let Some(want) = root_filter {
-                if !value["root"].as_str().unwrap_or("").contains(want) { continue; }
+                if !value["root"].as_str().unwrap_or("").contains(want) {
+                    continue;
+                }
             }
             rows.push(value);
         }
@@ -219,15 +250,21 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         let mut text = String::new();
         for i in 0..5 {
-            text.push_str(&json!({
-                "ts": i, "pid": 1, "kind": if i % 2 == 0 { "tick" } else { "file_changed" },
-                "root": "/repo/alpha", "data": {"n": i},
-            }).to_string());
+            text.push_str(
+                &json!({
+                    "ts": i, "pid": 1, "kind": if i % 2 == 0 { "tick" } else { "file_changed" },
+                    "root": "/repo/alpha", "data": {"n": i},
+                })
+                .to_string(),
+            );
             text.push('\n');
         }
-        text.push_str(&json!({
-            "ts": 9, "pid": 1, "kind": "tick", "root": "/repo/beta", "data": {},
-        }).to_string());
+        text.push_str(
+            &json!({
+                "ts": 9, "pid": 1, "kind": "tick", "root": "/repo/beta", "data": {},
+            })
+            .to_string(),
+        );
         text.push('\n');
         std::fs::write(home.join("events.jsonl"), text).unwrap();
 

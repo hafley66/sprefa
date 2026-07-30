@@ -1,5 +1,7 @@
 use sprefa_v5::db::ReadDb;
-use sprefa_v5::spine::{content_hash_hex, FileId, StringId, WhereBytes, WhereBytesId, ZERO_HASH_HEX};
+use sprefa_v5::spine::{
+    content_hash_hex, FileId, StringId, WhereBytes, WhereBytesId, ZERO_HASH_HEX,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,10 +20,7 @@ fn run(dir: &Path, prog: &str) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .output()
         .expect("run dl");
@@ -37,10 +36,7 @@ fn run_out(dir: &Path, prog: &str) -> (i32, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .output()
         .expect("run dl");
@@ -170,7 +166,10 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
         .unwrap();
     assert_eq!(
         symbol_row,
-        (StringId::of("AuthService").sqlite(), "AuthService".to_string())
+        (
+            StringId::of("AuthService").sqlite(),
+            "AuthService".to_string()
+        )
     );
 }
 
@@ -191,13 +190,17 @@ symbol(name, path) <- scan("WORK", "src/**/*.rs", path, rev), match(path, rev, /
     // "struct AuthService;\n" → "AuthService" spans bytes [7, 18).
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
-    let expect_id = WhereBytesId::of_located(WhereBytes {
-        string: string_id,
-        file: file_id,
-        lo: lo as u32,
-        hi: hi as u32,
-        ..Default::default()
-    }, "spine_meta_where_bytes", "src/a.rs");
+    let expect_id = WhereBytesId::of_located(
+        WhereBytes {
+            string: string_id,
+            file: file_id,
+            lo: lo as u32,
+            hi: hi as u32,
+            ..Default::default()
+        },
+        "spine_meta_where_bytes",
+        "src/a.rs",
+    );
 
     let row: (String, i64, String, i64, i64, String, String) = db
         .query_one(
@@ -247,13 +250,17 @@ sym(N, path) <- scan("WORK", "src/**/*.rs", path, rev), sg(path, rev, :rust, "st
     let db = ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
-    let expect_id = WhereBytesId::of_located(WhereBytes {
-        string: StringId::of("AuthService"),
-        file: FileId::of_bytes(SRC.as_bytes()),
-        lo: lo as u32,
-        hi: hi as u32,
-        ..Default::default()
-    }, "spine_meta_where_bytes_sg", "src/a.rs");
+    let expect_id = WhereBytesId::of_located(
+        WhereBytes {
+            string: StringId::of("AuthService"),
+            file: FileId::of_bytes(SRC.as_bytes()),
+            lo: lo as u32,
+            hi: hi as u32,
+            ..Default::default()
+        },
+        "spine_meta_where_bytes_sg",
+        "src/a.rs",
+    );
     let span: (i64, i64) = db
         .query_one(
             "_where_bytes",
@@ -274,9 +281,13 @@ fn git_rev_captures_are_located_against_blob_file_id() {
     git(
         &d,
         &[
-            "-c", "user.name=sprefa-test",
-            "-c", "user.email=sprefa-test@example.invalid",
-            "commit", "-m", "init",
+            "-c",
+            "user.name=sprefa-test",
+            "-c",
+            "user.email=sprefa-test@example.invalid",
+            "commit",
+            "-m",
+            "init",
         ],
     );
     let oid = git(&d, &["hash-object", "src/a.rs"]);
@@ -293,13 +304,17 @@ sym(name, path) <- scan("HEAD", "src/**/*.rs", path, rev), match(path, rev, /str
     let lo = SRC.find("AuthService").unwrap() as i64;
     let hi = lo + "AuthService".len() as i64;
     // The located span is keyed on the git blob OID file id, so it joins _files.
-    let expect_id = WhereBytesId::of_located(WhereBytes {
-        string: StringId::of("AuthService"),
-        file: file_id,
-        lo: lo as u32,
-        hi: hi as u32,
-        ..Default::default()
-    }, "spine_meta_where_bytes_git", "src/a.rs");
+    let expect_id = WhereBytesId::of_located(
+        WhereBytes {
+            string: StringId::of("AuthService"),
+            file: file_id,
+            lo: lo as u32,
+            hi: hi as u32,
+            ..Default::default()
+        },
+        "spine_meta_where_bytes_git",
+        "src/a.rs",
+    );
     let got: (String, i64, i64) = db
         .query_one(
             "_where_bytes",
@@ -349,7 +364,10 @@ rel located(text: text, lo: int, hi: int).
 "#;
     let (code, out) = run_out(&d, prog);
     assert_eq!(code, 0, "cold run failed: {out}");
-    assert!(out.contains("AuthService"), "cold: AuthService located: {out}");
+    assert!(
+        out.contains("AuthService"),
+        "cold: AuthService located: {out}"
+    );
 
     // Rename the struct; the old located span for AuthService must drop and the
     // new one for BillingService must appear. Tick only the changed file.
@@ -357,8 +375,10 @@ rel located(text: text, lo: int, hi: int).
     let _ = Command::new(DL)
         .arg(d.join("p.dl"))
         .args([
-            "--db", d.join("db").to_str().unwrap(),
-            "--changed", "src/a.rs",
+            "--db",
+            d.join("db").to_str().unwrap(),
+            "--changed",
+            "src/a.rs",
         ])
         .current_dir(&d)
         .output()

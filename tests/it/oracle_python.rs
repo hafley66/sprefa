@@ -39,10 +39,14 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 fn find_scip_python() -> Option<std::path::PathBuf> {
     if let Ok(p) = std::env::var("SPREFA_SCIP_PYTHON") {
         let p = std::path::PathBuf::from(p);
-        if p.is_file() { return Some(p); }
+        if p.is_file() {
+            return Some(p);
+        }
     }
     let out = Command::new("which").arg("scip-python").output().ok()?;
-    if !out.status.success() { return None; }
+    if !out.status.success() {
+        return None;
+    }
     let p = std::path::PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
     p.is_file().then_some(p)
 }
@@ -53,7 +57,8 @@ fn find_scip_python() -> Option<std::path::PathBuf> {
 #[test]
 #[ignore = "needs scip-python on PATH (set SPREFA_SCIP_PYTHON)"]
 fn python_call_resolution_parity_vs_scip() {
-    let scip_python = find_scip_python().expect("needs scip-python on PATH (set SPREFA_SCIP_PYTHON)");
+    let scip_python =
+        find_scip_python().expect("needs scip-python on PATH (set SPREFA_SCIP_PYTHON)");
 
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/py_ws");
 
@@ -68,18 +73,40 @@ fn python_call_resolution_parity_vs_scip() {
 
     let scip_out = index_dir.join("index.scip");
     let run = Command::new(&scip_python)
-        .args(["index", "--project-name", "py_ws", "--project-version", "0.0.1",
-               "--output", "index.scip"])
+        .args([
+            "index",
+            "--project-name",
+            "py_ws",
+            "--project-version",
+            "0.0.1",
+            "--output",
+            "index.scip",
+        ])
         .current_dir(&index_dir)
-        .output().expect("run scip-python index");
-    assert!(scip_out.is_file(), "scip-python produced no index (exit {}): {}",
+        .output()
+        .expect("run scip-python index");
+    assert!(
+        scip_out.is_file(),
+        "scip-python produced no index (exit {}): {}",
         run.status,
-        String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
+        String::from_utf8_lossy(&run.stderr)
+            .lines()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
     let index = Index::parse_from_bytes(&std::fs::read(&scip_out).unwrap()).expect("parse scip");
     // scip-python's fatal errors still exit 0 and leave a header-only index.
-    assert!(!index.documents.is_empty(), "scip-python index has no documents (exit {}): {}",
+    assert!(
+        !index.documents.is_empty(),
+        "scip-python index has no documents (exit {}): {}",
         run.status,
-        String::from_utf8_lossy(&run.stderr).lines().take(6).collect::<Vec<_>>().join(" | "));
+        String::from_utf8_lossy(&run.stderr)
+            .lines()
+            .take(6)
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
 
     let dl_dir = std::env::temp_dir().join("sprefa_oracle_py_parity_dl");
     let _ = std::fs::remove_dir_all(&dl_dir);
@@ -95,22 +122,36 @@ fn python_call_resolution_parity_vs_scip() {
         .env("SPREFA_CONFIG", "/nonexistent/sprefa-hermetic.toml")
         .env_remove("SPREFA_SCIP_INDEX")
         .current_dir(&dl_dir)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     // Python modules sit under pkg/ and at the root; the empty prefix scopes
     // nothing out (the hermetic fixture has no vendored/stdlib sources).
     let stats = oracle_parity::score_parity(&index, &dl_dir, "", &stdout);
     assert!(stats.total_sites > 0, "no call sites extracted:\n{stdout}");
-    assert!(stats.denom() > 0, "no scip-confirmable call sites; oracle can't score");
+    assert!(
+        stats.denom() > 0,
+        "no scip-confirmable call sites; oracle can't score"
+    );
 
-    eprintln!("[oracle:python-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
-        stats.confirmed, stats.wrong, stats.bare, stats.multi);
-    eprintln!("[oracle:python-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
-        stats.parity() * 100.0, stats.precision());
-    for ex in &stats.wrong_examples { eprintln!("[oracle:python-parity] wrong: {ex}"); }
+    eprintln!(
+        "[oracle:python-parity] confirmed={} wrong={} bare={} multi(excluded)={}",
+        stats.confirmed, stats.wrong, stats.bare, stats.multi
+    );
+    eprintln!(
+        "[oracle:python-parity] scip-parity={:.1}% (confirmed positives only) precision={:.3}",
+        stats.parity() * 100.0,
+        stats.precision()
+    );
+    for ex in &stats.wrong_examples {
+        eprintln!("[oracle:python-parity] wrong: {ex}");
+    }
     assert!(stats.confirmed > 0, "zero confirmed resolutions");
-    assert!(stats.precision() >= 0.95,
+    assert!(
+        stats.precision() >= 0.95,
         "resolver is buying coverage with wrong joins: precision {:.3} < 0.95; {:?}",
-        stats.precision(), stats.wrong_examples);
+        stats.precision(),
+        stats.wrong_examples
+    );
 }

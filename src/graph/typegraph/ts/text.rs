@@ -18,18 +18,32 @@ use super::super::*;
 /// index, matching the tree-sitter arm and the `sg`/`diag` convention.
 pub fn ts_comments(content: &str, tsx: bool) -> Vec<crate::cst::RawComment> {
     let alloc = oxc_allocator::Allocator::default();
-    let st = if tsx { oxc_span::SourceType::tsx() } else { oxc_span::SourceType::ts() };
+    let st = if tsx {
+        oxc_span::SourceType::tsx()
+    } else {
+        oxc_span::SourceType::ts()
+    };
     let ret = oxc_parser::Parser::new(&alloc, content, st).parse();
     // oxc still populates the comment table on a partial parse; `panicked` only
     // means the AST is incomplete, so comments are usable regardless.
     let idx = line_index(content);
-    ret.program.comments.iter().filter_map(|c| {
-        let (lo, hi) = (c.span.start as usize, c.span.end as usize);
-        let raw = content.get(lo..hi)?.to_string();
-        let (sl, sc) = line_col(&idx, lo);
-        let (el, ec) = line_col(&idx, hi);
-        Some(crate::cst::RawComment { start_row: sl, start_col: sc, end_row: el, end_col: ec, raw })
-    }).collect()
+    ret.program
+        .comments
+        .iter()
+        .filter_map(|c| {
+            let (lo, hi) = (c.span.start as usize, c.span.end as usize);
+            let raw = content.get(lo..hi)?.to_string();
+            let (sl, sc) = line_col(&idx, lo);
+            let (el, ec) = line_col(&idx, hi);
+            Some(crate::cst::RawComment {
+                start_row: sl,
+                start_col: sc,
+                end_row: el,
+                end_col: ec,
+                raw,
+            })
+        })
+        .collect()
 }
 
 /// One piece of a template literal, in source order: `` `GET /users/${id}` ``
@@ -88,7 +102,13 @@ pub fn ts_template_parts(file: &str, content: &str) -> Vec<TemplatePart> {
         return Vec::new();
     }
     let starts = line_index(content);
-    let mut walker = TsTemplateWalker { file, content, starts: &starts, out: Vec::new(), tag_anchor: None };
+    let mut walker = TsTemplateWalker {
+        file,
+        content,
+        starts: &starts,
+        out: Vec::new(),
+        tag_anchor: None,
+    };
     walker.visit_program(&ret.program);
     walker.out
 }
@@ -138,15 +158,30 @@ impl<'a, 's> OxcVisit<'a> for TsTemplateWalker<'s> {
         // `` ` ` ``) still yields one static row.
         for (slot, quasi) in it.quasis.iter().enumerate() {
             self.out.push(TemplatePart {
-                node: node.clone(), line, col, idx, kind: "static", text: quasi.value.raw.to_string(),
+                node: node.clone(),
+                line,
+                col,
+                idx,
+                kind: "static",
+                text: quasi.value.raw.to_string(),
             });
             idx += 1;
             if let Some(expr) = it.expressions.get(slot) {
                 use oxc_span::GetSpan;
                 let span = expr.span();
-                let text = self.content.get(span.start as usize..span.end as usize)
-                    .unwrap_or_default().to_string();
-                self.out.push(TemplatePart { node: node.clone(), line, col, idx, kind: "expr", text });
+                let text = self
+                    .content
+                    .get(span.start as usize..span.end as usize)
+                    .unwrap_or_default()
+                    .to_string();
+                self.out.push(TemplatePart {
+                    node: node.clone(),
+                    line,
+                    col,
+                    idx,
+                    kind: "expr",
+                    text,
+                });
                 idx += 1;
             }
         }
@@ -212,7 +247,11 @@ pub fn ts_unresolved_refs(file: &str, content: &str) -> Vec<UnresolvedRef> {
         return Vec::new();
     }
     let starts = line_index(content);
-    let mut walker = TsUnresolvedWalker { content, starts: &starts, out: Vec::new() };
+    let mut walker = TsUnresolvedWalker {
+        content,
+        starts: &starts,
+        out: Vec::new(),
+    };
     walker.visit_program(&ret.program);
     walker.out
 }
@@ -225,7 +264,10 @@ struct TsUnresolvedWalker<'s> {
 
 impl<'s> TsUnresolvedWalker<'s> {
     fn slice(&self, span: oxc_span::Span) -> String {
-        self.content.get(span.start as usize..span.end as usize).unwrap_or_default().to_string()
+        self.content
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or_default()
+            .to_string()
     }
 }
 
@@ -287,7 +329,6 @@ impl<'a, 's> OxcVisit<'a> for TsUnresolvedWalker<'s> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,12 +338,18 @@ mod tests {
         let src = "const route = `GET /users/${userId}/posts`;\n";
         let parts = ts_template_parts("route.ts", src);
         assert_eq!(parts.len(), 3, "{:?}", parts);
-        assert_eq!((parts[0].idx, parts[0].kind, parts[0].text.as_str()),
-                   (0, "static", "GET /users/"));
-        assert_eq!((parts[1].idx, parts[1].kind, parts[1].text.as_str()),
-                   (1, "expr", "userId"));
-        assert_eq!((parts[2].idx, parts[2].kind, parts[2].text.as_str()),
-                   (2, "static", "/posts"));
+        assert_eq!(
+            (parts[0].idx, parts[0].kind, parts[0].text.as_str()),
+            (0, "static", "GET /users/")
+        );
+        assert_eq!(
+            (parts[1].idx, parts[1].kind, parts[1].text.as_str()),
+            (1, "expr", "userId")
+        );
+        assert_eq!(
+            (parts[2].idx, parts[2].kind, parts[2].text.as_str()),
+            (2, "static", "/posts")
+        );
         // one occurrence: every piece shares the same node id.
         assert_eq!(parts[0].node, parts[1].node);
         assert_eq!(parts[1].node, parts[2].node);
@@ -320,16 +367,36 @@ mod tests {
         let first_occurrence: Vec<_> = both.iter().filter(|p| p.node == first_node).collect();
         assert_eq!(first_occurrence.len(), 5, "{:?}", both);
         assert_eq!(
-            first_occurrence.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
-            vec![(0, "static", ""), (1, "expr", "a"), (2, "static", ""), (3, "expr", "b"), (4, "static", "")],
+            first_occurrence
+                .iter()
+                .map(|p| (p.idx, p.kind, p.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "static", ""),
+                (1, "expr", "a"),
+                (2, "static", ""),
+                (3, "expr", "b"),
+                (4, "static", "")
+            ],
         );
         // second template: expr-only occurrence still opens and closes with
         // (empty) static chunks around the single interpolation.
-        let second_node = both.iter().map(|p| p.node.clone()).find(|n| *n != first_node).expect("second node");
+        let second_node = both
+            .iter()
+            .map(|p| p.node.clone())
+            .find(|n| *n != first_node)
+            .expect("second node");
         let second_occurrence: Vec<_> = both.iter().filter(|p| p.node == second_node).collect();
         assert_eq!(
-            second_occurrence.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
-            vec![(0, "static", ""), (1, "expr", "onlyExpr"), (2, "static", "")],
+            second_occurrence
+                .iter()
+                .map(|p| (p.idx, p.kind, p.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "static", ""),
+                (1, "expr", "onlyExpr"),
+                (2, "static", "")
+            ],
         );
     }
 
@@ -338,7 +405,10 @@ mod tests {
         let src = "const blank = ``;\n";
         let parts = ts_template_parts("blank.ts", src);
         assert_eq!(parts.len(), 1, "{:?}", parts);
-        assert_eq!((parts[0].idx, parts[0].kind, parts[0].text.as_str()), (0, "static", ""));
+        assert_eq!(
+            (parts[0].idx, parts[0].kind, parts[0].text.as_str()),
+            (0, "static", "")
+        );
     }
 
     #[test]
@@ -360,24 +430,49 @@ mod tests {
         // piece for that slot carries the nested template's full source text.
         let src = "const s = `outer ${`inner ${value}`}`;\n";
         let parts = ts_template_parts("nested.ts", src);
-        let nodes: std::collections::HashSet<String> = parts.iter().map(|p| p.node.clone()).collect();
+        let nodes: std::collections::HashSet<String> =
+            parts.iter().map(|p| p.node.clone()).collect();
         assert_eq!(nodes.len(), 2, "{:?}", parts);
 
-        let outer_node = parts.iter().find(|p| p.text == "outer ").expect("outer static").node.clone();
+        let outer_node = parts
+            .iter()
+            .find(|p| p.text == "outer ")
+            .expect("outer static")
+            .node
+            .clone();
         let outer: Vec<_> = parts.iter().filter(|p| p.node == outer_node).collect();
         // one interpolation slot -> 2 quasis (leading "outer ", trailing "")
         // plus the 1 expr piece in between.
         assert_eq!(
-            outer.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
-            vec![(0, "static", "outer "), (1, "expr", "`inner ${value}`"), (2, "static", "")],
+            outer
+                .iter()
+                .map(|p| (p.idx, p.kind, p.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "static", "outer "),
+                (1, "expr", "`inner ${value}`"),
+                (2, "static", "")
+            ],
         );
 
-        let inner_node = parts.iter().find(|p| p.text == "value").expect("inner expr").node.clone();
+        let inner_node = parts
+            .iter()
+            .find(|p| p.text == "value")
+            .expect("inner expr")
+            .node
+            .clone();
         assert_ne!(inner_node, outer_node);
         let inner: Vec<_> = parts.iter().filter(|p| p.node == inner_node).collect();
         assert_eq!(
-            inner.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
-            vec![(0, "static", "inner "), (1, "expr", "value"), (2, "static", "")],
+            inner
+                .iter()
+                .map(|p| (p.idx, p.kind, p.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "static", "inner "),
+                (1, "expr", "value"),
+                (2, "static", "")
+            ],
         );
     }
 
@@ -388,8 +483,15 @@ mod tests {
         let src = "const box = styled.div`color: ${c};`;\n";
         let parts = ts_template_parts("tagged.ts", src);
         assert_eq!(
-            parts.iter().map(|p| (p.idx, p.kind, p.text.as_str())).collect::<Vec<_>>(),
-            vec![(0, "static", "color: "), (1, "expr", "c"), (2, "static", ";")],
+            parts
+                .iter()
+                .map(|p| (p.idx, p.kind, p.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "static", "color: "),
+                (1, "expr", "c"),
+                (2, "static", ";")
+            ],
         );
     }
 

@@ -398,12 +398,12 @@ impl StageWriter<'_> {
         path: &str,
         encoded: &[u8],
     ) -> RowSeen {
-        let owner_changed = self
-            .dedup_owner
-            .as_ref()
-            .is_none_or(|(rel, owner_repo, owner_path)| {
-                rel != relation || owner_repo != repo || owner_path != path
-            });
+        let owner_changed =
+            self.dedup_owner
+                .as_ref()
+                .is_none_or(|(rel, owner_repo, owner_path)| {
+                    rel != relation || owner_repo != repo || owner_path != path
+                });
         if owner_changed {
             self.dedup_owner = Some((relation.to_string(), repo.to_string(), path.to_string()));
             self.dedup_keys.clear();
@@ -566,11 +566,7 @@ fn insert_source_owners(
 /// Chunked multi-row insert into the temp staging table. One logical statement
 /// per chunk (N+1 law); never recorded in the source write ledger because this
 /// is internal staging, not a public relation.
-fn insert_source_rows(
-    db: &Db,
-    stage_id: StageId,
-    rows: &[BufferedRow],
-) -> anyhow::Result<()> {
+fn insert_source_rows(db: &Db, stage_id: StageId, rows: &[BufferedRow]) -> anyhow::Result<()> {
     if rows.is_empty() {
         return Ok(());
     }

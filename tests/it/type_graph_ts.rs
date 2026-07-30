@@ -20,10 +20,7 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .output()
         .expect("run dl");
@@ -72,13 +69,34 @@ export function Card({ item }: CardProps) { return <div>{item.id}</div> }
 
     let (code, out, err) = run(&d, PROG);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("Entity\tId\tfield"), "interface property edge: {out}");
-    assert!(out.contains("Repo\tEntity\tgeneric"), "type-param bound edge: {out}");
-    assert!(out.contains("Repo\tPricing\timpl"), "implements edge: {out}");
-    assert!(out.contains("Repo\tDb\tfield"), "ctor parameter-property edge: {out}");
-    assert!(out.contains("Event\tCreated\tvariant"), "union variant edge: {out}");
-    assert!(out.contains("Color\tColor::Red\tvariant"), "enum member edge: {out}");
-    assert!(out.contains("CardProps\tEntity\tfield"), "tsx interface edge: {out}");
+    assert!(
+        out.contains("Entity\tId\tfield"),
+        "interface property edge: {out}"
+    );
+    assert!(
+        out.contains("Repo\tEntity\tgeneric"),
+        "type-param bound edge: {out}"
+    );
+    assert!(
+        out.contains("Repo\tPricing\timpl"),
+        "implements edge: {out}"
+    );
+    assert!(
+        out.contains("Repo\tDb\tfield"),
+        "ctor parameter-property edge: {out}"
+    );
+    assert!(
+        out.contains("Event\tCreated\tvariant"),
+        "union variant edge: {out}"
+    );
+    assert!(
+        out.contains("Color\tColor::Red\tvariant"),
+        "enum member edge: {out}"
+    );
+    assert!(
+        out.contains("CardProps\tEntity\tfield"),
+        "tsx interface edge: {out}"
+    );
 
     // closure: Repo -> Entity -> Id without a direct edge
     let reaches = out.split("? type_reaches").nth(1).unwrap_or("");
@@ -106,7 +124,10 @@ seen(path) <- scan("WORK", "src/**/*.kts", path, rev), match(path, rev, /./, lin
 "#;
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
-    assert!(out.contains("Wire\tStore\tfield"), "kotlin field edge from .kts: {out}");
+    assert!(
+        out.contains("Wire\tStore\tfield"),
+        "kotlin field edge from .kts: {out}"
+    );
 }
 
 const ENTITY_PROG: &str = r#"
@@ -138,21 +159,39 @@ fn ts_entities_sig_and_resolved_links() {
     assert_eq!(code, 0, "run failed:\nstdout={out}\nstderr={err}");
 
     let entity = out.split("? type_sig").next().unwrap_or("");
-    let sig = out.split("? type_sig").nth(1).unwrap_or("").split("? type_link").next().unwrap_or("");
+    let sig = out
+        .split("? type_sig")
+        .nth(1)
+        .unwrap_or("")
+        .split("? type_link")
+        .next()
+        .unwrap_or("");
     let link = out.split("? type_link").nth(1).unwrap_or("");
 
     // entity table: kind + declaration line, sem-style symbol
-    assert!(entity.contains("src/core/core/model.ts::alias::Model\tModel\talias")
-        || entity.contains("src/core/model.ts::alias::Model\tModel\talias"), "entity row: {entity}");
-    assert!(entity.contains("::function::cone\tcone\tfunction"), "function entity: {entity}");
+    assert!(
+        entity.contains("src/core/core/model.ts::alias::Model\tModel\talias")
+            || entity.contains("src/core/model.ts::alias::Model\tModel\talias"),
+        "entity row: {entity}"
+    );
+    assert!(
+        entity.contains("::function::cone\tcone\tfunction"),
+        "function entity: {entity}"
+    );
 
     // arrow type, resolved across files: cone's param + ret point at model.ts defs
-    assert!(sig.contains("::function::cone\tparam\t0\t") && sig.contains("model.ts::alias::Model"),
-        "param resolved to def: {sig}");
-    assert!(sig.contains("::function::cone\tret\t0\t") && sig.contains("model.ts::alias::View"),
-        "return resolved to def: {sig}");
+    assert!(
+        sig.contains("::function::cone\tparam\t0\t") && sig.contains("model.ts::alias::Model"),
+        "param resolved to def: {sig}"
+    );
+    assert!(
+        sig.contains("::function::cone\tret\t0\t") && sig.contains("model.ts::alias::View"),
+        "return resolved to def: {sig}"
+    );
 
     // SCIP-resolved link graph: owner sym -> resolved target sym
-    assert!(link.contains("::function::cone\t") && link.contains("model.ts::alias::Model\tparam"),
-        "resolved link: {link}");
+    assert!(
+        link.contains("::function::cone\t") && link.contains("model.ts::alias::Model\tparam"),
+        "resolved link: {link}"
+    );
 }

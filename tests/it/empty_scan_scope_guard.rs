@@ -50,8 +50,14 @@ fn no_scan_rules_preserves_existing_files() {
     );
     let (code, out, err) = run(&d, prog1, "db");
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("src/a.rs"), "first tick must scan a.rs:\n{out}");
-    assert!(out.contains("src/b.rs"), "first tick must scan b.rs:\n{out}");
+    assert!(
+        out.contains("src/a.rs"),
+        "first tick must scan a.rs:\n{out}"
+    );
+    assert!(
+        out.contains("src/b.rs"),
+        "first tick must scan b.rs:\n{out}"
+    );
 
     // Second program has NO scan rules. It derives over the persisted `seen`.
     let prog2 = concat!(

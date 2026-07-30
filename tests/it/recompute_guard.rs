@@ -32,39 +32,58 @@ fn check(root: &Path) -> (i32, String) {
         .current_dir(root)
         .output()
         .expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
 fn unguarded_recompute_fails() {
     let d = sandbox("unguarded");
-    fs::write(d.join("src/r.rs"),
-        "fn recompute_thing() {\n    let pool = embed_graph(&edges, &cfg);\n    pool\n}\n").unwrap();
+    fs::write(
+        d.join("src/r.rs"),
+        "fn recompute_thing() {\n    let pool = embed_graph(&edges, &cfg);\n    pool\n}\n",
+    )
+    .unwrap();
     let (code, err) = check(&d);
-    assert_eq!(code, 2, "an unguarded recompute must fail --check; stderr:\n{err}");
-    assert!(err.contains("unguarded-recompute"),
-        "diag should name the rail code; stderr:\n{err}");
+    assert_eq!(
+        code, 2,
+        "an unguarded recompute must fail --check; stderr:\n{err}"
+    );
+    assert!(
+        err.contains("unguarded-recompute"),
+        "diag should name the rail code; stderr:\n{err}"
+    );
 }
 
 #[test]
 fn digest_guard_passes() {
     let d = sandbox("guarded");
-    fs::write(d.join("src/r.rs"),
+    fs::write(
+        d.join("src/r.rs"),
         "fn recompute_thing() {\n    \
          if self.load_rel_digest(&key)? == Some(d) { return Ok(()); }\n    \
-         let pool = embed_graph(&edges, &cfg);\n}\n").unwrap();
+         let pool = embed_graph(&edges, &cfg);\n}\n",
+    )
+    .unwrap();
     let (code, err) = check(&d);
-    assert_eq!(code, 0, "a fn with a load_rel_digest skip must pass; stderr:\n{err}");
+    assert_eq!(
+        code, 0,
+        "a fn with a load_rel_digest skip must pass; stderr:\n{err}"
+    );
 }
 
 #[test]
 fn waiver_comment_passes() {
     let d = sandbox("waived");
-    fs::write(d.join("src/r.rs"),
+    fs::write(
+        d.join("src/r.rs"),
         "fn recompute_thing() {\n    \
          // @recompute unguarded: one-shot CLI, never reactive\n    \
-         let pool = embed_graph(&edges, &cfg);\n}\n").unwrap();
+         let pool = embed_graph(&edges, &cfg);\n}\n",
+    )
+    .unwrap();
     let (code, err) = check(&d);
     assert_eq!(code, 0, "a waived recompute must pass; stderr:\n{err}");
 }
@@ -74,8 +93,14 @@ fn waiver_comment_passes() {
 #[test]
 fn primitive_definition_is_not_a_call() {
     let d = sandbox("def_only");
-    fs::write(d.join("src/r.rs"),
-        "pub fn embed_graph(edges: &[(String, String)]) -> Vec<f32> {\n    vec![]\n}\n").unwrap();
+    fs::write(
+        d.join("src/r.rs"),
+        "pub fn embed_graph(edges: &[(String, String)]) -> Vec<f32> {\n    vec![]\n}\n",
+    )
+    .unwrap();
     let (code, err) = check(&d);
-    assert_eq!(code, 0, "defining embed_graph is not an unguarded call; stderr:\n{err}");
+    assert_eq!(
+        code, 0,
+        "defining embed_graph is not an unguarded call; stderr:\n{err}"
+    );
 }

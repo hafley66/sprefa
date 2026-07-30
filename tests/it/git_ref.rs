@@ -19,8 +19,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -50,19 +59,28 @@ fn git_ref_inventories_refs_with_peeled_tags() {
     git(&d, &["tag", "-a", "heavy", "-m", "annotated", &c2]);
     let tag_obj = git(&d, &["rev-parse", "heavy"]); // the tag object, NOT c2
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rel refs(refname: text, kind: text, sha: text).\n\
-         refs(N, K, S) <- git_ref(R, N, K, S).\n").unwrap();
+         refs(N, K, S) <- git_ref(R, N, K, S).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "git_ref program should typecheck: {diags:?}");
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.rel_rows("refs", 3);
-    let find = |n: &str| rows.iter().find(|r| r[0] == n)
-        .unwrap_or_else(|| panic!("no {n} row in {rows:?}"));
+    let find = |n: &str| {
+        rows.iter()
+            .find(|r| r[0] == n)
+            .unwrap_or_else(|| panic!("no {n} row in {rows:?}"))
+    };
     assert_eq!(find("HEAD")[1], "head");
     assert_eq!(find("HEAD")[2], c2);
     assert_eq!(find("main")[1], "branch");
@@ -71,7 +89,10 @@ fn git_ref_inventories_refs_with_peeled_tags() {
     let heavy = find("heavy");
     assert_eq!(heavy[1], "tag");
     assert_eq!(heavy[2], c2, "annotated tag should peel to the commit");
-    assert_ne!(heavy[2], tag_obj, "annotated tag must not surface the tag object");
+    assert_ne!(
+        heavy[2], tag_obj,
+        "annotated tag must not surface the tag object"
+    );
 }
 
 /// rev_behind fills counts for rev_cmp_want pairs: a tag behind main counts
@@ -90,22 +111,31 @@ fn rev_behind_counts_wanted_pairs() {
     commit(&d, "d.rs", "d1");
     git(&d, &["checkout", "-q", "main"]);
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rev_cmp_want(\".\", \"v1\", \"main\").\n\
          rev_cmp_want(\".\", \"div\", \"main\").\n\
          rel skew(refname: text, behind: int, ahead: int).\n\
-         skew(N, B, A) <- rev_behind(R, N, U, B, A).\n").unwrap();
+         skew(N, B, A) <- rev_behind(R, N, U, B, A).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, diags, _) = prepare_paths(&[d.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|x| x.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|x| x.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "rev_behind program should typecheck: {diags:?}");
     eng.tick(&prog, true).unwrap();
     eng.tick(&prog, true).unwrap();
 
     let rows = eng.rel_rows("skew", 3);
-    let find = |n: &str| rows.iter().find(|r| r[0] == n)
-        .unwrap_or_else(|| panic!("no {n} row in {rows:?}"));
+    let find = |n: &str| {
+        rows.iter()
+            .find(|r| r[0] == n)
+            .unwrap_or_else(|| panic!("no {n} row in {rows:?}"))
+    };
     // v1 = c1: main has c2+c3 it lacks, nothing of its own.
     assert_eq!(find("v1")[1], "2");
     assert_eq!(find("v1")[2], "0");
@@ -124,12 +154,15 @@ fn rev_behind_skips_unresolvable_refs() {
     git(&d, &["tag", "v1", &c1]);
     commit(&d, "b.rs", "c2");
 
-    fs::write(d.join("p.dl"),
+    fs::write(
+        d.join("p.dl"),
         "rev_cmp_want(\".\", \"v1\", \"main\").\n\
          rev_cmp_want(\".\", \"no-such-ref\", \"main\").\n\
          rev_cmp_want(\"no-such-repo\", \"v1\", \"main\").\n\
          rel skew(refname: text, behind: int, ahead: int).\n\
-         skew(N, B, A) <- rev_behind(R, N, U, B, A).\n").unwrap();
+         skew(N, B, A) <- rev_behind(R, N, U, B, A).\n",
+    )
+    .unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     let (prog, _, _) = prepare_paths(&[d.join("p.dl")]).unwrap();

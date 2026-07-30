@@ -25,10 +25,18 @@ impl RelKind for ProposeExtractKind {
         &["propose_extract"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "propose_extract".into(),
-            cols: vec![col("path", Type::Path), col("lo", Type::Int),
-                       col("hi", Type::Int), col("param", Type::Text)], group: "propose",
-            doc: "proposed extract-function refactor spans (path, lo, hi, param)", ..Default::default() }]
+        vec![RelDecl {
+            name: "propose_extract".into(),
+            cols: vec![
+                col("path", Type::Path),
+                col("lo", Type::Int),
+                col("hi", Type::Int),
+                col("param", Type::Text),
+            ],
+            group: "propose",
+            doc: "proposed extract-function refactor spans (path, lo, hi, param)",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in extract-proposal relation"
@@ -39,7 +47,9 @@ impl RelKind for ProposeExtractKind {
         let files = eng.node_file_set(None)?;
         let mut computed: Vec<(String, i64, i64, String)> = Vec::new();
         for (repo, path, rev, _hash) in files {
-            if crate::cst::lang_label_for_path(&path) != Some("rust") { continue; }
+            if crate::cst::lang_label_for_path(&path) != Some("rust") {
+                continue;
+            }
             let froot = roots.get(&repo).map(|p| p.as_path()).unwrap_or(&root);
             let content = read_content(froot, &rev, &path).unwrap_or_default();
             for prop in crate::propose::extract_proposals(&content) {
@@ -48,7 +58,8 @@ impl RelKind for ProposeExtractKind {
                 }
             }
         }
-        computed.sort(); computed.dedup();
+        computed.sort();
+        computed.dedup();
         let stored: Vec<(String, i64, i64, String)> = eng.db.query_rows(
             "propose_extract",
             &format!(
@@ -61,9 +72,19 @@ impl RelKind for ProposeExtractKind {
                 r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
             )),
         )?;
-        if stored == computed { return Ok(false); }
-        let rows: Vec<Vec<Value>> = computed.into_iter()
-            .map(|(p, lo, hi, pm)| vec![Value::Text(p), Value::Int(lo), Value::Int(hi), Value::Text(pm)])
+        if stored == computed {
+            return Ok(false);
+        }
+        let rows: Vec<Vec<Value>> = computed
+            .into_iter()
+            .map(|(p, lo, hi, pm)| {
+                vec![
+                    Value::Text(p),
+                    Value::Int(lo),
+                    Value::Int(hi),
+                    Value::Text(pm),
+                ]
+            })
             .collect();
         eng.refresh_rel("propose_extract", &["path", "lo", "hi", "param"], &rows)?;
         Ok(true)
@@ -84,11 +105,19 @@ impl RelKind for ProposeCloneKind {
         &["propose_clone"]
     }
     fn decls(&self) -> Vec<RelDecl> {
-        vec![RelDecl { name: "propose_clone".into(),
-            cols: vec![col("kernel", Type::Text), col("path", Type::Path),
-                       col("lo", Type::Int), col("hi", Type::Int),
-                       col("param", Type::Text)], group: "propose",
-            doc: "proposed clone/near-duplicate groups keyed by a shared kernel", ..Default::default() }]
+        vec![RelDecl {
+            name: "propose_clone".into(),
+            cols: vec![
+                col("kernel", Type::Text),
+                col("path", Type::Path),
+                col("lo", Type::Int),
+                col("hi", Type::Int),
+                col("param", Type::Text),
+            ],
+            group: "propose",
+            doc: "proposed clone/near-duplicate groups keyed by a shared kernel",
+            ..Default::default()
+        }]
     }
     fn reserved_msg(&self) -> &'static str {
         "the built-in clone-detection relation"
@@ -130,9 +159,15 @@ impl RelKind for ProposeCloneKind {
                 ("tree", crate::propose::tree_shape_proposals(&content)),
                 ("cfg", crate::propose::cfg_shape_proposals(&content)),
                 ("ddg", crate::propose::ddg_shape_proposals(&content)),
-                ("cgraph", crate::propose::callgraph_shape_proposals(&content)),
+                (
+                    "cgraph",
+                    crate::propose::callgraph_shape_proposals(&content),
+                ),
                 ("ngram", crate::propose::ngram_stat_proposals(&content)),
-                ("symbol", crate::propose::symbol_shape_proposals(&content, &spans)),
+                (
+                    "symbol",
+                    crate::propose::symbol_shape_proposals(&content, &spans),
+                ),
                 ("call", crate::propose::call_seq_proposals(&content, &spans)),
             ];
             for (kname, props) in kernels {
@@ -183,7 +218,11 @@ impl RelKind for ProposeCloneKind {
                 ]
             })
             .collect();
-        eng.refresh_rel("propose_clone", &["kernel", "path", "lo", "hi", "param"], &rows)?;
+        eng.refresh_rel(
+            "propose_clone",
+            &["kernel", "path", "lo", "hi", "param"],
+            &rows,
+        )?;
         Ok(true)
     }
 }

@@ -34,7 +34,11 @@ pub(crate) fn copy_dir(src: &Path, dst: &Path) {
     for e in std::fs::read_dir(src).unwrap().flatten() {
         let p = e.path();
         let d = dst.join(e.file_name());
-        if p.is_dir() { copy_dir(&p, &d); } else { std::fs::copy(&p, &d).unwrap(); }
+        if p.is_dir() {
+            copy_dir(&p, &d);
+        } else {
+            std::fs::copy(&p, &d).unwrap();
+        }
     }
 }
 
@@ -54,16 +58,26 @@ pub(crate) struct ParityStats {
 }
 
 impl ParityStats {
-    pub fn denom(&self) -> usize { self.confirmed + self.wrong + self.bare }
+    pub fn denom(&self) -> usize {
+        self.confirmed + self.wrong + self.bare
+    }
     /// Confirmed-positives-only percent: can only be driven down by fuzzy
     /// exclusions, never up.
     pub fn parity(&self) -> f64 {
         let d = self.denom();
-        if d == 0 { 0.0 } else { self.confirmed as f64 / d as f64 }
+        if d == 0 {
+            0.0
+        } else {
+            self.confirmed as f64 / d as f64
+        }
     }
     pub fn precision(&self) -> f64 {
         let scored = self.confirmed + self.wrong;
-        if scored == 0 { 1.0 } else { self.confirmed as f64 / scored as f64 }
+        if scored == 0 {
+            1.0
+        } else {
+            self.confirmed as f64 / scored as f64
+        }
     }
 }
 
@@ -74,8 +88,12 @@ fn def_files(index: &Index) -> HashMap<String, String> {
     let mut def_file: HashMap<String, String> = HashMap::new();
     for doc in &index.documents {
         for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 && !occ.symbol.starts_with("local ") {
-                def_file.entry(occ.symbol.clone()).or_insert_with(|| doc.relative_path.clone());
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0
+                && !occ.symbol.starts_with("local ")
+            {
+                def_file
+                    .entry(occ.symbol.clone())
+                    .or_insert_with(|| doc.relative_path.clone());
             }
         }
     }
@@ -87,33 +105,55 @@ fn def_files(index: &Index) -> HashMap<String, String> {
 /// definition somewhere in the index. Every fuzzy step here — a multi-line
 /// range, a non-ASCII column drift, a doc whose file isn't readable at
 /// `root` — EXCLUDES the occurrence rather than guessing at it.
-pub(crate) fn refs_at(index: &Index, root: &Path, source_prefix: &str)
-    -> HashMap<(String, u32), Vec<(String, String)>>
-{
+pub(crate) fn refs_at(
+    index: &Index,
+    root: &Path,
+    source_prefix: &str,
+) -> HashMap<(String, u32), Vec<(String, String)>> {
     let def_file = def_files(index);
     let mut refs_at: HashMap<(String, u32), Vec<(String, String)>> = HashMap::new();
     for doc in &index.documents {
-        if !doc.relative_path.starts_with(source_prefix) { continue; }
-        let Ok(content) = std::fs::read_to_string(root.join(&doc.relative_path)) else { continue; };
+        if !doc.relative_path.starts_with(source_prefix) {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(root.join(&doc.relative_path)) else {
+            continue;
+        };
         let lines: Vec<&str> = content.lines().collect();
         for occ in &doc.occurrences {
-            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 { continue; }
-            let Some(def) = def_file.get(&occ.symbol) else { continue; };
+            if occ.symbol_roles & (SymbolRole::Definition as i32) != 0 {
+                continue;
+            }
+            let Some(def) = def_file.get(&occ.symbol) else {
+                continue;
+            };
             // SCIP packed range: [line, col, end_col] or [line, col, end_line, end_col].
             let r = &occ.range;
-            if r.len() < 3 { continue; }
+            if r.len() < 3 {
+                continue;
+            }
             let (line, col, end_line, end_col) = if r.len() == 3 {
                 (r[0], r[1], r[0], r[2])
             } else {
                 (r[0], r[1], r[2], r[3])
             };
-            if line != end_line { continue; } // multi-line ref: exclude
-            let Some(text) = lines.get(line as usize) else { continue; };
+            if line != end_line {
+                continue;
+            } // multi-line ref: exclude
+            let Some(text) = lines.get(line as usize) else {
+                continue;
+            };
             let (lo, hi) = (col as usize, end_col as usize);
-            if hi > text.len() || lo >= hi { continue; } // non-ascii col drift: exclude
-            let Some(slice) = text.get(lo..hi) else { continue; };
-            refs_at.entry((doc.relative_path.clone(), line as u32))
-                .or_default().push((slice.to_string(), def.clone()));
+            if hi > text.len() || lo >= hi {
+                continue;
+            } // non-ascii col drift: exclude
+            let Some(slice) = text.get(lo..hi) else {
+                continue;
+            };
+            refs_at
+                .entry((doc.relative_path.clone(), line as u32))
+                .or_default()
+                .push((slice.to_string(), def.clone()));
         }
     }
     refs_at
@@ -137,17 +177,30 @@ pub(crate) fn refs_at(index: &Index, root: &Path, source_prefix: &str)
 /// (`call_def.file` / `module_binding_resolved.dst`). Both `sites` and `picks` lines are
 /// 1-based (call_site); the ONE conversion to SCIP's 0-based line happens in
 /// `score`, at the truth lookup.
-pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
-    -> (Vec<(String, String, u32)>, HashMap<(String, String, u32), HashSet<String>>)
-{
+pub(crate) fn parse_call_sections(
+    stdout: &str,
+    source_prefix: &str,
+) -> (
+    Vec<(String, String, u32)>,
+    HashMap<(String, String, u32), HashSet<String>>,
+) {
     let mut sites: Vec<(String, String, u32)> = Vec::new(); // (file, callee, 1-based line)
-    // (file, as-written callee text, 1-based line) -> resolved callee def files.
+                                                            // (file, as-written callee text, 1-based line) -> resolved callee def files.
     let mut picks: HashMap<(String, String, u32), HashSet<String>> = HashMap::new();
     let mut section = "";
     for line in stdout.lines() {
-        if line.starts_with("? call_site") { section = "site"; continue; }
-        if line.starts_with("? site_pick") { section = "pick"; continue; }
-        if line.starts_with('?') { section = ""; continue; }
+        if line.starts_with("? call_site") {
+            section = "site";
+            continue;
+        }
+        if line.starts_with("? site_pick") {
+            section = "pick";
+            continue;
+        }
+        if line.starts_with('?') {
+            section = "";
+            continue;
+        }
         let cells: Vec<&str> = line.trim_end().split('\t').collect();
         match section {
             "site" if cells.len() >= 5 => {
@@ -162,10 +215,16 @@ pub(crate) fn parse_call_sections(stdout: &str, source_prefix: &str)
             // that indent; trim it (call_site's file is cell 3, unaffected).
             "pick" if cells.len() >= 4 => {
                 let (file, callee_text, def_file) = (cells[0].trim(), cells[1], cells[3].trim());
-                if !file.starts_with(source_prefix) { continue; }
-                let Ok(line1) = cells[2].parse::<u32>() else { continue; };
-                picks.entry((file.to_string(), callee_text.to_string(), line1))
-                    .or_default().insert(def_file.to_string());
+                if !file.starts_with(source_prefix) {
+                    continue;
+                }
+                let Ok(line1) = cells[2].parse::<u32>() else {
+                    continue;
+                };
+                picks
+                    .entry((file.to_string(), callee_text.to_string(), line1))
+                    .or_default()
+                    .insert(def_file.to_string());
             }
             _ => {}
         }
@@ -192,11 +251,17 @@ pub(crate) fn score(
     for (file, callee, line1) in sites {
         let needle = callee.rsplit('.').next().unwrap_or(callee);
         // ONE line-base conversion: our 1-based site line -> SCIP's 0-based truth line.
-        let Some(cands) = truth.get(&(file.clone(), line1.saturating_sub(1))) else { continue; };
-        let truths: HashSet<&String> = cands.iter()
+        let Some(cands) = truth.get(&(file.clone(), line1.saturating_sub(1))) else {
+            continue;
+        };
+        let truths: HashSet<&String> = cands
+            .iter()
             .filter(|(slice, _)| slice == needle)
-            .map(|(_, def)| def).collect();
-        if truths.len() != 1 { continue; } // no truth or ambiguous truth: exclude
+            .map(|(_, def)| def)
+            .collect();
+        if truths.len() != 1 {
+            continue;
+        } // no truth or ambiguous truth: exclude
         let truth_file = *truths.iter().next().unwrap();
         // Per-site pick: keyed by the as-written call text AND the site line,
         // so `getUser`/`loadUser` at their own lines confirm.
@@ -206,22 +271,37 @@ pub(crate) fn score(
             Some(set) if set.len() > 1 => multi += 1, // ambiguous pick: excluded, reported
             Some(set) => {
                 let pick = set.iter().next().unwrap();
-                if pick == truth_file { confirmed += 1; }
-                else {
+                if pick == truth_file {
+                    confirmed += 1;
+                } else {
                     wrong += 1;
                     if wrong_examples.len() < 10 {
-                        wrong_examples.push(format!("{file}:{line1} {callee}: ours={pick} truth={truth_file}"));
+                        wrong_examples.push(format!(
+                            "{file}:{line1} {callee}: ours={pick} truth={truth_file}"
+                        ));
                     }
                 }
             }
         }
     }
-    ParityStats { total_sites: sites.len(), confirmed, wrong, bare, multi, wrong_examples }
+    ParityStats {
+        total_sites: sites.len(),
+        confirmed,
+        wrong,
+        bare,
+        multi,
+        wrong_examples,
+    }
 }
 
 /// Convenience: ground truth + section parse + score in one call, for a `dl`
 /// run whose stdout carries `? call_site`/`? site_pick` query blocks.
-pub(crate) fn score_parity(index: &Index, root: &Path, source_prefix: &str, dl_stdout: &str) -> ParityStats {
+pub(crate) fn score_parity(
+    index: &Index,
+    root: &Path,
+    source_prefix: &str,
+    dl_stdout: &str,
+) -> ParityStats {
     let truth = refs_at(index, root, source_prefix);
     let (sites, picks) = parse_call_sections(dl_stdout, source_prefix);
     score(&sites, &picks, &truth)

@@ -76,21 +76,29 @@ impl RefreshOutcome {
 
     pub fn from_legacy(moved: bool) -> Self {
         if moved {
-            Self::Coarse { reason: Self::LEGACY_REASON }
+            Self::Coarse {
+                reason: Self::LEGACY_REASON,
+            }
         } else {
             Self::Unchanged
         }
     }
 
-    pub fn moved(self) -> bool { !matches!(self, Self::Unchanged) }
+    pub fn moved(self) -> bool {
+        !matches!(self, Self::Unchanged)
+    }
 
     /// Exact outcomes require a generation-scoped staged delta, which the
     /// extraction contract does not have yet.
-    pub fn is_exact(self) -> bool { false }
+    pub fn is_exact(self) -> bool {
+        false
+    }
 }
 
 impl From<bool> for RefreshOutcome {
-    fn from(moved: bool) -> Self { Self::from_legacy(moved) }
+    fn from(moved: bool) -> Self {
+        Self::from_legacy(moved)
+    }
 }
 
 /// A builtin rel family populated by parsing the scanned file corpus (module
@@ -124,7 +132,9 @@ pub trait ExtractFamily: Sync {
     /// (and depend on the scip index, so they cannot be gated on file content
     /// alone). `spine` overrides true: it projects `_strings`/`_where_bytes`,
     /// which node walks only rewrite from file content.
-    fn corpus_gated(&self) -> bool { false }
+    fn corpus_gated(&self) -> bool {
+        false
+    }
     /// Whole-corpus recompute. A moved outcome means the tick should mark this
     /// family's rels changed — a real input-digest diff for `type`/`call`/
     /// `dataflow`/`doc`, unconditional `Coarse` for the wholesale
@@ -181,18 +191,30 @@ pub struct UnresolvedFamily;
 pub struct SpineFamily;
 
 impl ExtractFamily for ModuleFamily {
-    fn name(&self) -> &'static str { "module-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::MODULE_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::module_rel_decls() }
-    fn reserved_msg(&self) -> &'static str { "a built-in module-graph relation" }
-    fn digest_key(&self) -> Option<&'static str> { None }
+    fn name(&self) -> &'static str {
+        "module-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::MODULE_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::module_rel_decls()
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in module-graph relation"
+    }
+    fn digest_key(&self) -> Option<&'static str> {
+        None
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_module_rels().map(RefreshOutcome::from_legacy)
     }
     // Win D: the type/call resolvers' import-scoped ambiguity narrowing reads
     // `module_edge_rev`, so this family must also run whenever type/call
     // (or their dependents) do; see `engine::module_rels_needed`'s doc.
-    fn used(&self, prog: &Program) -> bool { engine::module_rels_needed(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::module_rels_needed(prog)
+    }
 }
 
 impl ModuleFamily {
@@ -221,12 +243,16 @@ impl ModuleFamily {
         } else {
             return Ok(RefreshOutcome::Unchanged);
         }
-        Ok(RefreshOutcome::Coarse { reason: RefreshOutcome::LEGACY_REASON })
+        Ok(RefreshOutcome::Coarse {
+            reason: RefreshOutcome::LEGACY_REASON,
+        })
     }
 }
 
 impl ExtractFamily for TypeFamily {
-    fn name(&self) -> &'static str { "type-rels" }
+    fn name(&self) -> &'static str {
+        "type-rels"
+    }
     fn rels(&self) -> &'static [&'static str] {
         // TYPE_RELS plus DOC_TEXT_RELS (doc_comment/doc_tag) plus
         // CONST_VALUE_RELS (const_value/const_value_rev): one parse in
@@ -235,14 +261,17 @@ impl ExtractFamily for TypeFamily {
         // several `for` loops under one refresh call.
         static RELS: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
         RELS.get_or_init(|| {
-            engine::TYPE_RELS.iter()
+            engine::TYPE_RELS
+                .iter()
                 .chain(engine::DOC_TEXT_RELS.iter())
                 .chain(engine::CONST_VALUE_RELS.iter())
-                .copied().collect()
+                .copied()
+                .collect()
         })
     }
     fn decls(&self) -> Vec<RelDecl> {
-        engine::type_rel_decls().into_iter()
+        engine::type_rel_decls()
+            .into_iter()
             .chain(engine::doc_text_rel_decls())
             .chain(engine::const_value_rel_decls())
             .collect()
@@ -250,7 +279,9 @@ impl ExtractFamily for TypeFamily {
     fn reserved_msg(&self) -> &'static str {
         "a built-in type-graph relation (type_edge / type_edge_rev / type_entity / type_entity_rev / type_sig / type_link / type_link_rev)"
     }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:type") }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:type")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_type_rels().map(RefreshOutcome::from_legacy)
     }
@@ -268,13 +299,21 @@ impl ExtractFamily for TypeFamily {
 }
 
 impl ExtractFamily for CallFamily {
-    fn name(&self) -> &'static str { "call-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::CALL_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::call_rel_decls() }
+    fn name(&self) -> &'static str {
+        "call-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::CALL_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::call_rel_decls()
+    }
     fn reserved_msg(&self) -> &'static str {
         "a built-in call-graph relation (call_def / call_def_rev / call_site / call_edge / call_edge_rev / call_name / call_kind)"
     }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:call") }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:call")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_call_rels().map(RefreshOutcome::from_legacy)
     }
@@ -284,9 +323,9 @@ impl ExtractFamily for CallFamily {
         context: &PathRefreshContext<'_>,
     ) -> Result<RefreshOutcome> {
         match eng.refresh_call_rels_delta(context)? {
-            CallPathRefreshOutcome::Applied => {
-                Ok(RefreshOutcome::Coarse { reason: "call-owner-delta" })
-            }
+            CallPathRefreshOutcome::Applied => Ok(RefreshOutcome::Coarse {
+                reason: "call-owner-delta",
+            }),
             CallPathRefreshOutcome::Unchanged => Ok(RefreshOutcome::Unchanged),
             CallPathRefreshOutcome::Unsupported(reason) => {
                 tracing::debug!(reason = %reason, "[call-delta] fallback reason={reason} scope=call-family");
@@ -294,107 +333,188 @@ impl ExtractFamily for CallFamily {
             }
         }
     }
-    fn used(&self, prog: &Program) -> bool { engine::call_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::call_rels_used(prog)
+    }
 }
 
 impl ExtractFamily for DataflowFamily {
-    fn name(&self) -> &'static str { "dataflow-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::DATAFLOW_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::dataflow_rel_decls() }
+    fn name(&self) -> &'static str {
+        "dataflow-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::DATAFLOW_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::dataflow_rel_decls()
+    }
     fn reserved_msg(&self) -> &'static str {
         "a built-in dataflow relation (df_node / df_node_rev / df_node_repo / df_node_repo_rev / df_edge / loop_over / allocates / nest / df_param / df_arg / df_arg_rev / df_field / df_field_rev / df_lit / df_lit_rev)"
     }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:dataflow") }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:dataflow")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_dataflow_rels().map(RefreshOutcome::from_legacy)
     }
-    fn used(&self, prog: &Program) -> bool { engine::dataflow_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::dataflow_rels_used(prog)
+    }
     // Cold-start chunking (plan Addendum 2026-07-18): dataflow is the measured
     // hog (4.4s release: emit 2.3s + wholesale write 2.1s over 115k rows) and has
     // NO corpus-global resolver barrier — node ids are `file:line:col`-derived, so
     // a byte-bounded file slice emits exactly its own rows. Its cold node splits
     // into `cold_chunk_slices()` slices, each an `refresh_dataflow_rels_slice`
     // append; the family digest is saved once at the completion gate.
-    fn shardable_cold(&self) -> bool { true }
+    fn shardable_cold(&self) -> bool {
+        true
+    }
 }
 
 impl ExtractFamily for DocFamily {
-    fn name(&self) -> &'static str { "doc-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::DOC_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::doc_rel_decls() }
+    fn name(&self) -> &'static str {
+        "doc-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::DOC_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::doc_rel_decls()
+    }
     fn reserved_msg(&self) -> &'static str {
         "a built-in document relation (doc_node / doc_ref)"
     }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:doc") }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:doc")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_doc_rels().map(RefreshOutcome::from_legacy)
     }
-    fn used(&self, prog: &Program) -> bool { engine::doc_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::doc_rels_used(prog)
+    }
 }
 
 impl ExtractFamily for CommentFamily {
-    fn name(&self) -> &'static str { "comment-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::COMMENT_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::comment_rel_decls() }
-    fn reserved_msg(&self) -> &'static str { "a built-in comment relation (comment_node)" }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:comment") }
+    fn name(&self) -> &'static str {
+        "comment-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::COMMENT_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::comment_rel_decls()
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in comment relation (comment_node)"
+    }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:comment")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_comment_rels().map(RefreshOutcome::from_legacy)
     }
-    fn used(&self, prog: &Program) -> bool { engine::comment_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::comment_rels_used(prog)
+    }
     // Cold-start chunking (2026-07-18 incident: a single corpus-global
     // `comment-rels` node ran 109s on a large corpus): `comment_node` has NO
     // corpus-global resolver barrier — every row is a pure function of its own
     // file's bytes — so it splits into `cold_chunk_slices_of`'s byte-bounded
     // slices exactly like dataflow. See `Engine::refresh_comment_rels_slice`.
-    fn shardable_cold(&self) -> bool { true }
+    fn shardable_cold(&self) -> bool {
+        true
+    }
 }
 
 impl ExtractFamily for TemplateFamily {
-    fn name(&self) -> &'static str { "template-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::TEMPLATE_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::template_rel_decls() }
-    fn reserved_msg(&self) -> &'static str { "a built-in template-literal relation (template_parts)" }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:template") }
+    fn name(&self) -> &'static str {
+        "template-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::TEMPLATE_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::template_rel_decls()
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in template-literal relation (template_parts)"
+    }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:template")
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_template_rels().map(RefreshOutcome::from_legacy)
     }
-    fn used(&self, prog: &Program) -> bool { engine::template_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::template_rels_used(prog)
+    }
     // Cold-start chunking (see `CommentFamily::shardable_cold`'s doc): no
     // corpus-global resolver, splits into byte-bounded slices.
-    fn shardable_cold(&self) -> bool { true }
+    fn shardable_cold(&self) -> bool {
+        true
+    }
 }
 
 impl ExtractFamily for UnresolvedFamily {
-    fn name(&self) -> &'static str { "unresolved-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::UNRESOLVED_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::unresolved_rel_decls() }
-    fn reserved_msg(&self) -> &'static str { "a built-in unresolved-marker relation (unresolved)" }
-    fn digest_key(&self) -> Option<&'static str> { Some("extract:unresolved") }
-    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
-        eng.refresh_unresolved_rel().map(RefreshOutcome::from_legacy)
+    fn name(&self) -> &'static str {
+        "unresolved-rels"
     }
-    fn used(&self, prog: &Program) -> bool { engine::unresolved_rels_used(prog) }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::UNRESOLVED_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::unresolved_rel_decls()
+    }
+    fn reserved_msg(&self) -> &'static str {
+        "a built-in unresolved-marker relation (unresolved)"
+    }
+    fn digest_key(&self) -> Option<&'static str> {
+        Some("extract:unresolved")
+    }
+    fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
+        eng.refresh_unresolved_rel()
+            .map(RefreshOutcome::from_legacy)
+    }
+    fn used(&self, prog: &Program) -> bool {
+        engine::unresolved_rels_used(prog)
+    }
     // Cold-start chunking (see `CommentFamily::shardable_cold`'s doc): no
     // corpus-global resolver, splits into byte-bounded slices.
-    fn shardable_cold(&self) -> bool { true }
+    fn shardable_cold(&self) -> bool {
+        true
+    }
 }
 
 impl ExtractFamily for SpineFamily {
-    fn name(&self) -> &'static str { "spine-rels" }
-    fn rels(&self) -> &'static [&'static str] { &engine::SPINE_RELS }
-    fn decls(&self) -> Vec<RelDecl> { engine::spine_rel_decls() }
+    fn name(&self) -> &'static str {
+        "spine-rels"
+    }
+    fn rels(&self) -> &'static [&'static str] {
+        &engine::SPINE_RELS
+    }
+    fn decls(&self) -> Vec<RelDecl> {
+        engine::spine_rel_decls()
+    }
     fn reserved_msg(&self) -> &'static str {
         "a built-in ref-spine relation (string / ref)"
     }
-    fn digest_key(&self) -> Option<&'static str> { None }
-    fn corpus_gated(&self) -> bool { true }
+    fn digest_key(&self) -> Option<&'static str> {
+        None
+    }
+    fn corpus_gated(&self) -> bool {
+        true
+    }
     fn refresh(&self, eng: &mut Engine) -> Result<RefreshOutcome> {
         eng.refresh_spine_rels()?;
         // Wholesale projection with no change report; conservative mark.
-        Ok(RefreshOutcome::Coarse { reason: RefreshOutcome::LEGACY_REASON })
+        Ok(RefreshOutcome::Coarse {
+            reason: RefreshOutcome::LEGACY_REASON,
+        })
     }
-    fn used(&self, prog: &Program) -> bool { engine::spine_rels_used(prog) }
+    fn used(&self, prog: &Program) -> bool {
+        engine::spine_rels_used(prog)
+    }
 }
 
 /// Every extraction-tied builtin rel family, in the order the full tick runs
@@ -406,8 +526,17 @@ impl ExtractFamily for SpineFamily {
 /// depends on another family, so both slices' module-first / spine-last
 /// invariants hold.
 pub fn extract_families() -> &'static [&'static dyn ExtractFamily] {
-    &[&ModuleFamily, &TypeFamily, &CallFamily, &DataflowFamily, &DocFamily, &CommentFamily,
-      &TemplateFamily, &UnresolvedFamily, &SpineFamily]
+    &[
+        &ModuleFamily,
+        &TypeFamily,
+        &CallFamily,
+        &DataflowFamily,
+        &DocFamily,
+        &CommentFamily,
+        &TemplateFamily,
+        &UnresolvedFamily,
+        &SpineFamily,
+    ]
 }
 
 /// Full tick, before `node`: every family but the spine tail.
@@ -437,12 +566,20 @@ mod tests {
 
     #[test]
     fn legacy_bool_mapping_and_helpers_preserve_change_semantics() {
-        assert_eq!(RefreshOutcome::from_legacy(false), RefreshOutcome::Unchanged);
+        assert_eq!(
+            RefreshOutcome::from_legacy(false),
+            RefreshOutcome::Unchanged
+        );
         assert!(!RefreshOutcome::from(false).moved());
         assert!(!RefreshOutcome::Unchanged.is_exact());
 
         let moved = RefreshOutcome::from_legacy(true);
-        assert_eq!(moved, RefreshOutcome::Coarse { reason: "legacy-family-refresh" });
+        assert_eq!(
+            moved,
+            RefreshOutcome::Coarse {
+                reason: "legacy-family-refresh"
+            }
+        );
         assert!(moved.moved());
         assert!(!moved.is_exact());
     }
@@ -452,9 +589,20 @@ mod tests {
     #[test]
     fn registry_order_matches_tick_order() {
         let names: Vec<&str> = extract_families().iter().map(|f| f.name()).collect();
-        assert_eq!(names, ["module-rels", "type-rels", "call-rels",
-                           "dataflow-rels", "doc-rels", "comment-rels", "template-rels",
-                           "unresolved-rels", "spine-rels"]);
+        assert_eq!(
+            names,
+            [
+                "module-rels",
+                "type-rels",
+                "call-rels",
+                "dataflow-rels",
+                "doc-rels",
+                "comment-rels",
+                "template-rels",
+                "unresolved-rels",
+                "spine-rels"
+            ]
+        );
         assert_eq!(extract_families_pre_node().len(), 8);
         assert_eq!(extract_families_paths_pre_node().len(), 7);
         assert_eq!(extract_families_paths_pre_node()[0].name(), "type-rels");
@@ -467,12 +615,14 @@ mod tests {
     #[test]
     fn family_rels_match_decls() {
         for fam in extract_families() {
-            let decl_names: Vec<String> =
-                fam.decls().into_iter().map(|d| d.name).collect();
-            let rel_names: Vec<String> =
-                fam.rels().iter().map(|r| r.to_string()).collect();
-            assert_eq!(decl_names, rel_names,
-                "family {} decls/rels drift", fam.name());
+            let decl_names: Vec<String> = fam.decls().into_iter().map(|d| d.name).collect();
+            let rel_names: Vec<String> = fam.rels().iter().map(|r| r.to_string()).collect();
+            assert_eq!(
+                decl_names,
+                rel_names,
+                "family {} decls/rels drift",
+                fam.name()
+            );
         }
         assert!(TypeFamily.rels().contains(&"doc_comment"));
         assert!(TypeFamily.rels().contains(&"doc_tag"));

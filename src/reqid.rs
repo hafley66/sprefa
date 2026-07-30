@@ -81,7 +81,11 @@ mod tests {
                 let _g2 = scope("abc-2");
                 assert_eq!(current(), Some("abc-2".to_string()));
             }
-            assert_eq!(current(), Some("abc-1".to_string()), "restores outer scope on inner drop");
+            assert_eq!(
+                current(),
+                Some("abc-1".to_string()),
+                "restores outer scope on inner drop"
+            );
         }
         assert_eq!(current(), None, "restores None after outer drop");
     }
@@ -92,6 +96,9 @@ mod tests {
         let b = next();
         assert_ne!(a, b);
         let pid_hex = format!("{:x}", std::process::id());
-        assert!(a.starts_with(&pid_hex), "id should be prefixed by pid hex: {a}");
+        assert!(
+            a.starts_with(&pid_hex),
+            "id should be prefixed by pid hex: {a}"
+        );
     }
 }

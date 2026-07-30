@@ -27,7 +27,9 @@ fn sandbox(tag: &str) -> PathBuf {
 fn write_skill(dir: &PathBuf, zone_rows: &str) {
     fs::write(
         dir.join(".agents/skills/sprf-add-language/SKILL.md"),
-        format!("# stub\n\n<!-- BEGIN: lang-junctions -->\n{zone_rows}<!-- END: lang-junctions -->\n"),
+        format!(
+            "# stub\n\n<!-- BEGIN: lang-junctions -->\n{zone_rows}<!-- END: lang-junctions -->\n"
+        ),
     )
     .unwrap();
 }
@@ -58,7 +60,10 @@ fn fires_on_marker_missing_from_skill() {
     write_skill(&dir, "");
     let (code, text) = check(&dir);
     assert_eq!(code, 2, "unsynced marker must fail --check; output: {text}");
-    assert!(text.contains("lang-junction-drift"), "expected drift diag: {text}");
+    assert!(
+        text.contains("lang-junction-drift"),
+        "expected drift diag: {text}"
+    );
 }
 
 #[test]
@@ -69,19 +74,31 @@ fn green_when_synced() {
         "// LANG-JUNCTION(planted-junction): a registration point\nfn body() {}\n",
     )
     .unwrap();
-    write_skill(&dir, "- `src/planted.rs:1` planted-junction: a registration point\n");
+    write_skill(
+        &dir,
+        "- `src/planted.rs:1` planted-junction: a registration point\n",
+    );
     let (code, text) = check(&dir);
-    assert_eq!(code, 0, "synced marker + skill row must pass; output: {text}");
+    assert_eq!(
+        code, 0,
+        "synced marker + skill row must pass; output: {text}"
+    );
 }
 
 #[test]
 fn orphan_fires_on_stale_skill_row() {
     let dir = sandbox("orphan");
     fs::write(dir.join("src/planted.rs"), "fn body() {}\n").unwrap();
-    write_skill(&dir, "- `src/gone.rs:1` vanished-junction: a marker that was deleted\n");
+    write_skill(
+        &dir,
+        "- `src/gone.rs:1` vanished-junction: a marker that was deleted\n",
+    );
     let (code, text) = check(&dir);
     assert_eq!(code, 2, "stale skill row must fail --check; output: {text}");
-    assert!(text.contains("lang-junction-orphan"), "expected orphan diag: {text}");
+    assert!(
+        text.contains("lang-junction-orphan"),
+        "expected orphan diag: {text}"
+    );
 }
 
 #[test]
@@ -94,5 +111,8 @@ fn string_literal_marker_never_counts() {
     .unwrap();
     write_skill(&dir, "");
     let (code, text) = check(&dir);
-    assert_eq!(code, 0, "a marker inside a string literal must not mint a junction; output: {text}");
+    assert_eq!(
+        code, 0,
+        "a marker inside a string literal must not mint a junction; output: {text}"
+    );
 }

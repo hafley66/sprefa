@@ -47,11 +47,16 @@ fn one_shot_check_emits_a_parseable_trace_with_a_tick_span() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    assert!(trace_path.exists(), "DL_TRACE_CHROME path should exist after a clean exit");
+    assert!(
+        trace_path.exists(),
+        "DL_TRACE_CHROME path should exist after a clean exit"
+    );
     let text = fs::read_to_string(&trace_path).expect("read trace file");
-    let events: serde_json::Value =
-        serde_json::from_str(&text).expect("trace file should be strict JSON after a clean exit (finish_chrome_trace ran)");
-    let events = events.as_array().expect("chrome trace is a JSON array of events");
+    let events: serde_json::Value = serde_json::from_str(&text)
+        .expect("trace file should be strict JSON after a clean exit (finish_chrome_trace ran)");
+    let events = events
+        .as_array()
+        .expect("chrome trace is a JSON array of events");
     assert!(!events.is_empty(), "trace should carry at least one event");
 
     let tick_spans: Vec<&serde_json::Value> = events
@@ -61,7 +66,10 @@ fn one_shot_check_emits_a_parseable_trace_with_a_tick_span() {
     assert!(
         !tick_spans.is_empty(),
         "trace should carry at least one `tick` span; got names: {:?}",
-        events.iter().filter_map(|e| e.get("name").and_then(|n| n.as_str())).collect::<Vec<_>>()
+        events
+            .iter()
+            .filter_map(|e| e.get("name").and_then(|n| n.as_str()))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -84,6 +92,12 @@ fn unset_env_var_writes_no_trace_file() {
         .env("DL_NO_BUDGET", "1")
         .output()
         .expect("run dl --check");
-    assert!(out.status.success(), "dl --check should exit 0 on a clean program");
-    assert!(!trace_path.exists(), "no trace file should appear when DL_TRACE_CHROME is unset");
+    assert!(
+        out.status.success(),
+        "dl --check should exit 0 on a clean program"
+    );
+    assert!(
+        !trace_path.exists(),
+        "no trace file should appear when DL_TRACE_CHROME is unset"
+    );
 }

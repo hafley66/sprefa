@@ -26,7 +26,10 @@ fn tick_once(root: &Path) -> Engine {
     let conn = db::open(Some(root.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, root.to_path_buf());
     let (prog, diags, _) = prepare_paths(&[root.join("p.dl")]).unwrap();
-    let errs = diags.iter().filter(|d| d.severity == sprefa_v5::ast::Severity::Error).count();
+    let errs = diags
+        .iter()
+        .filter(|d| d.severity == sprefa_v5::ast::Severity::Error)
+        .count();
     assert_eq!(errs, 0, "program should typecheck: {diags:?}");
     eng.tick(&prog, true).unwrap();
     eng
@@ -104,7 +107,11 @@ fn export_and_as_const_wrappers_unwrap_and_non_string_members_skip() {
     write_program(&d);
     let eng = tick_once(&d);
     let rows = eng.rel_rows("const_string_member", 4);
-    assert_eq!(rows.len(), 1, "{rows:?}: only the flat string member survives");
+    assert_eq!(
+        rows.len(),
+        1,
+        "{rows:?}: only the flat string member survives"
+    );
     assert_eq!(rows[0], vec!["mixed.ts", "STATUS", "ok", "OK"]);
 }
 
@@ -124,7 +131,8 @@ fn const_inside_function_body_still_counts() {
     let eng = tick_once(&d);
     let rows = eng.rel_rows("const_string_member", 4);
     assert!(
-        rows.iter().any(|r| r[1] == "INNER_TABLE" && r[2] == "x" && r[3] == "/inner/x"),
+        rows.iter()
+            .any(|r| r[1] == "INNER_TABLE" && r[2] == "x" && r[3] == "/inner/x"),
         "{rows:?}"
     );
 }
@@ -144,5 +152,13 @@ fn const_string_member_is_a_plain_user_declarable_rel_without_the_module() {
     .unwrap();
     let eng = tick_once(&d);
     let rows = eng.rel_rows("const_string_member", 4);
-    assert_eq!(rows, vec![vec!["f.ts".to_string(), "O".to_string(), "m".to_string(), "v".to_string()]]);
+    assert_eq!(
+        rows,
+        vec![vec![
+            "f.ts".to_string(),
+            "O".to_string(),
+            "m".to_string(),
+            "v".to_string()
+        ]]
+    );
 }

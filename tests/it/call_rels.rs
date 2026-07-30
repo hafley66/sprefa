@@ -26,10 +26,7 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .current_dir(dir)
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
         .output()
         .expect("run dl");
@@ -45,12 +42,20 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
 #[test]
 fn call_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["call_def", "call_site", "call_edge", "call_edge_rev", "call_name", "call_kind"] {
+    for rel in [
+        "call_def",
+        "call_site",
+        "call_edge",
+        "call_edge_rev",
+        "call_name",
+        "call_kind",
+    ] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog, &[]);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
         assert!(
-            err.contains("reserved-name") && err.contains(&format!("relation `{rel}`"))
+            err.contains("reserved-name")
+                && err.contains(&format!("relation `{rel}`"))
                 && err.contains("pick another name"),
             "{rel} parse-tier reservation/fix missing:\n{err}"
         );
@@ -78,7 +83,10 @@ fn empty_call_extractors_keep_wiring_live() {
     );
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "empty extractors must not error:\n{err}");
-    assert!(out.contains("(0 rows)"), "expected zero-row footers:\n{out}");
+    assert!(
+        out.contains("(0 rows)"),
+        "expected zero-row footers:\n{out}"
+    );
     assert!(
         !out.contains("(1 rows)") && !out.contains("(2 rows)"),
         "empty corpus produced call rows:\n{out}"
@@ -166,7 +174,10 @@ fn kotlin_call_graph_extracts_resolves_and_closes() {
     assert!(out.contains(&main), "main def missing:\n{out}");
     assert!(out.contains(&helper), "helper def missing:\n{out}");
     assert!(out.contains(&leaf), "leaf def missing:\n{out}");
-    assert!(out.contains("(3 rows)"), "expected exactly 3 call_def rows:\n{out}");
+    assert!(
+        out.contains("(3 rows)"),
+        "expected exactly 3 call_def rows:\n{out}"
+    );
 
     assert!(
         out.contains(&format!("{main}\t{helper}")),
@@ -209,7 +220,10 @@ fn ts_call_graph_extracts_resolves_and_closes() {
     assert!(out.contains(&main), "main def missing:\n{out}");
     assert!(out.contains(&helper), "helper def missing:\n{out}");
     assert!(out.contains(&leaf), "leaf def missing:\n{out}");
-    assert!(out.contains("(3 rows)"), "expected exactly 3 call_def rows:\n{out}");
+    assert!(
+        out.contains("(3 rows)"),
+        "expected exactly 3 call_def rows:\n{out}"
+    );
 
     assert!(
         out.contains(&format!("{main}\t{helper}")),
@@ -277,5 +291,8 @@ fn call_kind_classifies_read_and_write() {
     );
 
     // Exactly 4 rows: writer:write, reader:read, mixed:write, mixed:read.
-    assert!(out.contains("(4 rows)"), "expected exactly 4 call_kind rows:\n{out}");
+    assert!(
+        out.contains("(4 rows)"),
+        "expected exactly 4 call_kind rows:\n{out}"
+    );
 }

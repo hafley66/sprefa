@@ -24,10 +24,13 @@ fn run(dir: &Path, prog: &str, extra: &[&str]) -> (i32, String, String) {
         .args(["--db", dir.join("db").to_str().unwrap()])
         .args(extra)
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 #[test]
@@ -47,7 +50,10 @@ known(p) <- file(_, rev, p, _).
 "#;
     let (code, out, _) = run(&d, prog, &[]);
     assert_eq!(code, 0);
-    assert!(out.contains("src/x.rs") && out.contains("src/y.rs"), "file set must be queryable: {out}");
+    assert!(
+        out.contains("src/x.rs") && out.contains("src/y.rs"),
+        "file set must be queryable: {out}"
+    );
     assert!(out.contains("(2 rows)"), "expected both files: {out}");
 }
 
@@ -71,8 +77,14 @@ seen(path) <- scan("WORK", "**/*.txt", path, rev).
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("src/x.txt"), "{out}");
-    assert!(out.contains(".hidden/y.txt"), "hidden dirs other than .git scan: {out}");
-    assert!(!out.contains(".git/objects/z.txt"), ".git must be skipped: {out}");
+    assert!(
+        out.contains(".hidden/y.txt"),
+        "hidden dirs other than .git scan: {out}"
+    );
+    assert!(
+        !out.contains(".git/objects/z.txt"),
+        ".git must be skipped: {out}"
+    );
 }
 
 /// A submodule worktree is not gitignored — its files sit inside the parent
@@ -88,13 +100,25 @@ fn scan_prunes_nested_repo_dir_and_file_git_forms() {
 
     // Directory-form `.git` (an ordinary nested checkout under vendor/).
     fs::create_dir_all(d.join("vendor/nested_dir/.git")).unwrap();
-    fs::write(d.join("vendor/nested_dir/lib.rs"), "fn nested_dir_fn() {}\n").unwrap();
+    fs::write(
+        d.join("vendor/nested_dir/lib.rs"),
+        "fn nested_dir_fn() {}\n",
+    )
+    .unwrap();
 
     // File-form `.git` (the submodule-worktree form: a text file pointing at
     // the real gitdir, not a directory).
     fs::create_dir_all(d.join("vendor/nested_submodule")).unwrap();
-    fs::write(d.join("vendor/nested_submodule/.git"), "gitdir: /elsewhere/modules/nested_submodule\n").unwrap();
-    fs::write(d.join("vendor/nested_submodule/lib.rs"), "fn nested_submodule_fn() {}\n").unwrap();
+    fs::write(
+        d.join("vendor/nested_submodule/.git"),
+        "gitdir: /elsewhere/modules/nested_submodule\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("vendor/nested_submodule/lib.rs"),
+        "fn nested_submodule_fn() {}\n",
+    )
+    .unwrap();
 
     let prog = r#"
 rel seen(path: file).
@@ -103,11 +127,18 @@ seen(path) <- scan("WORK", "**/*.rs", path, rev).
 "#;
     let (code, out, err) = run(&d, prog, &[]);
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("src/main.rs"), "sibling source file must be scanned: {out}");
-    assert!(!out.contains("vendor/nested_dir/lib.rs"),
-        "dir-form nested repo must be pruned: {out}");
-    assert!(!out.contains("vendor/nested_submodule/lib.rs"),
-        "file-form (submodule) nested repo must be pruned: {out}");
+    assert!(
+        out.contains("src/main.rs"),
+        "sibling source file must be scanned: {out}"
+    );
+    assert!(
+        !out.contains("vendor/nested_dir/lib.rs"),
+        "dir-form nested repo must be pruned: {out}"
+    );
+    assert!(
+        !out.contains("vendor/nested_submodule/lib.rs"),
+        "file-form (submodule) nested repo must be pruned: {out}"
+    );
 }
 
 #[test]
@@ -118,8 +149,12 @@ fn declaring_a_builtin_name_errors() {
     let prog = "rel file(x: text).\nfile(a) <- scan(\"WORK\", \"src/**/*.rs\", a, r).\n";
     let (code, _, err) = run(&d, prog, &[]);
     assert_ne!(code, 0, "redeclaring `file` must fail");
-    assert!(err.contains("reserved-name") && err.contains("relation `file`")
-        && err.contains("write to the built-in directly"), "earlier reserved-name fix, got: {err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `file`")
+            && err.contains("write to the built-in directly"),
+        "earlier reserved-name fix, got: {err}"
+    );
 }
 
 #[test]
@@ -136,16 +171,24 @@ holds(src, dst) <- link(src, dst), file(_, rev, dst, _).
 ? holds(src, dst).
 "#;
     let (_, out, _) = run(&d, prog, &[]);
-    assert!(out.contains("a.txt\tb.txt"), "cold: holds(a.txt,b.txt) expected: {out}");
+    assert!(
+        out.contains("a.txt\tb.txt"),
+        "cold: holds(a.txt,b.txt) expected: {out}"
+    );
 
     // Delete the target and tick only that path. a.txt is NOT reparsed, yet the
     // edge must drop because the `file` join no longer finds b.txt.
     fs::remove_file(d.join("b.txt")).unwrap();
     let (_, _, err) = run(&d, prog, &["--changed", "b.txt"]);
-    assert!(err.contains("rebuilt derived: holds") || err.contains("holds"),
-        "the holds rule (joins file) must rebuild on the file-set change: {err}");
+    assert!(
+        err.contains("rebuilt derived: holds") || err.contains("holds"),
+        "the holds rule (joins file) must rebuild on the file-set change: {err}"
+    );
 
     let (_, out2, _) = run(&d, prog, &[]);
     // holds is now empty: the reference survives but its target file is gone.
-    assert!(out2.contains("(0 rows)"), "holds must drop when b.txt is gone: {out2}");
+    assert!(
+        out2.contains("(0 rows)"),
+        "holds must drop when b.txt is gone: {out2}"
+    );
 }

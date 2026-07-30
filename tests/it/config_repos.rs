@@ -30,12 +30,26 @@ fn same_canonical_root_under_two_slugs_dedupes_to_one() {
     // Engine root is unrelated, so ONLY the two config repos can collide.
     let mut eng = Engine::new(conn, d.join("engine-root"));
     eng.set_repos(vec![
-        RepoConfig { slug: "canon".into(), root: real.clone(), url: None, allow_missing: false },
-        RepoConfig { slug: "via-link".into(), root: link.clone(), url: None, allow_missing: false },
+        RepoConfig {
+            slug: "canon".into(),
+            root: real.clone(),
+            url: None,
+            allow_missing: false,
+        },
+        RepoConfig {
+            slug: "via-link".into(),
+            root: link.clone(),
+            url: None,
+            allow_missing: false,
+        },
     ]);
     let repos = eng.snapshot_repos();
-    assert_eq!(repos.len(), 1, "two slugs at one canonical dir collapse to one: {:?}",
-        repos.iter().map(|r| &r.slug).collect::<Vec<_>>());
+    assert_eq!(
+        repos.len(),
+        1,
+        "two slugs at one canonical dir collapse to one: {:?}",
+        repos.iter().map(|r| &r.slug).collect::<Vec<_>>()
+    );
     assert_eq!(repos[0].slug, "canon", "first slug at a path wins");
     let _ = fs::remove_dir_all(&d);
 }
@@ -50,31 +64,53 @@ fn config_repos_populate_the_repo_relation() {
     // `repo` relation so programs can detect misses via `!repo(S, _, _)`.
     fs::create_dir_all("/tmp/alpha").unwrap();
     fs::create_dir_all("/tmp/beta").unwrap();
-    fs::write(d.join("cfg.toml"), "\
+    fs::write(
+        d.join("cfg.toml"),
+        "\
         [[repos]]\n\
         slug = \"alpha/one\"\n\
         root = \"/tmp/alpha\"\n\
         [[repos]]\n\
         slug = \"beta/two\"\n\
-        root = \"/tmp/beta\"\n").unwrap();
-    fs::write(d.join("p.dl"), "\
+        root = \"/tmp/beta\"\n",
+    )
+    .unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "\
         rel src(p: file).\n\
         src(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n\
-        ? repo(slug, root, url).\n").unwrap();
+        ? repo(slug, root, url).\n",
+    )
+    .unwrap();
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&d)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let block = stdout.split("? repo").nth(1).unwrap_or("");
-    assert!(block.contains("alpha/one\t/tmp/alpha"), "repo alpha from config: {stdout}");
-    assert!(block.contains("beta/two\t/tmp/beta"), "repo beta from config: {stdout}");
-    assert!(block.contains("(2 rows)"), "exactly the two configured repos: {stdout}");
+    assert!(
+        block.contains("alpha/one\t/tmp/alpha"),
+        "repo alpha from config: {stdout}"
+    );
+    assert!(
+        block.contains("beta/two\t/tmp/beta"),
+        "repo beta from config: {stdout}"
+    );
+    assert!(
+        block.contains("(2 rows)"),
+        "exactly the two configured repos: {stdout}"
+    );
 
     // No config -> the single --root repo (one row), not the configured two.
     let out2 = Command::new(DL)
@@ -84,14 +120,24 @@ fn config_repos_populate_the_repo_relation() {
         .env_remove("SPREFA_CONFIG")
         .env("XDG_CONFIG_HOME", d.join("noconfig").to_str().unwrap())
         .env("HOME", d.join("noconfig").to_str().unwrap())
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout2 = String::from_utf8_lossy(&out2.stdout);
     let block2 = stdout2.split("? repo").nth(1).unwrap_or("");
-    assert!(block2.contains("(1 rows)"), "no config -> single --root repo: {stdout2}");
+    assert!(
+        block2.contains("(1 rows)"),
+        "no config -> single --root repo: {stdout2}"
+    );
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) {
-    let ok = Command::new("git").current_dir(dir).args(args).output().expect("git").status.success();
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("git")
+        .status
+        .success();
     assert!(ok, "git {args:?} in {}", dir.display());
 }
 
@@ -113,9 +159,16 @@ fn repo_sink_accepts_a_ground_fact() {
     fs::write(selfdir.join("src/main.rs"), "fn main() {}\n").unwrap();
 
     // Ground fact heads the built-in `repo` sink directly — no body, all literals.
-    fs::write(d.join("p.dl"), format!("\
+    fs::write(
+        d.join("p.dl"),
+        format!(
+            "\
         repo(\"extra\", \"{root}\", \"\").\n\
-        ? repo(slug, root, url).\n", root = extra.display())).unwrap();
+        ? repo(slug, root, url).\n",
+            root = extra.display()
+        ),
+    )
+    .unwrap();
 
     // --settle drives ticks to a fixpoint: the sink registers the repo AFTER the
     // query phase (one-tick registration latency, same as any repo sink), so a
@@ -125,11 +178,19 @@ fn repo_sink_accepts_a_ground_fact() {
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&selfdir)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     // the ground-fact repo is registered and shows in the repo relation
-    assert!(stdout.contains("extra"), "ground-fact repo registered in repo rel: {stdout}");
+    assert!(
+        stdout.contains("extra"),
+        "ground-fact repo registered in repo rel: {stdout}"
+    );
 }
 
 /// A configured repo whose `root` is not on disk but has a `url` is cloned on
@@ -153,30 +214,55 @@ fn config_repo_with_url_is_cloned_on_first_scan() {
     let clone_root = d.join("cache/gamma");
     assert!(!clone_root.exists(), "clone target must not exist yet");
 
-    fs::write(d.join("cfg.toml"), format!("\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "\
         [[repos]]\n\
         slug = \"gamma\"\n\
         root = \"{root}\"\n\
         url = \"{url}\"\n",
-        root = clone_root.display(), url = upstream.display())).unwrap();
-    fs::write(d.join("p.dl"), "\
+            root = clone_root.display(),
+            url = upstream.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "\
         rel s(p: file).\n\
         s(p) <- scan(\"gamma\", \"HEAD\", \"src/**/*.rs\", p, rev).\n\
-        ? file(repo, rev, path, content).\n").unwrap();
+        ? file(repo, rev, path, content).\n",
+    )
+    .unwrap();
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(&upstream)
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
-    assert!(clone_root.join(".git").is_dir(), "repo was cloned into root: {stdout}");
+    assert!(
+        clone_root.join(".git").is_dir(),
+        "repo was cloned into root: {stdout}"
+    );
     let block = stdout.split("? file").nth(1).unwrap_or("");
-    assert!(block.contains("gamma\t"), "cloned repo's file row present: {stdout}");
-    assert!(block.contains("src/lib.rs"), "cloned file path present: {stdout}");
+    assert!(
+        block.contains("gamma\t"),
+        "cloned repo's file row present: {stdout}"
+    );
+    assert!(
+        block.contains("src/lib.rs"),
+        "cloned file path present: {stdout}"
+    );
 }
 
 /// `scan("*", ...)` fans a single source rule out over every configured repo,
@@ -190,33 +276,58 @@ fn scan_star_fans_out_over_every_config_repo() {
         fs::create_dir_all(r.join("src")).unwrap();
         fs::write(r.join("src/lib.rs"), body).unwrap();
     }
-    fs::write(d.join("cfg.toml"), format!("\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "\
         [[repos]]\n\
         slug = \"ra\"\n\
         root = \"{a}\"\n\
         [[repos]]\n\
         slug = \"rb\"\n\
         root = \"{b}\"\n",
-        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
-    fs::write(d.join("p.dl"), "\
+            a = d.join("ra").display(),
+            b = d.join("rb").display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        d.join("p.dl"),
+        "\
         rel s(p: file).\n\
         s(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
-        ? file(repo, rev, path, content).\n").unwrap();
+        ? file(repo, rev, path, content).\n",
+    )
+    .unwrap();
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(d.join("ra"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let block = stdout.split("? file").nth(1).unwrap_or("");
     let rev = crate::util::NO_HEAD_REV;
-    assert!(block.contains(&format!("ra\t{rev}\tsrc/lib.rs")), "repo ra file row: {stdout}");
-    assert!(block.contains(&format!("rb\t{rev}\tsrc/lib.rs")), "repo rb file row: {stdout}");
-    assert!(block.contains("(2 rows)"), "both repos' files, distinct by repo: {stdout}");
+    assert!(
+        block.contains(&format!("ra\t{rev}\tsrc/lib.rs")),
+        "repo ra file row: {stdout}"
+    );
+    assert!(
+        block.contains(&format!("rb\t{rev}\tsrc/lib.rs")),
+        "repo rb file row: {stdout}"
+    );
+    assert!(
+        block.contains("(2 rows)"),
+        "both repos' files, distinct by repo: {stdout}"
+    );
 }
 
 /// Two config repos that share a path with byte-identical content keep DISTINCT
@@ -233,14 +344,21 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
         fs::create_dir_all(r.join("src")).unwrap();
         fs::write(r.join("src/lib.rs"), "struct Auth;\n").unwrap();
     }
-    fs::write(d.join("cfg.toml"), format!("\
+    fs::write(
+        d.join("cfg.toml"),
+        format!(
+            "\
         [[repos]]\n\
         slug = \"ra\"\n\
         root = \"{a}\"\n\
         [[repos]]\n\
         slug = \"rb\"\n\
         root = \"{b}\"\n",
-        a = d.join("ra").display(), b = d.join("rb").display())).unwrap();
+            a = d.join("ra").display(),
+            b = d.join("rb").display()
+        ),
+    )
+    .unwrap();
     fs::write(d.join("p.dl"), "\
         rel sym(name: text, path: file).\n\
         sym(name, path) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", path, rev), match(path, rev, /struct (?<name>\\w+)/, line).\n\
@@ -251,9 +369,14 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(d.join("ra"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let read_db = db::ReadDb::open(d.join("db").to_str().unwrap()).unwrap();
     let repos: Vec<String> = read_db
@@ -265,8 +388,11 @@ fn byte_identical_files_across_repos_keep_distinct_located_rows() {
             |r| Ok(r.get(0)?),
         )
         .unwrap();
-    assert_eq!(repos, vec!["ra".to_string(), "rb".to_string()],
-        "one located row per repo, attributed by slug: got {repos:?}");
+    assert_eq!(
+        repos,
+        vec!["ra".to_string(), "rb".to_string()],
+        "one located row per repo, attributed by slug: got {repos:?}"
+    );
 }
 
 /// `allow_missing = true` on a config repo whose root is absent is non-fatal:
@@ -280,7 +406,8 @@ fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
     fs::create_dir_all(d.join("present/src")).unwrap();
     fs::write(d.join("present/src/lib.rs"), "fn here() {}\n").unwrap();
 
-    let cfg = format!("\
+    let cfg = format!(
+        "\
         [[repos]]\n\
         slug = \"present\"\n\
         root = \"{present}\"\n\
@@ -289,7 +416,8 @@ fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
         root = \"{absent}\"\n\
         allow_missing = true\n",
         present = d.join("present").display(),
-        absent = d.join("does-not-exist").display());
+        absent = d.join("does-not-exist").display()
+    );
     fs::write(d.join("cfg.toml"), cfg).unwrap();
 
     // `referenced` is the author-defined inventory of slugs the program means
@@ -314,22 +442,43 @@ fn allow_missing_repo_runs_to_completion_and_is_omitted_from_repo_rel() {
             .args(["--db", d.join("db").to_str().unwrap()])
             .current_dir(d.join("present"))
             .env("SPREFA_CONFIG", d.join("cfg.toml"))
-            .output().expect("run dl");
-        (String::from_utf8_lossy(&out.stdout).into_owned(),
-         String::from_utf8_lossy(&out.stderr).into_owned())
+            .output()
+            .expect("run dl");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
     };
 
     let (stdout, stderr) = run_with("? repo(s, _, _).");
-    assert!(stderr.contains("[missing]"), "stderr should note the missing repo: {stderr}");
-    assert!(stdout.contains("present"), "present slug in repo rel: {stdout}");
-    assert!(!stdout.contains("absent"), "missing slug omitted from repo rel: {stdout}");
+    assert!(
+        stderr.contains("[missing]"),
+        "stderr should note the missing repo: {stderr}"
+    );
+    assert!(
+        stdout.contains("present"),
+        "present slug in repo rel: {stdout}"
+    );
+    assert!(
+        !stdout.contains("absent"),
+        "missing slug omitted from repo rel: {stdout}"
+    );
 
     let (stdout, _) = run_with("? missing_repo(s).");
-    assert!(stdout.contains("absent"), "missing slug surfaced by antijoin: {stdout}");
-    assert!(!stdout.contains("present"), "present slug must not appear as missing: {stdout}");
+    assert!(
+        stdout.contains("absent"),
+        "missing slug surfaced by antijoin: {stdout}"
+    );
+    assert!(
+        !stdout.contains("present"),
+        "present slug must not appear as missing: {stdout}"
+    );
 
     let (stdout, _) = run_with("? src_present(p).");
-    assert!(stdout.contains("lib.rs"), "present scan still produces rows: {stdout}");
+    assert!(
+        stdout.contains("lib.rs"),
+        "present scan still produces rows: {stdout}"
+    );
 }
 
 /// Cross-repo hardness test. Simulates an org checkout with two repos
@@ -346,7 +495,11 @@ fn cross_repo_scan_and_file_attribution_hardness() {
     // beta: a library declaring pub fn one() and pub fn two()
     let beta = org.join("beta");
     fs::create_dir_all(beta.join("src")).unwrap();
-    fs::write(beta.join("src/lib.rs"), "pub fn one() {}\npub fn two() { is_nothing(); }\n").unwrap();
+    fs::write(
+        beta.join("src/lib.rs"),
+        "pub fn one() {}\npub fn two() { is_nothing(); }\n",
+    )
+    .unwrap();
 
     // alpha: an app with a different file, importing from beta via path dep
     let alpha = org.join("alpha");
@@ -354,14 +507,21 @@ fn cross_repo_scan_and_file_attribution_hardness() {
     fs::write(alpha.join("src/main.rs"), "fn main() {}\nfn helper() {}\n").unwrap();
 
     // Both repos registered in config
-    fs::write(org.join("cfg.toml"), format!("\
+    fs::write(
+        org.join("cfg.toml"),
+        format!(
+            "\
         [[repos]]\n\
         slug = \"alpha\"\n\
         root = \"{a}\"\n\
         [[repos]]\n\
         slug = \"beta\"\n\
         root = \"{b}\"\n",
-        a = alpha.display(), b = beta.display())).unwrap();
+            a = alpha.display(),
+            b = beta.display()
+        ),
+    )
+    .unwrap();
 
     // DL program: scan "*" fans out over both repos. Put scan and
     // extraction (match) in the same rule body — the engine tracks
@@ -379,25 +539,48 @@ fn cross_repo_scan_and_file_attribution_hardness() {
         .args(["--db", org.join("db").to_str().unwrap()])
         .current_dir(&alpha)
         .env("SPREFA_CONFIG", org.join("cfg.toml"))
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // Both repos in the repo relation
     assert!(stdout.contains("alpha"), "alpha slug in repo rel: {stdout}");
     assert!(stdout.contains("beta"), "beta slug in repo rel: {stdout}");
 
     // Files from both repos in the file relation with per-repo attribution
-    assert!(stdout.contains("src/main.rs"), "alpha/src/main.rs in file rel: {stdout}");
-    assert!(stdout.contains("src/lib.rs"), "beta/src/lib.rs in file rel: {stdout}");
+    assert!(
+        stdout.contains("src/main.rs"),
+        "alpha/src/main.rs in file rel: {stdout}"
+    );
+    assert!(
+        stdout.contains("src/lib.rs"),
+        "beta/src/lib.rs in file rel: {stdout}"
+    );
 
     // scan picks up both repos' files
-    assert!(stdout.contains("src/main.rs"), "scan picks up main.rs: {stdout}");
-    assert!(stdout.contains("src/lib.rs"), "scan picks up lib.rs: {stdout}");
+    assert!(
+        stdout.contains("src/main.rs"),
+        "scan picks up main.rs: {stdout}"
+    );
+    assert!(
+        stdout.contains("src/lib.rs"),
+        "scan picks up lib.rs: {stdout}"
+    );
 
     // match extracts functions from both repos independently
-    assert!(stdout.contains("main") || stdout.contains("helper"), "alpha fns: {stdout}");
-    assert!(stdout.contains("one") || stdout.contains("two"), "beta fns: {stdout}");
+    assert!(
+        stdout.contains("main") || stdout.contains("helper"),
+        "alpha fns: {stdout}"
+    );
+    assert!(
+        stdout.contains("one") || stdout.contains("two"),
+        "beta fns: {stdout}"
+    );
 }
 
 /// Without `allow_missing`, the same absent root is fatal (engine bails). This
@@ -409,7 +592,8 @@ fn missing_repo_without_flag_bails() {
     fs::create_dir_all(d.join("present/src")).unwrap();
     fs::write(d.join("present/src/lib.rs"), "fn here() {}\n").unwrap();
 
-    let cfg = format!("\
+    let cfg = format!(
+        "\
         [[repos]]\n\
         slug = \"present\"\n\
         root = \"{present}\"\n\
@@ -417,21 +601,33 @@ fn missing_repo_without_flag_bails() {
         slug = \"absent\"\n\
         root = \"{absent}\"\n",
         present = d.join("present").display(),
-        absent = d.join("does-not-exist").display());
+        absent = d.join("does-not-exist").display()
+    );
     fs::write(d.join("cfg.toml"), cfg).unwrap();
-    fs::write(d.join("p.dl"), "\
+    fs::write(
+        d.join("p.dl"),
+        "\
         rel src(p: file).\n\
         src(p) <- scan(\"*\", \"WORK\", \"src/**/*.rs\", p, rev).\n\
-        ? src(p).\n").unwrap();
+        ? src(p).\n",
+    )
+    .unwrap();
 
     let out = Command::new(DL)
         .arg(d.join("p.dl"))
         .args(["--db", d.join("db").to_str().unwrap()])
         .current_dir(d.join("present"))
         .env("SPREFA_CONFIG", d.join("cfg.toml"))
-        .output().expect("run dl");
-    assert!(!out.status.success(), "missing root without allow_missing must bail: {}",
-        String::from_utf8_lossy(&out.stdout));
+        .output()
+        .expect("run dl");
+    assert!(
+        !out.status.success(),
+        "missing root without allow_missing must bail: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("does not exist"), "bail message names the missing root: {stderr}");
+    assert!(
+        stderr.contains("does not exist"),
+        "bail message names the missing root: {stderr}"
+    );
 }

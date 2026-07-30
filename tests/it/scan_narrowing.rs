@@ -19,7 +19,11 @@ fn sandbox(tag: &str) -> PathBuf {
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     for file_index in 0..10 {
-        fs::write(dir.join(format!("src/module_{file_index}.rs")), "fn present() {}\n").unwrap();
+        fs::write(
+            dir.join(format!("src/module_{file_index}.rs")),
+            "fn present() {}\n",
+        )
+        .unwrap();
     }
     dir
 }
@@ -33,11 +37,21 @@ fn source_rule(glob: &str) -> String {
 /// `dl <prog> --check --no-daemon [--stage S]`, hermetic and daemon-free.
 /// Reuses `dir.join("db")` across calls so a second invocation reconciles
 /// against the first tick's already-scanned file set.
-fn check(dir: &Path, prog: &str, stage: Option<&str>, extra_env: &[(&str, &str)]) -> (i32, String, String) {
+fn check(
+    dir: &Path,
+    prog: &str,
+    stage: Option<&str>,
+    extra_env: &[(&str, &str)],
+) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let mut cmd = Command::new(DL);
     cmd.arg(dir.join("p.dl"))
-        .args(["--db", dir.join("db").to_str().unwrap(), "--check", "--no-daemon"])
+        .args([
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--check",
+            "--no-daemon",
+        ])
         .env("SPREFA_CONFIG", dir.join("no.toml"))
         .current_dir(dir);
     if let Some(stage_name) = stage {
@@ -63,16 +77,29 @@ fn narrowing_past_threshold_warns_with_counts() {
     let sandbox_dir = sandbox("past_threshold");
     let (code1, _out1, err1) = check(&sandbox_dir, &source_rule("src/**/*.rs"), None, &[]);
     assert_eq!(code1, 0, "first tick must scan cleanly:\n{err1}");
-    assert!(!err1.contains("scan-narrowing"), "first tick has no prior state to narrow from:\n{err1}");
+    assert!(
+        !err1.contains("scan-narrowing"),
+        "first tick has no prior state to narrow from:\n{err1}"
+    );
 
     let (code2, _out2, err2) = check(&sandbox_dir, &source_rule("src/module_0.rs"), None, &[]);
     assert_eq!(code2, 0, "a warning must not fail --check:\n{err2}");
-    assert!(err2.contains("scan-narrowing"), "expected the scan-narrowing code:\n{err2}");
-    assert!(err2.contains("1 of the 10 file"), "expected the before/after counts:\n{err2}");
-    assert!(err2.contains("9") && err2.contains("90%"),
-        "expected the out-of-scope count and share:\n{err2}");
-    assert!(err2.contains("fresh --db") || err2.contains("broaden"),
-        "message must name the reconcile-semantics escape hatch:\n{err2}");
+    assert!(
+        err2.contains("scan-narrowing"),
+        "expected the scan-narrowing code:\n{err2}"
+    );
+    assert!(
+        err2.contains("1 of the 10 file"),
+        "expected the before/after counts:\n{err2}"
+    );
+    assert!(
+        err2.contains("9") && err2.contains("90%"),
+        "expected the out-of-scope count and share:\n{err2}"
+    );
+    assert!(
+        err2.contains("fresh --db") || err2.contains("broaden"),
+        "message must name the reconcile-semantics escape hatch:\n{err2}"
+    );
 }
 
 /// (2) Negative control: narrowing that stays UNDER the default 50% threshold
@@ -87,7 +114,10 @@ fn narrowing_under_threshold_is_silent() {
     let glob = "src/{module_0,module_1,module_2,module_3,module_4,module_5}.rs";
     let (code2, _out2, err2) = check(&sandbox_dir, &source_rule(glob), None, &[]);
     assert_eq!(code2, 0, "{err2}");
-    assert!(!err2.contains("scan-narrowing"), "under-threshold narrowing must stay silent:\n{err2}");
+    assert!(
+        !err2.contains("scan-narrowing"),
+        "under-threshold narrowing must stay silent:\n{err2}"
+    );
 }
 
 /// (3) `DL_SCAN_NARROW_THRESHOLD` is env-tunable: the same 40% narrowing that
@@ -101,12 +131,16 @@ fn narrow_threshold_is_env_tunable() {
 
     let glob = "src/{module_0,module_1,module_2,module_3,module_4,module_5}.rs";
     let (code2, _out2, err2) = check(
-        &sandbox_dir, &source_rule(glob), None,
+        &sandbox_dir,
+        &source_rule(glob),
+        None,
         &[("DL_SCAN_NARROW_THRESHOLD", "0.3")],
     );
     assert_eq!(code2, 0, "{err2}");
-    assert!(err2.contains("scan-narrowing"),
-        "a lowered threshold must catch the same 40% narrowing:\n{err2}");
+    assert!(
+        err2.contains("scan-narrowing"),
+        "a lowered threshold must catch the same 40% narrowing:\n{err2}"
+    );
 }
 
 /// (4) Stage routing: `scan-narrowing` is an unrouted warning, so it defaults
@@ -118,8 +152,15 @@ fn narrowing_warning_is_commit_stage_only() {
     let (code1, _out1, err1) = check(&sandbox_dir, &source_rule("src/**/*.rs"), None, &[]);
     assert_eq!(code1, 0, "{err1}");
 
-    let (code2, _out2, err2) = check(&sandbox_dir, &source_rule("src/module_0.rs"), Some("live"), &[]);
+    let (code2, _out2, err2) = check(
+        &sandbox_dir,
+        &source_rule("src/module_0.rs"),
+        Some("live"),
+        &[],
+    );
     assert_eq!(code2, 0, "{err2}");
-    assert!(!err2.contains("scan-narrowing"),
-        "an unrouted warning must not surface at the live stage:\n{err2}");
+    assert!(
+        !err2.contains("scan-narrowing"),
+        "an unrouted warning must not surface at the live stage:\n{err2}"
+    );
 }

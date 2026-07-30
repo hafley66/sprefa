@@ -8,7 +8,7 @@
 //! existing `crate::walk::`, `crate::scc::`, `crate::modgraph::`,
 //! `crate::typegraph::` paths resolve unchanged.
 
-pub mod walk;
-pub mod scc;
 pub mod modgraph;
+pub mod scc;
 pub mod typegraph;
+pub mod walk;

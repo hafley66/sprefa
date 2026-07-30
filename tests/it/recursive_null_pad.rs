@@ -28,7 +28,10 @@ fn run(dir: &Path, args: &[&str], prog: &str) -> (i32, String) {
         .args(args)
         .output()
         .expect("run dl");
-    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const HANG: &str = r#"
@@ -75,7 +78,10 @@ n(y, _) <- n(y, _).
 "#;
     let (code, stderr) = run(&d, &[], prog);
     assert_ne!(code, 0, "expected a non-zero exit; stderr: {stderr}");
-    assert!(stderr.contains("NULL"), "expected the NULL-pad bail; got: {stderr}");
+    assert!(
+        stderr.contains("NULL"),
+        "expected the NULL-pad bail; got: {stderr}"
+    );
 }
 
 #[test]
@@ -105,5 +111,8 @@ n(y, "k") <- n(y, _).
 ? n(a, b).
 "#;
     let (code, stderr) = run(&d, &[], prog);
-    assert_eq!(code, 0, "plain recursive rule should converge; stderr: {stderr}");
+    assert_eq!(
+        code, 0,
+        "plain recursive rule should converge; stderr: {stderr}"
+    );
 }

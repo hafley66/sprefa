@@ -69,9 +69,11 @@ fn unsealed_aborted_and_partial_stages_are_refused_without_changes() {
             "partial" => {
                 let sealed = h.seal_stage(generation).unwrap();
                 assert_eq!(sealed, ready);
-                h.db
-                    .exec_on("_next", "INSERT INTO _next(scope, name, value) VALUES ('r', 'a', 3)")
-                    .unwrap();
+                h.db.exec_on(
+                    "_next",
+                    "INSERT INTO _next(scope, name, value) VALUES ('r', 'a', 3)",
+                )
+                .unwrap();
             }
             _ => unreachable!(),
         }
@@ -158,9 +160,11 @@ fn populated_analyzed_plans_use_changed_key_driver_and_pk_probes() {
         SinkLimits::default(),
     )
     .unwrap();
-    h.db
-        .execute_batch_on("rel_fixture", "ANALYZE rel_fixture; ANALYZE _next; ANALYZE _changed_key;")
-        .unwrap();
+    h.db.execute_batch_on(
+        "rel_fixture",
+        "ANALYZE rel_fixture; ANALYZE _next; ANALYZE _changed_key;",
+    )
+    .unwrap();
     assert_diff_plans(&h.db).unwrap();
     let auto_index = h.db.pragma_i64("automatic_index").unwrap();
     let temp_store = h.db.pragma_i64("temp_store").unwrap();

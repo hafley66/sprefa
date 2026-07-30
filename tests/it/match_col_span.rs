@@ -22,10 +22,19 @@ fn run_json(dir: &PathBuf, prog: &str) -> Vec<serde_json::Value> {
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
         .current_dir(dir)
-        .args(["--db", dir.join("db").to_str().unwrap(),
-               "--no-daemon", "--query-json"])
-        .output().expect("run dl");
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+        .args([
+            "--db",
+            dir.join("db").to_str().unwrap(),
+            "--no-daemon",
+            "--query-json",
+        ])
+        .output()
+        .expect("run dl");
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|l| !l.trim().is_empty())
@@ -47,12 +56,23 @@ hit(l, c, ec) <- scan("WORK","src/**/*.rs",path,rev),
 ? hit(l, c, ec).
 "#;
     let recs = run_json(&d, prog);
-    let q = recs.iter().find(|r| r["query"] == "hit").expect("hit query");
+    let q = recs
+        .iter()
+        .find(|r| r["query"] == "hit")
+        .expect("hit query");
     assert_eq!(q["count"], 1, "one match: {q}");
     let row = &q["rows"][0];
     assert_eq!(row[0].as_i64(), Some(1), "line 1: {row}");
-    assert_eq!(row[1].as_i64(), Some(5), "`.unwrap()` starts at col 5: {row}");
-    assert_eq!(row[2].as_i64(), Some(14), "`.unwrap()` ends at col 14 (5+9): {row}");
+    assert_eq!(
+        row[1].as_i64(),
+        Some(5),
+        "`.unwrap()` starts at col 5: {row}"
+    );
+    assert_eq!(
+        row[2].as_i64(),
+        Some(14),
+        "`.unwrap()` ends at col 14 (5+9): {row}"
+    );
 }
 
 #[test]
@@ -70,7 +90,10 @@ located(lo, hi, c, ec) <- hit(id, c, ec), ref(id, _s, _f, lo, hi).
 ? located(lo, hi, c, ec).
 "#;
     let recs = run_json(&d, prog);
-    let q = recs.iter().find(|r| r["query"] == "located").expect("located query");
+    let q = recs
+        .iter()
+        .find(|r| r["query"] == "located")
+        .expect("located query");
     assert_eq!(q["count"], 1, "one located: {q}");
     let row = &q["rows"][0];
     // Byte span in the file: cols 5..14 on the only line, so file bytes 5..14.

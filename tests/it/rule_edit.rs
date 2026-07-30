@@ -23,17 +23,24 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .arg(dir.join("p.dl"))
         .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
-        .output().expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+        .output()
+        .expect("run dl");
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 fn prog(re: &str) -> String {
-    format!(concat!(
-        "rel hit(p: file, l: int).\n",
-        "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /{}/, l).\n",
-        "? hit(p, l).\n"), re)
+    format!(
+        concat!(
+            "rel hit(p: file, l: int).\n",
+            "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /{}/, l).\n",
+            "? hit(p, l).\n"
+        ),
+        re
+    )
 }
 
 /// Same db, same untouched file, three program versions: the rows must follow
@@ -51,7 +58,10 @@ fn edited_regex_reextracts_unchanged_files() {
     // file untouched, rule no longer matches: stale rows must not survive
     let (code, out, err) = run(&d, &prog("zzznever"));
     assert_eq!(code, 0, "{err}");
-    assert!(!out.contains("src/x.rs"), "v2 stale rows survived the rule edit:\n{out}");
+    assert!(
+        !out.contains("src/x.rs"),
+        "v2 stale rows survived the rule edit:\n{out}"
+    );
 
     // and back: re-extraction must produce rows again, not just delete
     let (code, out, err) = run(&d, &prog("alpha"));
@@ -83,19 +93,27 @@ fn edited_derived_rule_rebuilds_on_warm_db() {
     let d = sandbox("derived");
     fs::create_dir_all(d.join("src")).unwrap();
     fs::write(d.join("src/x.rs"), "fn alpha() {}\nfn beta() {}\n").unwrap();
-    let prog = |needle: &str| format!(concat!(
+    let prog = |needle: &str| {
+        format!(concat!(
         "rel hit(p: file, l: int).\n",
         "hit(p, l) <- scan(\"WORK\", \"src/**/*.rs\", p, rev), match(p, rev, /fn (?<w>\\w+)/, l).\n",
         "rel keep(p: file, l: int).\n",
         "keep(p, l) <- hit(p, l), l {}.\n",
-        "? keep(p, l).\n"), needle);
+        "? keep(p, l).\n"), needle)
+    };
 
     let (code, out, err) = run(&d, &prog("= 1"));
     assert_eq!(code, 0, "{err}");
-    assert!(out.contains("1") && !out.contains("2"), "v1 keeps line 1 only:\n{out}");
+    assert!(
+        out.contains("1") && !out.contains("2"),
+        "v1 keeps line 1 only:\n{out}"
+    );
 
     let (code, out, err) = run(&d, &prog("= 2"));
     assert_eq!(code, 0, "{err}");
     assert!(out.contains("2"), "v2 must rebuild to line 2:\n{out}");
-    assert!(!out.contains("\t1\n"), "stale derived row survived the edit:\n{out}");
+    assert!(
+        !out.contains("\t1\n"),
+        "stale derived row survived the edit:\n{out}"
+    );
 }

@@ -42,8 +42,17 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) -> String {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
@@ -106,7 +115,10 @@ const REL_COLS: &[(&str, &[&str])] = &[
     ("call_edge", &["caller", "callee", "kind"]),
     ("call_edge_rev", &["caller", "callee", "kind", "rev"]),
     ("call_def", &["repo", "sym", "kind", "file", "line", "end"]),
-    ("call_def_rev", &["repo", "sym", "kind", "file", "line", "end", "rev"]),
+    (
+        "call_def_rev",
+        &["repo", "sym", "kind", "file", "line", "end", "rev"],
+    ),
     ("call_name", &["sym", "name"]),
 ];
 
@@ -117,7 +129,10 @@ const REL_COLS: &[(&str, &[&str])] = &[
 /// `sprf_sym` (registered in `src/db.rs`) is a pure content hash, so it works
 /// against a runtime-computed rev string with no prior interning needed.
 const OWNED_CALL_TABLE_COUNT_SQL: &[(&str, &str)] = &[
-    ("_call_owner", "SELECT COUNT(*) FROM _call_owner WHERE rev_sid = sprf_sym(?1)"),
+    (
+        "_call_owner",
+        "SELECT COUNT(*) FROM _call_owner WHERE rev_sid = sprf_sym(?1)",
+    ),
     (
         "_call_raw_site",
         "SELECT COUNT(*) FROM _call_raw_site s JOIN _call_owner o USING(owner_id) \
@@ -129,9 +144,18 @@ const OWNED_CALL_TABLE_COUNT_SQL: &[(&str, &str)] = &[
          JOIN _call_raw_site s USING(site_id) JOIN _call_owner o USING(owner_id) \
          WHERE o.rev_sid = sprf_sym(?1)",
     ),
-    ("_call_def", "SELECT COUNT(*) FROM _call_def WHERE rev_sid = sprf_sym(?1)"),
-    ("_call_def_bucket", "SELECT COUNT(*) FROM _call_def_bucket WHERE rev_sid = sprf_sym(?1)"),
-    ("_call_edge_support", "SELECT COUNT(*) FROM _call_edge_support WHERE rev_sid = sprf_sym(?1)"),
+    (
+        "_call_def",
+        "SELECT COUNT(*) FROM _call_def WHERE rev_sid = sprf_sym(?1)",
+    ),
+    (
+        "_call_def_bucket",
+        "SELECT COUNT(*) FROM _call_def_bucket WHERE rev_sid = sprf_sym(?1)",
+    ),
+    (
+        "_call_edge_support",
+        "SELECT COUNT(*) FROM _call_edge_support WHERE rev_sid = sprf_sym(?1)",
+    ),
 ];
 
 /// Row count of each owned `_call_*` table scoped to one rev — the input
@@ -141,7 +165,9 @@ fn owned_table_counts(engine: &Engine, rev: &str) -> Vec<(&'static str, i64)> {
     OWNED_CALL_TABLE_COUNT_SQL
         .iter()
         .map(|&(table, sql)| {
-            let rows = engine.query_sql(sql, &[serde_json::Value::String(rev.to_string())]).unwrap();
+            let rows = engine
+                .query_sql(sql, &[serde_json::Value::String(rev.to_string())])
+                .unwrap();
             (table, rows[0][0].as_i64().unwrap())
         })
         .collect()
@@ -172,12 +198,21 @@ fn cell_to_string(v: &serde_json::Value) -> String {
 fn dump_call_rels(engine: &Engine) -> BTreeMap<&'static str, Vec<String>> {
     let mut dump = BTreeMap::new();
     for &(rel, cols) in REL_COLS {
-        let select = cols.iter().map(|c| format!("\"{c}\"")).collect::<Vec<_>>().join(", ");
+        let select = cols
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
         let sql = format!("SELECT {select} FROM rel_{rel}_txt");
         let rows = engine.query_sql(&sql, &[]).unwrap();
         let mut lines: Vec<String> = rows
             .into_iter()
-            .map(|row| row.iter().map(cell_to_string).collect::<Vec<_>>().join("\t"))
+            .map(|row| {
+                row.iter()
+                    .map(cell_to_string)
+                    .collect::<Vec<_>>()
+                    .join("\t")
+            })
             .collect();
         lines.sort();
         dump.insert(rel, lines);
@@ -216,10 +251,19 @@ fn assert_matches_oracle(
         if got == want {
             continue;
         }
-        let detail = match got.iter().zip(want.iter()).enumerate().find(|(_, (g, w))| g != w) {
+        let detail = match got
+            .iter()
+            .zip(want.iter())
+            .enumerate()
+            .find(|(_, (g, w))| g != w)
+        {
             Some((i, (g, w))) => format!("row {i}: incremental {g:?}, oracle {w:?}"),
             None if got.len() > want.len() => {
-                format!("extra incremental row {}: {:?}", want.len(), got[want.len()])
+                format!(
+                    "extra incremental row {}: {:?}",
+                    want.len(),
+                    got[want.len()]
+                )
             }
             None => format!("missing oracle row {}: {:?}", got.len(), want[got.len()]),
         };
@@ -247,7 +291,10 @@ fn add_then_delete_a_file() {
     fs::write(dir.join("src/b.rs"), "pub fn beta() {\n    alpha();\n}\n").unwrap();
     engine.tick(&prog, true).unwrap();
     let after_add = dump_call_rels(&engine);
-    assert!(!after_add["call_edge"].is_empty(), "fixture: beta->alpha must resolve before the delete");
+    assert!(
+        !after_add["call_edge"].is_empty(),
+        "fixture: beta->alpha must resolve before the delete"
+    );
 
     // Delete it and tick again.
     fs::remove_file(dir.join("src/b.rs")).unwrap();
@@ -293,8 +340,14 @@ fn delete_only_the_callee() {
     engine.tick(&prog, true).unwrap();
 
     let before = dump_call_rels(&engine);
-    assert!(!before["call_edge"].is_empty(), "fixture: f->g must resolve before the delete");
-    assert!(!before["call_site"].is_empty(), "fixture: f's call site must exist before the delete");
+    assert!(
+        !before["call_edge"].is_empty(),
+        "fixture: f->g must resolve before the delete"
+    );
+    assert!(
+        !before["call_site"].is_empty(),
+        "fixture: f's call site must exist before the delete"
+    );
     let site_rows_before = before["call_site"].clone();
 
     fs::remove_file(dir.join("src/callee.rs")).unwrap();
@@ -323,38 +376,64 @@ fn delete_only_the_callee() {
 #[test]
 fn rename_a_function_in_one_tick() {
     let dir = sandbox("rename");
-    fs::write(dir.join("src/a.rs"), "pub fn alpha() {}\npub fn caller() {\n    alpha();\n}\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "pub fn alpha() {}\npub fn caller() {\n    alpha();\n}\n",
+    )
+    .unwrap();
     let mut engine = engine_at(&dir, "db");
     let prog = call_prog();
     engine.tick(&prog, true).unwrap();
     let before = dump_call_rels(&engine);
     assert!(
-        before["call_name"].iter().any(|row| row.ends_with("\talpha")),
+        before["call_name"]
+            .iter()
+            .any(|row| row.ends_with("\talpha")),
         "fixture: alpha must be a known def name before the rename"
     );
 
     // Rename in a single edit: def AND every call site move together, ticked once.
-    fs::write(dir.join("src/a.rs"), "pub fn beta() {}\npub fn caller() {\n    beta();\n}\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "pub fn beta() {}\npub fn caller() {\n    beta();\n}\n",
+    )
+    .unwrap();
     engine.tick(&prog, true).unwrap();
 
     let incremental = dump_call_rels(&engine);
 
-    let syms: Vec<&str> = incremental["call_name"].iter().map(|row| row.split('\t').next().unwrap()).collect();
+    let syms: Vec<&str> = incremental["call_name"]
+        .iter()
+        .map(|row| row.split('\t').next().unwrap())
+        .collect();
     let unique_syms: HashSet<&str> = syms.iter().copied().collect();
     assert_eq!(
-        syms.len(), unique_syms.len(),
-        "no duplicate syms may exist in call_name: {:?}", incremental["call_name"]
+        syms.len(),
+        unique_syms.len(),
+        "no duplicate syms may exist in call_name: {:?}",
+        incremental["call_name"]
     );
     assert!(
-        !incremental["call_name"].iter().any(|row| row.ends_with("\talpha")),
-        "no sym may still carry the old name `alpha`: {:?}", incremental["call_name"]
+        !incremental["call_name"]
+            .iter()
+            .any(|row| row.ends_with("\talpha")),
+        "no sym may still carry the old name `alpha`: {:?}",
+        incremental["call_name"]
     );
-    let beta_names: Vec<&String> =
-        incremental["call_name"].iter().filter(|row| row.ends_with("\tbeta")).collect();
-    assert_eq!(beta_names.len(), 1, "exactly one sym must carry the new name `beta`: {beta_names:?}");
+    let beta_names: Vec<&String> = incremental["call_name"]
+        .iter()
+        .filter(|row| row.ends_with("\tbeta"))
+        .collect();
+    assert_eq!(
+        beta_names.len(),
+        1,
+        "exactly one sym must carry the new name `beta`: {beta_names:?}"
+    );
     let beta_sym = beta_names[0].split('\t').next().unwrap();
     assert!(
-        incremental["call_edge"].iter().any(|row| row.split('\t').nth(1) == Some(beta_sym)),
+        incremental["call_edge"]
+            .iter()
+            .any(|row| row.split('\t').nth(1) == Some(beta_sym)),
         "call_edge must retarget to beta's sym {beta_sym}: {:?}",
         incremental["call_edge"]
     );
@@ -377,24 +456,38 @@ fn rename_a_function_in_one_tick() {
 #[test]
 fn whitespace_only_edit() {
     let dir = sandbox("whitespace");
-    fs::write(dir.join("src/a.rs"), "pub fn alpha() {}\npub fn caller() {\n    alpha();\n}\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "pub fn alpha() {}\npub fn caller() {\n    alpha();\n}\n",
+    )
+    .unwrap();
     let mut engine = engine_at(&dir, "db");
     let prog = call_prog();
     engine.tick(&prog, true).unwrap();
     let before = dump_call_rels(&engine);
-    assert!(!before["call_edge"].is_empty(), "fixture: caller->alpha must resolve before the edit");
+    assert!(
+        !before["call_edge"].is_empty(),
+        "fixture: caller->alpha must resolve before the edit"
+    );
 
     // Trailing whitespace on an existing line + a trailing comment AFTER
     // every def: the content hash moves but no def's (line, end) span does.
     fs::write(
         dir.join("src/a.rs"),
         "pub fn alpha() {}\npub fn caller() {\n    alpha();   \n}\n\n// trailing comment\n",
-    ).unwrap();
+    )
+    .unwrap();
     let report = engine.tick_report(&prog, true).unwrap();
-    assert!(report.changed, "the file's content hash DID move, so the tick must register a change");
+    assert!(
+        report.changed,
+        "the file's content hash DID move, so the tick must register a change"
+    );
 
     let after = dump_call_rels(&engine);
-    assert_eq!(after, before, "zero rows may move in any public call rel for a whitespace-only edit");
+    assert_eq!(
+        after, before,
+        "zero rows may move in any public call rel for a whitespace-only edit"
+    );
 
     let oracle = oracle_dump(&dir, "whitespace");
     assert_matches_oracle("whitespace_only_edit", &after, &oracle);
@@ -416,18 +509,24 @@ fn retired_rev_is_swept_from_all_six_owned_tables() {
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_a() {}\npub fn caller_a() {\n    helper_a();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
     init_git(&dir);
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "revA"]);
     let head_sha = git(&dir, &["rev-parse", "HEAD"]);
-    assert_eq!(head_sha.len(), 40, "HEAD sha must be a 40-char commit sha: {head_sha:?}");
+    assert_eq!(
+        head_sha.len(),
+        40,
+        "HEAD sha must be a 40-char commit sha: {head_sha:?}"
+    );
 
     // WORK diverges with disjoint names, so it never masks revA's rows.
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_w() {}\npub fn caller_w() {\n    helper_w();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let two_rev_src = rev_prog(&["WORK", "HEAD"]);
     let one_rev_src = rev_prog(&["WORK"]);
@@ -447,7 +546,10 @@ fn retired_rev_is_swept_from_all_six_owned_tables() {
 
     // Drop revA's scan rule; `sweep_gone_call_inputs` runs as part of this tick.
     let report = engine.tick_report(&one_rev_prog, true).unwrap();
-    assert!(report.changed, "retiring a rev is a real state change, not a no-op tick");
+    assert!(
+        report.changed,
+        "retiring a rev is a real state change, not a no-op tick"
+    );
 
     // Every owned table is at zero for revA. A wrong FK deletion order (child
     // before parent survives, or vice versa) would either leave orphan rows
@@ -456,20 +558,29 @@ fn retired_rev_is_swept_from_all_six_owned_tables() {
     // all-zero result IS the "FK dependency chain respected" proof.
     let counts_after = owned_table_counts(&engine, &head_sha);
     for (table, count) in &counts_after {
-        assert_eq!(*count, 0, "`{table}` must hold zero rows for a retired rev: {counts_after:?}");
+        assert_eq!(
+            *count, 0,
+            "`{table}` must hold zero rows for a retired rev: {counts_after:?}"
+        );
     }
 
     let incremental = dump_call_rels(&engine);
     for &(rel, _) in REL_COLS {
         assert!(
-            incremental[rel].iter().all(|row| !row.contains("helper_a") && !row.contains("caller_a")),
+            incremental[rel]
+                .iter()
+                .all(|row| !row.contains("helper_a") && !row.contains("caller_a")),
             "no orphan public `{rel}` row for the retired rev: {:?}",
             incremental[rel]
         );
     }
 
     let oracle = oracle_dump_for(&dir, "sweep_six", &one_rev_src);
-    assert_matches_oracle("retired_rev_is_swept_from_all_six_owned_tables", &incremental, &oracle);
+    assert_matches_oracle(
+        "retired_rev_is_swept_from_all_six_owned_tables",
+        &incremental,
+        &oracle,
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -483,7 +594,8 @@ fn sweeping_twice_is_idempotent() {
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_a() {}\npub fn caller_a() {\n    helper_a();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
     init_git(&dir);
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "revA"]);
@@ -491,7 +603,8 @@ fn sweeping_twice_is_idempotent() {
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_w() {}\npub fn caller_w() {\n    helper_w();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
 
     let two_rev_src = rev_prog(&["WORK", "HEAD"]);
     let one_rev_src = rev_prog(&["WORK"]);
@@ -501,7 +614,9 @@ fn sweeping_twice_is_idempotent() {
     let mut engine = engine_at(&dir, "db");
     engine.tick(&two_rev_prog, true).unwrap();
     assert!(
-        owned_table_counts(&engine, &head_sha).iter().all(|(_, n)| *n > 0),
+        owned_table_counts(&engine, &head_sha)
+            .iter()
+            .all(|(_, n)| *n > 0),
         "fixture: revA must hold owned rows before the first sweep"
     );
 
@@ -509,7 +624,8 @@ fn sweeping_twice_is_idempotent() {
     let report_first = engine.tick_report(&one_rev_prog, true).unwrap();
     assert!(
         report_first.changed_rels.iter().any(|rel| rel == "file"),
-        "fixture: retiring revA must move the `file` source rel: {:?}", report_first.changed_rels
+        "fixture: retiring revA must move the `file` source rel: {:?}",
+        report_first.changed_rels
     );
     let counts_after_first = owned_table_counts(&engine, &head_sha);
     assert!(
@@ -531,7 +647,9 @@ fn sweeping_twice_is_idempotent() {
     let call_relevant: Vec<&String> = report_second
         .changed_rels
         .iter()
-        .filter(|rel| rel.as_str() == "file" || rel.as_str() == "content" || rel.starts_with("call"))
+        .filter(|rel| {
+            rel.as_str() == "file" || rel.as_str() == "content" || rel.starts_with("call")
+        })
         .collect();
     assert!(
         call_relevant.is_empty(),
@@ -567,7 +685,8 @@ fn gone_rev_interleaved_with_a_live_rev_sharing_files() {
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_a() {}\npub fn caller_a() {\n    helper_a();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
     init_git(&dir);
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "revA"]);
@@ -578,11 +697,15 @@ fn gone_rev_interleaved_with_a_live_rev_sharing_files() {
     fs::write(
         dir.join("src/a.rs"),
         "pub fn helper_b() {}\npub fn caller_b() {\n    helper_b();\n}\n",
-    ).unwrap();
+    )
+    .unwrap();
     git(&dir, &["add", "."]);
     git(&dir, &["commit", "-q", "-m", "revB"]);
     let rev_b = git(&dir, &["rev-parse", "HEAD"]);
-    assert_ne!(rev_a, rev_b, "fixture: revA and revB must be distinct commits");
+    assert_ne!(
+        rev_a, rev_b,
+        "fixture: revA and revB must be distinct commits"
+    );
 
     let two_rev_src = rev_prog(&[&rev_a, &rev_b]);
     let one_rev_src = rev_prog(&[&rev_b]);
@@ -606,19 +729,28 @@ fn gone_rev_interleaved_with_a_live_rev_sharing_files() {
         "revB's owned rows must survive revA's retraction untouched: {revb_after:?}"
     );
     let rev_a_after = owned_table_counts(&engine, &rev_a);
-    assert!(rev_a_after.iter().all(|(_, n)| *n == 0), "revA must be fully swept: {rev_a_after:?}");
+    assert!(
+        rev_a_after.iter().all(|(_, n)| *n == 0),
+        "revA must be fully swept: {rev_a_after:?}"
+    );
 
     let incremental = dump_call_rels(&engine);
     for &(rel, _) in REL_COLS {
         assert!(
-            incremental[rel].iter().all(|row| !row.contains("helper_a") && !row.contains("caller_a")),
+            incremental[rel]
+                .iter()
+                .all(|row| !row.contains("helper_a") && !row.contains("caller_a")),
             "no leftover revA row in `{rel}`: {:?}",
             incremental[rel]
         );
     }
 
     let oracle = oracle_dump_for(&dir, "interleaved", &one_rev_src);
-    assert_matches_oracle("gone_rev_interleaved_with_a_live_rev_sharing_files", &incremental, &oracle);
+    assert_matches_oracle(
+        "gone_rev_interleaved_with_a_live_rev_sharing_files",
+        &incremental,
+        &oracle,
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -635,7 +767,11 @@ fn degenerate_tree_empty() {
 
     let incremental = dump_call_rels(&engine);
     for &(rel, _) in REL_COLS {
-        assert!(incremental[rel].is_empty(), "empty tree: rel `{rel}` must be empty: {:?}", incremental[rel]);
+        assert!(
+            incremental[rel].is_empty(),
+            "empty tree: rel `{rel}` must be empty: {:?}",
+            incremental[rel]
+        );
     }
 
     let oracle = oracle_dump(&dir, "degenerate_empty");
@@ -650,7 +786,11 @@ fn degenerate_tree_empty() {
 #[test]
 fn degenerate_tree_rust_files_with_no_calls() {
     let dir = sandbox("degenerate_no_calls");
-    fs::write(dir.join("src/a.rs"), "pub struct Alpha { pub n: i64 }\npub const N: i64 = 1;\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "pub struct Alpha { pub n: i64 }\npub const N: i64 = 1;\n",
+    )
+    .unwrap();
     let mut engine = engine_at(&dir, "db");
     let prog = call_prog();
     engine.tick(&prog, true).unwrap();
@@ -665,7 +805,11 @@ fn degenerate_tree_rust_files_with_no_calls() {
     }
 
     let oracle = oracle_dump(&dir, "degenerate_no_calls");
-    assert_matches_oracle("degenerate_tree_rust_files_with_no_calls", &incremental, &oracle);
+    assert_matches_oracle(
+        "degenerate_tree_rust_files_with_no_calls",
+        &incremental,
+        &oracle,
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -688,10 +832,17 @@ fn add_and_delete_the_same_file_in_one_tick() {
     engine.tick(&prog, true).unwrap();
 
     let incremental = dump_call_rels(&engine);
-    assert_eq!(incremental, baseline, "a file created and removed before the next tick must be a net no-op");
+    assert_eq!(
+        incremental, baseline,
+        "a file created and removed before the next tick must be a net no-op"
+    );
 
     let oracle = oracle_dump(&dir, "add_delete_same_tick");
-    assert_matches_oracle("add_and_delete_the_same_file_in_one_tick", &incremental, &oracle);
+    assert_matches_oracle(
+        "add_and_delete_the_same_file_in_one_tick",
+        &incremental,
+        &oracle,
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

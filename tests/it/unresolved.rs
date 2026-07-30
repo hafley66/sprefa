@@ -36,9 +36,11 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
         .current_dir(dir)
         .output()
         .expect("run dl");
-    (out.status.code().unwrap_or(-1),
-     String::from_utf8_lossy(&out.stdout).into_owned(),
-     String::from_utf8_lossy(&out.stderr).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
 }
 
 const SEEN_TS: &str = r#"
@@ -51,10 +53,13 @@ seen(path) <- scan("WORK", "src/**/*.ts", path, rev).
 #[test]
 fn dynamic_import_expr_is_flagged() {
     let dir = sandbox("dynamic_import");
-    fs::write(dir.join("src/loader.ts"),
+    fs::write(
+        dir.join("src/loader.ts"),
         "export async function loadPlugin(pluginName: string) {\n\
          \x20 return import(`./plugins/${pluginName}`);\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let prog = format!("{SEEN_TS}? unresolved(file, line, reason, detail).\n");
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
@@ -70,13 +75,17 @@ fn dynamic_import_expr_is_flagged() {
 #[test]
 fn require_with_computed_argument_is_flagged() {
     let dir = sandbox("require_dynamic");
-    fs::write(dir.join("src/loader.js"),
+    fs::write(
+        dir.join("src/loader.js"),
         "function loadModule(moduleName) {\n\
          \x20 return require(moduleName);\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let prog = "rel seen(path: file).\n\
          seen(path) <- scan(\"WORK\", \"src/**/*.js\", path, rev).\n\
-         ? unresolved(file, line, reason, detail).\n".to_string();
+         ? unresolved(file, line, reason, detail).\n"
+        .to_string();
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
     let rows = data_rows(&out);
@@ -90,11 +99,11 @@ fn require_with_computed_argument_is_flagged() {
 #[test]
 fn require_with_string_literal_is_not_flagged() {
     let dir = sandbox("require_static");
-    fs::write(dir.join("src/loader.js"),
-        "const fs = require(\"fs\");\n").unwrap();
+    fs::write(dir.join("src/loader.js"), "const fs = require(\"fs\");\n").unwrap();
     let prog = "rel seen(path: file).\n\
          seen(path) <- scan(\"WORK\", \"src/**/*.js\", path, rev).\n\
-         ? unresolved(file, line, reason, detail).\n".to_string();
+         ? unresolved(file, line, reason, detail).\n"
+        .to_string();
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
     assert_eq!(data_rows(&out).len(), 0, "{out}");
@@ -105,10 +114,13 @@ fn require_with_string_literal_is_not_flagged() {
 #[test]
 fn computed_member_call_is_flagged() {
     let dir = sandbox("computed_member");
-    fs::write(dir.join("src/dispatch.ts"),
+    fs::write(
+        dir.join("src/dispatch.ts"),
         "export function dispatch(eventType: string, handlers: Record<string, () => void>) {\n\
          \x20 handlers[eventType]();\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let prog = format!("{SEEN_TS}? unresolved(file, line, reason, detail).\n");
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
@@ -123,11 +135,14 @@ fn computed_member_call_is_flagged() {
 #[test]
 fn spread_call_argument_is_flagged() {
     let dir = sandbox("spread_args");
-    fs::write(dir.join("src/notify.ts"),
+    fs::write(
+        dir.join("src/notify.ts"),
         "declare function notify(...args: unknown[]): void;\n\
          export function broadcast(listeners: unknown[]) {\n\
          \x20 notify(...listeners);\n\
-         }\n").unwrap();
+         }\n",
+    )
+    .unwrap();
     let prog = format!("{SEEN_TS}? unresolved(file, line, reason, detail).\n");
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
@@ -142,9 +157,12 @@ fn spread_call_argument_is_flagged() {
 #[test]
 fn plain_call_is_not_flagged() {
     let dir = sandbox("plain_call");
-    fs::write(dir.join("src/plain.ts"),
+    fs::write(
+        dir.join("src/plain.ts"),
         "function greet(name: string) { return name; }\n\
-         export function run() { return greet(\"world\"); }\n").unwrap();
+         export function run() { return greet(\"world\"); }\n",
+    )
+    .unwrap();
     let prog = format!("{SEEN_TS}? unresolved(file, line, reason, detail).\n");
     let (code, out, err) = run(&dir, &prog);
     assert_eq!(code, 0, "stderr:\n{err}");
@@ -159,6 +177,10 @@ fn rel_decl_of_unresolved_bails() {
     let prog = "rel unresolved(file: text, line: int, reason: text, detail: text).\n";
     let (code, _out, err) = run(&dir, prog);
     assert_ne!(code, 0, "reserved-name decl must fail");
-    assert!(err.contains("reserved-name") && err.contains("relation `unresolved`")
-        && err.contains("pick another name"), "{err}");
+    assert!(
+        err.contains("reserved-name")
+            && err.contains("relation `unresolved`")
+            && err.contains("pick another name"),
+        "{err}"
+    );
 }

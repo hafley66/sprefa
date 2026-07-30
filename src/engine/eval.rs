@@ -243,8 +243,7 @@ pub(crate) fn read_source_content(root: &Path, rev: &str, path: &str) -> Result<
 /// step `AstTreeCache` dedups). Observable by tests so parse amplification —
 /// K ast rules over one file costing K parses — fails loudly: one tick parses
 /// each file at most once per grammar.
-pub static AST_PARSE_COUNT: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static AST_PARSE_COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// One file's parses, shared across every source rule matching the file in a
 /// tick: at most one parse per grammar. Two sibling maps because two grammar
@@ -297,11 +296,7 @@ impl AstTreeCache {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 AST_PARSE_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                tracing::trace!(
-                    grammar = canon,
-                    bytes = content.len(),
-                    "[source] ast parse"
-                );
+                tracing::trace!(grammar = canon, bytes = content.len(), "[source] ast parse");
                 let mut parser = tree_sitter::Parser::new();
                 parser.set_language(language)?;
                 let tree = parser

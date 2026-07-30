@@ -21,7 +21,12 @@ fn work_rev() -> String {
 }
 
 fn extract_file(repo: &str, path: &str, hash: &str) -> ExtractFile {
-    (repo.to_string(), path.to_string(), work_rev(), hash.to_string())
+    (
+        repo.to_string(),
+        path.to_string(),
+        work_rev(),
+        hash.to_string(),
+    )
 }
 
 #[test]
@@ -44,10 +49,15 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
 
     let scip_initial = eng.scip_resolution_dependency_digest(&work_rev());
     let module_initial = eng.module_resolution_dependency_digest(&work_rev());
-    assert_eq!(scip_initial, eng.scip_resolution_dependency_digest(&work_rev()));
-    assert_eq!(module_initial, eng.module_resolution_dependency_digest(&work_rev()));
-    let mut expected_extract =
-        *blake3::hash(format!("call\0{}", work_rev()).as_bytes()).as_bytes();
+    assert_eq!(
+        scip_initial,
+        eng.scip_resolution_dependency_digest(&work_rev())
+    );
+    assert_eq!(
+        module_initial,
+        eng.module_resolution_dependency_digest(&work_rev())
+    );
+    let mut expected_extract = *blake3::hash(format!("call\0{}", work_rev()).as_bytes()).as_bytes();
     for dependency in [scip_initial, module_initial] {
         for (slot, byte) in expected_extract.iter_mut().zip(dependency) {
             *slot ^= byte;
@@ -59,19 +69,29 @@ fn resolution_dependency_digests_are_stable_and_isolated() {
         "factoring dependency folds changed the extract digest framing",
     );
 
-    eng.db.exec_on(
-        "rel_module_edge_rev_txt",
-        "UPDATE rel_module_edge_rev_txt SET dst = 'src/other.rs'",
-    ).unwrap();
+    eng.db
+        .exec_on(
+            "rel_module_edge_rev_txt",
+            "UPDATE rel_module_edge_rev_txt SET dst = 'src/other.rs'",
+        )
+        .unwrap();
     let scip_after_module = eng.scip_resolution_dependency_digest(&work_rev());
     let module_after_module = eng.module_resolution_dependency_digest(&work_rev());
-    assert_eq!(scip_initial, scip_after_module, "module input changed SCIP digest");
-    assert_ne!(module_initial, module_after_module, "module row change was invisible");
+    assert_eq!(
+        scip_initial, scip_after_module,
+        "module input changed SCIP digest"
+    );
+    assert_ne!(
+        module_initial, module_after_module,
+        "module row change was invisible"
+    );
 
-    eng.db.exec_on(
-        "rel_scip_ref_txt",
-        "UPDATE rel_scip_ref_txt SET def_file = 'src/other.rs'",
-    ).unwrap();
+    eng.db
+        .exec_on(
+            "rel_scip_ref_txt",
+            "UPDATE rel_scip_ref_txt SET def_file = 'src/other.rs'",
+        )
+        .unwrap();
     assert_ne!(
         scip_after_module,
         eng.scip_resolution_dependency_digest(&work_rev()),
@@ -148,7 +168,10 @@ fn resolved_corpus_digest_is_stable_across_ticks() {
     ];
     let first = eng.extract_input_digest("type", &work_rev(), &files, false);
     let second = eng.extract_input_digest("type", &work_rev(), &files, false);
-    assert_eq!(first, second, "a fully-resolved corpus must digest identically each tick");
+    assert_eq!(
+        first, second,
+        "a fully-resolved corpus must digest identically each tick"
+    );
 }
 
 /// REGRESSION (daemon CPU storm, 2026-07-12): a file with a persistently
@@ -258,15 +281,21 @@ fn cached_facts_profiled_order_is_independent_of_cache_hit_ratio() {
     }
 
     let cold = cached_facts_profiled(&cache, &files, &parsed, "test", parse);
-    assert_eq!(parsed.get(), files.len(), "cold call should parse every file");
-    let cold_order: Vec<_> = cold.iter()
+    assert_eq!(
+        parsed.get(),
+        files.len(),
+        "cold call should parse every file"
+    );
+    let cold_order: Vec<_> = cold
+        .iter()
         .map(|(rid, path, _rev, _facts)| (rid.clone(), path.clone()))
         .collect();
 
     parsed.set(0);
     let warm = cached_facts_profiled(&cache, &files, &parsed, "test", parse);
     assert_eq!(parsed.get(), 0, "warm call should parse no files");
-    let warm_order: Vec<_> = warm.iter()
+    let warm_order: Vec<_> = warm
+        .iter()
         .map(|(rid, path, _rev, _facts)| (rid.clone(), path.clone()))
         .collect();
 

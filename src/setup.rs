@@ -94,7 +94,7 @@ pub fn run(args: &[String]) -> Result<i32> {
                 i += 1;
                 let Some(root) = args.get(i) else {
                     eprintln!("dl setup: --root needs a path"); // @eprintln-ok: final user-facing CLI argument error
-                    return Ok(2)
+                    return Ok(2);
                 };
                 undo_root = Some(PathBuf::from(root));
             }
@@ -355,7 +355,10 @@ pub fn uninstall() -> Result<i32> {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) if error.kind() == std::io::ErrorKind::DirectoryNotEmpty => {
-                println!("[dl uninstall] state directory not empty, left in place: {}", dir.display());
+                println!(
+                    "[dl uninstall] state directory not empty, left in place: {}",
+                    dir.display()
+                );
             }
             Err(error) => return Err(error.into()),
         }

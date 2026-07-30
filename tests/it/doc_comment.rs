@@ -48,23 +48,59 @@ fn extracts_docs_and_tags_across_languages() {
          export function fetchUser(id: string): User { return null as any; }\n\
          /** An interface. */\nexport interface User { name: string; }\n").unwrap();
     // Kotlin: KDoc with @param.
-    fs::write(d.join("src/Svc.kt"),
-        "/**\n * A service.\n * @param host the host\n */\nclass Svc(host: String) {}\n").unwrap();
+    fs::write(
+        d.join("src/Svc.kt"),
+        "/**\n * A service.\n * @param host the host\n */\nclass Svc(host: String) {}\n",
+    )
+    .unwrap();
 
     let out = run(&d, PROG);
 
     // Tier 1: one doc_comment per documented entity, keyed by its type_entity sym.
-    assert!(out.contains("src/lib.rs::struct::Calc"), "rust struct doc missing:\n{out}");
-    assert!(out.contains("src/lib.rs::function::add"), "rust fn doc missing:\n{out}");
-    assert!(out.contains("Adds two numbers."), "rust summary missing:\n{out}");
-    assert!(out.contains("src/api.ts::function::fetchUser"), "ts fn doc missing:\n{out}");
-    assert!(out.contains("src/api.ts::interface::User"), "ts interface doc missing:\n{out}");
-    assert!(out.contains("src/Svc.kt::class::Svc"), "kotlin class doc missing:\n{out}");
+    assert!(
+        out.contains("src/lib.rs::struct::Calc"),
+        "rust struct doc missing:\n{out}"
+    );
+    assert!(
+        out.contains("src/lib.rs::function::add"),
+        "rust fn doc missing:\n{out}"
+    );
+    assert!(
+        out.contains("Adds two numbers."),
+        "rust summary missing:\n{out}"
+    );
+    assert!(
+        out.contains("src/api.ts::function::fetchUser"),
+        "ts fn doc missing:\n{out}"
+    );
+    assert!(
+        out.contains("src/api.ts::interface::User"),
+        "ts interface doc missing:\n{out}"
+    );
+    assert!(
+        out.contains("src/Svc.kt::class::Svc"),
+        "kotlin class doc missing:\n{out}"
+    );
 
     // Tier 2: rustdoc sections + JSDoc/KDoc @tags.
-    assert!(out.contains("section\tPanics"), "rust section tag missing:\n{out}");
-    assert!(out.contains("param\tid\tthe id"), "ts @param tag missing:\n{out}");
-    assert!(out.contains("returns\t\tthe User"), "ts @returns tag missing:\n{out}");
-    assert!(out.contains("deprecated\t\tsoon"), "ts @deprecated tag missing:\n{out}");
-    assert!(out.contains("param\thost\tthe host"), "kotlin @param tag missing:\n{out}");
+    assert!(
+        out.contains("section\tPanics"),
+        "rust section tag missing:\n{out}"
+    );
+    assert!(
+        out.contains("param\tid\tthe id"),
+        "ts @param tag missing:\n{out}"
+    );
+    assert!(
+        out.contains("returns\t\tthe User"),
+        "ts @returns tag missing:\n{out}"
+    );
+    assert!(
+        out.contains("deprecated\t\tsoon"),
+        "ts @deprecated tag missing:\n{out}"
+    );
+    assert!(
+        out.contains("param\thost\tthe host"),
+        "kotlin @param tag missing:\n{out}"
+    );
 }

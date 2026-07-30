@@ -183,8 +183,12 @@ fn stale_join_key_index_is_pruned_when_no_longer_needed() {
     run(&d, &db, WITH_JOIN);
     {
         let conn = Connection::open(&db).unwrap();
-        assert!(index_names(&conn, "rel_symbol").iter().any(|n| n == "idx_symbol_name"));
-        assert!(index_names(&conn, "rel_other").iter().any(|n| n == "idx_other_name"));
+        assert!(index_names(&conn, "rel_symbol")
+            .iter()
+            .any(|n| n == "idx_symbol_name"));
+        assert!(index_names(&conn, "rel_other")
+            .iter()
+            .any(|n| n == "idx_other_name"));
     }
 
     // A different program served against the SAME db: the join is gone, so
@@ -219,8 +223,12 @@ fn pruned_index_is_recreated_when_needed_again() {
     // clears the tiny-rel floor and `name` is distinct per row, so the index
     // is re-demanded — the reconcile is non-destructive, not a one-way ratchet.
     let conn = Connection::open(&db).unwrap();
-    assert!(index_names(&conn, "rel_symbol").iter().any(|n| n == "idx_symbol_name"));
-    assert!(index_names(&conn, "rel_other").iter().any(|n| n == "idx_other_name"));
+    assert!(index_names(&conn, "rel_symbol")
+        .iter()
+        .any(|n| n == "idx_symbol_name"));
+    assert!(index_names(&conn, "rel_other")
+        .iter()
+        .any(|n| n == "idx_other_name"));
 }
 
 #[test]
@@ -234,8 +242,12 @@ fn genuine_join_key_stays_demanded_after_probe() {
     // 1100 rows, 1100 distinct names: above the floor, above the selectivity
     // cutoff — the planner genuinely needs this index and demand keeps it.
     let conn = Connection::open(&db).unwrap();
-    assert!(index_names(&conn, "rel_symbol").iter().any(|n| n == "idx_symbol_name"));
-    assert!(index_names(&conn, "rel_other").iter().any(|n| n == "idx_other_name"));
+    assert!(index_names(&conn, "rel_symbol")
+        .iter()
+        .any(|n| n == "idx_symbol_name"));
+    assert!(index_names(&conn, "rel_other")
+        .iter()
+        .any(|n| n == "idx_other_name"));
 }
 
 // The join variable sits at position 0 of both body atoms — the FIRST column
@@ -421,8 +433,11 @@ fn hand_authored_index_survives_the_sweep() {
         // A name that does NOT start with the `idx_` auto-created prefix —
         // the reconcile sweep must never touch it, even though it indexes
         // the same table the sweep manages.
-        conn.execute("CREATE INDEX hand_rolled_symbol_path ON rel_symbol(path)", [])
-            .unwrap();
+        conn.execute(
+            "CREATE INDEX hand_rolled_symbol_path ON rel_symbol(path)",
+            [],
+        )
+        .unwrap();
     }
 
     // Switch to the no-join program: prunes idx_symbol_name, must leave the
@@ -480,8 +495,12 @@ fn pruning_reclaims_measurable_index_bytes() {
                 let path_id = StringId::of(&path).sqlite();
                 str_stmt.execute(rusqlite::params![name_id, name]).unwrap();
                 str_stmt.execute(rusqlite::params![path_id, path]).unwrap();
-                symbol_stmt.execute(rusqlite::params![path_id, name_id]).unwrap();
-                other_stmt.execute(rusqlite::params![path_id, name_id]).unwrap();
+                symbol_stmt
+                    .execute(rusqlite::params![path_id, name_id])
+                    .unwrap();
+                other_stmt
+                    .execute(rusqlite::params![path_id, name_id])
+                    .unwrap();
             }
         }
         conn.execute_batch("COMMIT").unwrap();
@@ -490,10 +509,19 @@ fn pruning_reclaims_measurable_index_bytes() {
 
     let (before_symbol_idx, before_other_idx) = {
         let conn = Connection::open(&db).unwrap();
-        (object_bytes(&conn, "idx_symbol_name"), object_bytes(&conn, "idx_other_name"))
+        (
+            object_bytes(&conn, "idx_symbol_name"),
+            object_bytes(&conn, "idx_other_name"),
+        )
     };
-    assert!(before_symbol_idx > 0, "fixture's join-key index must carry real bytes pre-prune");
-    assert!(before_other_idx > 0, "fixture's join-key index must carry real bytes pre-prune");
+    assert!(
+        before_symbol_idx > 0,
+        "fixture's join-key index must carry real bytes pre-prune"
+    );
+    assert!(
+        before_other_idx > 0,
+        "fixture's join-key index must carry real bytes pre-prune"
+    );
 
     run(&d, &db, WITHOUT_JOIN); // the join drops out; both indexes should prune
 
@@ -514,10 +542,21 @@ fn pruning_reclaims_measurable_index_bytes() {
                 |r| r.get(0),
             )
             .unwrap();
-        (object_bytes(&conn, "idx_symbol_name"), object_bytes(&conn, "idx_other_name"), before_bytes, after_bytes)
+        (
+            object_bytes(&conn, "idx_symbol_name"),
+            object_bytes(&conn, "idx_other_name"),
+            before_bytes,
+            after_bytes,
+        )
     };
-    assert_eq!(after_symbol_idx, 0, "idx_symbol_name object must be gone post-VACUUM");
-    assert_eq!(after_other_idx, 0, "idx_other_name object must be gone post-VACUUM");
+    assert_eq!(
+        after_symbol_idx, 0,
+        "idx_symbol_name object must be gone post-VACUUM"
+    );
+    assert_eq!(
+        after_other_idx, 0,
+        "idx_other_name object must be gone post-VACUUM"
+    );
 
     let index_delta = (before_symbol_idx + before_other_idx) - (after_symbol_idx + after_other_idx);
     let db_delta = db_before - db_after;
@@ -528,7 +567,10 @@ fn pruning_reclaims_measurable_index_bytes() {
         index_delta,
     );
     assert!(index_delta > 0, "pruning must reclaim index bytes");
-    assert!(db_delta > 0, "pruning must reclaim measurable db bytes on VACUUM");
+    assert!(
+        db_delta > 0,
+        "pruning must reclaim measurable db bytes on VACUUM"
+    );
 }
 
 // `edge` is read by a SELF-REFERENTIAL recursive rule in its canonical
@@ -599,7 +641,9 @@ fn stale_pk_prefix_duplicate_index_is_swept_even_when_hand_inserted() {
         conn.execute("CREATE INDEX idx_first_key_name ON rel_first_key(name)", [])
             .unwrap();
         assert!(
-            index_names(&conn, "rel_first_key").iter().any(|n| n == "idx_first_key_name"),
+            index_names(&conn, "rel_first_key")
+                .iter()
+                .any(|n| n == "idx_first_key_name"),
             "setup: the hand-inserted index must exist before the next tick"
         );
     }

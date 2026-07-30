@@ -56,7 +56,11 @@ fn production_bundle_ab_matches_rows_and_reduces_physical_parses() {
 fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     let d = sandbox("warm");
     fs::write(d.join("src/a.rs"), "pub struct Alpha { pub n: u32 }\npub fn alpha() -> Alpha { Alpha { n: helper() } }\nfn helper() -> u32 { 1 }\n").unwrap();
-    fs::write(d.join("src/b.rs"), "pub struct Beta { pub s: String }\npub fn beta() -> Beta { Beta { s: String::new() } }\n").unwrap();
+    fs::write(
+        d.join("src/b.rs"),
+        "pub struct Beta { pub s: String }\npub fn beta() -> Beta { Beta { s: String::new() } }\n",
+    )
+    .unwrap();
 
     let prog = parse::parse(lex::lex(PROG).unwrap()).unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
@@ -66,14 +70,23 @@ fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     // family caches without retaining source or ASTs.
     eng.tick(&prog, true).unwrap();
     let cold = eng.extract_files_parsed.get();
-    assert_eq!(cold, 2, "cold tick parses each Rust file once for all three families");
+    assert_eq!(
+        cold, 2,
+        "cold tick parses each Rust file once for all three families"
+    );
 
     // Warm no-change tick: the extract:* digests match, no family parses.
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.extract_files_parsed.get(), cold,
-        "a no-change tick must not re-parse any file");
+    assert_eq!(
+        eng.extract_files_parsed.get(),
+        cold,
+        "a no-change tick must not re-parse any file"
+    );
     // ... and the rows are still served from the db (skip, not wipe).
-    let n: i64 = eng.query_sql("SELECT COUNT(*) FROM rel_type_entity_txt", &[]).unwrap().len() as i64;
+    let n: i64 = eng
+        .query_sql("SELECT COUNT(*) FROM rel_type_entity_txt", &[])
+        .unwrap()
+        .len() as i64;
     assert!(n > 0, "type_entity rows survive the skipped refresh");
 
     // Edit ONE file: each family re-parses only it (the other file is a
@@ -82,8 +95,11 @@ fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
     // second same-size rewrite.
     fs::write(d.join("src/a.rs"), "pub struct Alpha { pub n: u64, pub extra: bool }\npub fn alpha() -> Alpha { Alpha { n: helper(), extra: true } }\nfn helper() -> u64 { 2 }\n").unwrap();
     eng.tick_paths(&prog, &[d.join("src/a.rs")], true).unwrap();
-    assert_eq!(eng.extract_files_parsed.get(), cold + 1,
-        "an edit re-parses the moved Rust file once for all three families");
+    assert_eq!(
+        eng.extract_files_parsed.get(),
+        cold + 1,
+        "an edit re-parses the moved Rust file once for all three families"
+    );
     assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt") > 0);
     assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt") > 0);
     assert!(count(&eng, "SELECT COUNT(*) FROM rel_df_node_txt") > 0);
@@ -92,7 +108,11 @@ fn warm_tick_skips_extraction_and_edit_reparses_only_the_moved_file() {
 #[test]
 fn fresh_process_over_a_warm_db_still_skips() {
     let d = sandbox("crossproc");
-    fs::write(d.join("src/a.rs"), "pub struct Gamma { pub n: u32 }\npub fn gamma() -> u32 { 3 }\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "pub struct Gamma { pub n: u32 }\npub fn gamma() -> u32 { 3 }\n",
+    )
+    .unwrap();
     let prog = parse::parse(lex::lex(PROG).unwrap()).unwrap();
 
     {
@@ -106,14 +126,25 @@ fn fresh_process_over_a_warm_db_still_skips() {
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
     let mut eng = Engine::new(conn, d.clone());
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.extract_files_parsed.get(), 0,
-        "a fresh process over an unchanged db parses nothing");
+    assert_eq!(
+        eng.extract_files_parsed.get(),
+        0,
+        "a fresh process over an unchanged db parses nothing"
+    );
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?} failed: {}",
-        String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// The revs that carry a stored `type` extract digest. The key form is
@@ -128,28 +159,44 @@ fn type_digest_revs(eng: &Engine) -> Vec<String> {
     eng.query_sql(
         "SELECT DISTINCT rev FROM _file \
          WHERE sprf_sym(rev) IN (SELECT rev FROM _extract_digest WHERE family = sprf_sym('type')) \
-         ORDER BY rev", &[])
-        .unwrap().into_iter()
-        .map(|r| r[0].as_str().unwrap().to_string()).collect()
+         ORDER BY rev",
+        &[],
+    )
+    .unwrap()
+    .into_iter()
+    .map(|r| r[0].as_str().unwrap().to_string())
+    .collect()
 }
 
 /// `WORK` is an ALIAS: the stored rev is HEAD's oid plus a `+` when the tree is
 /// dirty, which these sandboxes always are (the db file itself is untracked).
 fn work_rev_of(revs: &BTreeSet<String>) -> String {
-    revs.iter().find(|rev| rev.ends_with('+'))
-        .unwrap_or_else(|| panic!("no resolved worktree rev in {revs:?}")).clone()
+    revs.iter()
+        .find(|rev| rev.ends_with('+'))
+        .unwrap_or_else(|| panic!("no resolved worktree rev in {revs:?}"))
+        .clone()
 }
 
 fn digest_rows(eng: &Engine, family: &str, rev: &str) -> i64 {
-    count(eng, &format!(
-        "SELECT COUNT(*) FROM _extract_digest \
-         WHERE family = sprf_sym('{family}') AND rev = sprf_sym('{rev}')"))
+    count(
+        eng,
+        &format!(
+            "SELECT COUNT(*) FROM _extract_digest \
+         WHERE family = sprf_sym('{family}') AND rev = sprf_sym('{rev}')"
+        ),
+    )
 }
 
 fn digest_of(eng: &Engine, family: &str, rev: &str) -> String {
-    let rows = eng.query_sql(&format!(
-        "SELECT digest FROM _extract_digest \
-         WHERE family = sprf_sym('{family}') AND rev = sprf_sym('{rev}')"), &[]).unwrap();
+    let rows = eng
+        .query_sql(
+            &format!(
+                "SELECT digest FROM _extract_digest \
+         WHERE family = sprf_sym('{family}') AND rev = sprf_sym('{rev}')"
+            ),
+            &[],
+        )
+        .unwrap();
     rows[0][0].as_str().unwrap().to_string()
 }
 
@@ -167,8 +214,11 @@ seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 #[test]
 fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
     let d = sandbox("tworev");
-    fs::write(d.join("src/a.rs"),
-        "pub struct Alpha { pub n: u32 }\npub fn alpha() -> Alpha { Alpha { n: 1 } }\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "pub struct Alpha { pub n: u32 }\npub fn alpha() -> Alpha { Alpha { n: 1 } }\n",
+    )
+    .unwrap();
     git(&d, &["init", "-q"]);
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "T"]);
@@ -182,12 +232,25 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
     // (a) the two-rev corpus ticks and lands one type digest per rev.
     eng.tick(&prog, true).unwrap();
     let revs = type_digest_revs(&eng);
-    assert_eq!(revs.len(), 2, "one type digest per rev (worktree + HEAD oid): {revs:?}");
-    let work_rev = revs.iter().find(|rev| rev.ends_with('+'))
-        .unwrap_or_else(|| panic!("no resolved worktree rev in {revs:?}")).clone();
+    assert_eq!(
+        revs.len(),
+        2,
+        "one type digest per rev (worktree + HEAD oid): {revs:?}"
+    );
+    let work_rev = revs
+        .iter()
+        .find(|rev| rev.ends_with('+'))
+        .unwrap_or_else(|| panic!("no resolved worktree rev in {revs:?}"))
+        .clone();
     let head_rev = revs.iter().find(|rev| **rev != work_rev).unwrap().clone();
-    let n: usize = eng.query_sql("SELECT COUNT(*) FROM rel_type_entity_txt", &[]).unwrap()
-        .into_iter().next().unwrap()[0].as_i64().unwrap() as usize;
+    let n: usize = eng
+        .query_sql("SELECT COUNT(*) FROM rel_type_entity_txt", &[])
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()[0]
+        .as_i64()
+        .unwrap() as usize;
     assert!(n > 0, "type_entity rows land across both revs");
 
     let work0 = digest_of(&eng, "type", &work_rev);
@@ -196,7 +259,11 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
     // (c) warm no-change tick: no family re-parses, no digest moves.
     let parsed = eng.extract_files_parsed.get();
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.extract_files_parsed.get(), parsed, "a no-change tick re-parses nothing");
+    assert_eq!(
+        eng.extract_files_parsed.get(),
+        parsed,
+        "a no-change tick re-parses nothing"
+    );
     assert_eq!(digest_of(&eng, "type", &work_rev), work0);
     assert_eq!(digest_of(&eng, "type", &head_rev), head0);
 
@@ -205,8 +272,16 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
     fs::write(d.join("src/a.rs"),
         "pub struct Alpha { pub n: u64, pub extra: bool }\npub fn alpha() -> Alpha { Alpha { n: 2, extra: true } }\n").unwrap();
     eng.tick(&prog, true).unwrap();
-    assert_ne!(digest_of(&eng, "type", &work_rev), work0, "WORK digest moves on a WORK edit");
-    assert_eq!(digest_of(&eng, "type", &head_rev), head0, "committed rev digest stays frozen");
+    assert_ne!(
+        digest_of(&eng, "type", &work_rev),
+        work0,
+        "WORK digest moves on a WORK edit"
+    );
+    assert_eq!(
+        digest_of(&eng, "type", &head_rev),
+        head0,
+        "committed rev digest stays frozen"
+    );
 }
 
 /// A single-column query result as a set (dedups + order-free compare).
@@ -214,7 +289,9 @@ fn per_rev_digest_isolates_a_work_edit_from_the_committed_rev() {
 /// column (df_node_rev.id and kin, INTEGER as of the intern-key arc) reads
 /// back as a JSON Number, not a String.
 fn col_set(eng: &Engine, sql: &str) -> BTreeSet<String> {
-    eng.query_sql(sql, &[]).unwrap().into_iter()
+    eng.query_sql(sql, &[])
+        .unwrap()
+        .into_iter()
         .map(|r| match &r[0] {
             serde_json::Value::String(s) => s.clone(),
             v => v.to_string(),
@@ -223,7 +300,9 @@ fn col_set(eng: &Engine, sql: &str) -> BTreeSet<String> {
 }
 
 fn count(eng: &Engine, sql: &str) -> i64 {
-    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0].as_i64().unwrap()
+    eng.query_sql(sql, &[]).unwrap().into_iter().next().unwrap()[0]
+        .as_i64()
+        .unwrap()
 }
 
 const TWIN_PROG: &str = r#"
@@ -243,10 +322,13 @@ seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 #[test]
 fn type_and_call_twins_carry_both_revs_with_stable_syms() {
     let d = sandbox("twins");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Gadget { pub n: i64 }\n\
          pub struct Widget { pub part: Gadget }\n\
-         pub fn make() -> Widget { Widget { part: Gadget { n: 1 } } }\n").unwrap();
+         pub fn make() -> Widget { Widget { part: Gadget { n: 1 } } }\n",
+    )
+    .unwrap();
     git(&d, &["init", "-q"]);
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "T"]);
@@ -260,31 +342,65 @@ fn type_and_call_twins_carry_both_revs_with_stable_syms() {
 
     // (a) each twin spans both revs (WORK + the committed HEAD sha).
     let ent_revs = col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt");
-    assert_eq!(ent_revs.len(), 2, "type_entity_rev spans WORK + HEAD: {ent_revs:?}");
+    assert_eq!(
+        ent_revs.len(),
+        2,
+        "type_entity_rev spans WORK + HEAD: {ent_revs:?}"
+    );
     let work_rev = work_rev_of(&ent_revs);
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_call_def_rev_txt").len(), 2,
-        "call_def_rev spans both revs");
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_link_rev_txt").len(), 2,
-        "type_link_rev spans both revs");
+    assert_eq!(
+        col_set(&eng, "SELECT DISTINCT rev FROM rel_call_def_rev_txt").len(),
+        2,
+        "call_def_rev spans both revs"
+    );
+    assert_eq!(
+        col_set(&eng, "SELECT DISTINCT rev FROM rel_type_link_rev_txt").len(),
+        2,
+        "type_link_rev spans both revs"
+    );
 
     // (a, the crux) the sym strings are IDENTICAL across revs for unchanged code
     // — rev is a column, never folded into the sym, so a diff compares the same
     // string at both revs. WORK and the committed HEAD have byte-identical
     // content, so the two rev projections must be equal AND non-empty.
-    let work_ent = col_set(&eng, &format!("SELECT sym FROM rel_type_entity_rev_txt WHERE rev = '{work_rev}'"));
-    let head_ent = col_set(&eng, &format!("SELECT sym FROM rel_type_entity_rev_txt WHERE rev <> '{work_rev}'"));
+    let work_ent = col_set(
+        &eng,
+        &format!("SELECT sym FROM rel_type_entity_rev_txt WHERE rev = '{work_rev}'"),
+    );
+    let head_ent = col_set(
+        &eng,
+        &format!("SELECT sym FROM rel_type_entity_rev_txt WHERE rev <> '{work_rev}'"),
+    );
     assert!(!work_ent.is_empty(), "type_entity_rev has WORK syms");
-    assert_eq!(work_ent, head_ent, "type_entity syms are identical across revs");
+    assert_eq!(
+        work_ent, head_ent,
+        "type_entity syms are identical across revs"
+    );
 
-    let work_def = col_set(&eng, &format!("SELECT sym FROM rel_call_def_rev_txt WHERE rev = '{work_rev}'"));
-    let head_def = col_set(&eng, &format!("SELECT sym FROM rel_call_def_rev_txt WHERE rev <> '{work_rev}'"));
+    let work_def = col_set(
+        &eng,
+        &format!("SELECT sym FROM rel_call_def_rev_txt WHERE rev = '{work_rev}'"),
+    );
+    let head_def = col_set(
+        &eng,
+        &format!("SELECT sym FROM rel_call_def_rev_txt WHERE rev <> '{work_rev}'"),
+    );
     assert!(!work_def.is_empty(), "call_def_rev has WORK syms (fn make)");
-    assert_eq!(work_def, head_def, "call_def syms are identical across revs");
+    assert_eq!(
+        work_def, head_def,
+        "call_def syms are identical across revs"
+    );
 
     let work_link = col_set(&eng, &format!("SELECT src || char(31) || dst || char(31) || kind FROM rel_type_link_rev_txt WHERE rev = '{work_rev}'"));
     let head_link = col_set(&eng, &format!("SELECT src || char(31) || dst || char(31) || kind FROM rel_type_link_rev_txt WHERE rev <> '{work_rev}'"));
-    assert!(!work_link.is_empty(), "type_link_rev has WORK edges (Widget -> Gadget)");
-    assert_eq!(work_link, head_link, "type_link edges are identical across revs");
+    assert!(
+        !work_link.is_empty(),
+        "type_link_rev has WORK edges (Widget -> Gadget)"
+    );
+    assert_eq!(
+        work_link, head_link,
+        "type_link edges are identical across revs"
+    );
 
     // (b) each legacy rel equals the rev-deduped projection (drop rev) of its
     // twin — full-row equality, not just a count.
@@ -293,9 +409,16 @@ fn type_and_call_twins_carry_both_revs_with_stable_syms() {
         col_set(&eng, "SELECT DISTINCT repo||char(31)||sym||char(31)||name||char(31)||kind||char(31)||parent||char(31)||file||char(31)||line FROM rel_type_entity_rev_txt"),
         "legacy type_entity = rev-deduped projection of type_entity_rev");
     assert_eq!(
-        col_set(&eng, "SELECT src||char(31)||dst||char(31)||kind FROM rel_type_link_txt"),
-        col_set(&eng, "SELECT DISTINCT src||char(31)||dst||char(31)||kind FROM rel_type_link_rev_txt"),
-        "legacy type_link = rev-deduped projection of type_link_rev");
+        col_set(
+            &eng,
+            "SELECT src||char(31)||dst||char(31)||kind FROM rel_type_link_txt"
+        ),
+        col_set(
+            &eng,
+            "SELECT DISTINCT src||char(31)||dst||char(31)||kind FROM rel_type_link_rev_txt"
+        ),
+        "legacy type_link = rev-deduped projection of type_link_rev"
+    );
     assert_eq!(
         col_set(&eng, "SELECT repo||char(31)||sym||char(31)||kind||char(31)||file||char(31)||line||char(31)||end FROM rel_call_def_txt"),
         col_set(&eng, "SELECT DISTINCT repo||char(31)||sym||char(31)||kind||char(31)||file||char(31)||line||char(31)||end FROM rel_call_def_rev_txt"),
@@ -327,11 +450,14 @@ seen(p) <- scan("HEAD", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 #[test]
 fn df_twins_key_on_id_rev_and_join_within_a_rev() {
     let d = sandbox("dftwin");
-    fs::write(d.join("src/a.rs"),
+    fs::write(
+        d.join("src/a.rs"),
         "pub struct Gadget { pub n: i64 }\n\
          pub struct Widget { pub part: Gadget }\n\
          pub fn helper(x: i64) -> i64 { x }\n\
-         pub fn make() -> Widget { Widget { part: Gadget { n: helper(1) } } }\n").unwrap();
+         pub fn make() -> Widget { Widget { part: Gadget { n: helper(1) } } }\n",
+    )
+    .unwrap();
     git(&d, &["init", "-q"]);
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "T"]);
@@ -347,43 +473,78 @@ fn df_twins_key_on_id_rev_and_join_within_a_rev() {
     // is byte-identical at WORK and HEAD, so every id must appear at both —
     // this is the exact assertion the old salt inverted, and reading it as a
     // join is the point: an id-join across revs is now meaningful.
-    let work_rev = work_rev_of(&col_set(&eng, "SELECT DISTINCT rev FROM rel_df_node_rev_txt"));
-    let work_ids = col_set(&eng, &format!("SELECT id FROM rel_df_node_rev_txt WHERE rev = '{work_rev}'"));
-    let head_ids = col_set(&eng, &format!("SELECT id FROM rel_df_node_rev_txt WHERE rev <> '{work_rev}'"));
+    let work_rev = work_rev_of(&col_set(
+        &eng,
+        "SELECT DISTINCT rev FROM rel_df_node_rev_txt",
+    ));
+    let work_ids = col_set(
+        &eng,
+        &format!("SELECT id FROM rel_df_node_rev_txt WHERE rev = '{work_rev}'"),
+    );
+    let head_ids = col_set(
+        &eng,
+        &format!("SELECT id FROM rel_df_node_rev_txt WHERE rev <> '{work_rev}'"),
+    );
     assert!(!work_ids.is_empty(), "df_node_rev has WORK ids");
     assert!(!head_ids.is_empty(), "df_node_rev has committed-rev ids");
-    assert_eq!(work_ids, head_ids,
-        "byte-identical content at two revs interns to the SAME df_node ids (no rev salt)");
+    assert_eq!(
+        work_ids, head_ids,
+        "byte-identical content at two revs interns to the SAME df_node ids (no rev salt)"
+    );
 
     // Disjointness now lives in the composite PRIMARY KEY (id, rev), not in the
     // id: each rev keeps its OWN row for a shared id, so the twin's row count
     // is the sum of the per-rev counts even though the id sets are equal.
     let total_rows = count(&eng, "SELECT COUNT(*) FROM rel_df_node_rev_txt");
-    let work_rows = count(&eng, &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{work_rev}'"));
-    let head_rows = count(&eng, &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev <> '{work_rev}'"));
-    assert_eq!(total_rows, work_rows + head_rows,
-        "PRIMARY KEY (id, rev) keeps one row per rev for a shared id");
+    let work_rows = count(
+        &eng,
+        &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{work_rev}'"),
+    );
+    let head_rows = count(
+        &eng,
+        &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev <> '{work_rev}'"),
+    );
+    assert_eq!(
+        total_rows,
+        work_rows + head_rows,
+        "PRIMARY KEY (id, rev) keeps one row per rev for a shared id"
+    );
 
     // legacy df_node keeps the same ids, rev-deduped (one row per id despite
     // two identical revs) — the single-rev daemon sees today's behavior. No
     // recovery join is needed any more: the twin id IS the legacy id.
     let legacy = col_set(&eng, "SELECT id FROM rel_df_node_txt");
-    assert_eq!(legacy, work_ids, "legacy df_node = the same ids, rev-deduped");
+    assert_eq!(
+        legacy, work_ids,
+        "legacy df_node = the same ids, rev-deduped"
+    );
 
     // (b) each id-valued twin column joins df_node_rev.id WITHIN its rev (the salt
     // is applied identically to every column that joins on node identity).
-    assert!(count(&eng,
-        "SELECT COUNT(*) FROM rel_df_node_repo_rev_txt r \
-         JOIN rel_df_node_rev_txt n ON r.id = n.id AND r.rev = n.rev") > 0,
-        "df_node_repo_rev.id joins df_node_rev.id within a rev");
-    assert!(count(&eng,
-        "SELECT COUNT(*) FROM rel_df_arg_rev_txt a \
-         JOIN rel_df_node_rev_txt n ON a.call = n.id AND a.rev = n.rev") > 0,
-        "df_arg_rev.call joins df_node_rev.id within a rev (helper(1) call site)");
-    assert!(count(&eng,
-        "SELECT COUNT(*) FROM rel_df_field_rev_txt f \
-         JOIN rel_df_node_rev_txt n ON f.id = n.id AND f.rev = n.rev") > 0,
-        "df_field_rev.id joins df_node_rev.id within a rev (struct-literal field)");
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_df_node_repo_rev_txt r \
+         JOIN rel_df_node_rev_txt n ON r.id = n.id AND r.rev = n.rev"
+        ) > 0,
+        "df_node_repo_rev.id joins df_node_rev.id within a rev"
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_df_arg_rev_txt a \
+         JOIN rel_df_node_rev_txt n ON a.call = n.id AND a.rev = n.rev"
+        ) > 0,
+        "df_arg_rev.call joins df_node_rev.id within a rev (helper(1) call site)"
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_df_field_rev_txt f \
+         JOIN rel_df_node_rev_txt n ON f.id = n.id AND f.rev = n.rev"
+        ) > 0,
+        "df_field_rev.id joins df_node_rev.id within a rev (struct-literal field)"
+    );
 }
 
 const RETRACT_PROG_TWO_REV: &str = r#"
@@ -417,8 +578,11 @@ seen(p) <- scan("WORK", "src/**/*.rs", p, rev), match(p, rev, /fn/, line).
 #[test]
 fn sweep_retracts_gone_rev_from_twins_and_legacy() {
     let d = sandbox("sweep");
-    fs::write(d.join("src/a.rs"),
-        "pub struct OldOnly { pub n: i64 }\npub fn old_only_fn() -> i64 { 1 }\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "pub struct OldOnly { pub n: i64 }\npub fn old_only_fn() -> i64 { 1 }\n",
+    )
+    .unwrap();
     git(&d, &["init", "-q"]);
     git(&d, &["config", "user.email", "t@example.com"]);
     git(&d, &["config", "user.name", "T"]);
@@ -426,8 +590,11 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
     git(&d, &["commit", "-q", "-m", "head"]);
     // WORK diverges from HEAD with disjoint names, so each rev's rows are a
     // clean, unambiguous marker.
-    fs::write(d.join("src/a.rs"),
-        "pub struct NewOnly { pub n: i64 }\npub fn new_only_fn() -> i64 { 2 }\n").unwrap();
+    fs::write(
+        d.join("src/a.rs"),
+        "pub struct NewOnly { pub n: i64 }\npub fn new_only_fn() -> i64 { 2 }\n",
+    )
+    .unwrap();
 
     let prog_both = parse::parse(lex::lex(RETRACT_PROG_TWO_REV).unwrap()).unwrap();
     let conn = db::open(Some(d.join("db").to_str().unwrap())).unwrap();
@@ -437,24 +604,63 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
     // land in the twins, the legacy union, and a per-rev digest exists.
     eng.tick(&prog_both, true).unwrap();
     let ent_revs = col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt");
-    assert_eq!(ent_revs.len(), 2, "two revs present before retraction: {ent_revs:?}");
+    assert_eq!(
+        ent_revs.len(),
+        2,
+        "two revs present before retraction: {ent_revs:?}"
+    );
     let work_rev = work_rev_of(&ent_revs);
-    let head_rev = ent_revs.iter().find(|rev| **rev != work_rev).unwrap().clone();
+    let head_rev = ent_revs
+        .iter()
+        .find(|rev| **rev != work_rev)
+        .unwrap()
+        .clone();
 
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'OldOnly'") > 0);
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'NewOnly'") > 0);
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'OldOnly'") > 0,
-        "legacy type_entity has the HEAD-only entity before retraction");
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_rev_txt WHERE sym LIKE '%old_only_fn%'") > 0);
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%old_only_fn%'") > 0,
-        "legacy call_def has the HEAD-only fn before retraction");
-    assert!(count(&eng, &format!(
-        "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{head_rev}'")) > 0,
-        "df_node_rev has HEAD rows before retraction");
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'OldOnly'"
+        ) > 0
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'NewOnly'"
+        ) > 0
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'OldOnly'"
+        ) > 0,
+        "legacy type_entity has the HEAD-only entity before retraction"
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_call_def_rev_txt WHERE sym LIKE '%old_only_fn%'"
+        ) > 0
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%old_only_fn%'"
+        ) > 0,
+        "legacy call_def has the HEAD-only fn before retraction"
+    );
+    assert!(
+        count(
+            &eng,
+            &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{head_rev}'")
+        ) > 0,
+        "df_node_rev has HEAD rows before retraction"
+    );
 
     for fam in ["type", "call", "dataflow"] {
-        assert!(digest_rows(&eng, fam, &head_rev) > 0,
-            "{fam}:{head_rev} digest exists before retraction");
+        assert!(
+            digest_rows(&eng, fam, &head_rev) > 0,
+            "{fam}:{head_rev} digest exists before retraction"
+        );
     }
 
     // (b) drop the HEAD scan rule entirely (the program changes, WORK's file
@@ -464,34 +670,85 @@ fn sweep_retracts_gone_rev_from_twins_and_legacy() {
 
     // the retired rev's rows are gone from every twin...
     let expected_revs: BTreeSet<String> = [work_rev.clone()].into_iter().collect();
-    assert_eq!(col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt"), expected_revs,
-        "only the worktree rev remains in type_entity_rev after retraction");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'OldOnly'"), 0);
-    assert_eq!(count(&eng, &format!(
-        "SELECT COUNT(*) FROM rel_call_def_rev_txt WHERE rev = '{head_rev}'")), 0);
-    assert_eq!(count(&eng, &format!(
-        "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{head_rev}'")), 0);
+    assert_eq!(
+        col_set(&eng, "SELECT DISTINCT rev FROM rel_type_entity_rev_txt"),
+        expected_revs,
+        "only the worktree rev remains in type_entity_rev after retraction"
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'OldOnly'"
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &eng,
+            &format!("SELECT COUNT(*) FROM rel_call_def_rev_txt WHERE rev = '{head_rev}'")
+        ),
+        0
+    );
+    assert_eq!(
+        count(
+            &eng,
+            &format!("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev = '{head_rev}'")
+        ),
+        0
+    );
 
     // ...and from the legacy union, in the SAME tick (the sweep rebuilds
     // legacy directly rather than waiting for a family to re-run on its own).
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'OldOnly'"), 0,
-        "legacy type_entity drops the retired rev's entity this tick");
-    assert_eq!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%old_only_fn%'"), 0,
-        "legacy call_def drops the retired rev's def this tick");
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'OldOnly'"
+        ),
+        0,
+        "legacy type_entity drops the retired rev's entity this tick"
+    );
+    assert_eq!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%old_only_fn%'"
+        ),
+        0,
+        "legacy call_def drops the retired rev's def this tick"
+    );
 
     // ...and the stale per-rev digest keys are swept too.
     for fam in ["type", "call", "dataflow"] {
-        assert_eq!(digest_rows(&eng, fam, &head_rev), 0,
-            "{fam}:{head_rev} digest is swept once its rev is gone");
+        assert_eq!(
+            digest_rows(&eng, fam, &head_rev),
+            0,
+            "{fam}:{head_rev} digest is swept once its rev is gone"
+        );
     }
 
     // WORK's own rows/legacy/digest survive the sweep untouched.
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'NewOnly'") > 0,
-        "WORK's entity survives the sweep");
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'NewOnly'") > 0,
-        "legacy type_entity still populated for WORK after the sweep");
-    assert!(count(&eng, "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%new_only_fn%'") > 0,
-        "legacy call_def still populated for WORK after the sweep");
-    assert!(digest_rows(&eng, "type", &work_rev) > 0,
-        "the worktree rev's own digest survives the sweep");
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_rev_txt WHERE name = 'NewOnly'"
+        ) > 0,
+        "WORK's entity survives the sweep"
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_type_entity_txt WHERE name = 'NewOnly'"
+        ) > 0,
+        "legacy type_entity still populated for WORK after the sweep"
+    );
+    assert!(
+        count(
+            &eng,
+            "SELECT COUNT(*) FROM rel_call_def_txt WHERE sym LIKE '%new_only_fn%'"
+        ) > 0,
+        "legacy call_def still populated for WORK after the sweep"
+    );
+    assert!(
+        digest_rows(&eng, "type", &work_rev) > 0,
+        "the worktree rev's own digest survives the sweep"
+    );
 }

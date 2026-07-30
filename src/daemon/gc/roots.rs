@@ -147,8 +147,10 @@ pub(super) const CHUNK_SIZE: usize = 100;
 pub(super) fn insert_reachable_chunks(db: &Db, roots: &[String]) -> Result<()> {
     for chunk in roots.chunks(CHUNK_SIZE) {
         let union_sql = chunk.join(" UNION ALL ");
-        db.exec_on("_gc_reachable",
-            &format!("INSERT OR IGNORE INTO _gc_reachable SELECT id FROM ({union_sql})"))?;
+        db.exec_on(
+            "_gc_reachable",
+            &format!("INSERT OR IGNORE INTO _gc_reachable SELECT id FROM ({union_sql})"),
+        )?;
     }
     Ok(())
 }
@@ -161,7 +163,8 @@ pub(super) fn insert_reachable_chunks(db: &Db, roots: &[String]) -> Result<()> {
 /// `_call_def_bucket` / `_call_def` today and any future table that declares
 /// the same FK, with no code change here.
 pub(super) fn fk_roots(db: &Db) -> Result<Vec<(String, String)>> {
-    let all_tables: Vec<String> = db.schema_objects(&["%"])?
+    let all_tables: Vec<String> = db
+        .schema_objects(&["%"])?
         .into_iter()
         .filter(|(_, kind)| kind == "table")
         .map(|(name, _)| name)
@@ -192,10 +195,16 @@ pub(super) fn undeclared_roots(db: &Db) -> Result<Vec<(String, String)>> {
         out.push(("_where_bytes".to_string(), "string_id".to_string()));
     }
     if db.column_exists("_embeddings", "sid")? {
-        out.push(("_embeddings".to_string(), "CAST(sid AS INTEGER)".to_string()));
+        out.push((
+            "_embeddings".to_string(),
+            "CAST(sid AS INTEGER)".to_string(),
+        ));
     }
     if db.column_exists("_node_embeddings", "node")? {
-        out.push(("_node_embeddings".to_string(), "CAST(node AS INTEGER)".to_string()));
+        out.push((
+            "_node_embeddings".to_string(),
+            "CAST(node AS INTEGER)".to_string(),
+        ));
     }
     Ok(out)
 }

@@ -415,8 +415,12 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(12));
         let later = snapshot();
-        assert!(later.elapsed_ms >= mid.elapsed_ms,
-            "elapsed should not go backwards ({} -> {})", mid.elapsed_ms, later.elapsed_ms);
+        assert!(
+            later.elapsed_ms >= mid.elapsed_ms,
+            "elapsed should not go backwards ({} -> {})",
+            mid.elapsed_ms,
+            later.elapsed_ms
+        );
 
         end_tick();
         let done = snapshot();
@@ -448,7 +452,15 @@ mod tests {
             );
         }
 
-        assert_eq!(snapshot().root, before_root, "root should revert after guard drop");
-        assert_eq!(crate::perflog::path(), before_path, "perf path should revert after guard drop");
+        assert_eq!(
+            snapshot().root,
+            before_root,
+            "root should revert after guard drop"
+        );
+        assert_eq!(
+            crate::perflog::path(),
+            before_path,
+            "perf path should revert after guard drop"
+        );
     }
 }

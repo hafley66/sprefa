@@ -35,10 +35,7 @@ fn run(dir: &Path, prog: &str) -> (i32, String, String) {
     fs::write(dir.join("p.dl"), prog).unwrap();
     let out = Command::new(DL)
         .arg(dir.join("p.dl"))
-        .args([
-            "--db",
-            dir.join("db").to_str().unwrap(),
-        ])
+        .args(["--db", dir.join("db").to_str().unwrap()])
         .current_dir(dir)
         .output()
         .expect("run dl");
@@ -84,12 +81,23 @@ fn rows(sec: &str) -> Vec<Vec<String>> {
 #[test]
 fn dataflow_rels_are_reserved() {
     let d = sandbox("reserved");
-    for rel in ["df_node", "df_node_repo", "df_edge", "loop_over", "allocates", "nest", "df_param", "df_arg", "df_field"] {
+    for rel in [
+        "df_node",
+        "df_node_repo",
+        "df_edge",
+        "loop_over",
+        "allocates",
+        "nest",
+        "df_param",
+        "df_arg",
+        "df_field",
+    ] {
         let prog = format!("rel {rel}(a: text).\n? {rel}(\"x\").\n");
         let (code, _out, err) = run(&d, &prog);
         assert_ne!(code, 0, "{rel} must be reserved (expected error):\n{err}");
         assert!(
-            err.contains("reserved-name") && err.contains(&format!("relation `{rel}`"))
+            err.contains("reserved-name")
+                && err.contains(&format!("relation `{rel}`"))
                 && err.contains("pick another name"),
             "{rel} parse-tier reservation/fix missing:\n{err}"
         );
@@ -117,7 +125,10 @@ fn dataflow_lazy_gate_smoke() {
     );
     let (code, out, err) = run(&d, prog);
     assert_eq!(code, 0, "no-source scan must not error:\n{err}");
-    assert!(out.contains("(0 rows)"), "expected zero-row footers:\n{out}");
+    assert!(
+        out.contains("(0 rows)"),
+        "expected zero-row footers:\n{out}"
+    );
 }
 
 /// THE GATE. The lift produces a node for every value-bearing position; local
@@ -197,7 +208,10 @@ fn rust_lift_closes_transitively() {
     let u_id = u_reads[0].clone();
 
     // There is a real graph to walk, not an empty one.
-    assert!(!edges.is_empty(), "df_edge is empty — lift produced no edges:\n{out}");
+    assert!(
+        !edges.is_empty(),
+        "df_edge is empty — lift produced no edges:\n{out}"
+    );
 
     // DECISIVE: the (name, u_read) pair is NOT a base edge ...
     assert!(
@@ -270,24 +284,39 @@ fn ts_class_method_body_flows_like_a_function() {
     // The method's param `name` must be scoped under Widget.render's fn sym.
     let name_params: Vec<&String> = nodes
         .iter()
-        .filter(|(_, (kind, var, fn_sym))| kind == "param" && var == "name" && fn_sym.contains("Widget.render"))
+        .filter(|(_, (kind, var, fn_sym))| {
+            kind == "param" && var == "name" && fn_sym.contains("Widget.render")
+        })
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(name_params.len(), 1, "expected one param `name` under Widget.render:\n{out}");
+    assert_eq!(
+        name_params.len(),
+        1,
+        "expected one param `name` under Widget.render:\n{out}"
+    );
     let name_id = name_params[0].clone();
 
     // The body's `const label = format(name)` must mint a let_bind under the
     // same fn scope.
     let label_binds: Vec<&String> = nodes
         .iter()
-        .filter(|(_, (kind, var, fn_sym))| kind == "let_bind" && var == "label" && fn_sym.contains("Widget.render"))
+        .filter(|(_, (kind, var, fn_sym))| {
+            kind == "let_bind" && var == "label" && fn_sym.contains("Widget.render")
+        })
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(label_binds.len(), 1, "expected one let_bind `label` under Widget.render:\n{out}");
+    assert_eq!(
+        label_binds.len(),
+        1,
+        "expected one let_bind `label` under Widget.render:\n{out}"
+    );
     let label_id = label_binds[0].clone();
 
     // There is a real graph to walk, not an empty one.
-    assert!(!edges.is_empty(), "df_edge is empty for the method body:\n{out}");
+    assert!(
+        !edges.is_empty(),
+        "df_edge is empty for the method body:\n{out}"
+    );
 
     // name -> label is NOT a direct df_edge (it routes through a var_read and
     // format(name)'s call_res) ...
@@ -311,10 +340,15 @@ fn ts_class_method_body_flows_like_a_function() {
 #[test]
 fn taint_propagates_through_operations_per_language() {
     let rust = "fn sink(v: i32) {}\nfn go(q: i32) {\n    let a = q;\n    let m = a + 1;\n    sink(m);\n}\n";
-    let kotlin = "fun sink(v: Int) {}\nfun go(q: Int) {\n    val a = q\n    val m = a + 1\n    sink(m)\n}\n";
+    let kotlin =
+        "fun sink(v: Int) {}\nfun go(q: Int) {\n    val a = q\n    val m = a + 1\n    sink(m)\n}\n";
     let ts = "function sink(v: number): void {}\nfunction go(q: number): void {\n    const a = q;\n    const m = a + 1;\n    sink(m);\n}\n";
 
-    for (lang, ext, src) in [("rust", "rs", rust), ("kotlin", "kt", kotlin), ("ts", "ts", ts)] {
+    for (lang, ext, src) in [
+        ("rust", "rs", rust),
+        ("kotlin", "kt", kotlin),
+        ("ts", "ts", ts),
+    ] {
         let d = sandbox(&format!("taint_{lang}"));
         fs::create_dir_all(d.join("src")).unwrap();
         fs::write(d.join(format!("src/lib.{ext}")), src).unwrap();
@@ -331,7 +365,10 @@ fn taint_propagates_through_operations_per_language() {
         assert_eq!(code, 0, "[{lang}] must not error:\n{err}");
 
         let secs = sections(&out);
-        assert!(secs.len() >= 3, "[{lang}] expected 3 query sections:\n{out}");
+        assert!(
+            secs.len() >= 3,
+            "[{lang}] expected 3 query sections:\n{out}"
+        );
         let mut nodes: HashMap<String, (String, String)> = HashMap::new();
         for r in rows(&secs[0]) {
             nodes.insert(r[0].clone(), (r[1].clone(), r[2].clone()));
@@ -360,14 +397,29 @@ fn taint_propagates_through_operations_per_language() {
         );
         // q reaches the binop, the binop reaches m, and so q reaches m. The path
         // traverses the operation: exact dataflow would stop at `a + 1`.
-        assert!(reaches.contains(&(q_id.clone(), binop.clone())), "[{lang}] q must reach the binop:\n{out}");
-        assert!(reaches.contains(&(binop.clone(), m_id.clone())), "[{lang}] binop must reach m:\n{out}");
-        assert!(reaches.contains(&(q_id.clone(), m_id.clone())), "[{lang}] q must reach m THROUGH the binop (taint):\n{out}");
+        assert!(
+            reaches.contains(&(q_id.clone(), binop.clone())),
+            "[{lang}] q must reach the binop:\n{out}"
+        );
+        assert!(
+            reaches.contains(&(binop.clone(), m_id.clone())),
+            "[{lang}] binop must reach m:\n{out}"
+        );
+        assert!(
+            reaches.contains(&(q_id.clone(), m_id.clone())),
+            "[{lang}] q must reach m THROUGH the binop (taint):\n{out}"
+        );
     }
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git").current_dir(dir).args(args).output().expect("git").status.success();
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("git")
+        .status
+        .success();
     assert!(ok, "git {args:?} in {}", dir.display());
 }
 
@@ -402,7 +454,11 @@ fn config_repo_work_edit_produces_dataflow_rows() {
     // cfg: committed a struct with NO constructor. The uniquely-named path means
     // the buggy self.root read resolves to a nonexistent host/src/widget.rs.
     fs::create_dir_all(cfg.join("src")).unwrap();
-    fs::write(cfg.join("src/widget.rs"), "pub struct Widget { pub part: i64 }\n").unwrap();
+    fs::write(
+        cfg.join("src/widget.rs"),
+        "pub struct Widget { pub part: i64 }\n",
+    )
+    .unwrap();
     git(&cfg, &["init", "-q"]);
     git(&cfg, &["config", "user.email", "t@t"]);
     git(&cfg, &["config", "user.name", "t"]);
@@ -453,10 +509,17 @@ fn config_repo_work_edit_produces_dataflow_rows() {
         .output()
         .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(out.status.success(), "run failed: {stdout}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "run failed: {stdout}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let secs = sections(&stdout);
-    assert!(secs.len() >= 2, "expected df_node + df_field sections:\n{stdout}");
+    assert!(
+        secs.len() >= 2,
+        "expected df_node + df_field sections:\n{stdout}"
+    );
     let node_rows = rows(&secs[0]);
     let field_rows = rows(&secs[1]);
 
@@ -478,13 +541,24 @@ fn config_repo_work_edit_produces_dataflow_rows() {
     );
 }
 
-fn single(nodes: &HashMap<String, (String, String)>, kind: &str, var: &str, out: &str, lang: &str) -> String {
+fn single(
+    nodes: &HashMap<String, (String, String)>,
+    kind: &str,
+    var: &str,
+    out: &str,
+    lang: &str,
+) -> String {
     let hits: Vec<&String> = nodes
         .iter()
         .filter(|(_, (k, v))| k == kind && v == var)
         .map(|(id, _)| id)
         .collect();
-    assert_eq!(hits.len(), 1, "[{lang}] expected one {kind}/{var:?} node, got {}:\n{out}", hits.len());
+    assert_eq!(
+        hits.len(),
+        1,
+        "[{lang}] expected one {kind}/{var:?} node, got {}:\n{out}",
+        hits.len()
+    );
     hits[0].clone()
 }
 
@@ -546,9 +620,14 @@ fn loop_invariant_call_flags_recomputation_per_iteration() {
 
     // loop_over: exactly one loop, in `work`, with loop variable `item`.
     let loops = rows(&secs[0]);
-    assert!(!loops.is_empty(), "expected a loop_over row — T1 must record the loop:\n{out}");
     assert!(
-        loops.iter().any(|r| r.len() >= 6 && r[3] == "item" && r[5].contains("::work")),
+        !loops.is_empty(),
+        "expected a loop_over row — T1 must record the loop:\n{out}"
+    );
+    assert!(
+        loops
+            .iter()
+            .any(|r| r.len() >= 6 && r[3] == "item" && r[5].contains("::work")),
         "expected one loop in `work` with var item:\n{out}"
     );
 
@@ -560,7 +639,8 @@ fn loop_invariant_call_flags_recomputation_per_iteration() {
         "loop_invariant_call must fire — without T1 the loop body was a hole:\n{out}"
     );
     assert!(
-        lics.iter().any(|r| r.len() >= 5 && r[1].contains("::work") && r[4] == "prog"),
+        lics.iter()
+            .any(|r| r.len() >= 5 && r[1].contains("::work") && r[4] == "prog"),
         "expected lic on `work` flagging make_rels(prog) with var prog:\n{out}"
     );
 }
@@ -695,7 +775,8 @@ fn nest_depth_records_loop_nesting_per_call() {
         2,
         "expected exactly 2 nest rows (depth 1 + depth 2 for make(o) in the nested loop):\n{out}"
     );
-    let depths: HashSet<&str> = nests.iter()
+    let depths: HashSet<&str> = nests
+        .iter()
         .filter_map(|r| r.get(2).map(|s| s.as_str()))
         .collect();
     assert!(
@@ -703,7 +784,8 @@ fn nest_depth_records_loop_nesting_per_call() {
         "expected depths {{1, 2}} for the doubly-nested call, got {depths:?}:\n{out}"
     );
     // both rows share the same call_id (one call site, two enclosing loops)
-    let call_ids: HashSet<&str> = nests.iter()
+    let call_ids: HashSet<&str> = nests
+        .iter()
         .filter_map(|r| r.first().map(|s| s.as_str()))
         .collect();
     assert_eq!(
@@ -712,7 +794,8 @@ fn nest_depth_records_loop_nesting_per_call() {
         "both nest rows must reference the same call_id:\n{out}"
     );
     // and the loop_ids differ (outer vs inner)
-    let loop_ids: HashSet<&str> = nests.iter()
+    let loop_ids: HashSet<&str> = nests
+        .iter()
         .filter_map(|r| r.get(1).map(|s| s.as_str()))
         .collect();
     assert_eq!(
@@ -799,7 +882,8 @@ fn nest_composes_over_call_edge_into_symbolic_cost() {
     }
 
     // DECISIVE 1: direct_cost(middle, 2) -- the call from the depth-2 site.
-    let mid_cost = direct.iter()
+    let mid_cost = direct
+        .iter()
         .find(|(s, _)| s.contains("::middle"))
         .map(|(_, d)| d.clone())
         .unwrap_or_default();
@@ -815,12 +899,14 @@ fn nest_composes_over_call_edge_into_symbolic_cost() {
     );
     // ... so the only route to a leaf cost is the transitive join. Find middle's
     // sym, then any call_reaches(middle, leaf) carries depth 2 to leaf.
-    let mid_sym = direct.keys()
+    let mid_sym = direct
+        .keys()
         .find(|s| s.contains("::middle"))
         .cloned()
         .unwrap_or_default();
     assert!(!mid_sym.is_empty(), "no middle sym found:\n{out}");
-    let leaf_reached_from_mid: Vec<&(String, String)> = reaches.iter()
+    let leaf_reached_from_mid: Vec<&(String, String)> = reaches
+        .iter()
         .filter(|(a, b)| a == &mid_sym && b.contains("::leaf"))
         .collect();
     assert!(
@@ -902,7 +988,11 @@ fn rust_lift_carries_branch_tails_into_bindings() {
 
     let x_id = bind_of("x");
     let if_calls = call_res_on("6");
-    assert_eq!(if_calls.len(), 2, "expected produce+fallback call_res on the if line:\n{out}");
+    assert_eq!(
+        if_calls.len(),
+        2,
+        "expected produce+fallback call_res on the if line:\n{out}"
+    );
     for c in &if_calls {
         assert!(
             reaches.contains(&(c.clone(), x_id.clone())),
@@ -911,8 +1001,15 @@ fn rust_lift_carries_branch_tails_into_bindings() {
     }
 
     let y_id = bind_of("y");
-    let arm_calls: Vec<String> = call_res_on("9").into_iter().chain(call_res_on("10")).collect();
-    assert_eq!(arm_calls.len(), 2, "expected pick+fallback call_res on the match arms:\n{out}");
+    let arm_calls: Vec<String> = call_res_on("9")
+        .into_iter()
+        .chain(call_res_on("10"))
+        .collect();
+    assert_eq!(
+        arm_calls.len(),
+        2,
+        "expected pick+fallback call_res on the match arms:\n{out}"
+    );
     for c in &arm_calls {
         assert!(
             reaches.contains(&(c.clone(), y_id.clone())),
@@ -993,9 +1090,13 @@ fn rust_lift_carries_loop_break_tails_into_bindings() {
     // produce() sits on line 7 (inside the `if`), fallback() on line 9 (the
     // loop's other break) — both must reach let_bind `outcome` on line 5.
     let outcome_id = bind_of("outcome");
-    let break_calls: Vec<String> = call_res_on("7").into_iter().chain(call_res_on("9")).collect();
+    let break_calls: Vec<String> = call_res_on("7")
+        .into_iter()
+        .chain(call_res_on("9"))
+        .collect();
     assert_eq!(
-        break_calls.len(), 2,
+        break_calls.len(),
+        2,
         "expected produce+fallback call_res on the break lines:\n{out}"
     );
     for c in &break_calls {
@@ -1075,7 +1176,11 @@ fn rust_lift_carries_labeled_loop_break_tails_into_bindings() {
     // on line 4 (the OUTER `loop` binding).
     let outcome_id = bind_of("outcome");
     let break_calls = call_res_on("6");
-    assert_eq!(break_calls.len(), 1, "expected one produce() call_res on the labeled break line:\n{out}");
+    assert_eq!(
+        break_calls.len(),
+        1,
+        "expected one produce() call_res on the labeled break line:\n{out}"
+    );
     assert!(
         reaches.contains(&(break_calls[0].clone(), outcome_id.clone())),
         "labeled break-value call_res {} must reach let_bind outcome through the outer loop:\n{out}",
@@ -1098,7 +1203,12 @@ fn rust_lift_carries_labeled_loop_break_tails_into_bindings() {
 // ============================================================================
 
 fn git_rev(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
     assert!(
         out.status.success(),
         "git {args:?} failed: {}",
@@ -1167,7 +1277,9 @@ fn df_node_rev_id_matches_df_node_raw_id() {
     }
 
     // Sanity: both revs actually populated df_node_rev.
-    let revs = eng.query_sql("SELECT DISTINCT rev FROM rel_df_node_rev_txt", &[]).unwrap();
+    let revs = eng
+        .query_sql("SELECT DISTINCT rev FROM rel_df_node_rev_txt", &[])
+        .unwrap();
     assert_eq!(revs.len(), 2, "df_node_rev must span HEAD + WORK: {revs:?}");
 
     let node_rows = eng.count_rows("df_node").unwrap();
@@ -1226,7 +1338,10 @@ fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
         .unwrap()[0][0]
         .as_i64()
         .unwrap();
-    assert!(shared > 0, "alpha/greet nodes must be shared ids across the base rev and WORK");
+    assert!(
+        shared > 0,
+        "alpha/greet nodes must be shared ids across the base rev and WORK"
+    );
 
     let work_only = eng
         .query_sql(
@@ -1239,18 +1354,27 @@ fn df_node_rev_keeps_revs_disjoint_by_rev_column() {
         .unwrap()[0][0]
         .as_i64()
         .unwrap();
-    assert!(work_only > 0, "beta's nodes are WORK-only and must not leak into the base rev's rows");
+    assert!(
+        work_only > 0,
+        "beta's nodes are WORK-only and must not leak into the base rev's rows"
+    );
 
     // Every shared id keeps ONE row PER rev: total rows == HEAD rows + WORK
     // rows. If revs collapsed into one row per id (an (id)-only key instead
     // of (id, rev)) this equality would fail.
     let head_rows = eng
-        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev NOT LIKE '%+'", &[])
+        .query_sql(
+            "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev NOT LIKE '%+'",
+            &[],
+        )
         .unwrap()[0][0]
         .as_i64()
         .unwrap();
     let work_rows = eng
-        .query_sql("SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev LIKE '%+'", &[])
+        .query_sql(
+            "SELECT COUNT(*) FROM rel_df_node_rev_txt WHERE rev LIKE '%+'",
+            &[],
+        )
         .unwrap()[0][0]
         .as_i64()
         .unwrap();
@@ -1282,9 +1406,7 @@ fn corpus_strings_never_contain_the_salt_separator() {
         eng.tick(&prog, true).unwrap();
     }
 
-    let total_strings = eng
-        .query_sql("SELECT COUNT(*) FROM _strings", &[])
-        .unwrap()[0][0]
+    let total_strings = eng.query_sql("SELECT COUNT(*) FROM _strings", &[]).unwrap()[0][0]
         .as_i64()
         .unwrap();
     assert!(total_strings > 0, "fixture must actually intern strings");
@@ -1328,7 +1450,10 @@ fn df_node_repo_rev_keeps_without_rowid_after_desalting() {
     }
 
     let rows = eng.count_rows("df_node_repo_rev").unwrap();
-    assert!(rows > 0, "fixture must actually populate df_node_repo_rev, not just declare it");
+    assert!(
+        rows > 0,
+        "fixture must actually populate df_node_repo_rev, not just declare it"
+    );
 
     let table_sql = eng
         .query_sql(
@@ -1568,12 +1693,21 @@ fn coordinate_id_deinterned_but_joins_and_display_hold() {
     assert!(!reach_rows.is_empty(), "df_reaches non-empty:\n{out}");
     for r in &reach_rows {
         assert_eq!(r.len(), 2, "df_reaches row: {r:?}");
-        assert!(!r[0].is_empty() && !r[1].is_empty(), "endpoints reconstruct: {r:?}");
+        assert!(
+            !r[0].is_empty() && !r[1].is_empty(),
+            "endpoints reconstruct: {r:?}"
+        );
     }
     // the gate property, restated: name(param) REACHES the read of u several hops
     // later — a transitive pair the base df_edge does not carry.
-    let name_id = node_rows.iter().find(|r| r[1] == "param" && r[2] == "name").map(|r| r[0].clone());
-    let u_read = node_rows.iter().find(|r| r[1] == "var_read" && r[2] == "u").map(|r| r[0].clone());
+    let name_id = node_rows
+        .iter()
+        .find(|r| r[1] == "param" && r[2] == "name")
+        .map(|r| r[0].clone());
+    let u_read = node_rows
+        .iter()
+        .find(|r| r[1] == "var_read" && r[2] == "u")
+        .map(|r| r[0].clone());
     if let (Some(name_id), Some(u_read)) = (name_id, u_read) {
         assert!(
             reach_rows.iter().any(|r| r[0] == name_id && r[1] == u_read),
@@ -1593,7 +1727,10 @@ fn coordinate_id_deinterned_but_joins_and_display_hold() {
             |row| row.get(0),
         )
         .unwrap();
-    assert_eq!(coord_rows, 0, "no df coordinate id text may remain interned in _strings");
+    assert_eq!(
+        coord_rows, 0,
+        "no df coordinate id text may remain interned in _strings"
+    );
 
     // (2) JOIN KEY is a DENSE `_df_node_dict` surrogate keyed on
     // (file,line,col,kind), NOT a hash of the interpolated coordinate string
@@ -1623,7 +1760,10 @@ fn coordinate_id_deinterned_but_joins_and_display_hold() {
             |row| row.get(0),
         )
         .unwrap();
-    assert!(matches >= 1, "df_node.id stores its dense _df_node_dict surrogate");
+    assert!(
+        matches >= 1,
+        "df_node.id stores its dense _df_node_dict surrogate"
+    );
     let old_hash = sprefa_v5::spine::StringId::of(&r[0]).sqlite();
     assert_ne!(
         surrogate, old_hash,

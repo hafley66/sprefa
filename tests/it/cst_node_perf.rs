@@ -45,10 +45,17 @@ fn node_child_tick_has_no_n1() {
     // Several files across languages, each with enough nodes that a per-row
     // writer would blow past N1_THRESHOLD (64).
     for i in 0..8 {
-        fs::write(src.join(format!("m{i}.rs")),
-            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n    let c = b * 2;\n}}\n")).unwrap();
+        fs::write(
+            src.join(format!("m{i}.rs")),
+            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n    let c = b * 2;\n}}\n"),
+        )
+        .unwrap();
     }
-    fs::write(src.join("p.py"), "def g():\n    x = 1\n    y = x + 2\n    return y\n").unwrap();
+    fs::write(
+        src.join("p.py"),
+        "def g():\n    x = 1\n    y = x + 2\n    return y\n",
+    )
+    .unwrap();
 
     let prog = parse::parse(lex::lex(NODE_PROG).unwrap()).unwrap();
     let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
@@ -57,11 +64,16 @@ fn node_child_tick_has_no_n1() {
 
     let nodes = row_count(&eng, "node");
     let children = row_count(&eng, "child");
-    assert!(nodes > 64, "fixture must have enough nodes to expose an N+1 (got {nodes})");
+    assert!(
+        nodes > 64,
+        "fixture must have enough nodes to expose an N+1 (got {nodes})"
+    );
     assert!(children > 0, "child edges populated (got {children})");
-    assert!(eng.last_n1.is_none(),
+    assert!(
+        eng.last_n1.is_none(),
         "node/child tick tripped the N+1 detector: {:?} — a per-row write slipped the plural API",
-        eng.last_n1);
+        eng.last_n1
+    );
 }
 
 #[test]
@@ -84,7 +96,11 @@ fn node_child_perf_on_v5_src() {
     let nodes = row_count(&eng, "node");
     let children = row_count(&eng, "child");
     let files = row_count(&eng, "seen");
-    assert!(eng.last_n1.is_none(), "cold node tick tripped N+1: {:?}", eng.last_n1);
+    assert!(
+        eng.last_n1.is_none(),
+        "cold node tick tripped N+1: {:?}",
+        eng.last_n1
+    );
 
     // NO-OP RE-TICK: nothing changed, the stored-id-set early-out should
     // short-circuit refresh_node_rels (no DELETE+reinsert).
@@ -103,7 +119,11 @@ fn node_child_perf_on_v5_src() {
     let inc_ms = t.elapsed().as_secs_f64() * 1000.0;
     fs::write(&target, &original).unwrap(); // restore before asserting
     r.unwrap();
-    assert!(eng.last_n1.is_none(), "incremental node tick tripped N+1: {:?}", eng.last_n1);
+    assert!(
+        eng.last_n1.is_none(),
+        "incremental node tick tripped N+1: {:?}",
+        eng.last_n1
+    );
 
     // GATE PAYS ZERO: a program that never references node/child walks nothing.
     let dbdir2 = std::env::temp_dir().join("cst_node_perf_v5src_nonode");
@@ -130,11 +150,16 @@ fn node_child_perf_on_v5_src() {
 
     // Gate: a program without node/child must produce zero node rows. The
     // rel_node table exists (declared) but is never populated.
-    assert_eq!(gate_nodes, 0, "node_rels_used gate failed: walked despite no node/child reference");
+    assert_eq!(
+        gate_nodes, 0,
+        "node_rels_used gate failed: walked despite no node/child reference"
+    );
     // Sanity: the real corpus produced a meaningful node count.
-    assert!(nodes > 1000, "src should yield thousands of nodes (got {nodes})");
+    assert!(
+        nodes > 1000,
+        "src should yield thousands of nodes (got {nodes})"
+    );
 }
-
 
 #[test]
 fn point_containment_query_uses_span_index() {
@@ -147,8 +172,11 @@ fn point_containment_query_uses_span_index() {
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
     for i in 0..4 {
-        fs::write(src.join(format!("m{i}.rs")),
-            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n")).unwrap();
+        fs::write(
+            src.join(format!("m{i}.rs")),
+            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n"),
+        )
+        .unwrap();
     }
 
     let prog = parse::parse(lex::lex(NODE_PROG).unwrap()).unwrap();
@@ -156,14 +184,22 @@ fn point_containment_query_uses_span_index() {
     let mut eng = Engine::new(conn, dir.clone());
     eng.tick(&prog, true).unwrap();
 
-    let plan = eng.query_sql(
-        "EXPLAIN QUERY PLAN SELECT id, kind FROM rel_node \
-         WHERE \"file\" = sprf_sym('0') AND \"lo\" <= 5 AND 5 < \"hi\"", &[]).unwrap();
-    let detail = plan.iter()
+    let plan = eng
+        .query_sql(
+            "EXPLAIN QUERY PLAN SELECT id, kind FROM rel_node \
+         WHERE \"file\" = sprf_sym('0') AND \"lo\" <= 5 AND 5 < \"hi\"",
+            &[],
+        )
+        .unwrap();
+    let detail = plan
+        .iter()
         .filter_map(|row| row.last().and_then(|v| v.as_str()))
-        .collect::<Vec<_>>().join(" | ");
-    assert!(detail.contains("node_file_span_idx"),
-        "point-containment query did not use node_file_span_idx (plan: {detail})");
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        detail.contains("node_file_span_idx"),
+        "point-containment query did not use node_file_span_idx (plan: {detail})"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -178,8 +214,11 @@ fn incremental_node_tick_is_path_scoped() {
     let src = dir.join("src");
     fs::create_dir_all(&src).unwrap();
     for i in 0..5 {
-        fs::write(src.join(format!("m{i}.rs")),
-            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n")).unwrap();
+        fs::write(
+            src.join(format!("m{i}.rs")),
+            format!("fn f{i}() {{\n    let a = {i};\n    let b = a + 1;\n}}\n"),
+        )
+        .unwrap();
     }
 
     let prog = parse::parse(lex::lex(NODE_PROG).unwrap()).unwrap();
@@ -188,26 +227,44 @@ fn incremental_node_tick_is_path_scoped() {
 
     // COLD: full walk over all 5 files.
     eng.tick(&prog, true).unwrap();
-    assert_eq!(eng.last_node_files_walked.get(), 5,
-        "cold tick should walk every file (got {})", eng.last_node_files_walked.get());
+    assert_eq!(
+        eng.last_node_files_walked.get(),
+        5,
+        "cold tick should walk every file (got {})",
+        eng.last_node_files_walked.get()
+    );
     let nodes_before = row_count(&eng, "node");
     assert!(nodes_before > 0);
 
     // INCREMENTAL: edit ONE file (real body change so its node set moves).
     let target = src.join("m2.rs");
-    fs::write(&target, "fn f2() {\n    let a = 2;\n    let b = a + 1;\n    let c = b * 9;\n}\n").unwrap();
-    eng.tick_paths(&prog, std::slice::from_ref(&target), true).unwrap();
+    fs::write(
+        &target,
+        "fn f2() {\n    let a = 2;\n    let b = a + 1;\n    let c = b * 9;\n}\n",
+    )
+    .unwrap();
+    eng.tick_paths(&prog, std::slice::from_ref(&target), true)
+        .unwrap();
 
     // THE PROOF: only the one edited file was re-walked, NOT all 5.
-    assert_eq!(eng.last_node_files_walked.get(), 1,
+    assert_eq!(
+        eng.last_node_files_walked.get(),
+        1,
         "incremental tick must walk ONLY the edited file (got {} — regressed to full-corpus?)",
-        eng.last_node_files_walked.get());
-    assert!(eng.last_n1.is_none(),
-        "incremental node delta tripped N+1: {:?}", eng.last_n1);
+        eng.last_node_files_walked.get()
+    );
+    assert!(
+        eng.last_n1.is_none(),
+        "incremental node delta tripped N+1: {:?}",
+        eng.last_n1
+    );
 
     // The other 4 files' node rows survived; the corpus didn't get wiped.
     let nodes_after = row_count(&eng, "node");
-    assert!(nodes_after > 0, "node rows survived the delta (got {nodes_after})");
+    assert!(
+        nodes_after > 0,
+        "node rows survived the delta (got {nodes_after})"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

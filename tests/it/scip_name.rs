@@ -20,7 +20,9 @@ const DL: &str = env!("CARGO_BIN_EXE_dl");
 fn find_ra() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SPREFA_RUST_ANALYZER") {
         let p = PathBuf::from(p);
-        if p.is_file() { return Some(p); }
+        if p.is_file() {
+            return Some(p);
+        }
     }
     let home = std::env::var("HOME").ok()?;
     let ext = Path::new(&home).join(".vscode/extensions");
@@ -30,7 +32,9 @@ fn find_ra() -> Option<PathBuf> {
             let name = e.file_name().to_string_lossy().into_owned();
             if name.starts_with("rust-lang.rust-analyzer-") {
                 let bin = e.path().join("server/rust-analyzer");
-                if bin.is_file() { found = Some(bin); }
+                if bin.is_file() {
+                    found = Some(bin);
+                }
             }
         }
     }
@@ -42,7 +46,11 @@ fn copy_dir(src: &Path, dst: &Path) {
     for e in std::fs::read_dir(src).unwrap().flatten() {
         let p = e.path();
         let d = dst.join(e.file_name());
-        if p.is_dir() { copy_dir(&p, &d); } else { std::fs::copy(&p, &d).unwrap(); }
+        if p.is_dir() {
+            copy_dir(&p, &d);
+        } else {
+            std::fs::copy(&p, &d).unwrap();
+        }
     }
 }
 
@@ -55,13 +63,20 @@ fn scip_names(root: &Path, index: &Path) -> Vec<String> {
         .args(["--db", root.join("p.db").to_str().unwrap()])
         .current_dir(root)
         .env("SPREFA_SCIP_INDEX", index)
-        .output().expect("run dl");
+        .output()
+        .expect("run dl");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut names = Vec::new();
     let mut in_q = false;
     for line in stdout.lines() {
-        if line.starts_with("? scip_name") { in_q = true; continue; }
-        if line.starts_with('?') { in_q = false; continue; }
+        if line.starts_with("? scip_name") {
+            in_q = true;
+            continue;
+        }
+        if line.starts_with('?') {
+            in_q = false;
+            continue;
+        }
         if in_q {
             if let Some((_sym, name)) = line.trim_end().split_once('\t') {
                 names.push(name.to_string());
@@ -73,7 +88,10 @@ fn scip_names(root: &Path, index: &Path) -> Vec<String> {
 
 fn is_bare_ident(s: &str) -> bool {
     !s.is_empty()
-        && s.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false)
+        && s.chars()
+            .next()
+            .map(|c| c.is_ascii_alphabetic() || c == '_')
+            .unwrap_or(false)
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
@@ -88,10 +106,19 @@ fn scip_name_reduces_every_real_moniker_to_a_bare_identifier() {
 
     let index = root.join("index.scip");
     let status = Command::new(&ra)
-        .args(["scip", root.to_str().unwrap(), "--output", index.to_str().unwrap()])
-        .output().expect("run rust-analyzer scip");
-    assert!(index.is_file(), "rust-analyzer scip produced no index: {}",
-        String::from_utf8_lossy(&status.stderr));
+        .args([
+            "scip",
+            root.to_str().unwrap(),
+            "--output",
+            index.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run rust-analyzer scip");
+    assert!(
+        index.is_file(),
+        "rust-analyzer scip produced no index: {}",
+        String::from_utf8_lossy(&status.stderr)
+    );
 
     let names = scip_names(&root, &index);
     assert!(!names.is_empty(), "no scip_name rows produced");
@@ -99,11 +126,21 @@ fn scip_name_reduces_every_real_moniker_to_a_bare_identifier() {
     // every descriptor name is a bare identifier — no `#`, `[`, `]`, `(`, `.`,
     // `impl`/`for` structural residue.
     let dirty: Vec<&String> = names.iter().filter(|n| !is_bare_ident(n)).collect();
-    assert!(dirty.is_empty(), "scip_name leaked non-identifier descriptors: {dirty:?}");
+    assert!(
+        dirty.is_empty(),
+        "scip_name leaked non-identifier descriptors: {dirty:?}"
+    );
 
     // the shapes the naive split broke on must be present and clean.
-    for want in ["free_function", "inherent_method", "draw_shape", "inner_field"] {
-        assert!(names.iter().any(|n| n == want),
-            "expected {want:?} among scip_name descriptors: {names:?}");
+    for want in [
+        "free_function",
+        "inherent_method",
+        "draw_shape",
+        "inner_field",
+    ] {
+        assert!(
+            names.iter().any(|n| n == want),
+            "expected {want:?} among scip_name descriptors: {names:?}"
+        );
     }
 }

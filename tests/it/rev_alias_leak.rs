@@ -36,12 +36,25 @@ fn sandbox(tag: &str) -> PathBuf {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git").arg("-C").arg(dir).args(args).output().expect("git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git");
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn commit_fixture(dir: &Path) {
-    fs::write(dir.join("src/a.rs"), "pub struct Alpha;\npub fn alpha() {}\n").unwrap();
+    fs::write(
+        dir.join("src/a.rs"),
+        "pub struct Alpha;\npub fn alpha() {}\n",
+    )
+    .unwrap();
     git(dir, &["init", "-q"]);
     git(dir, &["config", "user.email", "t@example.com"]);
     git(dir, &["config", "user.name", "T"]);
@@ -50,7 +63,9 @@ fn commit_fixture(dir: &Path) {
 }
 
 fn column(eng: &Engine, sql: &str) -> Vec<String> {
-    eng.query_sql(sql, &[]).unwrap().into_iter()
+    eng.query_sql(sql, &[])
+        .unwrap()
+        .into_iter()
         .map(|row| match &row[0] {
             serde_json::Value::String(text) => text.clone(),
             other => other.to_string(),
@@ -74,12 +89,21 @@ fn no_stored_rev_holds_the_work_alias() {
     eng.tick(&prog, true).unwrap();
 
     let file_revs = column(&eng, "SELECT DISTINCT rev FROM _file");
-    assert_eq!(file_revs.len(), 2, "the corpus spans the worktree and HEAD: {file_revs:?}");
+    assert_eq!(
+        file_revs.len(),
+        2,
+        "the corpus spans the worktree and HEAD: {file_revs:?}"
+    );
     for rev in &file_revs {
-        assert!(is_stored_rev(rev), "_file.rev holds a non-rev value: {rev:?}");
+        assert!(
+            is_stored_rev(rev),
+            "_file.rev holds a non-rev value: {rev:?}"
+        );
     }
-    assert!(file_revs.iter().any(|rev| rev.ends_with('+')),
-        "the worktree rev carries the dirty marker (the db files are untracked): {file_revs:?}");
+    assert!(
+        file_revs.iter().any(|rev| rev.ends_with('+')),
+        "the worktree rev carries the dirty marker (the db files are untracked): {file_revs:?}"
+    );
 
     for table in [
         "rel_rev_txt",
@@ -90,7 +114,10 @@ fn no_stored_rev_holds_the_work_alias() {
         let revs = column(&eng, &format!("SELECT DISTINCT {column_name} FROM {table}"));
         assert!(!revs.is_empty(), "{table} is populated");
         for rev in &revs {
-            assert!(is_stored_rev(rev), "{table}.{column_name} holds a non-rev value: {rev:?}");
+            assert!(
+                is_stored_rev(rev),
+                "{table}.{column_name} holds a non-rev value: {rev:?}"
+            );
         }
     }
 }
@@ -104,7 +131,10 @@ fn a_second_tick_over_an_unchanged_corpus_rehashes_nothing() {
     // fast path is reachable without a wall-clock wait. Same technique as
     // racy_mtime.rs, pointed the other way.
     let stamp = std::time::SystemTime::now() - std::time::Duration::from_secs(30);
-    fs::File::open(dir.join("src/a.rs")).unwrap().set_modified(stamp).unwrap();
+    fs::File::open(dir.join("src/a.rs"))
+        .unwrap()
+        .set_modified(stamp)
+        .unwrap();
 
     let prog = parse::parse(lex::lex(PROG).unwrap()).unwrap();
     let conn = db::open(Some(dir.join("db").to_str().unwrap())).unwrap();
@@ -123,12 +153,20 @@ fn a_second_tick_over_an_unchanged_corpus_rehashes_nothing() {
     let reads_before = eng.file_hash_reads.get();
     eng.tick(&prog, true).unwrap();
 
-    assert_eq!(eng.file_hash_reads.get(), reads_before,
-        "an unchanged corpus re-hashes nothing on the next tick");
-    assert_eq!(column(&eng, "SELECT hash FROM _file ORDER BY repo, path, rev"), hashes_after_first,
-        "the stored content hashes are reused, not recomputed into new rows");
-    assert!(hashes_after_first.iter().all(|hash| !hash.is_empty()),
-        "every _file row carries a content hash: {hashes_after_first:?}");
+    assert_eq!(
+        eng.file_hash_reads.get(),
+        reads_before,
+        "an unchanged corpus re-hashes nothing on the next tick"
+    );
+    assert_eq!(
+        column(&eng, "SELECT hash FROM _file ORDER BY repo, path, rev"),
+        hashes_after_first,
+        "the stored content hashes are reused, not recomputed into new rows"
+    );
+    assert!(
+        hashes_after_first.iter().all(|hash| !hash.is_empty()),
+        "every _file row carries a content hash: {hashes_after_first:?}"
+    );
 }
 
 /// A dirty working tree whose scan touches a path absent from HEAD.
@@ -160,9 +198,15 @@ hit(path, line) <- scan("WORK", "src/**/*.rs", path, rev),
 
     let revs = column(&eng, "SELECT DISTINCT rev FROM _file");
     assert_eq!(revs.len(), 1);
-    assert!(revs[0].ends_with('+'), "the tree is dirty, so the rev carries the marker: {revs:?}");
+    assert!(
+        revs[0].ends_with('+'),
+        "the tree is dirty, so the rev carries the marker: {revs:?}"
+    );
 
     let paths = column(&eng, "SELECT path FROM rel_hit_txt");
-    assert_eq!(paths, vec!["src/b.rs".to_string()],
-        "a file present only on disk is read from disk, not from a git object");
+    assert_eq!(
+        paths,
+        vec!["src/b.rs".to_string()],
+        "a file present only on disk is read from disk, not from a git object"
+    );
 }

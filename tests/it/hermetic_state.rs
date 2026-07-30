@@ -56,12 +56,17 @@ impl Sandbox {
 
     /// The DL_STATE_DIR the hermetic env pins (`<home>/sprefa`) — where every
     /// write MUST land.
-    fn state_dir(&self) -> PathBuf { self.home.join("sprefa") }
+    fn state_dir(&self) -> PathBuf {
+        self.home.join("sprefa")
+    }
 
     /// Count `roots/<key>/db.sqlite` files under a given state dir.
     fn root_dbs_under(dir: &Path) -> usize {
         let roots = dir.join("roots");
-        fs::read_dir(&roots).into_iter().flatten().flatten()
+        fs::read_dir(&roots)
+            .into_iter()
+            .flatten()
+            .flatten()
             .filter(|e| e.path().join("db.sqlite").is_file())
             .count()
     }
@@ -70,7 +75,8 @@ impl Sandbox {
         let mut cmd = self.cmd();
         cmd.args(["daemon", "start", "--foreground"])
             .env("DL_DAEMON_ROOT", &self.root)
-            .stdout(Stdio::null()).stderr(Stdio::null());
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
         DaemonGuard(cmd.spawn().expect("spawn daemon"))
     }
 
@@ -98,17 +104,27 @@ fn dl_state_dir_outranks_xdg_and_receives_the_write() {
     let xdg = sb.base.join("xdg-separate");
     fs::create_dir_all(&xdg).unwrap();
     let mut cmd = sb.cmd();
-    cmd.arg("--check")                 // discovery mode (no positional) => defaults db
-        .env("XDG_STATE_HOME", &xdg)   // distinct from DL_STATE_DIR (<home>/sprefa)
+    cmd.arg("--check") // discovery mode (no positional) => defaults db
+        .env("XDG_STATE_HOME", &xdg) // distinct from DL_STATE_DIR (<home>/sprefa)
         .env("DL_NO_DAEMON", "1");
     let out = cmd.output().expect("run dl --check discovery");
     let stderr = String::from_utf8_lossy(&out.stderr);
     // The rail fires -> exit 2.
-    assert_eq!(out.status.code(), Some(2), "discovery --check should trip the rail: {stderr}");
-    assert_eq!(Sandbox::root_dbs_under(&sb.state_dir()), 1,
-        "DL_STATE_DIR must receive the defaulted per-root db: {stderr}");
-    assert_eq!(Sandbox::root_dbs_under(&xdg.join("sprefa")), 0,
-        "XDG_STATE_HOME must NOT receive the write when DL_STATE_DIR is set: {stderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "discovery --check should trip the rail: {stderr}"
+    );
+    assert_eq!(
+        Sandbox::root_dbs_under(&sb.state_dir()),
+        1,
+        "DL_STATE_DIR must receive the defaulted per-root db: {stderr}"
+    );
+    assert_eq!(
+        Sandbox::root_dbs_under(&xdg.join("sprefa")),
+        0,
+        "XDG_STATE_HOME must NOT receive the write when DL_STATE_DIR is set: {stderr}"
+    );
 }
 
 /// (1) A file-scoped `--check` (positional program) writes ONLY the scratch
@@ -119,12 +135,16 @@ fn dl_state_dir_outranks_xdg_and_receives_the_write() {
 fn file_scoped_check_is_ephemeral_no_root_db() {
     let sb = Sandbox::new("filescoped");
     let mut cmd = sb.cmd();
-    cmd.arg(sb.root.join(".dl").join("p.dl"))  // POSITIONAL => file-scoped
+    cmd.arg(sb.root.join(".dl").join("p.dl")) // POSITIONAL => file-scoped
         .arg("--check")
         .env("DL_NO_DAEMON", "1");
     let out = cmd.output().expect("run file-scoped dl --check");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "the rail still fires in-process: {stderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "the rail still fires in-process: {stderr}"
+    );
     assert!(stderr.contains("tripwire"), "the diag renders: {stderr}");
     // The whole point: no roots/<key>/db.sqlite anywhere under the state home.
     let roots = sb.state_dir().join("roots");
@@ -145,7 +165,9 @@ fn file_scoped_check_parity_daemon_vs_no_daemon() {
 
     // No-daemon mode.
     let mut nd = sb.cmd();
-    nd.arg(sb.root.join(".dl").join("p.dl")).arg("--check").env("DL_NO_DAEMON", "1");
+    nd.arg(sb.root.join(".dl").join("p.dl"))
+        .arg("--check")
+        .env("DL_NO_DAEMON", "1");
     let out_nd = nd.output().expect("no-daemon file-scoped check");
     let code_nd = out_nd.status.code();
     let err_nd = String::from_utf8_lossy(&out_nd.stderr).into_owned();
@@ -161,7 +183,11 @@ fn file_scoped_check_parity_daemon_vs_no_daemon() {
     drop(daemon);
 
     assert_eq!(code_nd, Some(2), "no-daemon check trips the rail: {err_nd}");
-    assert_eq!(code_dm, Some(2), "daemon-mode check trips the same rail: {err_dm}");
+    assert_eq!(
+        code_dm,
+        Some(2),
+        "daemon-mode check trips the same rail: {err_dm}"
+    );
     assert_eq!(
         err_nd.lines().filter(|l| l.contains("tripwire")).count(),
         err_dm.lines().filter(|l| l.contains("tripwire")).count(),
@@ -177,13 +203,21 @@ fn state_home_rail_flags_a_new_reader() {
     let sb = Sandbox::new("rail");
     // The shipped rail file, run against a fixture tree that contains a
     // forbidden read in a file with no baseline row.
-    fs::write(sb.root.join("src").join("leak.rs"),
-        "pub fn h() -> Option<std::ffi::OsString> { std::env::var_os(\"DL_STATE_DIR\") }\n").unwrap();
-    let rail = format!("{}/.dl/state-home-single-source.dl", env!("CARGO_MANIFEST_DIR"));
+    fs::write(
+        sb.root.join("src").join("leak.rs"),
+        "pub fn h() -> Option<std::ffi::OsString> { std::env::var_os(\"DL_STATE_DIR\") }\n",
+    )
+    .unwrap();
+    let rail = format!(
+        "{}/.dl/state-home-single-source.dl",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let mut cmd = sb.cmd();
     cmd.arg(&rail).arg("--check").env("DL_NO_DAEMON", "1");
     let out = cmd.output().expect("run the state-home rail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("state-home-read-new-file"),
-        "a new state-home env read outside the resolver must warn: {stderr}");
+    assert!(
+        stderr.contains("state-home-read-new-file"),
+        "a new state-home env read outside the resolver must warn: {stderr}"
+    );
 }

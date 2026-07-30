@@ -39,8 +39,12 @@ static ALREADY_WARNED: AtomicBool = AtomicBool::new(false);
 /// here, since root resolution has its own `.dl`-ancestor rules this module
 /// has no business reimplementing.
 pub fn warn_if_stale(start: &Path) {
-    let Some(running_exe) = std::env::current_exe().ok() else { return };
-    let Some(running_mtime) = mtime(&running_exe) else { return };
+    let Some(running_exe) = std::env::current_exe().ok() else {
+        return;
+    };
+    let Some(running_mtime) = mtime(&running_exe) else {
+        return;
+    };
     warn_if_stale_with_reference(start, &running_exe.to_string_lossy(), running_mtime);
 }
 
@@ -56,17 +60,25 @@ pub fn warn_if_stale(start: &Path) {
 /// this variant is for a caller checking on a DIFFERENT process's binary via
 /// out-of-band identity (e.g. the daemon's reported `build_id` mtime, decoded
 /// by `crate::cli::daemon_cmd`'s supervised `status` path).
-pub fn warn_if_stale_with_reference(start: &Path, reference_label: &str, reference_mtime: SystemTime) {
+pub fn warn_if_stale_with_reference(
+    start: &Path,
+    reference_label: &str,
+    reference_mtime: SystemTime,
+) {
     if std::env::var("DL_NO_STALE_WARN").ok().as_deref() == Some("1") {
         return;
     }
     if ALREADY_WARNED.load(Ordering::Relaxed) {
         return;
     }
-    let Some(build_root) = crate_build_root(start) else { return };
+    let Some(build_root) = crate_build_root(start) else {
+        return;
+    };
     for profile in ["debug", "release"] {
         let candidate = build_root.join("target").join(profile).join(BIN_NAME);
-        let Some(built_mtime) = mtime(&candidate) else { continue };
+        let Some(built_mtime) = mtime(&candidate) else {
+            continue;
+        };
         if !built_is_strictly_newer(built_mtime, reference_mtime) {
             continue;
         }
@@ -89,7 +101,10 @@ pub fn warn_if_stale_with_reference(start: &Path, reference_label: &str, referen
             &msg,
             &[
                 ("running_exe", reference_label),
-                ("running_mtime_secs", &epoch_secs(reference_mtime).to_string()),
+                (
+                    "running_mtime_secs",
+                    &epoch_secs(reference_mtime).to_string(),
+                ),
                 ("build_candidate", &candidate.to_string_lossy()),
                 ("build_mtime_secs", &epoch_secs(built_mtime).to_string()),
             ],
@@ -110,7 +125,10 @@ fn crate_build_root(start: &Path) -> Option<PathBuf> {
     start.ancestors().find_map(|dir| {
         let text = std::fs::read_to_string(dir.join("Cargo.toml")).ok()?;
         let value = toml::from_str::<toml::Value>(&text).ok()?;
-        let name = value.get("package").and_then(|p| p.get("name")).and_then(|n| n.as_str());
+        let name = value
+            .get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str());
         (name == Some(env!("CARGO_PKG_NAME"))).then(|| dir.to_path_buf())
     })
 }
@@ -131,7 +149,9 @@ fn mtime(path: &Path) -> Option<SystemTime> {
 }
 
 fn epoch_secs(t: SystemTime) -> u64 {
-    t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    t.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// `t`'s age relative to now as a terse human string (`"3h12m"`, `"45s"`) —
@@ -141,7 +161,10 @@ fn epoch_secs(t: SystemTime) -> u64 {
 /// `target/` artifact touched by a concurrent build mid-check) reads as
 /// `"0s"` rather than underflowing.
 fn humanize_age(t: SystemTime) -> String {
-    let secs = SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = SystemTime::now()
+        .duration_since(t)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     if secs < 60 {
         format!("{secs}s")
     } else if secs < 3600 {
@@ -215,7 +238,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "dl_stale_binary_test_{}_{}",
             std::process::id(),
-            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_nanos()
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
         assert_eq!(crate_build_root(&dir), None);

@@ -17,8 +17,10 @@ fn main() {
     let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(3);
     let kernel = args.get(3).map(|s| s.as_str()).unwrap_or("symbol");
 
-    let content = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| { eprintln!("read {path}: {e}"); std::process::exit(1); });
+    let content = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        eprintln!("read {path}: {e}");
+        std::process::exit(1);
+    });
     let base = path.rsplit('/').next().unwrap_or(&path);
 
     let verbatim = sprefa_v5::propose::extract_proposals(&content);
@@ -31,22 +33,34 @@ fn main() {
 
     // symbol-shape + call-seq need the SCIP index; resolve it the same way the engine does.
     let repo_root = format!("{}/..", env!("CARGO_MANIFEST_DIR"));
-    let idx = std::path::PathBuf::from(env::var("SPREFA_SCIP_INDEX")
-        .unwrap_or_else(|_| format!("{repo_root}/index.scip")));
+    let idx = std::path::PathBuf::from(
+        env::var("SPREFA_SCIP_INDEX").unwrap_or_else(|_| format!("{repo_root}/index.scip")),
+    );
     let (sym_count, sym, call_count, call) = match sprefa_v5::scip_import::load(
-        &idx, std::path::Path::new(env!("CARGO_MANIFEST_DIR")), "sprefa") {
+        &idx,
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+        "sprefa",
+    ) {
         Ok(rows) => {
-            let rel = path.strip_prefix(&format!("{}/", env!("CARGO_MANIFEST_DIR")))
-                .unwrap_or(&path).to_string();
-            let spans: Vec<(i32, i32, &str)> = rows.occ_spans.iter()
+            let rel = path
+                .strip_prefix(&format!("{}/", env!("CARGO_MANIFEST_DIR")))
+                .unwrap_or(&path)
+                .to_string();
+            let spans: Vec<(i32, i32, &str)> = rows
+                .occ_spans
+                .iter()
                 .filter(|(f, _, _, _)| f == &rel)
-                .map(|(_, l, c, s)| (*l, *c, s.as_str())).collect();
+                .map(|(_, l, c, s)| (*l, *c, s.as_str()))
+                .collect();
             let s = sprefa_v5::propose::symbol_shape_proposals(&content, &spans);
             let c = sprefa_v5::propose::call_seq_proposals(&content, &spans);
             (s.len(), s, c.len(), c)
         }
         Err(e) => {
-            eprintln!("[scip] no index at {}: {e}; skipping symbol + call-seq kernels", idx.display());
+            eprintln!(
+                "[scip] no index at {}: {e}; skipping symbol + call-seq kernels",
+                idx.display()
+            );
             (0, Vec::new(), 0, Vec::new())
         }
     };

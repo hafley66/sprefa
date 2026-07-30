@@ -68,7 +68,11 @@ impl ReadView {
                 _ => None,
             })
             .collect();
-        ReadView { rels: rels.clone(), queries, db_path }
+        ReadView {
+            rels: rels.clone(),
+            queries,
+            db_path,
+        }
     }
 
     /// The served db path as a `&str`, or `None` when this view cannot be served
@@ -84,9 +88,10 @@ impl ReadView {
     /// to the engine lock in that case.
     fn any_aggregate_query(&self) -> bool {
         self.queries.iter().any(|q| {
-            q.head.terms.iter().any(|t| {
-                matches!(t, Term::Call { name, .. } if AggFn::parse(name).is_some())
-            })
+            q.head
+                .terms
+                .iter()
+                .any(|t| matches!(t, Term::Call { name, .. } if AggFn::parse(name).is_some()))
         })
     }
 
@@ -135,8 +140,8 @@ pub fn query(view: &ReadView) -> Served {
 }
 
 fn run_query(view: &ReadView, db_path: &str) -> Result<Value, (i64, String)> {
-    let conn = ReadDb::open(db_path)
-        .map_err(|e| (INTERNAL_ERROR, format!("open read-only db: {e}")))?;
+    let conn =
+        ReadDb::open(db_path).map_err(|e| (INTERNAL_ERROR, format!("open read-only db: {e}")))?;
     let mut results: Vec<Value> = Vec::with_capacity(view.queries.len());
     for q in &view.queries {
         let (sql, columns) =
@@ -200,17 +205,82 @@ pub fn schema(view: &ReadView) -> Value {
         relations.push(rel);
     }
     let extra: &[(&str, &[(&str, &str)])] = &[
-        ("_file", &[("repo", "text"), ("path", "text"), ("rev", "text"), ("hash", "text"), ("mtime", "int"), ("size", "int")]),
-        ("_files", &[("id", "int"), ("content_hash", "text"), ("path", "text"), ("size", "int")]),
-        ("_where_bytes", &[("id", "int"), ("repo", "text"), ("path", "text"), ("rev", "text"), ("byte", "int"), ("line", "int"), ("col", "int")]),
-        ("_program", &[("path", "text"), ("hash", "text"), ("mtime", "int"), ("loaded_at", "int")]),
-        ("_repo", &[("slug", "text"), ("root", "text"), ("url", "text"), ("registered_at", "int")]),
-        ("_ref", &[("repo", "text"), ("name", "text"), ("oid", "text"), ("observed_at", "int")]),
-        ("_rev_log", &[("id", "int"), ("repo", "text"), ("name", "text"), ("old", "text"), ("new", "text"), ("at", "int")]),
+        (
+            "_file",
+            &[
+                ("repo", "text"),
+                ("path", "text"),
+                ("rev", "text"),
+                ("hash", "text"),
+                ("mtime", "int"),
+                ("size", "int"),
+            ],
+        ),
+        (
+            "_files",
+            &[
+                ("id", "int"),
+                ("content_hash", "text"),
+                ("path", "text"),
+                ("size", "int"),
+            ],
+        ),
+        (
+            "_where_bytes",
+            &[
+                ("id", "int"),
+                ("repo", "text"),
+                ("path", "text"),
+                ("rev", "text"),
+                ("byte", "int"),
+                ("line", "int"),
+                ("col", "int"),
+            ],
+        ),
+        (
+            "_program",
+            &[
+                ("path", "text"),
+                ("hash", "text"),
+                ("mtime", "int"),
+                ("loaded_at", "int"),
+            ],
+        ),
+        (
+            "_repo",
+            &[
+                ("slug", "text"),
+                ("root", "text"),
+                ("url", "text"),
+                ("registered_at", "int"),
+            ],
+        ),
+        (
+            "_ref",
+            &[
+                ("repo", "text"),
+                ("name", "text"),
+                ("oid", "text"),
+                ("observed_at", "int"),
+            ],
+        ),
+        (
+            "_rev_log",
+            &[
+                ("id", "int"),
+                ("repo", "text"),
+                ("name", "text"),
+                ("old", "text"),
+                ("new", "text"),
+                ("at", "int"),
+            ],
+        ),
     ];
     for (name, cols) in extra {
-        let cols_json: Vec<Value> =
-            cols.iter().map(|(n, t)| json!({ "name": n, "ty": t })).collect();
+        let cols_json: Vec<Value> = cols
+            .iter()
+            .map(|(n, t)| json!({ "name": n, "ty": t }))
+            .collect();
         relations.push(json!({ "name": name, "columns": cols_json, "builtin": true }));
     }
     json!({ "relations": relations })
@@ -222,7 +292,8 @@ pub fn schema(view: &ReadView) -> Value {
 /// `sqlite_to_json` (text -> string, int/real -> number, null/blob -> null for
 /// the lowered-query path). Params bind like `engine::rpc.rs`'s `query_sql`.
 fn json_rows(conn: &ReadDb, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>> {
-    let sqlval_params: Vec<crate::db::SqlVal> = params.iter().map(crate::db::SqlVal::from_json).collect();
+    let sqlval_params: Vec<crate::db::SqlVal> =
+        params.iter().map(crate::db::SqlVal::from_json).collect();
     let raw_rows = conn.query_values("_query_sql", sql, &sqlval_params)?;
     Ok(raw_rows
         .iter()
@@ -269,8 +340,8 @@ mod tests {
         fn new() -> Self {
             static SEQ: AtomicU64 = AtomicU64::new(0);
             let n = SEQ.fetch_add(1, Ordering::Relaxed);
-            let dir = std::env::temp_dir()
-                .join(format!("dl_daemon_read_{}_{n}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("dl_daemon_read_{}_{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             TmpDir(dir)
@@ -293,7 +364,9 @@ mod tests {
         let mut prog = crate::parse::parse(toks).unwrap();
         let diags = crate::typecheck::check_and_normalize(&mut prog, "<test>");
         assert!(
-            !diags.iter().any(|d| d.severity == crate::ast::Severity::Error),
+            !diags
+                .iter()
+                .any(|d| d.severity == crate::ast::Severity::Error),
             "fixture program has type errors: {diags:?}"
         );
         let conn = crate::db::open(Some(&db_str)).unwrap();
@@ -331,16 +404,23 @@ mod tests {
         // query_rel
         let cols = 2;
         let locked_rows = eng.rel_rows("edge", cols);
-        let read_rel = super::query_rel(&view, "edge").expect("served").expect("ok");
-        assert_eq!(read_rel, json!({
-            "columns": ["a", "b"],
-            "rows": locked_rows,
-        }));
+        let read_rel = super::query_rel(&view, "edge")
+            .expect("served")
+            .expect("ok");
+        assert_eq!(
+            read_rel,
+            json!({
+                "columns": ["a", "b"],
+                "rows": locked_rows,
+            })
+        );
 
         // query_sql
         let sql = format!("SELECT a, b FROM {} ORDER BY a, b", txt_tbl("edge"));
         let locked_sql = json!({"rows": eng.query_sql(&sql, &[]).unwrap()});
-        let read_sql = super::query_sql(&view, &sql, &[]).expect("served").expect("ok");
+        let read_sql = super::query_sql(&view, &sql, &[])
+            .expect("served")
+            .expect("ok");
         assert_eq!(read_sql, locked_sql, "query_sql read path == locked path");
 
         // unknown rel is INVALID_PARAMS on both paths
@@ -365,16 +445,26 @@ mod tests {
         });
         // Give the holder time to actually acquire the lock first.
         std::thread::sleep(Duration::from_millis(100));
-        assert!(eng_mutex.try_lock().is_err(), "holder must own the engine mutex");
+        assert!(
+            eng_mutex.try_lock().is_err(),
+            "holder must own the engine mutex"
+        );
 
         let start = Instant::now();
         let read = super::query(&view).expect("served").expect("ok");
         let elapsed = start.elapsed();
-        assert_eq!(read["results"][0]["rows"].as_array().unwrap().len(), 6,
-            "read returns correct rows while the engine mutex is held");
-        tracing::debug!("[SLA] read RPC completed in {elapsed:?} while a 3s engine-lock hold was in flight");
-        assert!(elapsed < Duration::from_millis(500),
-            "read completed in {elapsed:?} while a 3s engine-lock hold was in flight");
+        assert_eq!(
+            read["results"][0]["rows"].as_array().unwrap().len(),
+            6,
+            "read returns correct rows while the engine mutex is held"
+        );
+        tracing::debug!(
+            "[SLA] read RPC completed in {elapsed:?} while a 3s engine-lock hold was in flight"
+        );
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "read completed in {elapsed:?} while a 3s engine-lock hold was in flight"
+        );
 
         holder.join().unwrap();
     }
@@ -388,7 +478,9 @@ mod tests {
         let view = view_of(&eng, &prog, &db_str);
 
         // Baseline: 3 committed edge rows.
-        let before = super::query_rel(&view, "edge").expect("served").expect("ok");
+        let before = super::query_rel(&view, "edge")
+            .expect("served")
+            .expect("ok");
         assert_eq!(before["rows"].as_array().unwrap().len(), 3);
 
         // Open a second WRITER connection and BEGIN an uncommitted insert into
@@ -397,23 +489,38 @@ mod tests {
         let a_id = crate::spine::StringId::of("a").sqlite();
         let d_id = crate::spine::StringId::of("d").sqlite();
         writer.begin_immediate().unwrap();
-        writer.exec_params(
-            "edge",
-            &format!("INSERT INTO {} (a, b) VALUES (?1, ?2)", crate::lower::tbl("edge")),
-            &[a_id.into(), d_id.into()],
-        ).unwrap();
+        writer
+            .exec_params(
+                "edge",
+                &format!(
+                    "INSERT INTO {} (a, b) VALUES (?1, ?2)",
+                    crate::lower::tbl("edge")
+                ),
+                &[a_id.into(), d_id.into()],
+            )
+            .unwrap();
 
         // A read opened now must still see only the 3 committed rows.
-        let mid = super::query_rel(&view, "edge").expect("served").expect("ok");
-        assert_eq!(mid["rows"].as_array().unwrap().len(), 3,
-            "reader must not see the in-flight uncommitted insert");
+        let mid = super::query_rel(&view, "edge")
+            .expect("served")
+            .expect("ok");
+        assert_eq!(
+            mid["rows"].as_array().unwrap().len(),
+            3,
+            "reader must not see the in-flight uncommitted insert"
+        );
 
         writer.commit().unwrap();
 
         // A fresh read after commit sees the 4th row.
-        let after = super::query_rel(&view, "edge").expect("served").expect("ok");
-        assert_eq!(after["rows"].as_array().unwrap().len(), 4,
-            "reader sees the row once the writer commits");
+        let after = super::query_rel(&view, "edge")
+            .expect("served")
+            .expect("ok");
+        assert_eq!(
+            after["rows"].as_array().unwrap().len(),
+            4,
+            "reader sees the row once the writer commits"
+        );
 
         drop(eng);
     }

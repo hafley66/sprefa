@@ -17,8 +17,12 @@ pub(crate) fn kotlin_package_re() -> &'static Regex {
 
 fn kotlin_import_re() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(
-        r"(?m)^[ \t]*import[ \t]+([\w`]+(?:\.[\w`]+)*(?:\.\*)?)(?:[ \t]+as[ \t]+([\w`]+))?").unwrap())
+    RE.get_or_init(|| {
+        Regex::new(
+            r"(?m)^[ \t]*import[ \t]+([\w`]+(?:\.[\w`]+)*(?:\.\*)?)(?:[ \t]+as[ \t]+([\w`]+))?",
+        )
+        .unwrap()
+    })
 }
 
 /// Column-0 declarations only — Kotlin convention indents members, so a line
@@ -246,4 +250,3 @@ impl ModuleResolver for KotlinResolver {
         out
     }
 }
-

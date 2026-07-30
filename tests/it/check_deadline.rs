@@ -15,14 +15,35 @@ fn zero_wall_deadline_prints_warning_and_exits_zero() {
     fs::write(&program, "rel seed(x: text).\nseed(\"ok\").\n").unwrap();
     let out = Command::new(DL)
         .arg(&program)
-        .args(["--check", "--max-wall", "0", "--no-daemon", "--db", dir.join("db").to_str().unwrap()])
+        .args([
+            "--check",
+            "--max-wall",
+            "0",
+            "--no-daemon",
+            "--db",
+            dir.join("db").to_str().unwrap(),
+        ])
         .current_dir(&dir)
         .env("SPREFA_CONFIG", "/nonexistent/x.toml")
         .env("DL_NO_DAEMON", "1")
-        .output().expect("run timed check");
+        .output()
+        .expect("run timed check");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(0), "deadline must not block hooks: {err}");
-    assert!(err.contains("CHECK TIMED OUT"), "loud partial report: {err}");
-    assert!(err.contains("warning[check-timed-out]"), "warning diagnostic: {err}");
-    assert!(err.contains("partial report"), "incompleteness is explicit: {err}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "deadline must not block hooks: {err}"
+    );
+    assert!(
+        err.contains("CHECK TIMED OUT"),
+        "loud partial report: {err}"
+    );
+    assert!(
+        err.contains("warning[check-timed-out]"),
+        "warning diagnostic: {err}"
+    );
+    assert!(
+        err.contains("partial report"),
+        "incompleteness is explicit: {err}"
+    );
 }

@@ -67,11 +67,19 @@ impl Parser {
         let (repo, rev, glob, path, rev_out) = if path_named.is_some() {
             // path is named: every positional is an input coordinate.
             let (repo, rev, glob) = coord(pos)?;
-            (repo, rev, glob, path_named.unwrap(), rev_out_named.unwrap_or(Term::Wild))
+            (
+                repo,
+                rev,
+                glob,
+                path_named.unwrap(),
+                rev_out_named.unwrap_or(Term::Wild),
+            )
         } else if let Some(ro) = rev_out_named {
             // rev_out named, path positional (the last positional).
             let mut pos = pos;
-            let path = pos.pop().ok_or_else(|| anyhow::anyhow!("scan missing path output"))?;
+            let path = pos
+                .pop()
+                .ok_or_else(|| anyhow::anyhow!("scan missing path output"))?;
             let (repo, rev, glob) = coord(pos)?;
             (repo, rev, glob, path, ro)
         } else {
@@ -88,14 +96,22 @@ impl Parser {
                 n => bail!("scan expects 2 args (glob, path), 3 (glob, path, rev_out), 4 (rev, glob, path, rev_out), or 5 (repo, rev, glob, path, rev_out), got {n}"),
             }
         };
-        Ok(BodyItem::Scan { repo, rev, glob, path, rev_out })
+        Ok(BodyItem::Scan {
+            repo,
+            rev,
+            glob,
+            path,
+            rev_out,
+        })
     }
 
     pub(crate) fn match_(&mut self, legacy_name: bool) -> Result<BodyItem> {
         self.ident()?; // match / match_line
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         let regex = match self.next()? {
             Tok::Regex(r) => desugar_regex_holes(&r),
             other => bail!("expected regex literal in match_line, got {:?}", other),
@@ -120,31 +136,57 @@ impl Parser {
             (Vec::new(), Vec::new())
         };
         self.expect(Tok::RParen)?;
-        let opt = |t: Term| if matches!(t, Term::Wild) { None } else { Some(t) };
+        let opt = |t: Term| {
+            if matches!(t, Term::Wild) {
+                None
+            } else {
+                Some(t)
+            }
+        };
         let (id, col, end_col) = if named.is_empty() {
             let mut trailing = pos;
             match trailing.len() {
                 0 => (None, None, None),
                 1 => (Some(trailing.remove(0)), None, None),
                 2 => (None, Some(trailing.remove(0)), Some(trailing.remove(0))),
-                3 => { let id = trailing.remove(0);
-                       (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0))) }
-                n => bail!("match_line expects 4 args (path, rev, /re/, line), +1 (id), \
-                            +2 (col, end_col), or +3 (id, col, end_col), got {} trailing", n),
+                3 => {
+                    let id = trailing.remove(0);
+                    (Some(id), Some(trailing.remove(0)), Some(trailing.remove(0)))
+                }
+                n => bail!(
+                    "match_line expects 4 args (path, rev, /re/, line), +1 (id), \
+                            +2 (col, end_col), or +3 (id, col, end_col), got {} trailing",
+                    n
+                ),
             }
         } else {
             let outs = Self::assign_outputs(&["id", "col", "end_col"], pos, named)?;
             let mut it = outs.into_iter();
-            (opt(it.next().unwrap()), opt(it.next().unwrap()), opt(it.next().unwrap()))
+            (
+                opt(it.next().unwrap()),
+                opt(it.next().unwrap()),
+                opt(it.next().unwrap()),
+            )
         };
-        Ok(BodyItem::Match { path, rev, regex, line, id, col, end_col, legacy_name })
+        Ok(BodyItem::Match {
+            path,
+            rev,
+            regex,
+            line,
+            id,
+            col,
+            end_col,
+            legacy_name,
+        })
     }
 
     pub(crate) fn ast(&mut self) -> Result<BodyItem> {
         self.ident()?; // ast
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         self.expect(Tok::Colon)?;
         let lang = self.ident()?;
         self.expect(Tok::Comma)?;
@@ -167,7 +209,13 @@ impl Parser {
             (Vec::new(), Vec::new())
         };
         self.expect(Tok::RParen)?;
-        let opt = |t: Term| if matches!(t, Term::Wild) { None } else { Some(t) };
+        let opt = |t: Term| {
+            if matches!(t, Term::Wild) {
+                None
+            } else {
+                Some(t)
+            }
+        };
         let (end, id) = if named.is_empty() {
             let mut trailing = pos;
             match trailing.len() {
@@ -181,7 +229,15 @@ impl Parser {
             let mut it = outs.into_iter();
             (opt(it.next().unwrap()), opt(it.next().unwrap()))
         };
-        Ok(BodyItem::Ast { path, rev, lang, query, line, end, id })
+        Ok(BodyItem::Ast {
+            path,
+            rev,
+            lang,
+            query,
+            line,
+            end,
+            id,
+        })
     }
 
     /// FILE form `match_ast(path, rev, :lang, "pat", line, col, end_line, end_col, id)`
@@ -198,8 +254,10 @@ impl Parser {
         if matches!(self.peek(), Some(Tok::Colon)) {
             return self.sg_term(legacy_name);
         }
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         self.expect(Tok::Colon)?;
         let lang = self.ident()?;
         self.expect(Tok::Comma)?;
@@ -223,13 +281,22 @@ impl Parser {
         // codemod anchor (christmas #9, decision 3 — consistent across ast/
         // match_ast/json).
         let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col", "id"], pos, named)?;
-        let id = match &outs[4] { Term::Wild => None, t => Some(t.clone()) };
+        let id = match &outs[4] {
+            Term::Wild => None,
+            t => Some(t.clone()),
+        };
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Sg {
-            src: path, rev: Some(rev), lang, pattern,
-            line: outs[0].clone(), col: outs[1].clone(),
-            end_line: outs[2].clone(), end_col: outs[3].clone(),
-            id, legacy_name,
+            src: path,
+            rev: Some(rev),
+            lang,
+            pattern,
+            line: outs[0].clone(),
+            col: outs[1].clone(),
+            end_line: outs[2].clone(),
+            end_col: outs[3].clone(),
+            id,
+            legacy_name,
         })
     }
 
@@ -248,7 +315,10 @@ impl Parser {
         self.expect(Tok::Comma)?;
         let pattern = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("expected pattern string in match_ast(:lang, src, \"pat\"), got {:?}", other),
+            other => bail!(
+                "expected pattern string in match_ast(:lang, src, \"pat\"), got {:?}",
+                other
+            ),
         };
         let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?;
@@ -262,10 +332,16 @@ impl Parser {
         let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Sg {
-            src, rev: None, lang, pattern,
-            line: outs[0].clone(), col: outs[1].clone(),
-            end_line: outs[2].clone(), end_col: outs[3].clone(),
-            id: None, legacy_name,
+            src,
+            rev: None,
+            lang,
+            pattern,
+            line: outs[0].clone(),
+            col: outs[1].clone(),
+            end_line: outs[2].clone(),
+            end_col: outs[3].clone(),
+            id: None,
+            legacy_name,
         })
     }
 
@@ -277,14 +353,19 @@ impl Parser {
     pub(crate) fn ast_yaml(&mut self) -> Result<BodyItem> {
         self.ident()?; // ast_yaml
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         self.expect(Tok::Colon)?;
         let lang = self.ident()?;
         self.expect(Tok::Comma)?;
         let yaml = match self.next()? {
             Tok::Str(s) => s,
-            other => bail!("expected ast_yaml body string in ast_yaml(), got {:?}", other),
+            other => bail!(
+                "expected ast_yaml body string in ast_yaml(), got {:?}",
+                other
+            ),
         };
         let (pos, named) = if matches!(self.peek(), Some(Tok::Comma)) {
             self.next()?;
@@ -295,9 +376,14 @@ impl Parser {
         let outs = Self::assign_outputs(&["line", "col", "end_line", "end_col"], pos, named)?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::AstYaml {
-            path, rev, lang, yaml,
-            line: outs[0].clone(), col: outs[1].clone(),
-            end_line: outs[2].clone(), end_col: outs[3].clone(),
+            path,
+            rev,
+            lang,
+            yaml,
+            line: outs[0].clone(),
+            col: outs[1].clone(),
+            end_line: outs[2].clone(),
+            end_col: outs[3].clone(),
         })
     }
 
@@ -342,10 +428,19 @@ impl Parser {
         // Only the FILE form locates (the term source has no file); an id on a
         // term-form jsonp is rejected in the engine.
         let id = if matches!(self.peek(), Some(Tok::Comma)) {
-            self.next()?; Some(self.term()?)
-        } else { None };
+            self.next()?;
+            Some(self.term()?)
+        } else {
+            None
+        };
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::JsonP { src, rev, jpath, out, id })
+        Ok(BodyItem::JsonP {
+            src,
+            rev,
+            jpath,
+            out,
+            id,
+        })
     }
 
     /// FILE form `json(path, rev, q:{...})` vs TERM form `json(src, q:{...})`.
@@ -368,7 +463,10 @@ impl Parser {
                         "json takes a brace-pattern literal (`q:{{ $k: $v }}`); for the \
                          dotted-string form use `jsonp(...)`"
                     ),
-                    other => bail!("json pattern arg must be a `q:{{...}}` brace-pattern literal, got {:?}", other),
+                    other => bail!(
+                        "json pattern arg must be a `q:{{...}}` brace-pattern literal, got {:?}",
+                        other
+                    ),
                 };
                 (first, Some(rev), pat)
             }
@@ -385,8 +483,10 @@ impl Parser {
     pub(crate) fn cmd(&mut self) -> Result<BodyItem> {
         self.ident()?; // cmd
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         let template = match self.next()? {
             Tok::Str(s) => s,
             other => bail!("expected command string in cmd(), got {:?}", other),
@@ -396,7 +496,13 @@ impl Parser {
         self.expect(Tok::Comma)?;
         let out = self.term()?;
         self.expect(Tok::RParen)?;
-        Ok(BodyItem::Cmd { path, rev, template, line, out })
+        Ok(BodyItem::Cmd {
+            path,
+            rev,
+            template,
+            line,
+            out,
+        })
     }
 
     /// `comment(p, rev, /open/[, /close/], l0: .., l1: .., label: ..)` — one
@@ -407,24 +513,35 @@ impl Parser {
     pub(crate) fn comment(&mut self) -> Result<BodyItem> {
         self.ident()?; // comment
         self.expect(Tok::LParen)?;
-        let path = self.term()?; self.expect(Tok::Comma)?;
-        let rev = self.term()?; self.expect(Tok::Comma)?;
+        let path = self.term()?;
+        self.expect(Tok::Comma)?;
+        let rev = self.term()?;
+        self.expect(Tok::Comma)?;
         let open = match self.next()? {
             Tok::Regex(r) => desugar_regex_holes(&r),
             other => bail!("expected open regex literal in comment(), got {:?}", other),
         };
         self.expect(Tok::Comma)?;
         let close = if matches!(self.peek(), Some(Tok::Regex(_))) {
-            let Tok::Regex(r) = self.next()? else { unreachable!() };
+            let Tok::Regex(r) = self.next()? else {
+                unreachable!()
+            };
             self.expect(Tok::Comma)?;
             Some(desugar_regex_holes(&r))
-        } else { None };
+        } else {
+            None
+        };
         let (pos, named) = self.parse_kwarg_terms()?;
         let outs = Self::assign_outputs(&["l0", "l1", "label"], pos, named)?;
         self.expect(Tok::RParen)?;
         Ok(BodyItem::Comment {
-            path, rev, open, close,
-            l0: outs[0].clone(), l1: outs[1].clone(), label: outs[2].clone(),
+            path,
+            rev,
+            open,
+            close,
+            l0: outs[0].clone(),
+            l1: outs[1].clone(),
+            label: outs[2].clone(),
         })
     }
 
