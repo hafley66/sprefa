@@ -216,6 +216,12 @@ verification(scan_match_reconciliation,
                     nested_match_temp_tables(15),
                     scan_rel_tables(2),
                     scan_temp_tables(7))).
+verification(reconciled_lab_receipts,
+             passed(scan_match_value(8),
+                    generic_scan(11),
+                    rel_definition_hash(11),
+                    select_scan_cache(12),
+                    selected_decisions(0))).
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
