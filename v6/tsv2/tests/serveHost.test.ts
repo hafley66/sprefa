@@ -50,7 +50,7 @@ import { oracleLog, logOfTicks, postArrivals, postProgram, request, scheduleFrom
 const HOST_CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
 
 const STRUCT_HOST_DL6 = `
-type span(end: int, start: int).
+rel span(end: int, start: int).
 rel source_path(path: text).
 rel host_span(path: text, at: span).
 rel host_start(path: text, start: int).
@@ -60,7 +60,7 @@ sh scan_span(path: text) -> (at: span) =
 
 host_span(Path, At) <-
   source_path(Path),
-  ? scan_span(Path, At).
+  scan_span(Path, At).
 
 host_start(Path, Start) <-
   host_span(Path, At),
@@ -163,9 +163,20 @@ test("receipt (b) teardown: a program swap stops the previous program's interval
  *   2. With parser acceptance alone, the host effect settled as error because
  *      StructPlane received canonical JSON text and refused
  *      type_arrival_shape_mismatch: not_an_object(span, ...).
+ *   3. Written against the removed surface (`type span(...)` decl, `? probe`
+ *      RHS rider) this program stopped at the parser: POST /program returned
+ *      400 dl_parse_error(statement, "type span(end: int, start: int)...").
+ *      The referenced relation is now an ORDINARY rel decl and the registered
+ *      host is an ORDINARY RHS atom; the contract, not a marker, selects the
+ *      demand-response lowering.
  *
- * The file-backed injected seam lets this one receipt inspect the dictionary
- * count after the live host tick without exposing dictionaries through /idb.
+ * The file-backed injected seam lets this one receipt count the target
+ * relation's rows straight out of sqlite after the live host tick.
+ *
+ * SABOTAGE RECEIPT (run 2026-07-30, reverted): swapping the expected target
+ * delta to the other column order (`span` add `[[17, 42]]`) turns this test red
+ * (2 pass, 1 fail), so the public-target assertions read the real tick log and
+ * pin the declared column order rather than merely observing a non-empty key.
  */
 test("declared-struct live host output interns once and tick logs render the canonical value", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tsv2-struct-host-"));
@@ -211,16 +222,25 @@ test("declared-struct live host output interns once and tick logs render the can
       ["a.rs", { end: 42, start: 17 }],
     ]);
     assert.deepEqual(hostTick.deltas.host_start?.add, [["a.rs", 17]]);
+    // The referenced relation is ordinary and PUBLIC: the target row enters the
+    // same tick as the parent that references it, in its own declared column
+    // order, and is queryable by name. Under the dictionary model this row was
+    // storage-plane only and appeared in neither place.
+    assert.deepEqual(hostTick.deltas.span?.add, [[42, 17]]);
+    const spanRows = JSON.parse((await request(served.port, "/idb/span", "GET")).body) as {
+      rows: readonly (readonly (string | number)[])[];
+    };
+    assert.deepEqual(spanRows.rows, [[42, 17]]);
 
     const inspection = ScratchStore.open(dbUrl);
     try {
-      const dictionaryRows = await firstValueFrom(
+      const targetRows = await firstValueFrom(
         inspection.runner.scalar(
           inspection.db,
-          'SELECT count(*) FROM "__dict_span"',
+          'SELECT count(*) FROM "span"',
         ),
       );
-      assert.equal(dictionaryRows, 1);
+      assert.equal(targetRows, 1);
     } finally {
       inspection.db.close();
     }
