@@ -1,0 +1,26 @@
+# exhaust-case.dl6 -- the flagship scenario with the SESSION passed to the host.
+#
+# rxoracle's flagship declares `sh fetch_body(route_id)`, so each route is its
+# own invocation and no two demands share anything. `exhaust` means "while a
+# SLOT is busy, drop new work for that slot", so grading it needs a program
+# where two demands are for one slot. Adding `session_id` to the host's inputs
+# is the smallest change that produces that, and it changes nothing else: the
+# rules, the keyed head and the arrival shape are the flagship's.
+#
+# What the probe derives from this is the honest part of the exhaust result.
+# `slotOf` in flatten-probe.ts reads the first input column, which here IS the
+# session. That derivation is the PROBE's convention and not the language's:
+# `identity_digest` and `witness_digest` are both content-addressed over the
+# full input tuple, so the two competing demands get two unrelated digests and
+# no column in the demand rel says they compete for one slot. The verdict's
+# "the slot key" section is about exactly that gap.
+
+rel route_change(session_id: text, route_id: text) log keep(all).
+rel open_route(session_id: text, route_id: text) key(1).
+rel body(session_id: text, route_id: text, payload: text).
+
+sh fetch_body(session_id: text, route_id: text) -> (payload: text) =
+  `printf 'start %s-%s\n' "{session_id}" "{route_id}" >> "$RXO_MARKS"; sleep "$RXO_NAP"; printf 'done %s-%s\n' "{session_id}" "{route_id}" >> "$RXO_MARKS"; printf '%s' "{route_id}-body"`.
+
+open_route(SessionId, RouteId) <+ route_change(SessionId, RouteId).
+body(SessionId, RouteId, Payload) <- open_route(SessionId, RouteId), fetch_body(SessionId, RouteId, Payload).
