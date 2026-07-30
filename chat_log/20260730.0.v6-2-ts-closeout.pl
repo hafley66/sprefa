@@ -82,6 +82,12 @@ lane(json_interop_lab, active,
      'actual-world executable lab for an additive opt-out JSON module; no production or surface edits').
 lane(coordinator_integration, active,
      'merge gates, run Grafana and watcher baselines, port norm, update ARCH and this ledger, commit checkpoints, and push').
+lane(reference_runtime_finish, active,
+     'finish or block the single-rel target-arrival then parent-edge normalization path; no intermediate relation type or new syntax').
+lane(rtkq_extraction_golden, active,
+     'grade multiple advanced ast-grep forms, relational union, spans, edits, retractions, and process counts through Rust extraction').
+lane(host_batching_audit, active,
+     'measure and reduce per-witness extraction subprocess amplification through existing typed executor contracts').
 
 task(remove_rhs_question_mark, active,
      'zero executable RHS host probes use question-mark syntax; compiler infers host lowering from the registered contract').
