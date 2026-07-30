@@ -1,0 +1,18 @@
+{
+  "expect": "diverges",
+  "summary": "three transitions for one entity in ONE arrival batch: rxjs sees three, sprefa's tick boundary sees the net one.",
+  "note": "N-1 of N intra-tick transitions are not events anywhere; no normalization is opted into, so the whole gap is the diff",
+  "stepMs": 500,
+  "guardMs": 100,
+  "steps": [
+    {
+      "label": "three transitions, one batch, one tick",
+      "batch": [
+        { "rel": "transition", "sign": "add", "row": ["e", "alpha"] },
+        { "rel": "transition", "sign": "add", "row": ["e", "beta"] },
+        { "rel": "transition", "sign": "add", "row": ["e", "gamma"] }
+      ]
+    },
+    { "label": "idle", "batch": [] }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "expect": "inexpressible",
+  "summary": "observing a teardown: rxjs finalize fires when the inner's subscription ends; DL6 reserves the word unsubscribe and lowers nothing behind it.",
+  "note": "registry.pl unsubscribe/1 status reserved, lower role wrapper(rel_atom, refuse(lifecycle))",
+  "refusal": { "exit": 2, "contains": "unsupported_construct(lifecycle_arm(unsubscribe))" },
+  "stepMs": 500,
+  "guardMs": 100,
+  "steps": []
+}

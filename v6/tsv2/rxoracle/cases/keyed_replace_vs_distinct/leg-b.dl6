@@ -1,0 +1,13 @@
+# keyed_replace_vs_distinct -- leg B.
+#
+# An edge rule into a `key(1)` head. The question is what an IDENTICAL value
+# re-arriving on the same key does: R7 boundary diffing says a keyed write of a
+# row that is already there produces no delta, which is distinctUntilChanged's
+# whole contract. `reading` is `log keep(all)`, so the duplicate arrivals
+# themselves are all visible and only the keyed head is expected to swallow
+# them.
+
+rel reading(sensor: text, value: text) log keep(all).
+rel current(sensor: text, value: text) key(1).
+
+current(Sensor, Value) <+ reading(Sensor, Value).

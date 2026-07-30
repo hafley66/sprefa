@@ -1,0 +1,29 @@
+# unsubscribe_teardown -- leg B. THE INEXPRESSIBLE ONE.
+#
+# This is the cancel-inner question asked in the language's own rx vocabulary:
+# when a subscription's reason to exist goes away, rxjs runs the inner's
+# teardown and `finalize` is the place a program observes that happening. The
+# construct registry has `unsubscribe/1` -- axis `time`, analyze role
+# `refs_of_arg(1, pos, trigger)` -- and its lower role is
+# `wrapper(rel_atom, refuse(lifecycle))`, status `reserved`. The word exists,
+# the surface parses it, and no lowering is behind it.
+#
+# `bop check` returns exit 2 and names it:
+#
+#   refusal: unsupported_construct(lifecycle_arm(unsubscribe))
+#
+# `directive(no_new_syntax)` is absolute, so this file stays as the natural
+# spelling of the missing thing rather than being rewritten into something that
+# compiles. `finalize/1` DOES compile and is the closest live word, but it is
+# not the same event: the update-arm lab measured it as per-row retraction
+# firing on the tick AFTER the departure, where an rxjs teardown is the
+# subscription ending, synchronously, at the moment its reason ends. A rewrite
+# onto `finalize` would report a match for a different question.
+
+rel open_request(request_id: text) log keep(all).
+rel close_request(request_id: text) log keep(all).
+rel live(request_id: text).
+rel torn_down(request_id: text) log keep(all).
+
+live(RequestId) <- open_request(RequestId), not(close_request(RequestId)).
+torn_down(RequestId) <+ unsubscribe(live(RequestId)).

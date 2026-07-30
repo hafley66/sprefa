@@ -136,10 +136,13 @@ Two of the questions this harness exists to answer are not events at all:
 * is the dead inner's answer stored anywhere
 
 `case.json`'s `receipts` asserts both against the live server, in bash, before
-teardown: `marksLines` / `marksContains` against `$RXO_MARKS`, the spawn ledger
+teardown: `marksLines` and `marksExact` against `$RXO_MARKS`, the spawn ledger
 every host template in this corpus appends to, and `idbRows` against
 `GET /idb/:rel`. These are assertions, not normalizations: they add nothing to
-either line file and cannot make a diff pass.
+either line file and cannot make a diff pass. `marksExact` is a whole-file
+equality, which is what makes it a proof of ORDER as well as count:
+`host_concurrency` declares `start j1 / done j1 / start j2 / done j2`, and an
+interleaved ledger would fail it.
 
 ## 4. Case layout
 

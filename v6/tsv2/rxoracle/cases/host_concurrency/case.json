@@ -1,0 +1,27 @@
+{
+  "expect": "diverges",
+  "summary": "two host demands raised in one tick: mergeMap overlaps the two inners, the served host runner serializes them under concatMap.",
+  "note": "same rows, different steps; the spawn ledger start j1/done j1/start j2/done j2 is the receipt",
+  "stepMs": 1000,
+  "guardMs": 250,
+  "env": { "RXO_NAP": "1.95" },
+  "receipts": {
+    "marksLines": 4,
+    "marksExact": ["start j1", "done j1", "start j2", "done j2"],
+    "idbRows": { "result": 2 }
+  },
+  "steps": [
+    {
+      "label": "two jobs, one batch, one tick",
+      "batch": [
+        { "rel": "job", "sign": "add", "row": ["j1"] },
+        { "rel": "job", "sign": "add", "row": ["j2"] }
+      ]
+    },
+    { "label": "idle", "batch": [] },
+    { "label": "idle: mergeMap would deliver BOTH here", "batch": [] },
+    { "label": "idle", "batch": [] },
+    { "label": "idle: the serialized second answer lands here", "batch": [] },
+    { "label": "idle", "batch": [] }
+  ]
+}

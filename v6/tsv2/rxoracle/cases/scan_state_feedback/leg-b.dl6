@@ -1,0 +1,25 @@
+# scan_state_feedback -- leg B.
+#
+# `scan` feeds each emission back into the next. The DL6 spelling is `pre(...)`:
+# read the head as it stood BEFORE this occurrence and write the successor.
+# This is the fixture family that was refused as `edge_body_needs_pre` until
+# `pre_occurrence_loop` landed (ARCH row, 2026-07-30); it compiles now, and the
+# ordered occurrence loop is what makes the fold correct rather than sampled.
+#
+# The base case is its own rule because `counter` is rule-headed and therefore
+# not an arrival target: there is no way to seed it over http. `not(counter(...))`
+# around one plain relation atom is live in an edge body, so the first increment
+# for a name mints 1 and every later one reads `pre`.
+#
+# THE POINT OF THE CASE is the last step, where two increments arrive in ONE
+# batch. The ordered occurrence loop computes both -- the receipt is that the
+# total reaches 5 and not 4 -- and the intermediate 4 is consumed by the second
+# occurrence and then is not an event anywhere, because the tick boundary
+# reports the net change. So this is not same_tick_collapse's "the intermediate
+# is discarded": here it is computed, used, and unobservable.
+
+rel increment(name: text) log keep(all).
+rel counter(name: text, total: int) key(1).
+
+counter(Name, 1) <+ increment(Name), not(counter(Name, _Existing)).
+counter(Name, Next) <+ increment(Name), pre(counter(Name, Total)), Next := Total + 1.

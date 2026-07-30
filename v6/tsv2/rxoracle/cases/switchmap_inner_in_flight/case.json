@@ -8,6 +8,7 @@
   "env": { "RXO_NAP": "1.95" },
   "receipts": {
     "marksLines": 4,
+    "marksExact": ["start r1", "done r1", "start r2", "done r2"],
     "idbRows": { "__host_response_fetch_body": 2, "body": 1 }
   },
   "steps": [

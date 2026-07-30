@@ -44,6 +44,11 @@ trap cleanup EXIT
 say() { printf '%s\n' "$*"; }
 loud() { printf '\n== %s ==\n' "$*"; }
 
+# Block until the wall clock reaches an absolute epoch-millisecond target.
+sleep_until() {
+  python3 -c "import time; target=$1/1000.0; remaining=target-time.time(); time.sleep(remaining if remaining>0 else 0)"
+}
+
 # ── argument parsing ─────────────────────────────────────────────────────────
 SELECTED=()
 for argument in "$@"; do
@@ -116,17 +121,22 @@ run_leg_b() {
   local t0_ms
   t0_ms="$(python3 -c 'import time; print(int(round(time.time()*1000)) - '"$step_ms"'//2)')"
 
+  # Each POST is anchored to an ABSOLUTE target derived from t0, never to a
+  # relative sleep. A relative `sleep stepMs` after every POST accumulates the
+  # POST's own round trip: measured at ~40ms per step, which walked step 4 of
+  # this corpus 167ms past its midpoint and into the boundary guard.
   local step_count index batch label
   step_count="$(jq -r '.steps | length' "$manifest")"
   for (( index = 0; index < step_count; index++ )); do
+    sleep_until "$(( t0_ms + index * step_ms + step_ms / 2 ))"
     batch="$(jq -c ".steps[$index].batch // []" "$manifest")"
     label="$(jq -r ".steps[$index].label // \"step $index\"" "$manifest")"
     if [ "$batch" != "[]" ]; then
       curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null \
         || { say "  leg B: arrivals POST failed at step $index ($label)"; return 1; }
     fi
-    python3 -c "import time; time.sleep($step_ms/1000.0)"
   done
+  sleep_until "$(( t0_ms + step_count * step_ms ))"
 
   # RECEIPTS, taken while the server is still up. These answer questions the
   # line diff structurally cannot: the diff grades relations a program declared,
@@ -143,6 +153,12 @@ run_leg_b() {
       || { say "  receipt: expected $want_marks host spawn marks, got $got_marks:"; sed 's/^/    /' "$scratch/marks"; return 1; }
     say "  receipt: host spawn ledger has $got_marks lines as declared"
     sed 's/^/    marks: /' "$scratch/marks"
+  fi
+  if [ "$(jq -r '(.receipts.marksExact // []) | length' "$manifest")" != "0" ]; then
+    jq -r '.receipts.marksExact[]' "$manifest" >"$scratch/marks.want"
+    diff -q "$scratch/marks.want" "$scratch/marks" >/dev/null \
+      || { say "  receipt: spawn ledger is not the declared sequence:"; diff "$scratch/marks.want" "$scratch/marks" | sed 's/^/    /'; return 1; }
+    say "  receipt: spawn ledger is the declared sequence exactly"
   fi
   while IFS= read -r pair; do
     [ -n "$pair" ] || continue
