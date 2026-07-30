@@ -222,6 +222,43 @@ program_violation(relation_pattern_not_a_relation_value, prog(Decls, Rules),
                                 Argument, pattern(Ref, Column, TypeName, Value)),
     !.
 
+% The SAME law one hop out, where the offending value is not written down.
+% relation_argument_violation/6 opens with nonvar(Value), so the class above
+% sees only concrete arguments; a VARIABLE carrying a text leaf into a ref
+% column passed both doors and the emitter wrote that text straight into a
+% column its own DDL declares INTEGER NOT NULL and puts in the primary key
+% (burr B1 of plans/2026-07-30-relpattern-adversarial-review.md). sqlite stores
+% text in an integer-affinity column without complaint, and the boundary render
+% then read it as a dictionary id.
+%
+% A variable is not refused for being a variable. What is refused is a variable
+% appearing at a ref-typed column AND at some other declared column of a
+% different type in the same rule, which is a contradiction whatever the two
+% types are: the surrogate id is storage, never a value anything else may hold
+% (the types-round-2 surrogate-mate ruling), so no program can want a variable
+% to be both a `file` and a text at once.
+%
+% The report is taken from the REF side: that column is the one whose declared
+% type the program is contradicting, and naming it matches the concrete class
+% above, which also names the ref column rather than whatever the phantom
+% expression collided with.
+%
+% Scope, stated: only DECLARED column types take part. An undeclared column has
+% no type here to contradict (0_program_check.pl sees prog/2 and never the
+% literal witnesses analyze.pl infers from), so nothing is asserted about it,
+% and this class stays a statement about what the program itself wrote down.
+program_violation(relation_column_type_conflict, prog(Decls, Rules),
+                  conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType)) :-
+    type_definitions(Decls, Types),
+    Types \== [],
+    member(Rule, Rules),
+    rule_column_variable(Decls, Types, Rule, Variable, Ref, Column, TypeName),
+    declared_type_name(Types, TypeName),
+    rule_column_variable(Decls, Types, Rule, Other, OtherRef, OtherColumn, OtherType),
+    Other == Variable,
+    OtherType \== TypeName,
+    !.
+
 % ── the two classes only the oracle used to check ────────────────────────────
 
 % A Log relation with no keep/2 is unbounded history by accident rather than
@@ -268,6 +305,22 @@ body_relation_atom(Body, Atom) :-
         memberchk(Wrapper, [latest, pre, finalize]),
         arg(1, Term, Atom)
     ).
+
+% Every VARIABLE argument of every relation atom a rule reaches, with the
+% column it sits in and that column's declared type. Variable identity is the
+% clause's own, so two occurrences of the same source variable are `==` and two
+% anonymous `_` are not, which is exactly the flow question being asked.
+rule_column_variable(Decls, Types, Rule, Argument, Ref, Column, Type) :-
+    rule_relation_atom(Rule, Atom),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    Ref = Name/Arity,
+    relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
+    length(Columns, Arity),
+    nth1(Position, ColumnTypes, Type),
+    nth1(Position, Columns, Column),
+    arg(Position, Atom, Argument),
+    var(Argument).
 
 % One argument in a ref-typed column. A well-formed relation value is not a
 % violation by itself; the search continues INTO it, so the reported column is

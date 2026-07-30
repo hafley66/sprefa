@@ -139,6 +139,9 @@ engine_check_order([ key_position_out_of_range,
                      type_cycle,
                      column_type_unknown,
                      relation_pattern_not_a_relation_value,
+                     % Straight after the concrete-argument class it extends:
+                     % the same law where the offending value is a variable.
+                     relation_column_type_conflict,
                      keyed_level_head,
                      keyed_log_rel,
                      log_on_level_headed_rel,
@@ -163,6 +166,10 @@ engine_refusal(type_cycle,              Names, type_cycle(Names)).
 engine_refusal(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
+engine_refusal(relation_column_type_conflict,
+               conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
+               relation_column_type_conflict(Ref, Column, TypeName,
+                                             OtherRef, OtherColumn, OtherType)).
 engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
 engine_refusal(key_position_out_of_range, Payload, Payload).
 engine_refusal(key_position_duplicate,    Payload, Payload).

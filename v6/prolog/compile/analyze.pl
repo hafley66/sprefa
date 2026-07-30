@@ -1098,7 +1098,13 @@ check_supported_subset_expanded(Program) :-
                               % a ref column holding a non-relation term used
                               % to compile into a json_extract of an INTEGER
                               % endpoint, which is NULL and answers nothing.
-                              relation_pattern_not_a_relation_value ]),
+                              relation_pattern_not_a_relation_value,
+                              % The same law where the value is a VARIABLE, in
+                              % the same slot engine.pl gives it. Without this
+                              % the emitter INSERTs a text leaf into its own
+                              % `INTEGER NOT NULL` ref column and sqlite keeps
+                              % it.
+                              relation_column_type_conflict ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1147,6 +1153,10 @@ compiler_refusal(type_cycle,            Names, type_cycle(Names)).
 compiler_refusal(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
+compiler_refusal(relation_column_type_conflict,
+                 conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
+                 relation_column_type_conflict(Ref, Column, TypeName,
+                                               OtherRef, OtherColumn, OtherType)).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(key_position_out_of_range, Payload, Payload).
 compiler_refusal(key_position_duplicate,    Payload, Payload).
