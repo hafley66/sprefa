@@ -57,7 +57,7 @@ sweep:
 bop-test:
 	cd {{v6}}/tsv2 && node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
 
-# tsv2 runtime + served-engine tests (expect: 96 pass / 1 skip, and growing)
+# tsv2 runtime + served-engine tests (expect: 92 pass / 1 skip, and growing)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 

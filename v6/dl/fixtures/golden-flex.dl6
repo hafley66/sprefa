@@ -140,7 +140,8 @@ rel patch(label: text, at: plot).                  # depth 1: a struct field typ
 
 # ═══ the world's arrival targets (EDB) ══════════════════════════════════════
 # Nothing derives these; the schedule pushes them. Every column carries a
-# col_type/3 entry, including the two non-scalar scalars (bool, float).
+# col_type/3 entry, `bool` and `float` among them -- the two types a `rel` decl
+# accepts and an `sh`/`bind` decl does not (the door disagreement above).
 rel tree(tree_id: int, species: text, site: patch).   # depth 2: patch -> plot
 rel pick_event(tree_id: int, picker: text, kilos: float, sugar: int).
 rel retire_event(tree_id: int).
