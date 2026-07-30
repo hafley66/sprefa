@@ -162,6 +162,17 @@ memory-soak:
 golden-flex:
 	bash {{v6}}/tsv2/scripts/golden-flex.sh
 
+# THE SYSTEM DESCRIBING ITSELF: v6/dl/fixtures/self-map.dl6 reads registry.pl's
+# surface/5, 1_expansion.pl's expansion_phase/3, ARCH.pl's task/3 and its OWN
+# rel graph (through analyze.pl) as `sh` host rows, derives the structure in
+# ordinary dl6 rules, and v6/ARCH-MAP.md is rendered from the derived rows.
+# Manual mode only -- no daemon, one ephemeral server, torn down on exit.
+# Output is byte-stable across runs (everything sorted, no timestamps), which
+# is what a later staleness gate would diff.
+# (expect: SELF MAP HOLDS, diagrams=4, exit 0; ~20s, spawns 4 swipl one-shots)
+self-map:
+	bash {{v6}}/tsv2/scripts/self-map.sh
+
 # exactly one terminal subscription per app (dl/src and tsv2/serve)
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
