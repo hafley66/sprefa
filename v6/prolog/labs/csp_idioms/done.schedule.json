@@ -1,0 +1,6 @@
+[
+  [ {"rel":"produce","sign":"add","row":["a"]}, {"rel":"produce","sign":"add","row":["b"]}, {"rel":"produce","sign":"add","row":["c"]} ],
+  [ {"rel":"drain","sign":"add","row":["d1"]} ],
+  [ {"rel":"done","sign":"add","row":["cancel"]}, {"rel":"drain","sign":"add","row":["d2"]} ],
+  [ {"rel":"drain","sign":"add","row":["d3"]} ]
+]

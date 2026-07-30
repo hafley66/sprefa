@@ -1,0 +1,49 @@
+# idiom 5: select / alternation. First-available of two channels wins, loser
+# STAYS QUEUED. This is the CSP primitive with no direct spelling here, so it is
+# built from two full queues plus a priority tiebreak.
+#
+# Go equivalent (unexecuted, the external referent):
+#   select {
+#   case v := <-chanA: use("a", v)
+#   case v := <-chanB: use("b", v)
+#   }   // if BOTH are ready Go picks UNIFORMLY AT RANDOM; the unpicked value
+#       // is not consumed and stays in its channel
+#
+# What is written below is a PRIORITY select: a wins whenever a is ready.
+# The random discipline is not expressible (there is no randomness); the
+# round-robin discipline IS (see select_rr.dl6). slot_select_spelling.
+#
+rel prod_a(payload: text)               log keep(all).
+rel prod_b(payload: text)               log keep(all).
+rel sel(cause: text)                    log keep(all).
+rel pend_a(ordinal: int, payload: text) log keep(all).
+rel pend_b(ordinal: int, payload: text) log keep(all).
+rel cursor_a(name: text, at: int)       key(1).
+rel cursor_b(name: text, at: int)       key(1).
+rel took_a(ordinal: int)                key(1).
+rel took_b(ordinal: int)                key(1).
+rel picked(branch: text, ordinal: int, payload: text) log keep(all).
+
+# numbering block for channel A
+cursor_a('a', 1)          <+ prod_a(_Payload), not(cursor_a('a', _At)).
+pend_a(1, Payload)        <+ prod_a(Payload), not(cursor_a('a', _At)).
+cursor_a('a', NextAt)     <+ prod_a(_Payload), pre(cursor_a('a', At)), NextAt := At + 1.
+pend_a(NextAt, Payload)   <+ prod_a(Payload), pre(cursor_a('a', At)), NextAt := At + 1.
+
+# numbering block for channel B -- VERBATIM SHAPE REPEAT of the block above
+cursor_b('b', 1)          <+ prod_b(_Payload), not(cursor_b('b', _At)).
+pend_b(1, Payload)        <+ prod_b(Payload), not(cursor_b('b', _At)).
+cursor_b('b', NextAt)     <+ prod_b(_Payload), pre(cursor_b('b', At)), NextAt := At + 1.
+pend_b(NextAt, Payload)   <+ prod_b(Payload), pre(cursor_b('b', At)), NextAt := At + 1.
+
+item_a(Ordinal, Payload)  <- pend_a(Ordinal, Payload).
+item_b(Ordinal, Payload)  <- pend_b(Ordinal, Payload).
+ready_a(min(Ordinal))     <- item_a(Ordinal, _Payload), not(took_a(Ordinal)).
+ready_b(min(Ordinal))     <- item_b(Ordinal, _Payload), not(took_b(Ordinal)).
+
+# the arms. A wins outright; B fires only when A has nothing ready.
+took_a(Ordinal)                 <+ sel(_Cause), latest(ready_a(Ordinal)).
+picked('a', Ordinal, Payload)   <+ sel(_Cause), latest(ready_a(Ordinal)), latest(item_a(Ordinal, Payload)).
+
+took_b(Ordinal)                 <+ sel(_Cause), not(ready_a(_Any)), latest(ready_b(Ordinal)).
+picked('b', Ordinal, Payload)   <+ sel(_Cause), not(ready_a(_Any)), latest(ready_b(Ordinal)), latest(item_b(Ordinal, Payload)).

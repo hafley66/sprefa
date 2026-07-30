@@ -1,0 +1,8 @@
+[
+  [ {"rel":"acquire","sign":"add","row":["w1",1]} ],
+  [ {"rel":"acquire","sign":"add","row":["w2",2]} ],
+  [ {"rel":"acquire","sign":"add","row":["w3",3]} ],
+  [ {"rel":"release","sign":"add","row":[1]} ],
+  [ {"rel":"acquire","sign":"add","row":["w4",4]} ],
+  [ {"rel":"acquire","sign":"add","row":["w5",5]}, {"rel":"acquire","sign":"add","row":["w6",6]} ]
+]
