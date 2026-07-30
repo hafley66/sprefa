@@ -45,6 +45,15 @@ arch:
 prolog-lint:
 	cd {{v6}}/prolog && bash tools/prolog-lint.sh
 
+# ratcheted compiler-cost gate: SWI inference counts per pinned .dl6 program
+# per phase, against scripts/compile-speed-baseline.tsv. Inferences because
+# they are byte-reproducible run to run where wall ms is not -- the 255s
+# clock_check SCC regression was invisible to every gate that existed.
+# Wall ms printed informationally, never gated.
+# (expect: COMPILE_SPEED programs=4 phases=24 regressions=0 improvements=0 OK)
+compile-speed:
+	cd {{v6}}/prolog/compile && bash scripts/1_compile_speed.sh
+
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
@@ -187,4 +196,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed

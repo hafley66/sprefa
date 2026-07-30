@@ -1,0 +1,31 @@
+# compile-speed baseline: SWI inference counts per .dl6 program per
+# compiler phase. Regenerate with:
+#   bash scripts/1_compile_speed.sh --write-baseline
+# Gate bands: fail above baseline*1.10, fail below
+# baseline*0.75 (bank the win deliberately).
+# Written 2026-07-30T20:02:22Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
+# program	phase	inferences
+flagship-flow	parse	229946
+flagship-flow	plan	1369399
+flagship-flow	lower	163893
+flagship-flow	boot	1447
+flagship-flow	emit	355902
+flagship-flow	write	90
+golden-flex	parse	135429
+golden-flex	plan	359646
+golden-flex	lower	55126
+golden-flex	boot	1117
+golden-flex	emit	131422
+golden-flex	write	90
+flagship-callgraph	parse	75992
+flagship-callgraph	plan	92220
+flagship-callgraph	lower	24002
+flagship-callgraph	boot	492
+flagship-callgraph	emit	94841
+flagship-callgraph	write	90
+door-handwritten	parse	41118
+door-handwritten	plan	13155
+door-handwritten	lower	3675
+door-handwritten	boot	243
+door-handwritten	emit	15782
+door-handwritten	write	90
