@@ -19,6 +19,7 @@
 pub mod dispatch;
 pub mod family;
 pub mod lang;
+pub mod project;
 pub mod rows;
 pub mod scip;
 pub mod seams;
@@ -37,6 +38,9 @@ pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, GoSource,
     KotlinSource, PrologSource, RustSource, TsSource,
 };
+pub use project::{
+    resolve_project, resolve_project_jsonl, ProjectError, ResolveArms, ResolveRequest, ScipMode,
+};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
@@ -49,4 +53,4 @@ pub use seams::{
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use wire::{flatten, flatten_jsonl, FlatFact, SpanOut};
+pub use wire::{flatten, flatten_jsonl, FlatFact, SpanOut, SCHEMA};

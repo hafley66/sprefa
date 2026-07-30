@@ -1344,6 +1344,22 @@ pub enum FlatFact {
         caller_site_end: u32,
         kind: String,
     },
+    /// A project-mode `Resolve<TypeF>` edge: one type reference resolved to the
+    /// declaration it names. The flat twin of `ProjectEdge`, for the same reason
+    /// as `ResolvedEdge` above: the v6 host decodes top-level keys, so the
+    /// target coordinate travels as a path plus a name, never a nested span
+    /// join. `owner` is the referencing declaration, `target` what it resolved
+    /// to.
+    #[serde(rename = "resolved_type_edge")]
+    ResolvedTypeEdge {
+        owner_path: String,
+        owner_name: Option<String>,
+        owner_start: u32,
+        owner_end: u32,
+        target_path: String,
+        target_name: Option<String>,
+        kind: String,
+    },
 }
 
 // flatten / flatten_jsonl live in wire.rs (the logic, not the types).
