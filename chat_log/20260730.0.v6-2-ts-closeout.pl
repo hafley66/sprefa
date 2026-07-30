@@ -187,6 +187,17 @@ verification(json_interop_lab,
                     repeated_json_bytes(921600),
                     relational_ref_bytes(98304),
                     ratio(9.38))).
+verification(grafana_scale_gate,
+             passed(v5(files(42739), repos(389), wall_seconds(13.00),
+                       files_per_second(3287.62), rss_bytes(356794368),
+                       sqlite_bytes(52387840)),
+                    v6(files(779), repos(8), wall_seconds(19.35),
+                       files_per_second(40.26), rss_bytes(176553984),
+                       sqlite_bytes(1069056), statements_per_tick(54.03)),
+                    unusable_repos(139),
+                    cap_excluded_repos(242))).
+host_overuse(grafana_v6_crawl,
+             'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
 host_executor(shell).
 host_executor(sprefa_extract).
