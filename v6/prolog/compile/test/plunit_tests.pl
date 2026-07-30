@@ -46,7 +46,8 @@
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
                 listened_departure_refs/2,
-                reserved_construct_in_body/2, body_forbidden_goal/2 ]).
+                reserved_construct_in_body/2, body_forbidden_goal/2,
+                rule_is_level/1, rule_is_edge/1 ]).
 :- use_module('../../conformance/engine',
               [ trigger_items/2, body_finalize_ref/2,
                 body_latest_ref/2, body_pre_ref/2,
@@ -2531,3 +2532,83 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
     split_rules([Rule], [], [Rule], []).
 
 :- end_tests(oracle_aggregate_classification).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% relation values at depth >= 2
+% ═══════════════════════════════════════════════════════════════════════════
+%
+% The conformance corpus grades the ROWS (fixtures/6_relation_depth.pl) and
+% tsv2/tests/relationDepth.test.ts grades the query PLAN. What is left for a
+% unit test is the two compiler-only refusals: positions the dictionary
+% rewrite deliberately does not enter. Neither has a fixture, because neither
+% is a language refusal -- the reference engine executes both happily -- and a
+% conformance fixture would assert the oracle's answer while saying nothing
+% about the compiler's.
+
+:- begin_tests(relation_depth_lowering).
+
+depth_program(Rules, plan(depth, prog(Decls, Rules), RelPlans, [raw/4],
+                          LevelRules, EdgeRules)) :-
+    Decls = [ type_decl(repo,  [col(name, text)]),
+              col_type(repo/1, name, text),
+              type_decl(fpath, [col(name, text)]),
+              col_type(fpath/1, name, text),
+              type_decl(file,  [col(repo, repo), col(at, fpath)]),
+              col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+              col_type(span/3, file, file),
+              col_type(span/3, start, int), col_type(span/3, end, int),
+              col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+              col_type(raw/4, start, int), col_type(raw/4, end, int),
+              col_type(seen/1, start, int) ],
+    RelPlans = [ relplan(repo/1,  set, [name], none, [text]),
+                 relplan(fpath/1, set, [name], none, [text]),
+                 relplan(file/2,  set, [repo, at], none, [ref(repo), ref(fpath)]),
+                 relplan(span/3,  set, [file, start, end], none,
+                         [ref(file), int, int]),
+                 relplan(raw/4,   set, [repo_name, path_name, start, end], none,
+                         [text, text, int, int]),
+                 relplan(seen/1,  set, [start], none, [int]) ],
+    include(rule_is_level, Rules, LevelRules),
+    include(rule_is_edge, Rules, EdgeRules).
+
+% A depth-2 pattern under not/1. The NOT EXISTS subquery the negation lowers
+% to has no room for the per-level joins, so the rewrite does not enter it and
+% the leftover term is named rather than compiled back into the json_extract
+% that used to answer nothing.
+test(relation_pattern_under_negation_is_refused) :-
+    depth_program([ (seen(Start) <-
+                        raw(_, _, Start, _),
+                        not(span(file(_, fpath('a.rs')), Start, _))) ],
+                  Plan),
+    catch((lower_program(Plan, _), fail), Thrown, true),
+    Thrown = unsupported_construct(
+                 relation_pattern_not_lowerable(span/3, file, file, _)).
+
+% The same value in an EDGE rule. edge_statements_for_rule/3 compiles against
+% RelPlans alone -- the dictionary plans are level-body-only by construction --
+% so there is nowhere for the join to go. Refused with its own name, because
+% the fix for it is a different piece of work than the negation case.
+test(relation_value_in_edge_rule_is_refused) :-
+    depth_program([ (span(file(repo(Name), fpath(Path)), Start, End) <+
+                        raw(Name, Path, Start, End)) ],
+                  Plan),
+    catch((lower_program(Plan, _), fail), Thrown, true),
+    Thrown = unsupported_construct(
+                 relation_value_in_edge_rule(span/3, file, file, _)).
+
+% The positive control for both: the same depth-2 construction as a LEVEL rule
+% lowers, and it lowers to one dictionary atom per level rather than to a
+% json_extract of the integer endpoint.
+test(depth_two_level_construction_lowers_to_one_join_per_level) :-
+    depth_program([ (span(file(repo(Name), fpath(Path)), Start, End) <-
+                        raw(Name, Path, Start, End)) ],
+                  Plan),
+    lower_program(Plan, Lowered),
+    arg(5, Lowered, LevelStatements),
+    memberchk(levelstmt(span/3, _, InsertSqls, _, _, _), LevelStatements),
+    atomic_list_concat(InsertSqls, ' ', Sql),
+    forall(member(View, ['"__ref_repo"', '"__ref_fpath"', '"__ref_file"']),
+           sub_atom(Sql, _, _, _, View)),
+    \+ sub_atom(Sql, _, _, _, 'json_extract(b').
+
+:- end_tests(relation_depth_lowering).

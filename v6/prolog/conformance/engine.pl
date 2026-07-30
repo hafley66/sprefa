@@ -88,6 +88,7 @@
                 canonicalize_world_rows/3,
                 normalize_relation_reference_rows/3
               ]).
+:- use_module('../0_relation_pattern', [expand_relation_values/2]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -137,6 +138,7 @@ engine_check_order([ key_position_out_of_range,
                      key_position_duplicate,
                      type_cycle,
                      column_type_unknown,
+                     relation_pattern_not_a_relation_value,
                      keyed_level_head,
                      keyed_log_rel,
                      log_on_level_headed_rel,
@@ -158,6 +160,9 @@ check_program(Program) :-
     ).
 
 engine_refusal(type_cycle,              Names, type_cycle(Names)).
+engine_refusal(relation_pattern_not_a_relation_value,
+               pattern(Ref, Column, TypeName, Value),
+               relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
 engine_refusal(key_position_out_of_range, Payload, Payload).
 engine_refusal(key_position_duplicate,    Payload, Payload).
@@ -445,8 +450,14 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     % Host preparation stays a PRE-PASS: it mixes syntax normalization with
     % world-plan extraction, so it does not belong in the four-phase table.
     % Everything after it runs in the declared order (1_expansion.pl).
-    expand_program(HostProg, Prog, _),
-    check_program(Prog),
+    expand_program(HostProg, ExpandedProg, _),
+    check_program(ExpandedProg),
+    % A relation-shaped TERM in a rule is the surface spelling of a relation
+    % value; obj(SortedPairs) is the value. Rewriting here, after the shape
+    % refusal and before anything stores or unifies, is what makes a
+    % rule-BUILT value and a world-ARRIVED value the same term at every depth
+    % (0_relation_pattern.pl).
+    expand_relation_values(ExpandedProg, Prog),
     check_world_shapes(Prog, Initial0, Schedule0),
     % struct_arrival_key_order ruling: arrival key order is insignificant --
     % the decl induces the canonical form, so every world row is rewritten to

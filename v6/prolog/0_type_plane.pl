@@ -42,11 +42,15 @@
             type_field_values/4,
             type_ref_columns/3,
             canonical_json_text/2,
-            json_object_value/2
+            json_object_value/2,
+            relation_columns_and_types/5,
+            relation_value_shape/3,
+            relation_value_object/4
           ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(pairs)).
 :- use_module('conformance/body', [json_canon/2]).
 
 % ── the type table ───────────────────────────────────────────────────────────
@@ -84,6 +88,57 @@ type_ref_columns(Types, Name, RefColumns) :-
               nth1(Position, ColumnTypes, ChildType),
               declared_type_name(Types, ChildType) ),
             RefColumns).
+
+% ── one relation's columns, whichever door asks ──────────────────────────────
+% A rel reached in COLUMN position carries its shape in a type_decl/2; a rel
+% reached only as an ordinary relation carries it in col_type/3 rows. Both
+% spellings describe the same rel, and a caller walking a rule body cannot know
+% in advance which one a given atom has, so this answers from either.
+% relation_column_types/4 below is the types-only projection that predates it.
+relation_columns_and_types(_, Types, Name/Arity, Columns, ColumnTypes) :-
+    type_definition(Types, Name, Columns, ColumnTypes),
+    length(Columns, Arity),
+    !.
+relation_columns_and_types(Decls, _, Ref, Columns, ColumnTypes) :-
+    findall(Column-Type, member(col_type(Ref, Column, Type), Decls), Pairs),
+    pairs_keys_values(Pairs, Columns, ColumnTypes).
+
+% ── a relation value written as a term ───────────────────────────────────────
+%
+% `file(repo(Name), fpath(Path))` in a rule head or body argument, over a
+% column declared `file`. This is the SURFACE spelling of a relation value; the
+% stored/graded spelling is the canonical obj(...) below, which is also what a
+% world arrival produces. Keeping the two apart is the whole of the depth fix:
+% every door turns the term into the object, and no door stores the term.
+%
+% The shape test is exact -- right name, right arity. A name that matches no
+% declared type, or the right name at the wrong arity, is NOT a relation value
+% and is a named refusal at the door
+% (0_program_check.pl relation_pattern_not_a_relation_value), never a value
+% that quietly stores as something else.
+relation_value_shape(Types, TypeName, Value) :-
+    nonvar(Value),
+    compound(Value),
+    functor(Value, TypeName, Arity),
+    type_definition(Types, TypeName, Columns, _),
+    length(Columns, Arity).
+
+% The canonical object a relation-value term denotes, recursively, with keys
+% sorted the way every other object in the system is sorted. Unbound arguments
+% pass through as themselves, so a PATTERN (`file(_, fpath(Path))`) becomes a
+% pattern object that unifies against a stored value at any depth.
+relation_value_object(Types, TypeName, Value, obj(Sorted)) :-
+    relation_value_shape(Types, TypeName, Value),
+    type_definition(Types, TypeName, Columns, ColumnTypes),
+    Value =.. [_ | Args],
+    maplist(relation_field_object(Types), Columns, ColumnTypes, Args, Pairs),
+    keysort(Pairs, Sorted).
+
+relation_field_object(Types, Column, ChildType, Arg, Column-Out) :-
+    (   relation_value_object(Types, ChildType, Arg, Object)
+    ->  Out = Object
+    ;   Out = Arg
+    ).
 
 % ── ordering: children before parents ────────────────────────────────────────
 % Interning is post-order, so every statement family below (DDL, intern,

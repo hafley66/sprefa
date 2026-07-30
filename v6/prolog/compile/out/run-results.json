@@ -245,6 +245,62 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth2_construct_and_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_literal_leaf_selects_zero_and_one",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_many_rows_share_one_leaf",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_chained_decode",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_nested_decode_pattern",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth3_construct_and_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth3_chained_decode",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth3_many_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
     "bucket": "identical",
     "detail": "",
@@ -268,7 +324,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
