@@ -14,6 +14,7 @@
 :- discontiguous touched/2.
 :- discontiguous verification/2.
 :- discontiguous next_action/2.
+:- discontiguous session_task/2.
 :- discontiguous locked/2.
 :- discontiguous leading_hypothesis/2.
 :- discontiguous closed/2.
@@ -352,3 +353,7 @@ observed(scan_blocker,
          'scan and switchScan both reach only unsupported_construct(edge_body_needs_pre); pre_occurrence_loop owns 13 current refused fixtures and is the next V5-usurping implementation arc').
 next_action(pre_occurrence_loop,
             'implement ordered occurrence processing in the emitted runtime, applying keyed writes between occurrences and netting boundary deltas once').
+session_task(v6_completion_drive,
+             'plans/2026-07-29-v6-completion-drive.pl').
+next_action(parallel_completion_lanes,
+            'integrate ordered event scan, ghcacher tick golden, and extract tick golden; then build queryable signatures and expansion-only switchMap/scan').
