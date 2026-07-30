@@ -53,6 +53,10 @@ lane(file_span_reconcile, opus_worktree, dispatched,
      'reconcile file-span-design.md + file-identity-span-spine.md + locked single_rel_type_system + landed rel-ref runtime into ONE plan; implement only if zero cards remain open, else stop at plan').
 lane(flow_parity_residue, codex_terra, dispatched,
      'classify every unmatched call-resolution target (v5only 87 / v6only 55), close flow_node_type + param_type residue, referee-side fixes only, 0 unclassified or named blockers').
+lane_landed(comment_rail_wiring, 'merge 786b5daa',
+     '6 of 7 verdict techniques as standing rails (arch markers, suppression, readme anchors, lang junctions, gen zones, lint+suppression-retraction) + parity referee; coordinator re-ran gate: RAILS HOLD, comment_node 745/745 v5-exact, arch_node 4/4; named skips = markdown grammar (extractor hole, standing) + technique-2 block pairing refused unbound_head_var').
+bug(block_pairing_refusal_misnamed_suspect, codex_luna,
+    'range-comparison body in the block-pairing rail refused as unsupported_construct(unbound_head_var(_)) -- same misnamed-refusal class as the = spelling (review-B4 family); needs a real name + location before the technique can be judged inexpressible').
 lane(comment_rail_wiring, codex_luna, dispatched,
      'wire the comment-node verdict techniques into production rails, graded like the lab (745/745 target); fold per receipt_folding').
 
