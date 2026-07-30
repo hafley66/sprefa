@@ -259,6 +259,44 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
     OtherType \== TypeName,
     !.
 
+% A HIGHER-ORDER goal: a body goal that names the relation it reads in an
+% ARGUMENT rather than as its own functor. `call/N` is the whole family
+% (`call(src, Name, Value)`, `call(Rel, Name, Value)`, `call(src(Name, Value))`)
+% and it has no registry row, so nothing recognized it as a construct at all.
+% What claimed it instead was the edb_definition ruling: a rel no rule heads is
+% pure input, so `call/3` became a REAL relation with synthesized columns and a
+% real table that no world push ever fills. Three spellings, zero rows, zero
+% refusal, on both doors.
+%
+% Refused by name, and by the name the question already has:
+% labs/generic_scan_instantiation reached the same boundary from the other
+% side and called it dynamic_relation_name -- a relation name is a ground
+% functor the program writes down, never a value carried in an argument.
+%
+% WHAT KEEPS THIS NARROW, and it has to be kept narrow: `call` is a legal
+% relation name here and the alpha's own flagship uses one
+% (fixtures/3_flagship_callgraph.pl declares `call/2`, straight out of v5's
+% examples/callgraph-ast.dl). So the trigger is an UNDECLARED, UNHEADED
+% `call/N` goal. A program that means the relation says so, the way it says so
+% for every other relation; a program that declares nothing and writes
+% prolog's own apply functor meant the apply, and gets told the language has
+% no such thing instead of getting an empty table.
+%
+% This is a REFUSAL and not a construct: nothing new is spellable, one silent
+% wrong answer becomes an error. Scope is exactly `call`; the wider class (any
+% reserved registry word silently deriving nothing on the ORACLE door, which
+% `zip/2` also does today) is a separate and larger question about whether the
+% reference engine gains a reserved-word gate at all.
+program_violation(dynamic_relation_name, prog(Decls, Rules), call/Arity) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, Goal),
+    nonvar(Goal),
+    functor(Goal, call, Arity),
+    Arity >= 1,
+    \+ declared_relation(Decls, call/Arity),
+    \+ headed_relation(Rules, call/Arity),
+    !.
+
 % ── the two classes only the oracle used to check ────────────────────────────
 
 % A Log relation with no keep/2 is unbounded history by accident rather than
@@ -294,6 +332,33 @@ rule_relation_atom((Head <- _), Head).
 rule_relation_atom((Head <+ _), Head).
 rule_relation_atom((_ <- Body), Atom) :- body_relation_atom(Body, Atom).
 rule_relation_atom((_ <+ Body), Atom) :- body_relation_atom(Body, Atom).
+
+% A relation the program WRITES DOWN: one column declaration per position, or
+% a type declaration of the same width. Either is the program saying this name
+% is a relation of mine.
+declared_relation(Decls, Name/Arity) :-
+    type_definitions(Decls, Types),
+    relation_columns_and_types(Decls, Types, Name/Arity, Columns, _),
+    length(Columns, Arity),
+    Arity > 0.
+
+headed_relation(Rules, Ref) :-
+    (   member((Head <- _), Rules)
+    ;   member((Head <+ _), Rules)
+    ),
+    head_ref(Head, Ref),
+    !.
+
+% Every body GOAL, whatever its surface class, including inside not/1 and
+% inside a splice. Unlike body_relation_atom/2 below this does not care what
+% the goal turns out to be, which is the point: the higher-order class is
+% about a functor nothing else in the pipeline recognizes.
+rule_body_goal((_ <- Body), Goal) :- body_goal(Body, Goal).
+rule_body_goal((_ <+ Body), Goal) :- body_goal(Body, Goal).
+
+body_goal(Body, Goal) :-
+    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
+    member(event(_, _, _, Goal), Events).
 
 body_relation_atom(Body, Atom) :-
     walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),

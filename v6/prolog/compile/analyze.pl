@@ -1093,6 +1093,10 @@ check_supported_subset_expanded(Program) :-
                               key_position_duplicate,
                               type_cycle,
                               column_type_unknown,
+                              % Same slot engine.pl gives it: a higher-order
+                              % goal is not a relation atom, so no later class
+                              % has a meaningful question about it.
+                              dynamic_relation_name,
                               % Ahead of every rule-shape check, in the same
                               % slot engine.pl:engine_check_order/1 gives it:
                               % a ref column holding a non-relation term used
@@ -1153,6 +1157,7 @@ compiler_refusal(type_cycle,            Names, type_cycle(Names)).
 compiler_refusal(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
+compiler_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
 compiler_refusal(relation_column_type_conflict,
                  conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                  relation_column_type_conflict(Ref, Column, TypeName,

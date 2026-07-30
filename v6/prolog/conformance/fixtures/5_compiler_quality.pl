@@ -97,3 +97,62 @@ fixture(probe_output_comparison_guard,
         [] ]),
     final(accepted/2,
       [ accepted(a, 12) ]) ]).
+
+% ═══ D4: a higher-order goal is a named refusal, not a phantom input rel ════
+%
+% `call/N` has no registry row, so nothing recognized it as a construct, and
+% the edb_definition ruling (a rel no rule heads is pure input) claimed it
+% first: `call/3` became a real EDB relation with synthesized columns, a real
+% table, and no rows the world ever pushes. Every higher-order spelling
+% therefore answered ZERO ROWS with no refusal on either door, which is the
+% one shape this repo treats as worse than an error.
+%
+% RED RECEIPTS, taken at a4629623.
+%
+% COMPILER (swipl -q -l compile/compile.pl -g compile_dl6(...)):
+%
+%   COMPILED CLEAN
+%   CREATE TABLE "call" ("src" TEXT NOT NULL, "name" TEXT NOT NULL,
+%                        "value" TEXT NOT NULL,
+%                        PRIMARY KEY ("src", "name", "value")) WITHOUT ROWID
+%   INSERT OR IGNORE INTO "out" ("name", "value")
+%   SELECT DISTINCT d0."name", d0."value" FROM "__frontier_call" d0 ...
+%
+% ORACLE (compile/scripts/dl6_oracle.pl over one +src arrival), for both the
+% call/3 and the call/1 spellings: the tick log carries the src arrival and
+% nothing else, `out` never derives, nothing is thrown.
+%
+%   {"tick":1,"deltas":{"src":{"add":[["a",1]],"del":[]}}}
+%
+% The refusal name is the one labs/generic_scan_instantiation already chose
+% for this exact question: a relation name is a ground functor the program
+% writes down, never an argument (dynamic_relation_name).
+%
+% NARROW BY CONSTRUCTION: `call` is a legal relation name here and the alpha's
+% own flagship has one -- callgraph_derivation_over_extraction in
+% fixtures/3_flagship_callgraph.pl declares `call/2`, copied from v5's
+% examples/callgraph-ast.dl -- so the trigger is an UNDECLARED, UNHEADED
+% `call/N` goal, and that flagship fixture is this refusal's negative leg. The
+% first cut of the check refused the name outright and turned both flagship
+% fixtures red, which is how the narrowing came to be written down here.
+
+% The apply spelling. Identical in shape whether the first argument is a rel
+% NAME (`src`) or a variable bound elsewhere: same functor, same arity, same
+% refusal, so one fixture covers both.
+fixture(higher_order_call_goal_rejected,
+  prog([ col_type(src/2, name, text), col_type(src/2, value, int),
+         col_type(out/2, name, text), col_type(out/2, value, int) ],
+       [ (out(Name, Value) <- call(src, Name, Value)) ]),
+  [],
+  [],
+  [ throws(dynamic_relation_name(call/3)) ]).
+
+% The wrapped-atom spelling. A different arity, and the same answer: the goal
+% inside is not reached by anything that resolves relation names.
+fixture(higher_order_call_over_atom_rejected,
+  prog([ col_type(src/2, name, text), col_type(src/2, value, int),
+         col_type(out/2, name, text), col_type(out/2, value, int) ],
+       [ (out(Name, Value) <- call(src(Name, Value))) ]),
+  [],
+  [],
+  [ throws(dynamic_relation_name(call/1)) ]).

@@ -138,6 +138,10 @@ engine_check_order([ key_position_out_of_range,
                      key_position_duplicate,
                      type_cycle,
                      column_type_unknown,
+                     % Ahead of the value-plane classes: a higher-order goal
+                     % is not a relation atom at all, so nothing below has a
+                     % meaningful question to ask about it.
+                     dynamic_relation_name,
                      relation_pattern_not_a_relation_value,
                      % Straight after the concrete-argument class it extends:
                      % the same law where the offending value is a variable.
@@ -166,6 +170,7 @@ engine_refusal(type_cycle,              Names, type_cycle(Names)).
 engine_refusal(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
+engine_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
 engine_refusal(relation_column_type_conflict,
                conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                relation_column_type_conflict(Ref, Column, TypeName,
