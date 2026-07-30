@@ -458,3 +458,9 @@ ruling(scan_surface, no_new_surface_match_block_arms, user,
 % in a diff, readable by downstream generators without running swipl.
 ruling(openapi_spec_artifact, checked_in_with_staleness_gate, user,
        'user 2026-07-30: "yea spec checked in u dinaglong"').
+
+% 2026-07-30 openapi lab, remaining structural cards.
+ruling(openapi_route_list_generated, generated_from_facts, user,
+       'user 2026-07-30: "card 8 does ROUTE_LIST get generated -- yea sure". Turns parity legs 1 and 2 from a check into an identity and deletes the two-hand-kept-lists crack; it is the first production edit this arc makes to serve/').
+ruling(openapi_generated_code_checked_in, spec_and_output_both_checked_in, user,
+       'user 2026-07-30: "spec and produced code checked in please". Same staleness-gate shape as the spec artifact ruling').
