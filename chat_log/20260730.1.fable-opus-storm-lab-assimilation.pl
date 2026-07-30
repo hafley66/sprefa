@@ -35,6 +35,8 @@ directive(ledger_duty,
           'this file stays current through the session; it is the main coordinator deliverable alongside review').
 
 % lane(Name, Owner, State, Deliverable).
+lane_landed(clock_checker_finish, 'merge ffcddfc7',
+     'THE PIPELINE WORKED: sol implemented (A2/A4/A5/A7/A8/A9/A11 not_provable with pinned dependency/8 projections, battery exact), opus review gate FALSIFIED the one affirmative claim (A6 proven was a constants-vs-constants crosscheck; sabotage receipts S1/S2/S4), sol applied the 3-item fix list (nonzero-offset pipe crosscheck pinning the 4-tick delta sequence, clock_boundary negative case, ClockCatch pinning restored, A6 honestly renamed runtime_clock_crosscheck), coordinator re-ran plunit 197/197 and merged. Focused clock suite 24/24.').
 lane(clock_checker_finish, codex_sol, dispatched,
      'USER DIRECTIVE (best intelligence): sol finishes the paused 3_clock_check.pl per clock_checker_resume_order (A2 stays not-provable, A6 inferred offsets vs runtime ticks, full battery); no-commit flow; then an OPUS 5 agent runs the review gate on sol output and coordinates feedback before coordinator merge. Prior opus lane stood down.').
 lane(spot_check_assimilation_order, opus_readonly, dispatched,
@@ -64,6 +66,18 @@ answered(sprefa_extract_usage,
          'v6.2 spawns the released binary via executor contracts (2 executor keys: shell, sprefa_extract; 14 extract declarations); batching landed (same-tick demands grouped, one stdout fans into typed response rels, flow 7->1 subprocess/path); extractor additions stay typed-rust-side (ast_pattern_query = AstPatternQuery + flat AstCaptureFact, zero DL types in the extractor); locked contracts already match the user policy (sprefa_extract_scope, extractor_trait_boundary, parser_residency); gaps: document_sources (no md/html/xml/toml/yaml Source), file_blob_repo_revision (BlobSource unimplemented, Repo/Rev types absent); named overuse: grafana 40.26 f/s under per-witness subprocess boundary').
 answered(lang_design_lock_state,
          'LOCKED: single rel type model + one checker, host = ordinary RHS atom (? and @ removed), parser residency rust, surface freeze + stop rule, target-neutral plan order, bool/float storage, clock-checker scope. OPEN CARDS: scan/match composition (4 questions + 3 surface cards), json residency/arrays/null/schema/recursion (5 cards), span-spine decision rows, assign 3 cards, decl-legibility cluster, older slot pile. Verdict: value plane + host surface + storage locked; composition surface and json/module/span identity are the remaining design').
+
+% user directives 2026-07-30 afternoon (verbatim intent, rulings-grade)
+directive(openapi_codegen_spine,
+          'CLI + HTTP become proper OpenAPI codegen: ONE spec drives the ts node server now, rust axum later, and the CLI; the spec itself is GENERATED from prolog facts (dogfood the codegen from our language); this is the foray into json feature land').
+directive(json_as_rel_type,
+          'json becomes a rel column type that LOWERS TO SQLITE JSON1 ("we gotta play ball") -- REFINES the earlier one-rel-boundary reading that classified stored inline json as pure migration debt; typed refs and json columns coexist').
+directive(json_syntax_native,
+          'json natively expressable 1-1 in the language; unquoted keys when valid (json5-ish); HOLES like v3/v4 brace patterns; the { opening will later be abused beyond json, FOR NOW { means json').
+directive(roots_never_again,
+          'target = hundreds of repos AND an above-repos root; v5 roots concept must not return; defaults spelled as ordinary rels/builtins/sh/hosts; unspecified repo root = git rev-parse --show-toplevel walk; SCALE TEST EARLY').
+directive(rust_flip_soon,
+          'ts -> rust flip coming, prolog compiler stays; server + cli expressed from the same openapi spec on both targets').
 
 % bug(Name, FoundBy, Text). -- every defect any lane surfaces, marked here on arrival.
 bug(ref_pattern_depth2_silent_empty, filespan_lane,
