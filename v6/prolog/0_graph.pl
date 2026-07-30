@@ -34,10 +34,8 @@
           [ graph_from_edges/2,          % +Edges, -Graph
             graph_from_edges/3,          % +Vertices, +Edges, -Graph
             graph_nodes/2,               % +Graph, -Nodes
-            graph_edges/2,               % +Graph, -Edges
             graph_closure/2,             % +Graph, -Closure
             graph_reaches/3,             % +Closure, +From, +To
-            graph_reachable_from/3,      % +Closure, +From, -Targets
             graph_components/2,          % +Graph, -Components
             graph_cyclic_components/2,   % +Graph, -Components
             graph_component_of/3,        % +Components, +Node, -Component
@@ -77,9 +75,6 @@ graph_from_edges(Vertices, Edges, Graph) :-
 graph_nodes(Graph, Nodes) :-
     vertices(Graph, Nodes).
 
-graph_edges(Graph, Edges) :-
-    edges(Graph, Edges).
-
 % ═══ reachability ════════════════════════════════════════════════════════════
 
 %!  graph_closure(+Graph, -Closure) is det.
@@ -105,11 +100,6 @@ graph_closure(Graph, Closure) :-
 graph_reaches(Closure, From, To) :-
     memberchk(From-Targets, Closure),
     memberchk(To, Targets).
-
-%!  graph_reachable_from(+Closure, +From, -Targets) is semidet.
-
-graph_reachable_from(Closure, From, Targets) :-
-    memberchk(From-Targets, Closure).
 
 % ═══ strongly connected components ═══════════════════════════════════════════
 
