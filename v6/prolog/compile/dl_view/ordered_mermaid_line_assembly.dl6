@@ -1,0 +1,3 @@
+rel mermaid_line(file_name: text, line_ordinal: int, line_text: text).
+
+mermaid_text(FileName, group_concat(LineText, "\n", LineOrdinal)) <- mermaid_line(FileName, LineOrdinal, LineText).

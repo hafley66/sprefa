@@ -1,0 +1,3 @@
+rel item(group: text, value: text).
+
+value_joined(Group, group_concat(Value, " > ")) <- item(Group, Value).

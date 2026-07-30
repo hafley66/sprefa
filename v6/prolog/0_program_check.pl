@@ -65,6 +65,9 @@ first_violation(Program, OrderedChecks, violation(Name, Payload)) :-
     program_violation(Name, Program, Payload),
     !.
 
+ordered_aggregate_name(json_group_array).
+ordered_aggregate_name(group_concat).
+
 % ── declaration queries these triggers share ─────────────────────────────────
 % Kept here rather than in either door so the fallback-to-set rule has ONE
 % statement. A relation is a Log only when declared so; a keyed relation is a
@@ -101,7 +104,7 @@ aggregate_head_ref(Head, Ref) :-
 aggregate_argument(Arg) :- nonvar(Arg), Arg = json_object(_, _), !.
 aggregate_argument(Arg) :-
     nonvar(Arg),
-    surface_for_term(Arg, _/1, aggregate, no_refs, head(_), _).
+    surface_for_term(Arg, _/_Arity, aggregate, no_refs, head(_), _).
 
 % ── the six mirrored trigger classes ─────────────────────────────────────────
 
@@ -420,6 +423,17 @@ program_violation(aggregate_in_edge_head, prog(_, Rules), Ref) :-
     member((Head <+ _), Rules),
     aggregate_head_ref(Head, Ref).
 
+program_violation(aggregate_head_shape, prog(_, Rules), Name/Arity) :-
+    member((Head <- _), Rules),
+    compound(Head),
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    nonvar(Arg),
+    functor(Arg, Name, Arity),
+    ordered_aggregate_name(Name),
+    \+ surface(Name/Arity, aggregate, _, _, _),
+    !.
+
 % An aggregate spelling on the registry's aggregate axis that NEITHER door
 % implements. registry.pl marks it head(refuse(not_implemented)), which is a
 % different statement from json_array's head(refuse(aggregate)): that pair is
@@ -469,7 +483,8 @@ implemented_aggregates(Names) :-
     sort(Names0, Names).
 
 surface_row_is_live_aggregate(Name) :-
-    surface(Name/1, aggregate, _, head(lower), live).
+    surface(Name/Arity, aggregate, _, head(lower), live),
+    integer(Arity).
 
 % ── helper for the value-plane classes ───────────────────────────────────────
 

@@ -44,6 +44,22 @@ aggregate_head(Head, Template, Ref) :-
 % oracle_aggregate_classification unit pins exactly that.
 classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
     nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
+classify_head_arg(Arg, agg(json_group_array, ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, json_group_array/1, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), !.
+classify_head_arg(Arg, agg(json_group_array_ordered, ValueExpr-OrdinalExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, json_group_array/2, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, OrdinalExpr), !.
+classify_head_arg(Arg, agg(group_concat(Sep), ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/2, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, Sep), !.
+classify_head_arg(Arg, agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/3, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), arg(2, Arg, Sep), arg(3, Arg, OrdinalExpr), !.
 classify_head_arg(Arg, agg(Kind, Expr)) :-
     nonvar(Arg),
     surface_for_term(Arg, Kind/1, aggregate, _, head(_), _), !,
@@ -211,6 +227,18 @@ agg_rule_rows((Head <- Body), Visible, Tick, Row) :-
 head_arg_value(plain(Expr), value(Value)) :- eval_expr(Expr, Value).
 head_arg_value(agg(json_object, KeyExpr-ValueExpr), contrib(Key-Value)) :- !,
     eval_expr(KeyExpr, Key), eval_expr(ValueExpr, Value).
+head_arg_value(agg(json_group_array_ordered, ValueExpr-OrdinalExpr),
+               contrib(Ordinal-Value)) :- !,
+    eval_expr(ValueExpr, Value), eval_expr(OrdinalExpr, Ordinal),
+    require_aggregate_ordinal(Ordinal).
+head_arg_value(agg(group_concat(Sep), ValueExpr), contrib(Value)) :- !,
+    require_aggregate_separator(Sep),
+    eval_expr(ValueExpr, Value).
+head_arg_value(agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr),
+               contrib(Ordinal-Value)) :- !,
+    require_aggregate_separator(Sep),
+    eval_expr(ValueExpr, Value), eval_expr(OrdinalExpr, Ordinal),
+    require_aggregate_ordinal(Ordinal).
 head_arg_value(agg(_, Expr), contrib(Value)) :- eval_expr(Expr, Value).
 
 group_key(Template, Solution, GroupKey) :-
@@ -240,8 +268,44 @@ agg_compute(avg, Contributions, Average) :-
 agg_compute(min, Contributions, Min) :- min_list(Contributions, Min).
 agg_compute(max, Contributions, Max) :- max_list(Contributions, Max).
 agg_compute(json_array, Contributions, Array) :- msort(Contributions, Array).
+agg_compute(json_group_array, Contributions, Array) :-
+    maplist(json_canon, Contributions, Canonical),
+    msort(Canonical, Array).
+agg_compute(json_group_array_ordered, Contributions, Array) :-
+    keysort(Contributions, Sorted),
+    pairs_values(Sorted, Values),
+    maplist(json_canon, Values, Array).
+agg_compute(group_concat(Sep), Contributions, Text) :-
+    msort(Contributions, Sorted),
+    aggregate_text_join(Sep, Sorted, Text).
+agg_compute(group_concat_ordered(Sep), Contributions, Text) :-
+    keysort(Contributions, Sorted),
+    pairs_values(Sorted, Values),
+    aggregate_text_join(Sep, Values, Text).
 agg_compute(json_object, Pairs, obj(Object)) :-
     sort(Pairs, Distinct), keysort(Distinct, Object),
     pairs_keys(Object, Keys),
     ( sort(Keys, DistinctKeys), length(Keys, N), length(DistinctKeys, N)
     -> true ; throw(json_object_dup_key(Keys)) ).
+
+require_aggregate_separator(Sep) :-
+    ( nonvar(Sep), atomic(Sep), \+ number(Sep)
+    -> true
+    ;  throw(aggregate_separator_not_constant(Sep))
+    ).
+
+require_aggregate_ordinal(Ordinal) :-
+    ( integer(Ordinal)
+    -> true
+    ;  throw(aggregate_ordinal_not_int(Ordinal))
+    ).
+
+aggregate_text_join(Sep, Values, Text) :-
+    maplist(aggregate_text_value, Values, Texts),
+    atomic_list_concat(Texts, Sep, Text).
+
+aggregate_text_value(Value, Text) :-
+    ( atomic(Value)
+    -> format(atom(Text), '~w', [Value])
+    ;  throw(aggregate_value_not_text(Value))
+    ).

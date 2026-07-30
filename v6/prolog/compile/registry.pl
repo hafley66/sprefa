@@ -164,36 +164,18 @@ surface(sum/1,          aggregate, no_refs,                      head(lower),   
 surface(min/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(max/1,          aggregate, no_refs,                      head(lower),                           live).
 surface(avg/1,          aggregate, no_refs,                      head(lower),                           live).
-% json_array/json_object stay REFUSED per ruling json_ticklog_encoding:
-% the oracle tick-log and final-state encoders now emit canonical JSON text
-% for JSON values, with sorted object keys and no whitespace, while plain
-% compounds keep canonical term text. The compiler-side aggregate heads
-% remain refused until a later arc supplies matching json_group_array/
-% json_group_object lowering and byte-identity coverage. The refusal itself
-% does not depend on the old cons-term rendering argument.
-surface(json_array/1,   aggregate, no_refs,                      head(refuse(aggregate)),               refused).
-surface(json_object/2,  aggregate, no_refs,                      head(refuse(aggregate)),               refused).
-% SQLite HAS this one, which is exactly why a cold author reaches for it, and
-% this language does not. Without a row it was not a construct at all: the
-% head argument fell through to compile_head_expr's generic compound
-% rendering, so `roster(group_concat(Name)) <- member(Name)` stored ONE ROW
-% PER INPUT holding the literal text of the call, on both doors --
-%
-%   oracle    rows=[out(group_concat(1)), out(group_concat(2))]
-%   compiler  SELECT json_object('fn','group_concat','args',json_array(...))
-%
-% -- where the author asked for one grouped row. A silent wrong answer that
-% reads as a working aggregate.
-%
-% The role is refuse(not_implemented) and NOT refuse(aggregate), which is the
-% json_array/json_object role above and means something different: those two
-% are computed by the reference engine on purpose and refused only by this
-% compiler, so the oracle stays the wider language. group_concat is
-% implemented by NEITHER, so 0_program_check.pl's aggregate_not_implemented
-% refuses it at both doors and the refusal names the aggregates that do work.
-% A text-joining aggregate becomes emittable on the same arc that lands
-% json_group_array; adding `total` or `string_agg` here is one row each.
-surface(group_concat/1, aggregate, no_refs,                      head(refuse(not_implemented)),         refused).
+% The compiler and oracle share the aggregate names below. JSON values use
+% the canonical JSON text boundary, so the SQL aggregate result and the tick
+% log carry the same bytes.
+surface(json_array/1,       aggregate, no_refs,                   head(refuse(aggregate)),               refused).
+surface(json_object/2,      aggregate, no_refs,                   head(refuse(aggregate)),               refused).
+surface(json_group_array/1, aggregate, no_refs,                   head(lower),                           live).
+surface(json_group_array/2, aggregate, no_refs,                   head(lower),                           live).
+surface(group_concat/2,     aggregate, no_refs,                   head(lower),                           live).
+surface(group_concat/3,     aggregate, no_refs,                   head(lower),                           live).
+% This old one-argument spelling remains a named refusal. The four writable
+% forms above are the complete ordered aggregate surface.
+surface(group_concat/1,     aggregate, no_refs,                   head(refuse(not_implemented)),         refused).
 
 surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).

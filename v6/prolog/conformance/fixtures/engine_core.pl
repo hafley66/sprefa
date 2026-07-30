@@ -167,7 +167,8 @@ fixture(unimplemented_aggregate_head_rejected,
   [],
   [ [ +member_of(ada), +member_of(grace) ] ],
   [ throws(aggregate_not_implemented(roster/1, group_concat/1,
-                                     [avg, count, max, min, sum])) ]).
+                                     [avg, count, group_concat, json_group_array,
+                                      max, min, sum])) ]).
 
 % Retention is meaningful only on Log relations. A keep clause on a Set was
 % previously accepted and had no effect.
