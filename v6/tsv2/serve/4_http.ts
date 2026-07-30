@@ -66,7 +66,9 @@ import {
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { ServeStats } from "../runtime/serveStats.ts";
 import type {
-  IArrivalRow,
+  IArrivalBatch,
+  IRowColumnType,
+  IRowValue,
   IServeConfig,
   IServeEvent,
   IServedProgram,
@@ -197,19 +199,112 @@ function runProgram$(state: ServerState, config: IServeConfig, load: ProgramLoad
 // Routes.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** A batch is rejected here, before the engine sees it, when it names a rel the
- *  program does not accept arrivals for or carries a row of the wrong width.
- *  Returns the reason, or null when the batch is well formed. */
-function batchProblem(program: IServedProgram, batch: readonly IArrivalRow[]): string | null {
-  for (const arrival of batch) {
-    if (!program.arrivalTargets.includes(arrival.rel)) return `'${arrival.rel}' is not an arrival target`;
-    if (arrival.sign !== "add" && arrival.sign !== "del") return `sign must be add or del, got '${String(arrival.sign)}'`;
-    const width = program.relColumns[arrival.rel]?.length ?? 0;
-    if (arrival.row.length !== width) {
-      return `'${arrival.rel}' takes ${width} columns, got ${arrival.row.length}`;
+/**
+ * THE ARRIVAL BOUNDARY. Everything a POST body claims is checked here, before
+ * the engine sees any of it, and a failure is a 400 that names the rel and the
+ * column rather than a leaked JS TypeError.
+ *
+ * WHY HERE AND NOT IN EMITTED CODE. This is the only trust boundary: the other
+ * two arrival producers (bind timers, host responses) build rows in typed code
+ * inside this process, and only http accepts arbitrary bytes. It is also the
+ * only place that can name the mistake, because the program's `relColumns` and
+ * `relColumnTypes` are in hand here while the emitted `validateArrivals` sees
+ * one value and an index. And emitted validation runs INSIDE the tick, after
+ * writes have begun, so a rejection there is a partially-applied tick and a
+ * 500, never a clean 400. The emitted pass stays what it is: a per-value
+ * COERCION (bool to 0/1, -0 to 0) that keeps its own bool/float refusals as a
+ * second line for arrivals that never crossed this boundary.
+ *
+ * The shape this replaced checked three things (target rel, sign, row LENGTH)
+ * and never that `row` was an array or that its elements were scalars. Measured
+ * consequences: `row: "ab"` killed the whole server, and `row: [{a:1},[2,3]]`
+ * answered 200 with a tick log of `{"deltas":{}}` while storing `[null,"[2,3]"]`
+ * into a TEXT NOT NULL column, where it polluted every later read. The tick log
+ * is the cross-target grading contract; a path that stores a row and prints an
+ * empty delta line breaks it in silence. Receipt:
+ * tests/serveArrivalValidation.test.ts.
+ */
+function isRowValue(value: unknown): value is IRowValue {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+/**
+ * What one value may be, given the column's declared storage type.
+ *
+ * `int`, `float` and `bool` are exact; the last two match the emitted
+ * `validateArrivals` refusals word for word. `text` takes any scalar (SQLite
+ * affinity is the contract there) and nothing else -- that arm is the review's
+ * measured corruption, an object landing in a TEXT NOT NULL column as NULL.
+ *
+ * `ref` IS DIFFERENT AND MUST STAY PERMISSIVE. Under the struct-as-rows ruling
+ * a struct value arrives WHOLE, as a JSON object, and the engine interns it
+ * into its own rel (golden-flex's `tree(tree_id, species, site: patch)` posts
+ * `{label, at:{row, col}}`, two levels deep). A first draft of this function
+ * required a scalar everywhere and golden-flex went red on exactly that row:
+ *   Error: POST /arrivals -> 400 {"error":"'tree' column 'site' must be a
+ *   string, number or boolean"}
+ * So a ref takes a scalar (its canonical text) or any JSON value, and the only
+ * thing refused is the absent one. Whether the object MATCHES the declared
+ * struct shape is the type graph's question, not the boundary's.
+ *
+ * An UNDECLARED column type (a program carrying no `relColumnTypes`) is refused
+ * nothing but absence, for the same reason: nothing here knows what it is.
+ */
+function columnProblem(type: IRowColumnType | undefined, value: unknown): string | null {
+  if (value === null || value === undefined) return "must not be null";
+  if (type === "int") return Number.isInteger(value) ? null : "must be an int";
+  if (type === "float") return typeof value === "number" && Number.isFinite(value) ? null : "must be a float";
+  if (type === "bool") return typeof value === "boolean" ? null : "must be a bool";
+  if (type === "text") return isRowValue(value) ? null : "must be a string, number or boolean";
+  return null;
+}
+
+type BatchCheck =
+  | { readonly kind: "ok"; readonly batch: IArrivalBatch }
+  | { readonly kind: "bad"; readonly problem: string };
+
+function checkArrivalBody(program: IServedProgram, text: string): BatchCheck {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { kind: "bad", problem: "body is not valid json" };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { kind: "bad", problem: "body must be a json object carrying a 'batch' array" };
+  }
+  const batch = (parsed as { readonly batch?: unknown }).batch ?? [];
+  if (!Array.isArray(batch)) return { kind: "bad", problem: "'batch' must be an array" };
+
+  for (const [index, entry] of batch.entries()) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      return { kind: "bad", problem: `arrival ${index} must be an object carrying rel, sign and row` };
+    }
+    const arrival = entry as { readonly rel?: unknown; readonly sign?: unknown; readonly row?: unknown };
+    if (typeof arrival.rel !== "string" || !program.arrivalTargets.includes(arrival.rel)) {
+      return { kind: "bad", problem: `'${String(arrival.rel)}' is not an arrival target` };
+    }
+    if (arrival.sign !== "add" && arrival.sign !== "del") {
+      return { kind: "bad", problem: `sign must be add or del, got '${String(arrival.sign)}'` };
+    }
+    const columns = program.relColumns[arrival.rel] ?? [];
+    if (!Array.isArray(arrival.row)) {
+      return { kind: "bad", problem: `'${arrival.rel}' row must be an array of ${columns.length} values` };
+    }
+    if (arrival.row.length !== columns.length) {
+      return { kind: "bad", problem: `'${arrival.rel}' takes ${columns.length} columns, got ${arrival.row.length}` };
+    }
+    const types = program.relColumnTypes?.[arrival.rel];
+    for (const [column, value] of (arrival.row as readonly unknown[]).entries()) {
+      const problem = columnProblem(types?.[column], value);
+      if (problem !== null) {
+        return { kind: "bad", problem: `'${arrival.rel}' column '${columns[column]}' ${problem}` };
+      }
     }
   }
-  return null;
+  // Every field of every arrival has now been checked against the program's own
+  // declaration, which is what makes this the one honest place to name the type.
+  return { kind: "ok", batch: batch as IArrivalBatch };
 }
 
 function handleArrivals$(state: ServerState, exchange: Exchange): Observable<IServeEvent> {
@@ -220,13 +315,12 @@ function handleArrivals$(state: ServerState, exchange: Exchange): Observable<ISe
   }
   return from(readBody(exchange.request)).pipe(
     concatMap((text) => {
-      const batch = (JSON.parse(text) as { readonly batch?: readonly IArrivalRow[] }).batch ?? [];
-      const problem = batchProblem(program, batch);
-      if (problem !== null) {
-        writeJson(exchange.response, 400, { error: problem });
+      const checked = checkArrivalBody(program, text);
+      if (checked.kind === "bad") {
+        writeJson(exchange.response, 400, { error: checked.problem });
         return EMPTY;
       }
-      return engine.submit(batch).pipe(toArray());
+      return engine.submit(checked.batch).pipe(toArray());
     }),
     map((outcomes: readonly ITickOutcome[]): IServeEvent => {
       writeJson(exchange.response, 200, {
