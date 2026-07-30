@@ -1,0 +1,3 @@
+rel chart(body: text).
+
+image(Repository, Tag) <- chart(Body), decode(Body, {**: {image: {repository: Repository, tag: Tag}}}).

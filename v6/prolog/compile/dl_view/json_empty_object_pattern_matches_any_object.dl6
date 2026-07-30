@@ -1,0 +1,3 @@
+rel entry(name: text, value: text).
+
+is_object(Name) <- entry(Name, Value), decode(Value, {}).

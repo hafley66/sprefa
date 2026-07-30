@@ -1,0 +1,3 @@
+rel resp(body: text).
+
+numbered(Number) <- resp(Body), decode(Body, [... {number: Number}]).

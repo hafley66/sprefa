@@ -1,0 +1,3 @@
+rel raw_doc(body: text).
+
+field(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value}).

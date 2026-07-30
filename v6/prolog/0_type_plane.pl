@@ -246,7 +246,9 @@ field_shape_error(_, TypeName, Column, text, ChildValue, Reason) :-
 % produces. Sorted pairs, always, so a caller may index by column name.
 json_object_value(Value, Pairs) :-
     nonvar(Value),
-    (   Value = obj(RawPairs)
+    (   Value == '{}'
+    ->  Pairs = []
+    ;   Value = obj(RawPairs)
     ->  is_list(RawPairs), keysort(RawPairs, Pairs)
     ;   Value = {}(_)
     ->  json_canon(Value, obj(Pairs))

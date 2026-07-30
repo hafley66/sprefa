@@ -141,10 +141,15 @@ normalize_float_json_atom(Raw, Text) :-
 % arrays and obj(SortedPairs) for objects. A braces literal is still written
 % as {}(Fields) in raw fixture/host rows and is canonicalized here before
 % rendering. A plain compound term reaches the following term_text/2 clause.
+% The empty object is the ATOM `{}` on both doors (parse_dl.pl braces_term/5;
+% term_to_atom reads `{}` at arity 0). Without this pair it would fall through
+% to string_json/2 and render as the JSON STRING "{}" rather than an object.
+json_value_term('{}') :- !.
 json_value_term(Value) :- Value = {}(_), !.
 json_value_term(Value) :- is_list(Value), !.
 json_value_term(obj(Pairs)) :- is_list(Pairs).
 
+json_value_json('{}', '{}') :- !.
 json_value_json({}(Fields), Json) :- !,
     json_canon({}(Fields), Canon),
     json_value_json(Canon, Json).

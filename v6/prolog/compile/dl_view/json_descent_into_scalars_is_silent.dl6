@@ -1,0 +1,3 @@
+rel doc(body: text).
+
+found(Value) <- doc(Body), decode(Body, {**: {leaf: Value}}).
