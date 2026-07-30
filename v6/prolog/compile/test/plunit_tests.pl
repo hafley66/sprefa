@@ -2179,6 +2179,16 @@ test(modulo_lowers_sign_corrected) :-
     compile_expr(mod(7, 3), [], Sql, _),
     Sql == '(((7 % 3) + 3) % 3)'.
 
+test(norm_lowers_to_ascii_character_filter) :-
+    compile_expr(norm('Route /V2: Café_42'), [], Sql, Type),
+    Type == text,
+    once(sub_atom(Sql, _, _, _, 'WITH RECURSIVE "__norm_chars"')),
+    once(sub_atom(Sql, _, _, _, 'unicode("c") BETWEEN 48 AND 57')).
+
+test(norm_refuses_integer_operand,
+     [throws(unsupported_construct(text_operand_not_text(norm(7), 7, int)))]) :-
+    compile_expr(norm(7), [], _, _).
+
 % Every comparison row lowers to its declared SQL operator.
 test(every_comparison_row_lowers_to_its_sql_operator) :-
     forall(( expression(Name/2, Family, _, infix(SqlOperator), _),

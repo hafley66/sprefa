@@ -648,6 +648,10 @@ expression_type(Expr, Environment, Type) :-
 expression_type(Expr, _, int) :- integer(Expr), !.
 expression_type(Expr, _, text) :- atomic(Expr), !.
 expression_type(concat(_), _, text) :- !.
+expression_type(Expr, Environment, text) :-
+    text_scalar_expression(Expr, Argument), !,
+    expression_type(Argument, Environment, ArgumentType),
+    ( ArgumentType == text ; ArgumentType == none ).
 expression_type(Expr, Environment, Type) :-
     arithmetic_expression(Expr, Left, Right), !,
     expression_type(Left, Environment, LeftType),
@@ -660,6 +664,10 @@ expression_type(_, _, text).
 arithmetic_expression(Expr, Left, Right) :-
     compound(Expr), Expr =.. [Functor, Left, Right],
     expression(Functor/2, arithmetic, _, _, _).
+
+text_scalar_expression(Expr, Argument) :-
+    compound(Expr), Expr =.. [Functor, Argument],
+    expression(Functor/1, text_scalar, _, _, _).
 
 % Positionwise combine, only where the seed is open/1: text dominates, then
 % int, then none. A frozen(Type) position is returned unchanged.

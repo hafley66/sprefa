@@ -122,6 +122,7 @@ surface(sg_pattern/3,    world,     no_refs,                      value(refuse(s
 %                   operator does not match this language's semantics.
 %   TypeRule        both_int  operands must both be int (the Int-only law)
 %                   same_type operands must agree, whatever the type
+%                   text_only operand must be text
 %
 % Before this table, the same eleven operators were listed in five places:
 % body.pl's comparison_goal/1, lower.pl's arithmetic_expr/4 and
@@ -145,6 +146,10 @@ expression('>='/2,   ordered_comparison,  0, infix('>='),            both_int).
 
 expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
 expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).
+
+% V5 `sprf_norm`: retain ASCII letters/digits and lowercase letters. This is
+% an existing expression-call shape; lowering stays inside SQLite.
+expression(norm/1,    text_scalar,         3, ascii_alnum_lower,     text_only).
 
 expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     nonvar(Term),

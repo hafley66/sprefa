@@ -1,0 +1,4 @@
+# V5 `norm(text)` parity: lowercase ASCII alphanumerics, discard all else.
+rel route(raw: text).
+rel route_key(raw: text, key: text).
+route_key(raw, norm(raw)) <- route(raw).

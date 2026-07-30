@@ -174,6 +174,12 @@ verification(host_shell_census,
                      sh_declarations(33),
                      extract_declarations(14),
                      extract_fixture_files(5))).
+verification(norm_runtime_parity,
+             passed(plunit(167),
+                    runtime(1),
+                    host_changes(0),
+                    parser_changes(0),
+                    syntax_changes(0))).
 
 host_executor(shell).
 host_executor(sprefa_extract).

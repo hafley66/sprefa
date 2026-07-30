@@ -420,6 +420,10 @@ compile_expr(Expr, Bound, Sql, Type) :-
        atomic_list_concat(PartSqls, ' || ', Joined),
        format(atom(Sql), '(~w)', [Joined]),
        Type = text
+    ; text_scalar_expr(Expr, Function, Argument)
+    -> compile_text_operand(Argument, Bound, Expr, ArgumentSql),
+       text_scalar_sql(Function, ArgumentSql, Sql),
+       Type = text
     ; arithmetic_expr(Expr, Operator, Left, Right)
     -> compile_int_operand(Left, Bound, Expr, LeftSql),
        compile_int_operand(Right, Bound, Expr, RightSql),
@@ -448,6 +452,28 @@ compile_expr_bound(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
 arithmetic_expr(Expr, Operator, Left, Right) :-
     compound(Expr), Expr =.. [Operator, Left, Right],
     expression(Operator/2, arithmetic, _, _, _).
+
+text_scalar_expr(Expr, Function, Argument) :-
+    compound(Expr), Expr =.. [Function, Argument],
+    expression(Function/1, text_scalar, _, _, _).
+
+compile_text_operand(Operand, Bound, Whole, Sql) :-
+    compile_expr(Operand, Bound, Sql, Type),
+    ( Type == text
+    -> true
+    ;  throw(unsupported_construct(text_operand_not_text(Whole, Operand, Type)))
+    ).
+
+text_scalar_sql(Function, ArgumentSql, Sql) :-
+    expression(Function/1, text_scalar, _, Rendering, _),
+    text_scalar_rendering(Rendering, ArgumentSql, Sql).
+
+% SQLite's @libsql seam has lower()/unicode(), but no scalar-function
+% registration. The recursive scalar expression preserves V5 `normalize`.
+text_scalar_rendering(ascii_alnum_lower, ArgumentSql, Sql) :-
+    format(atom(Sql),
+           '(WITH RECURSIVE "__norm_chars"("i", "c") AS (SELECT 1, substr(~w, 1, 1) UNION ALL SELECT "i" + 1, substr(~w, "i" + 1, 1) FROM "__norm_chars" WHERE "i" < length(~w)) SELECT coalesce(group_concat(lower("c"), \'\'), \'\') FROM "__norm_chars" WHERE (unicode("c") BETWEEN 48 AND 57) OR (unicode("c") BETWEEN 65 AND 90) OR (unicode("c") BETWEEN 97 AND 122))',
+           [ArgumentSql, ArgumentSql, ArgumentSql]).
 
 % The json arm's own VALUE grammar: a braces literal ({}/1) and a list. Both
 % are ordinary compound terms structurally, and the generic compound branch
