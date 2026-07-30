@@ -494,3 +494,14 @@ ruling(stream_decl_word, no_word_convention_only, user,
        'card 6a: log + ordinal + keep bound IS the definition; a stream word would hide the retention choice, the one an author must make on purpose').
 ruling(cross_rel_drain_order, non_contract_documented, user,
        'card 7a: between-rel delta interleaving is a function of drain placement, measured not-fixable-in-general by the runtime bridge arc; TICK-MODEL gets the one-paragraph non-promise').
+
+% 2026-07-30. json-flex card C3 + dup-key card, user word.
+% User proposed () for json null; () is still an ATOM, so the text value
+% "()" would inherit exactly the curse "none" has today (any atom collides
+% with some text). The fix is a COMPOUND term: no text value can ever equal
+% a compound, so it is unforgeable from world data. Exact spelling picked
+% at wiring time; json(null) is the candidate shape (bool_lit precedent).
+ruling(json_null_token, reserved_ground_compound_never_atom, user,
+       'user 2026-07-30: "do not use None lmfao use something else i guess, what about ()" -- () explained atom-cursed, compound accepted by delegation').
+ruling(json_dup_key_fate, refuse_both_doors, user,
+       'user 2026-07-30: "emitter throws if oracle throws i gues[s]" -- oracle already throws json_dup_key; emitter gains the matching refusal/guard instead of silent last-wins').
