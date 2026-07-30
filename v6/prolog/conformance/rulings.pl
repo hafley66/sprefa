@@ -452,3 +452,9 @@ ruling(json_pattern_goal_spelling, named_goal_decode, user,
 % it afterwards from evidence instead of from a guess.
 ruling(scan_surface, no_new_surface_match_block_arms, user,
        'user 2026-07-30: "take whatever is the simplest and closest to tier0 for now and explain it to me, we use it alot and then see how ugly consistent it is and give it suytnax later"').
+
+% 2026-07-30. openapi lab card 1. The generated spec is a CHECKED-IN artifact
+% with a staleness gate, the shape cli/0_inventory.ts already uses. Reviewable
+% in a diff, readable by downstream generators without running swipl.
+ruling(openapi_spec_artifact, checked_in_with_staleness_gate, user,
+       'user 2026-07-30: "yea spec checked in u dinaglong"').
