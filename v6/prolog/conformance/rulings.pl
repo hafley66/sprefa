@@ -441,3 +441,14 @@ ruling(descent_depth_cap, uncapped, user,
 % elsewhere. So the named goal is the reversible choice.
 ruling(json_pattern_goal_spelling, named_goal_decode, user,
        'user 2026-07-30: "do whatever is easiest to change later for decode/pattern-goal spelling". Coordinator picked the named body atom over the operator form on migration cost').
+
+% 2026-07-30. Scan surface. The rel-as-stream lab returned an EMPTY tier-0
+% list, so nothing about scan justifies new syntax. Ruling: NO new surface for
+% now. The canonical spelling is the one the lab already grades: a keyed state
+% rel for the accumulator, a log rel for the sequence, and a match block whose
+% arms are ordinary |+> edge rules. It is the closest thing to tier 0 that
+% exists, because it is made entirely of constructs that already ship. Write
+% real programs with it, let the ugliness show up under repetition, and sugar
+% it afterwards from evidence instead of from a guess.
+ruling(scan_surface, no_new_surface_match_block_arms, user,
+       'user 2026-07-30: "take whatever is the simplest and closest to tier0 for now and explain it to me, we use it alot and then see how ugly consistent it is and give it suytnax later"').
