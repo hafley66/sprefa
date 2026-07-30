@@ -106,6 +106,29 @@
 #                                  told, by a red gate, to promote norm into
 #                                  this file.
 #
+# ═══ DEFECTS THIS PROGRAM SURFACED (index; each is written up where it lives)
+#
+#   norm/1 diverges oracle vs emitter                 header above; the inverted
+#                                                     receipt is step 5 of
+#                                                     tsv2/scripts/golden-flex.sh
+#   float/bool unspellable in sh + bind decls         header above
+#                                                     (parse_dl.pl
+#                                                     decl_b_column_type/5)
+#   JSON schedule cannot carry an object value        compile/scripts/
+#                                                     golden_oracle.pl header;
+#                                                     dl6_oracle.pl's own
+#                                                     schedule_value/2 is the
+#                                                     one-clause site
+#   .dl6 text has no final-state oracle leg           same header
+#   one ITickOutcome renders a struct column TWO      tsv2/tests/
+#   ways: outcome.line canonical, outcome.deltas      goldenFlexServed.test.ts
+#   and GET /idb the raw arrival key order
+#   IRowValue cannot type a struct value the          tsv2/scripts/
+#   engine both accepts and prints                    golden-schedules.ts
+#
+# None of them is fixed here. Two are routed around inside this lane (its own
+# oracle door, its own schedule types) and the routes are named at the site.
+#
 # ═══ the value plane: struct types, one chain two deep ══════════════════════
 # A bare `rel` whose NAME is used as another column's TYPE is a struct type
 # (type_decl/2 in term form; ruling compound_storage = struct_as_rows). `plot`
