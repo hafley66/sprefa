@@ -2343,11 +2343,58 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                50-relation_edge].
+                45-coalesce, 50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
     expansion_phase(30, row_spread, unwired).
+
+% ── coalesce/2 (ruling null_design) ──────────────────────────────────────────
+% The conformance fixtures grade the BEHAVIOUR; these three pin the emitted
+% SHAPE, which is where the reasoning lives. Sabotage receipt, taken by hand
+% against a draft that emitted the bare atom on both arrows: the edge shape
+% test below goes red (`latest(name(...))` vs `name(...)`) while every
+% conformance fixture in 7_coalesce.pl stays green except
+% coalesce_in_edge_body_samples -- which is exactly why that fixture feeds a
+% `name` arrival with no ping.
+
+test(coalesce_level_arm_reads_the_bare_atom) :-
+    Program = prog([],
+        [ (repo_latest(Name, Commit) <-
+               repo(Name),
+               coalesce(latest_commit(Name, Commit), absent)) ]),
+    expand_program(Program, prog(_, Expanded), _),
+    Expanded =@=
+        [ (repo_latest(Name, Commit) <- (repo(Name),
+                                         latest_commit(Name, Commit))),
+          (repo_latest(Name, Commit) <- (repo(Name),
+                                         not(latest_commit(Name, _)),
+                                         Commit := absent)) ].
+
+% A bare relation atom in an EDGE body is an occurrence. The read arm samples
+% instead, or an arrival on the coalesced rel would fire the rule on its own.
+test(coalesce_edge_arm_samples_instead_of_triggering) :-
+    Program = prog([],
+        [ (labelled(TreeId, Label) <+
+               ping(TreeId),
+               coalesce(name(TreeId, Label), unnamed)) ]),
+    expand_program(Program, prog(_, Expanded), _),
+    Expanded =@=
+        [ (labelled(TreeId, Label) <+ (ping(TreeId),
+                                       latest(name(TreeId, Label)))),
+          (labelled(TreeId, Label) <+ (ping(TreeId),
+                                       not(name(TreeId, _)),
+                                       Label := unnamed)) ].
+
+% The survival refusal. Without it a nested coalesce reaches analyze.pl, whose
+% refs_of_arg role reads the source atom as an ordinary join and drops the
+% default in silence.
+test(coalesce_off_the_conjunction_spine_is_refused) :-
+    Program = prog([],
+        [ (odd(Name) <- repo(Name),
+                        not(coalesce(latest_commit(Name, _Commit), absent))) ]),
+    catch(( expand_program(Program, _, _), Thrown = none ), Thrown, true),
+    Thrown == unsupported_construct(coalesce_not_top_level(latest_commit/2)).
 
 test(level_relation_value_adds_target_membership) :-
     Program = prog(

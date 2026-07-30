@@ -55,6 +55,24 @@ sampled atom reads the current base table and never becomes a trigger.
 Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 `edge_body_with_latest`.
 
+`coalesce(rel_atom(Bound..., Out), Default)` is the TOTAL read (ruling
+`null_design = get_else_use_site_never_storage`). `Out` binds from the matching
+row when one exists and from `Default` when none does, so the tuple survives
+either way -- the outer-join effect, spelled at the use site by the consumer
+that wants it. Null never enters storage or the type system; absence stays row
+absence. Exactly one variable in the atom may be unbound by the rest of the
+body, and `Default` must be a literal value of that column's own type.
+
+It is SUGAR: `0_coalesce_expand.pl` rewrites one such rule into two ordinary
+clauses -- the read, and `not(...)` plus a `:=` of the default -- before either
+door sees the program, so it inherits the shipped incremental delta path, the
+negation path's retraction flip and the naive referee rather than adding a
+lowering. In an EDGE body the read arm is `latest(...)`, because a bare atom
+there is a trigger and an optional lookup must not become a firing source.
+Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
+`coalesce_output_not_column`, `coalesce_default_not_literal`,
+`coalesce_source_not_rel_atom`, `coalesce_not_top_level`, `coalesce_in_head`.
+
 <!-- BEGIN GENERATED surface/5 TABLE -->
 | signature | axis | analyze role | lower role | status (writable surface) |
 |---|---|---|---|---|
@@ -68,6 +86,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `subscribe/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
 | `error/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
+| `coalesce/2` | `sugar` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom_default,expand(coalesce))` | `live` |
 | `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
 | `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
 | `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |

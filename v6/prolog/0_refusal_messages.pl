@@ -81,6 +81,7 @@ refusal_inventory_entry(Signature, Example) :-
 refusal_source_module(parse_dl).
 refusal_source_module(enum_expand).
 refusal_source_module(match_expand).
+refusal_source_module(coalesce_expand).
 refusal_source_module(type_plane).
 refusal_source_module(expansion).
 refusal_source_module(host_expand).
