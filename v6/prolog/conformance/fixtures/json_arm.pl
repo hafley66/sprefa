@@ -51,6 +51,121 @@ fixture(json_each_fans_out,
   [],
   [ final(repo_lang/1, [ repo_lang(go), repo_lang(rust) ]) ]).
 
+% ═══ the json wiring arc acceptance corpus (2026-07-30) ═════════════════════
+%
+% One fixture per production added by the json grammar wiring, each carrying
+% the archive source the json_syntax lab drew it from. Every one of these is
+% a form five generations shipped and v6 had no spelling for.
+
+% THE FLAGSHIP, examples/gh-cache.dl:116-117, transcribed to dl6. Array spread
+% over an array of objects, siblings correlated, one row per element. The
+% recovery doc graded this row "(c) blocked on storage"; the lab's L2 receipt
+% executes it as ONE json_each join.
+fixture(json_array_spread_fans_out_correlated_siblings,
+  prog([col_type(resp/1, body, json),
+        col_type(pull_request/3, number, int),
+        col_type(pull_request/3, title, text),
+        col_type(pull_request/3, author, text)],
+       [ (pull_request(Number, Title, Author) <-
+            resp(Body),
+            decode(Body, spread({number: Number, title: Title,
+                                 user: {login: Author}}))) ]),
+  [ resp([ {number: 1, title: first,  user: {login: octo}},
+           {number: 2, title: second, user: {login: hubot}} ]) ],
+  [],
+  [ final(pull_request/3, [ pull_request(1, first,  octo),
+                           pull_request(2, second, hubot) ]) ]).
+
+% Spread over an element that does not match binds nothing and raises nothing:
+% the missing-key silence, one level down inside the fan-out.
+fixture(json_array_spread_skips_non_matching_elements,
+  prog([col_type(resp/1, body, json),
+        col_type(numbered/1, number, int)],
+       [ (numbered(Number) <- resp(Body), decode(Body, spread({number: Number}))) ]),
+  [ resp([ {number: 1}, {title: no_number}, {number: 3} ]) ],
+  [],
+  [ final(numbered/1, [ numbered(1), numbered(3) ]) ]).
+
+% KEY CAPTURE (ruling json_key_hole_marker = dollar), examples/type-from-json.dl:25.
+% The VALUE hole is a bare variable, which is the canonical term form: `$` is
+% the marker on the key plane, where a bare identifier is a literal label, and
+% a TEXT-door alias on the value plane, where a bare identifier is already a
+% variable. `{$Key: Value}` and the text `{$key: $value}` are the same term.
+% The single most-used v5 form, and the lowering is json_each's own (key,value)
+% columns -- zero new SQL machinery (lab receipt L3).
+fixture(json_key_capture_binds_key_and_value,
+  prog([col_type(raw_doc/1, body, json),
+        col_type(field/2, key, text),
+        col_type(field/2, value, text)],
+       [ (field(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
+  [ raw_doc({name: cli, owner: octo}) ],
+  [],
+  [ final(field/2, [ field(name, cli), field(owner, octo) ]) ]).
+
+% Two key holes nested: v4/examples/openapi-cardinality-markdown.sprf, the
+% path x method fan-out. Cardinality is the product, which is what makes this
+% the test that key capture really is a join and not a lookup.
+fixture(json_key_capture_nests_and_fans_out,
+  prog([col_type(spec/1, body, json)],
+       [ (operation(Path, Method, Id) <-
+            spec(Body),
+            decode(Body, {paths: {$Path: {$Method: {operationId: Id}}}})) ]),
+  [ spec({paths: {'/users': {get:  {operationId: list_users},
+                             post: {operationId: create_user}},
+                  '/pets':  {get:  {operationId: list_pets}}}}) ],
+  [],
+  [ final(operation/3, [ operation('/pets',  get,  list_pets),
+                        operation('/users', get,  list_users),
+                        operation('/users', post, create_user) ]) ]).
+
+% `**` DESCENT (ruling descent_depth_cap = uncapped), archive-20260428/
+% README.md:78. Unbounded like the CSS descendant combinator; lowers to
+% json_tree, whose first row is the root, so the root is a candidate too.
+fixture(json_descent_matches_at_any_depth,
+  prog([col_type(chart/1, body, json)],
+       [ (image(Repository, Tag) <-
+            chart(Body),
+            decode(Body, {'**': {image: {repository: Repository, tag: Tag}}})) ]),
+  [ chart({spec: {template: {image: {repository: nginx, tag: '1.2'}}},
+           sidecar: {image: {repository: envoy, tag: '2.0'}}}) ],
+  [],
+  [ final(image/2, [ image(envoy, '2.0'), image(nginx, '1.2') ]) ]).
+
+% Descending into a SCALAR is a silent non-match, never an error. This is the
+% oracle half of the emitted `type = 'object'` guard: without that guard SQLite
+% raises `malformed JSON` and kills the whole statement (lab finding 6).
+fixture(json_descent_into_scalars_is_silent,
+  prog([col_type(doc/1, body, json)],
+       [ (found(Value) <- doc(Body), decode(Body, {'**': {leaf: Value}})) ]),
+  [ doc({a: 1, b: text, c: {leaf: here}, d: [1, 2]}) ],
+  [],
+  [ final(found/1, [ found(here) ]) ]).
+
+% The EMPTY object, the atom `{}` on both doors. An open pattern with no
+% members: matches any object, binds nothing, and does NOT match a scalar.
+fixture(json_empty_object_pattern_matches_any_object,
+  prog([col_type(entry/2, name, text), col_type(entry/2, value, json)],
+       [ (is_object(Name) <- entry(Name, Value), decode(Value, {})) ]),
+  [ entry(first, {a: 1}), entry(second, [1, 2]), entry(third, {}) ],
+  [],
+  [ final(is_object/1, [ is_object(first), is_object(third) ]) ]).
+
+% ruling list_spelling = list_of_type. `list(text)` is a TYPED VIEW over the
+% json carrier: one column in one row holds the whole array, and the array
+% fans out into rows when a rule queries it. The lab graded the alternatives
+% (cons cells, indexed rows) on five axes and measured one 1000-element list
+% at 1 row as a carrier vs 1001 indexed vs 1000 cons cells, all three
+% rendering byte-identically.
+fixture(list_column_fans_out_through_spread,
+  prog([col_type(repo/2, name, text),
+        col_type(repo/2, tags, list(text)),
+        col_type(repo_tag/2, name, text),
+        col_type(repo_tag/2, tag, text)],
+       [ (repo_tag(Name, Tag) <- repo(Name, Tags), decode(Tags, spread(Tag))) ]),
+  [ repo(cli, [go, rust]), repo(shell, []) ],
+  [],
+  [ final(repo_tag/2, [ repo_tag(cli, go), repo_tag(cli, rust) ]) ]).
+
 % ═══ aggregate heads (q9 reserved forms), bag multiplicity (q7) ═════════════
 
 % R8's fail-pre-fix fixture: two hits on ONE line count 2 under bag.

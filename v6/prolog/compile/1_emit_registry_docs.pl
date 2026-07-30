@@ -161,7 +161,12 @@ dl6_grammar(Text) :-
 registry_word_regex(Which, Regex) :-
     findall(Name,
             ( surface(Name/Arity, Axis, _AnalyzeRole, _LowerRole, Status),
-              ( Axis \== decl ; Name == set ),
+              % `decl` rows are decl words, not body keywords, and the
+              % `json` axis is punctuation surface (`{`, `$name`, `**`,
+              % `[... p]`) whose term functors are never typed by an author --
+              % painting `spread` as a keyword would highlight any relation
+              % named spread.
+              ( ( Axis \== decl, Axis \== json ) ; Name == set ),
               grammar_identifier(Name),
               grammar_arity(Arity),
               ( Which == live -> Status == live ; Status \== live )

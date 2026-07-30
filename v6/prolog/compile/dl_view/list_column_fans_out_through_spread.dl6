@@ -1,0 +1,4 @@
+rel repo(name: text, tags: list(text)).
+rel repo_tag(name: text, tag: text).
+
+repo_tag(Name, Tag) <- repo(Name, Tags), decode(Tags, [... Tag]).

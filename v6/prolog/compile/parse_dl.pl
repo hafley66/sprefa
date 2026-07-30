@@ -420,6 +420,15 @@ typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
 typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
 typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
+% ruling list_spelling = list_of_type. The ONE parametric type, and its
+% argument is a bare type word, never a nested list: 0_type_plane.pl's
+% column_storage/3 refuses list(list(_)) and list(<struct>) by name, so the
+% grammar stays permissive and the refusal stays where the reason lives.
+typed_column_type(list(Element), S0, S) :-
+    word(`list`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
 typed_column_type(float, S0, S) :- word(`float`, S0, S), !.
 % STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
 % position names a referenced relation value, and the column stores a ref to
@@ -1252,6 +1261,7 @@ mul_expr_rest(Acc, E, Vars0, Vars, S0, S) :-
 
 factor(E, Vars0, Vars, S0, S) :-
     ws0(S0, S1),
+    refuse_tagged_brace(S1),
     ( lit_dcg(`(`, S1, S2)
     -> ws0(S2, S3), expr(E, Vars0, Vars, S3, S4), ws0(S4, S5), lit_dcg(`)`, S5, S)
     ; bool_lit(E, S1, S) -> Vars = Vars0
@@ -1259,11 +1269,56 @@ factor(E, Vars0, Vars, S0, S) :-
     ; integer_lit(E, S1, S) -> Vars = Vars0
     ; quoted_atom_lit(E, S1, S) -> Vars = Vars0
     ; string_lit(E, S1, S) -> Vars = Vars0
+    ; dollar_var(E, Vars0, Vars, S1, S)
     ; braces_term(E, Vars0, Vars, S1, S)
     ; list_term(E, Vars0, Vars, S1, S)
     ; wildcard_var(E, S1, S) -> Vars = Vars0
     ; compound_or_var(E, Vars0, Vars, S1, S)
     ).
+
+% CARD-BRACE-TAG, settled 2026-07-30 with a measured receipt rather than a
+% preference (the coordinator asked "`_{}` -- or is that reserved?"; it is,
+% and not by us):
+%
+%   term_to_atom(T, '{a: 1}')      ->  {a:1}          `{}`/1, curly term
+%   term_to_atom(T, '_{a: 1}')     ->  _G{a:1}        SWI DICT
+%   term_to_atom(T, 'point{x: 1}') ->  point{x:1}     SWI DICT
+%
+% The TERM door consults real Prolog, so `_{...}` and `Tag{...}` arrive there
+% as dicts, a term shape `{}`/1 can never unify with -- body.pl's json_canon/2
+% would never see them and the two doors could not agree without switching the
+% `dicts` flag off language-wide. Bare `{...}` is the one spelling both doors
+% already read the same way, so bare braces are the json literal and the tagged
+% forms are RESERVED with this named refusal, which is also the future home the
+% directive asked to keep open ("the `{` opening will later be abused beyond
+% json").
+%
+% Refusing is what the position was missing, not what it gains: before this
+% clause `_{a: 1}` consumed `_` as a wildcard and the leftover surfaced as
+% `dl_parse_error(trailing_input([123,97,58,32,49,125]))`, naming neither the
+% brace nor the tag.
+refuse_tagged_brace(S) :-
+    (   tagged_brace_name(S, Name)
+    ->  throw(unsupported_construct(tagged_brace_reserved(Name)))
+    ;   true
+    ).
+
+tagged_brace_name(S, Name) :-
+    ident(Name, S, Rest),
+    Rest = [0'{ | _].
+
+% ruling json_key_hole_marker = dollar (2026-07-30). `$name` marks a hole in
+% KEY position, where a bare identifier is a literal label. It is accepted in
+% VALUE position too, where a bare identifier is already a variable, so that
+% `{$key: $value}` reads uniformly on both planes -- an alias, never a second
+% meaning. `$_` is a fresh anonymous variable, exactly like bare `_`.
+dollar_var(Var, Vars0, Vars, S0, S) :-
+    S0 = [0'$ | S1],
+    ident(Name, S1, S),
+    hole_var(Name, Vars0, Var, Vars).
+
+hole_var('_', Vars, _Fresh, Vars) :- !.
+hole_var(Name, Vars0, Var, Vars) :- get_or_make_var(Name, Vars0, Var, Vars).
 
 bool_lit(bool_lit(true), S0, S) :- word(`true`, S0, S), !.
 bool_lit(bool_lit(false), S0, S) :- word(`false`, S0, S).
@@ -1291,34 +1346,83 @@ call_args([Arg | Rest], Vars0, Vars, S0, S) :-
 % braces term `{ key: value, ... }` -> '{}'/1 wrapping a comma-conjunction of
 % Key:Value pairs, matching exactly how plain Prolog reads the fixtures' own
 % `{stars: 4, name: Name}` source (curly term + standard `:`/2 operator).
-% Key is a LABEL (bare ident taken literally, never quoted, never a var --
-% the same lexical role as a relation functor name).
+%
+% ONE grammar, two roles (json_syntax lab §1 law (a)): the literal is this
+% production minus holes. The empty object is the ATOM `{}`, not `{}`/1,
+% because that is what the term door produces -- `term_to_atom(T, '{}')` reads
+% an atom of arity 0, so making the text door mint `{}`/1 with an empty pair
+% list would put the two doors on different terms for the same source.
+%
+% Keys are pattern-only by construction (lab §1 law (b)): JSON5 permits
+% unquoted keys and forbids unquoted string values, so bareness is the literal
+% marker on the KEY plane while quoting is the literal marker on the VALUE
+% plane. A key that has to be COMPUTED is json_object(Key, Value), never a
+% brace.
+%
+% Trailing commas are NOT accepted: ruling json5_subset = unquoted_keys_only
+% takes bare identifier keys out of JSON5 and nothing else (no `,}` and no `#`
+% comments inside a brace).
 
-braces_term('{}'(Pairs), Vars0, Vars, S0, S) :-
+braces_term(Term, Vars0, Vars, S0, S) :-
     lit_dcg(`{`, S0, S1), !,
     ws0(S1, S2),
-    brace_pairs(Pairs, Vars0, Vars, S2, S3),
+    (   peek(0'}, S2, S2)
+    ->  Term = '{}', Vars = Vars0, S3 = S2
+    ;   Term = '{}'(Pairs),
+        brace_pairs(Pairs, Vars0, Vars, S2, S3)
+    ),
     ws0(S3, S4), lit_dcg(`}`, S4, S).
 
-brace_pairs((Key:Value, Rest), Vars0, Vars, S0, S) :-
-    ident(Key, S0, S1), ws0(S1, S2), lit_dcg(`:`, S2, S3), ws0(S3, S4),
-    expr(Value, Vars0, Vars1, S4, S5), ws0(S5, S6),
-    lit_dcg(`,`, S6, S7), !, ws0(S7, S8),
-    brace_pairs(Rest, Vars1, Vars, S8, S).
-brace_pairs(Key:Value, Vars0, Vars, S0, S) :-
-    ident(Key, S0, S1), ws0(S1, S2), lit_dcg(`:`, S2, S3), ws0(S3, S4),
-    expr(Value, Vars0, Vars, S4, S).
+brace_pairs((Pair, Rest), Vars0, Vars, S0, S) :-
+    brace_pair(Pair, Vars0, Vars1, S0, S1), ws0(S1, S2),
+    lit_dcg(`,`, S2, S3), !, ws0(S3, S4),
+    brace_pairs(Rest, Vars1, Vars, S4, S).
+brace_pairs(Pair, Vars0, Vars, S0, S) :-
+    brace_pair(Pair, Vars0, Vars, S0, S).
 
-% list term `[ e1, e2, ... ]` (only ever used as concat/1's argument in this
-% corpus, kept general as a proper Prolog list of exprs).
+brace_pair(Key:Value, Vars0, Vars, S0, S) :-
+    brace_key(Key, Vars0, Vars1, S0, S1), ws0(S1, S2),
+    lit_dcg(`:`, S2, S3), ws0(S3, S4),
+    expr(Value, Vars1, Vars, S4, S).
 
-list_term(List, Vars0, Vars, S0, S) :-
+% The key axis. Every form but the plain label is a MATCHER:
+%
+%   name        k_exact   the label itself
+%   'name'      k_exact   ruling string_quote = both_parse; a quoted key is
+%   "name"      k_exact   always literal, which is how a real "$ref" key in an
+%                         OpenAPI document stays a key instead of a capture
+%   $name       k_hole    ruling json_key_hole_marker = dollar; term `$`/1
+%   **          k_descend ruling descent_depth_cap = uncapped; term `'**'`
+%
+% `**` and `$name` both have to survive the term door, which is why they carry
+% those exact term shapes: `{**: ...}` is a Prolog syntax error (the reader
+% wants an operand after the infix `**`) while `{'**': ...}` and `{$Key: V}`
+% both read (`$`/1 is a standard SWI prefix operator).
+brace_key('**', Vars, Vars, S0, S) :- lit_dcg(`**`, S0, S), !.
+brace_key($(Var), Vars0, Vars, S0, S) :-
+    S0 = [0'$ | S1], !,
+    ident(Name, S1, S),
+    hole_var(Name, Vars0, Var, Vars).
+brace_key(Key, Vars, Vars, S0, S) :- quoted_atom_lit(Key, S0, S), !.
+brace_key(Key, Vars, Vars, S0, S) :- string_lit(Text, S0, S), !, atom_string(Key, Text).
+brace_key(Key, Vars, Vars, S0, S) :- ident(Key, S0, S).
+
+% list term `[ e1, e2, ... ]`, plus the array SPREAD `[... pattern]`, which is
+% the one array production the flagship needs: one row per element, siblings
+% correlated (json_syntax lab receipt L2, `examples/gh-cache.dl:116-117`).
+% Term form is `spread`/1 -- `[... P]` is a Prolog syntax error, so the term
+% door needs a functor, and the printer renders it back to `[... P]`.
+
+list_term(Term, Vars0, Vars, S0, S) :-
     lit_dcg(`[`, S0, S1), !,
     ws0(S1, S2),
-    ( peek(0'], S2, S2) -> List = [], Vars = Vars0, S3 = S2
-    ; list_items(List, Vars0, Vars, S2, S3)
+    ( lit_dcg(`...`, S2, S3)
+    -> ws0(S3, S4), expr(Element, Vars0, Vars, S4, S5),
+       Term = spread(Element), S6 = S5
+    ; peek(0'], S2, S2) -> Term = [], Vars = Vars0, S6 = S2
+    ; list_items(Term, Vars0, Vars, S2, S6)
     ),
-    ws0(S3, S4), lit_dcg(`]`, S4, S).
+    ws0(S6, S7), lit_dcg(`]`, S7, S).
 
 list_items([Item | Rest], Vars0, Vars, S0, S) :-
     expr(Item, Vars0, Vars1, S0, S1), ws0(S1, S2),

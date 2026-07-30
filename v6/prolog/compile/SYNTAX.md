@@ -70,8 +70,14 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
 | `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
 | `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
-| `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |
 | `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `{}/1` | `json` | `no_refs` | `value(json_object_shape)` | `live` |
+| `{}/0` | `json` | `no_refs` | `value(json_empty_object)` | `live` |
+| `spread/1` | `json` | `no_refs` | `value(json_array_spread)` | `live` |
+| `$/1` | `json` | `no_refs` | `value(json_hole)` | `live` |
+| `**/0` | `json` | `no_refs` | `value(json_descent)` | `live` |
+| `tagged_brace/1` | `json` | `no_refs` | `value(refuse(tagged_brace_reserved))` | `reserved` |
 | `true/0` | `guard` | `no_refs` | `word(lower)` | `live` |
 | `:=/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
 | `is/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
@@ -85,6 +91,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `sum/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `min/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `max/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
+| `avg/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
@@ -122,6 +129,8 @@ sibling throw shapes -- see `scripts/bop_check.pl`'s own header), 1 broken
 | `bop check` | `<file.dl6>` | validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error). |
 | `bop load` | `<file.dl6> [--port <port>]` | POST a compiled program to an already-running bop serve; exit 1 if nothing is listening. |
 | `bop q` | `<rel> [--port <port>] [--json]` | read one rel's current rows from a running bop serve. |
+| `bop stats` | `[--port <port>]` | read process and SQLite storage statistics from a running bop serve. |
+| `bop ticks` | `[--port <port>]` | stream served tick events from a running bop serve until interrupted. |
 <!-- END GENERATED cli_command/3 TABLE -->
 
 ### Context status
@@ -175,6 +184,44 @@ construct inventory.
 | mutation | `rel!(args)` | `unsupported_surface(mutation(Name/Arity))` |
 | `true` / `false` as values | unavailable | bare identifiers remain variables in argument position |
 | `null` | unavailable | no term-form mapping |
+
+### The json plane
+
+`json` is a column type, and the brace grammar is one grammar with two roles:
+the LITERAL is the PATTERN minus holes. Which lowering a brace pattern gets is
+decided by the SOURCE COLUMN'S DECLARED TYPE, never by the pattern -- a
+declared struct becomes a dictionary join, a `json` column becomes json1 SQL.
+
+| term-form shape | `.dl6` spelling | role | ruling |
+|---|---|---|---|
+| `'{}'(Pairs)` | `{key: value, ...}` | object literal / open object pattern | `json5_subset = unquoted_keys_only` |
+| `'{}'` (arity 0) | `{}` | empty object; matches any object, binds nothing | term-door agreement |
+| `spread(Pattern)` | `[... pattern]` | array fan-out, one row per element | the gh-cache flagship |
+| `$(Var)` as a KEY | `$name` | key capture; the key is data | `json_key_hole_marker = dollar` |
+| `$(Var)` as a VALUE | `$name` | alias for the bare variable (text door) | same ruling |
+| `'**'` as a KEY | `**` | descent at any depth, root included | `descent_depth_cap = uncapped` |
+| quoted key | `{'name': v}` / `{"name": v}` | literal label, never a hole | `string_quote = both_parse` |
+| `list(T)` | `tags: list(text)` | typed view over the json array carrier | `list_spelling = list_of_type` |
+| tagged brace | `Tag{...}` / `_{...}` | `unsupported_construct(tagged_brace_reserved(Tag))` | reserved |
+
+Bareness is the literal marker on the KEY plane and quoting is the literal
+marker on the VALUE plane, and that is forced rather than chosen: JSON5 permits
+unquoted keys and forbids unquoted string values, so the value slot is free for
+dl6 variables and the key slot is not. Every key-axis production is therefore
+PATTERN-ONLY, forever -- constructing an object with a computed key is
+`json_object(Key, Value)`, never a brace literal.
+
+NOT taken out of JSON5: trailing commas, and `#` comments inside a brace.
+
+`Tag{...}` is reserved by measurement, not preference. SWI reads `_{a: 1}` and
+`point{x: 1}` as DICTS, a term shape `{}`/1 can never unify with, so the term
+door could never agree with a text door that read them as json. The refusal
+also keeps the spelling free for the stated future use of `{` beyond json.
+
+Cost, in joins: an exact key at any depth is 0 (one accumulated `json_extract`
+path); array spread, key capture and key wildcard are 1 (`json_each`); `**` is
+1 (`json_tree`, whose `fullkey` rides the same join). Statement counts stay
+flat per rule.
 
 ### Legacy surface: parsed, then refused
 

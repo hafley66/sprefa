@@ -37,6 +37,36 @@
 #                                  log side; emission still owed).
 #   sg_pattern/3                   registry status `refused`
 #                                  (slot_sg_metavariable_semantics).
+#   spread/1, $/1, **/0, {}/0      the json value/pattern axis. LIVE and graded
+#                                  -- seven fixtures in conformance/fixtures/
+#                                  json_arm.pl, sweep 140 compiled / 138
+#                                  identical / 0 wrong on BOTH the tick log and
+#                                  the final state, both emitter modes. Absent
+#                                  from THIS file for one measured reason: the
+#                                  json arrival seam not wired on the golden path.
+#                                  The sweep feeds a json column through
+#                                  sweep.pl, which canonicalizes the value to
+#                                  TEXT in prolog before it is written, and the
+#                                  oracle reads the obj(...) straight out of the
+#                                  fixture term. The golden's path has neither
+#                                  half: golden-schedules.ts would bind a JS
+#                                  object into a TEXT column, and
+#                                  golden_oracle.pl's schedule_value/2 maps a
+#                                  JSON STRING to an ATOM, so a canonical-text
+#                                  payload would derive nothing on the oracle
+#                                  side while the emitter derived rows. Closing
+#                                  it is one change on each door (canonicalize
+#                                  an object/array arrival for a json column in
+#                                  the TS seam; parse a string arriving into a
+#                                  json column at the oracle door) and it is the
+#                                  named follow-up, not a workaround.
+#   tagged_brace/1                 reserved. `_{...}` and `Tag{...}` are SWI
+#                                  DICT syntax (measured: term_to_atom gives a
+#                                  dict, not `{}`/1), so the term door could
+#                                  never agree with a text door that read them
+#                                  as json. parse_dl.pl refuses them by name and
+#                                  the spelling stays free for the directive's
+#                                  stated future use of `{`.
 #   set/0                          removed word: unsupported_surface(
 #                                  removed_word(set)).
 #   zip/2                          reserved.

@@ -2793,3 +2793,130 @@ test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
     \+ sub_atom(DeltaSql, _, _, _, '__ref_user').
 
 :- end_tests(relation_depth_lowering).
+
+% ═══ json surface grammar ═══════════════════════════════════════════════════
+%
+% The parse/print half of the json wiring arc (plans/2026-07-30-json-syntax-
+% lab.md §1, rulings json_key_hole_marker/json5_subset/string_quote/
+% descent_depth_cap/list_spelling). Each test names the ruling it pins.
+%
+% SABOTAGE RECEIPT, run before this group was written: deleting the
+% `refuse_tagged_brace/1` call from factor/5 turns
+% tagged_brace_is_reserved_with_a_named_refusal red with
+% `dl_parse_error(trailing_input([123,97,58,32,49,125]))` -- the exact
+% unnamed failure the refusal replaces, and the reason the refusal exists at
+% all rather than the spelling being merely unsupported.
+
+:- begin_tests(json_grammar).
+
+parsed_pattern(Text, Pattern) :-
+    atomic_list_concat(['out(a) <- src(b), decode(b, ', Text, ').'], Source),
+    atom_codes(Source, Codes),
+    once(( parse_dl(Codes, prog(_, Rules), _, []),
+           Rules = [(_ <- (_, decode(_, Pattern)))] )).
+
+printed_pattern(Pattern, Text) :-
+    once(print_term(Pattern, [], 0, top, Text)).
+
+% ruling json5_subset = unquoted_keys_only: bare identifier keys, and nothing
+% else out of JSON5. A trailing comma is NOT taken, so it must not parse.
+test(unquoted_identifier_keys_parse) :-
+    parsed_pattern('{name: n, stars: s}', Pattern),
+    Pattern = '{}'((name:_, stars:_)).
+
+test(trailing_comma_is_not_taken) :-
+    catch(( parsed_pattern('{name: n, }', _), Outcome = parsed ),
+          dl_parse_error(_, _),
+          Outcome = refused),
+    Outcome == refused.
+
+% ruling string_quote = both_parse. A quoted key is always a literal label,
+% which is how a real OpenAPI `"$ref"` key stays a key instead of a hole.
+test(both_quote_characters_give_the_same_key) :-
+    parsed_pattern('{\'name\': n}', Single),
+    parsed_pattern('{"name": n}', Double),
+    Single = '{}'(name:_),
+    Double = '{}'(name:_).
+
+test(quoted_dollar_key_is_a_literal_label) :-
+    parsed_pattern('{\'$ref\': v}', Pattern),
+    Pattern = '{}'('$ref':Value),
+    var(Value).
+
+% ruling json_key_hole_marker = dollar. `$name` on the key plane is a hole
+% (term `$`/1); on the value plane it is an alias for the bare variable, so
+% `{$key: $value}` reads uniformly on both planes.
+test(dollar_marks_a_key_hole) :-
+    parsed_pattern('{$key: $value}', Pattern),
+    Pattern = '{}'($(KeyVar):ValueVar),
+    var(KeyVar), var(ValueVar), KeyVar \== ValueVar.
+
+test(dollar_in_value_position_is_the_same_variable_as_the_bare_identifier) :-
+    atom_codes('out(v) <- src(b), decode(b, {a: v, c: $v}).', Codes),
+    once(parse_dl(Codes, prog(_, [(out(HeadVar) <- (_, decode(_, Pattern)))]), _, [])),
+    Pattern = '{}'((a:First, c:Second)),
+    First == HeadVar,
+    Second == HeadVar.
+
+% ruling descent_depth_cap = uncapped: `**` stays unbounded, like the CSS
+% descendant combinator. Term form is the QUOTED atom because `{**: ...}` is a
+% Prolog syntax error (the reader wants an operand after the infix `**`).
+test(descent_key_parses_to_the_quoted_atom) :-
+    parsed_pattern('{**: {image: i}}', Pattern),
+    Pattern = '{}'('**':'{}'(image:_)).
+
+% The flagship, examples/gh-cache.dl:116-117, transcribed into dl6. This is
+% the acceptance case of the whole grammar: array spread + exact keys + value
+% holes + nesting, in one pattern.
+test(gh_cache_flagship_parses) :-
+    parsed_pattern('[... {number: num, title: title, state: state, user: {login: author}}]',
+                   Pattern),
+    Pattern = spread('{}'((number:_, title:_, state:_, user:'{}'(login:_)))).
+
+% The empty object is the ATOM `{}`, matching what the term door produces:
+% term_to_atom(T, '{}') reads arity 0, so a text door minting `{}`/1 here
+% would put the two doors on different terms for identical source.
+test(empty_object_is_the_arity_zero_atom) :-
+    parsed_pattern('{}', Pattern),
+    Pattern == '{}'.
+
+test(empty_array_is_the_empty_list) :-
+    parsed_pattern('[]', Pattern),
+    Pattern == [].
+
+% CARD-BRACE-TAG, settled by measurement: `_{...}` and `Tag{...}` are SWI
+% DICT syntax (term_to_atom gives a dict, not `{}`/1), so the term door could
+% never agree with a text door that read them as json. Reserved, named.
+test(tagged_brace_is_reserved_with_a_named_refusal,
+     [throws(unsupported_construct(tagged_brace_reserved(point)))]) :-
+    parsed_pattern('point{a: v}', _).
+
+test(underscore_brace_is_reserved_with_a_named_refusal,
+     [throws(unsupported_construct(tagged_brace_reserved('_')))]) :-
+    parsed_pattern('_{a: v}', _).
+
+% Round-trip: every production the printer can emit re-reads to the same term.
+% This is the printer half of the G1 grade, at unit granularity.
+test(every_json_production_round_trips) :-
+    forall(member(Source, ['{name: n, stars: 4}',
+                           '{$key: $value}',
+                           '{**: {image: i}}',
+                           '[... {number: num, user: {login: author}}]',
+                           '{}',
+                           '[]',
+                           '{\'$ref\': v}']),
+           ( parsed_pattern(Source, Pattern),
+             printed_pattern(Pattern, Printed),
+             parsed_pattern(Printed, Reparsed),
+             ( Pattern =@= Reparsed
+             -> true
+             ; throw(round_trip_broken(Source, Printed, Pattern, Reparsed)) ) )).
+
+% A key whose text is not a plain identifier comes back QUOTED, because bare
+% `$ref` would re-read as a hole rather than a label.
+test(non_identifier_key_prints_quoted) :-
+    parsed_pattern('{\'$ref\': v}', Pattern),
+    printed_pattern(Pattern, Text),
+    Text == '{\'$ref\': _}'.
+
+:- end_tests(json_grammar).

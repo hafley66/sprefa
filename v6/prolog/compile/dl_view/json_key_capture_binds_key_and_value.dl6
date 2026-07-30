@@ -1,0 +1,4 @@
+rel raw_doc(body: json).
+rel field(key: text, value: text).
+
+field(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value}).

@@ -54,6 +54,10 @@ eval_expr(Term, Out) :-
     arg(1, Term, Argument),
     eval_expr(Argument, Value),
     text_scalar_value(Rendering, Value, Out).
+% The empty object is the ATOM `{}` on both doors, so it canonicalizes here
+% beside its arity-1 sibling; without this clause a stored `{}` stays an atom
+% and every object pattern over it fails as if the value were a scalar.
+eval_expr('{}', Canon) :- !, json_canon('{}', Canon).
 eval_expr(Braces, Canon) :- Braces = {}(_), !, json_canon(Braces, Canon).
 eval_expr([Head | Tail], Canon) :- !, json_canon([Head | Tail], Canon).
 eval_expr(Value, Value).
@@ -112,6 +116,10 @@ solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, Rig
 
 % ═══ json ═══════════════════════════════════════════════════════════════════
 
+% The EMPTY object is the atom `{}`, not `{}`/1: that is what the term door's
+% own reader produces for `{}` (term_to_atom gives arity 0), so the text door
+% mints the same atom and both arrive here.
+json_canon('{}', obj([])) :- !.
 json_canon(Braces, obj(Sorted)) :- nonvar(Braces), Braces = {}(Fields), !,
     braces_pairs(Fields, Pairs),
     keysort(Pairs, Sorted),
@@ -130,7 +138,32 @@ braces_pairs((Left, Right), Pairs) :- !,
 braces_pairs(Key: Raw, [Key-Value]) :- json_canon(Raw, Value).
 
 % decode: open object patterns, holes bind canonical values.
+%
+% NONDETERMINISM IS THE SEMANTICS, not a convenience. Three of the productions
+% below fan out -- array spread, key capture and `**` descent -- and each one
+% corresponds to exactly one SQL join in the emitted plan (json_syntax lab
+% cost table: spread and key capture are `json_each`, descent is `json_tree`).
+% A `memberchk` anywhere in those three would answer the first match only and
+% silently lose rows the emitter derives.
 json_decode(Value, Pattern) :- var(Pattern), !, Pattern = Value.
+% `$Name` in VALUE position (ruling json_key_hole_marker = dollar: "so
+% {$key: $value} reads uniformly on both planes"). The TERM door reads it as
+% the `$`/1 compound, because `$` is a standard SWI prefix operator; the TEXT
+% door resolves it to the plain variable, because on the value plane a bare
+% identifier is already a variable and `$` is an alias rather than a second
+% meaning. Both spellings are holes and both arrive here.
+json_decode(Value, Pattern) :- nonvar(Pattern), Pattern = $(Hole), !,
+    Hole = Value.
+% The empty object pattern is OPEN with no members, so it matches any object
+% and binds nothing.
+json_decode(Value, '{}') :- !, Value = obj(_).
+% Array spread `[... Sub]`: ONE SOLUTION PER ELEMENT. Lowers to a `json_each`
+% join, which is one row per element with siblings correlated -- the flagship
+% shape (json_syntax lab receipt L2, examples/gh-cache.dl:116-117).
+json_decode(List, Pattern) :- nonvar(Pattern), Pattern = spread(Sub), !,
+    is_list(List),
+    member(Element, List),
+    json_decode(Element, Sub).
 json_decode(obj(Pairs), Pattern) :- nonvar(Pattern), Pattern = {}(Fields), !,
     braces_decode(Fields, Pairs).
 json_decode(List, Pattern) :- is_list(Pattern), !,
@@ -142,10 +175,40 @@ json_decode_flip(Pattern, Value) :- json_decode(Value, Pattern).
 
 braces_decode((Left, Right), Pairs) :- !,
     braces_decode(Left, Pairs), braces_decode(Right, Pairs).
+% `**` descent (ruling descent_depth_cap = uncapped): the sub-pattern is tried
+% against this object AND every object below it, at any depth. Lowers to
+% `json_tree`, whose first row IS the root, which is why the root is a
+% candidate here too.
+braces_decode('**': Pattern, Pairs) :- !,
+    descendant_object(obj(Pairs), Descendant),
+    json_decode(Descendant, Pattern).
+% Key capture (ruling json_key_hole_marker = dollar): the key is data. Lowers
+% to `json_each`, whose (key, value) columns already carry both -- the
+% construct the recovery doc graded "needs new surface" and that needs ZERO
+% new SQL machinery (lab receipt L3).
+braces_decode(Key: Pattern, Pairs) :-
+    nonvar(Key), Key = $(KeyHole), !,
+    member(ActualKey-Value, Pairs),
+    Value \== none,
+    KeyHole = ActualKey,
+    json_decode(Value, Pattern).
 braces_decode(Key: Pattern, Pairs) :-
     memberchk(Key-Value, Pairs),
     Value \== none,
     json_decode(Value, Pattern).
+
+% Every OBJECT in a value's tree, root first. Scalars contribute nothing, so
+% descending into one is a silent non-match -- the same semantics the emitted
+% `type = 'object'` guard buys in SQL, where without it json_extract raises
+% `malformed JSON` and kills the whole statement (lab finding 6).
+descendant_object(obj(Pairs), obj(Pairs)).
+descendant_object(obj(Pairs), Descendant) :-
+    member(_-Value, Pairs),
+    descendant_object(Value, Descendant).
+descendant_object(List, Descendant) :-
+    is_list(List),
+    member(Value, List),
+    descendant_object(Value, Descendant).
 
 % ═══ body solving ═══════════════════════════════════════════════════════════
 % ctx(Visible, PreState, Tick): Visible = rows body atoms read; PreState =

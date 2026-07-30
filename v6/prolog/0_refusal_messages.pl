@@ -75,6 +75,10 @@ refusal_inventory_entry(Signature, Example) :-
     nonvar(Example),
     reason_signature(Example, Signature).
 
+% parse_dl is a refusal source as of the json wiring arc: `tagged_brace_
+% reserved` is thrown at the LEXER, before any analyzer stage sees a term, and
+% a refusal the inventory cannot see is a refusal nothing checks renders.
+refusal_source_module(parse_dl).
 refusal_source_module(enum_expand).
 refusal_source_module(match_expand).
 refusal_source_module(type_plane).

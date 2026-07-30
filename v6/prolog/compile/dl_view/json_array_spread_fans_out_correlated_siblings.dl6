@@ -1,0 +1,4 @@
+rel resp(body: json).
+rel pull_request(number: int, title: text, author: text).
+
+pull_request(Number, Title, Author) <- resp(Body), decode(Body, [... {number: Number, title: Title, user: {login: Author}}]).

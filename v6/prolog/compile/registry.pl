@@ -67,6 +67,39 @@ surface(now/1,          time,      no_refs,                      wrapper(expr, l
 % and a key the type does not declare is decode_field_unknown.
 surface(decode/2,       guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pair, refuse(goal)),      refused).
+
+% ═══ the json value/pattern axis ════════════════════════════════════════════
+%
+% These are NOT body goals: every row below is a shape that appears inside a
+% VALUE or inside decode/2's second argument, which is why each carries a
+% `value(...)` lowering role and none of them reaches body_lower_role/1. They
+% are registry rows all the same, because the registry is what the generated
+% SYNTAX.md table and the golden-flex coverage gate read -- a surface that
+% grows without a row here grows in silence.
+%
+% Their TEXT surface is punctuation, not a word, so registry_word_regex/2 in
+% 1_emit_registry_docs.pl excludes the whole axis from the tmLanguage keyword
+% alternation; highlighting `spread` as a keyword would paint any relation a
+% user happens to call `spread`, and the text spelling is `[... p]` anyway.
+%
+%   term          text         ruling
+%   '{}'/1        {k: v}       json5_subset = unquoted_keys_only
+%   '{}'/0        {}           the empty object; arity 0 because that is what
+%                              the term door's own reader produces
+%   spread/1      [... p]      the flagship's array fan-out
+%   '$'/1         $name        json_key_hole_marker = dollar
+%   '**'/0        **           descent_depth_cap = uncapped
+surface('{}'/1,         json,      no_refs,                      value(json_object_shape),               live).
+surface('{}'/0,         json,      no_refs,                      value(json_empty_object),               live).
+surface(spread/1,       json,      no_refs,                      value(json_array_spread),               live).
+surface('$'/1,          json,      no_refs,                      value(json_hole),                       live).
+surface('**'/0,         json,      no_refs,                      value(json_descent),                    live).
+% CARD-BRACE-TAG, settled by measurement: `_{...}` and `Tag{...}` are SWI DICT
+% syntax, a term shape `{}`/1 can never unify with, so the term door could
+% never agree with a text door that read them as json. Reserved rather than
+% silently misparsed (parse_dl.pl refuse_tagged_brace/1), and reserved on
+% purpose: it is the home for the directive's stated future use of `{`.
+surface(tagged_brace/1, json,      no_refs,                      value(refuse(tagged_brace_reserved)),   reserved).
 surface(true/0,         guard,     no_refs,                      word(lower),                           live).
 
 % EXPRESSION + AGGREGATE LIFT (ruling expression_residency,
