@@ -267,3 +267,42 @@ fixture(log_stacks_within_tick_and_across_ticks,
     final(heard/1, [ heard(alpha), heard(alpha), heard(alpha) ]),
     final(heard_count/1, [ heard_count(alpha), heard_count(alpha), heard_count(alpha) ]),
     ticks(3) ]).
+
+% The log/set distinction as a GRADED PAIR. Promoted from the time-plane lab
+% (T1/T2, plans/2026-07-30-time-plane-unification-verdict.md candidates 1-2),
+% which needed both halves to refute the "log is sugar over a seq column"
+% hypothesis and found neither was pinned anywhere in the corpus.
+%
+% The pair is the discriminating measurement: what the LOG kind buys is not
+% duplicate delivery, it is the engine minting DISTINCTNESS the world did not
+% send. On the set plane the second identical arrival is absorbed by
+% absorb_set_arrival/5 as Changed = false, so absorb_arrivals/8 mints no
+% occurrence and the row is invisible to every rule in the program -- not
+% merely coalesced at the boundary. That is why no expansion written in rules
+% can recover it: the occurrence it would have to fire on does not exist.
+%
+% Held together with log_stacks_within_tick_and_across_ticks above, which
+% grades the log half's multiplicity across ticks. These two grade the SPLIT.
+
+fixture(set_rel_identical_arrival_is_one_occurrence,
+  prog([ kind(fired/1, log), keep(fired/1, all) ],
+       [ (fired(Name) <+ ev(Name)) ]),
+  [],
+  [ [ +ev(alpha), +ev(alpha) ] ],
+  [ deltas(ev/1, [ [ +ev(alpha) ], [] ]),
+    deltas(fired/1, [ [ +fired(alpha) ], [] ]),
+    final(ev/1, [ ev(alpha) ]),
+    final(fired/1, [ fired(alpha) ]),
+    ticks(2) ]).
+
+fixture(log_rel_identical_arrival_is_two_occurrences,
+  prog([ kind(ev/1, log), keep(ev/1, all),
+         kind(fired/1, log), keep(fired/1, all) ],
+       [ (fired(Name) <+ ev(Name)) ]),
+  [],
+  [ [ +ev(alpha), +ev(alpha) ] ],
+  [ deltas(ev/1, [ [ +ev(alpha), +ev(alpha) ], [] ]),
+    deltas(fired/1, [ [ +fired(alpha), +fired(alpha) ], [] ]),
+    final(ev/1, [ ev(alpha), ev(alpha) ]),
+    final(fired/1, [ fired(alpha), fired(alpha) ]),
+    ticks(2) ]).

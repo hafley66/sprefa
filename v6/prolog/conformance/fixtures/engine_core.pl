@@ -7,12 +7,21 @@
 :- op(700,  xfx, :=).
 
 % keep(count(N)) prunes a Log rel to its newest N stamps at tick end.
+%
+% The deltas/2 leg was ADDED after the time-plane lab named this fixture's
+% final/2-only expectation as the reason the retention hole survived three
+% arcs: for the corpus's only keep(count(N)) fixture, grading the end state
+% alone cannot see whether the prune was reported or silently dropped, and it
+% was silently dropped. Retention is now graded on both legs.
 fixture(retention_count_prunes_oldest,
   prog([ kind(event/1, log), keep(event/1, count(2)) ],
        []),
   [],
   [ [ +event(one) ], [ +event(two) ], [ +event(three) ] ],
-  [ final(event/1, [ event(three), event(two) ]) ]).
+  [ deltas(event/1, [ [ +event(one) ],
+                      [ +event(two) ],
+                      [ -event(one), +event(three) ] ]),
+    final(event/1, [ event(three), event(two) ]) ]).
 
 % Retention reports the reclamation. The prune is an ordinary minus delta at
 % the tick boundary, so the bound the program declared is graded rather than
@@ -38,6 +47,37 @@ fixture(retention_prune_is_a_visible_minus,
   [ deltas(event/1, [ [ +event(one) ],
                       [ +event(two) ],
                       [ -event(one), +event(three) ] ]) ]).
+
+% created_at and updated_at are ordinary columns two ordinary edge rules fill.
+% Promoted from the time-plane lab (T15,
+% plans/2026-07-30-time-plane-unification-verdict.md candidate 3), where it is
+% the receipt that refutes the auto-metadata-plane hypothesis: the semantics
+% the plane would add already ship, with zero new constructs, so an auto plane
+% would cost 7.5 bytes/row on every rel to serve the rels that asked for it.
+%
+% now/1 supplies the tick, pre/1 carries the birth tick across a keyed
+% replace, not/1 supplies the base case. The two rules are the two branches of
+% one fold: in rx this is groupBy + scan, with pre/1 as the accumulator and
+% not/1 as the seed.
+%
+% The graded value is thing(1, c, 1, 3): payload advanced to the third
+% arrival, created pinned at tick 1, updated advanced to tick 3. The NAIVE
+% one-rule spelling (drop the pre/1 rule) instead yields thing(1, c, 3, 3) --
+% a column named created_at_tick holding updated_at semantics, silently. That
+% trap is the honest argument for sugar later; this fixture is the oracle any
+% such sugar has to match.
+fixture(created_at_pinned_updated_at_advances,
+  prog([ kind(arrive/2, log), keep(arrive/2, all),
+         keyed(thing/4, [1]) ],
+       [ (thing(Id, Payload, Born, Tick) <+
+              arrive(Id, Payload), now(Tick),
+              pre(thing(Id, _Old, Born, _Was))),
+         (thing(Id, Payload, Tick, Tick) <+
+              arrive(Id, Payload), now(Tick),
+              not(thing(Id, _AnyPayload, _AnyBorn, _AnyUpdated))) ]),
+  [],
+  [ [ +arrive(1, a) ], [ +arrive(1, b) ], [ +arrive(1, c) ] ],
+  [ final(thing/4, [ thing(1, c, 1, 3) ]) ]).
 
 % A Log rel without a keep clause is a load error (q10: REQUIRED).
 fixture(log_without_retention_rejected,

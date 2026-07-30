@@ -371,6 +371,13 @@
     "finalDetail": ""
   },
   {
+    "name": "created_at_pinned_updated_at_advances",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
     "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
@@ -701,6 +708,20 @@
   },
   {
     "name": "log_stacks_within_tick_and_across_ticks",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "set_rel_identical_arrival_is_one_occurrence",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_rel_identical_arrival_is_two_occurrences",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
