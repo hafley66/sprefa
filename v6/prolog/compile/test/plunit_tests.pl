@@ -2611,4 +2611,44 @@ test(depth_two_level_construction_lowers_to_one_join_per_level) :-
            sub_atom(Sql, _, _, _, View)),
     \+ sub_atom(Sql, _, _, _, 'json_extract(b').
 
+% ── the level the body already joins ────────────────────────────────────────
+%
+% D5. A head value that IS a body atom needs no dictionary join at all: the
+% endpoint is that atom's own `__id`. The depth-N rewrite interned it anyway,
+% and the emitted statement became the target table joined to a TEMP VIEW over
+% itself on every value column, once in the full arm and again in the delta arm.
+%
+% RED RECEIPT, run at a4629623 (labs/rel_value_unification/11_ref_necessity.pl,
+% whose two checks are this receipt's origin):
+%
+%   fail  target_scan_captures_dense_identity_without_ref
+%   fail  incremental_target_frontier_rejoins_dense_identity_without_json
+%
+% with the full arm reading
+%
+%   SELECT b1."__id" FROM "user" b0, "__ref_user" b1
+%   WHERE b1."id" = b0."id" AND b1."name" = b0."name"
+%
+% Both arms are pinned here because they are built by different code paths and
+% only the incremental one is the hot path.
+% Built through the TEXT DOOR rather than by hand: the elision depends on the
+% target-membership atom 0_relation_edge_expand.pl adds, and a hand-built
+% plan/6 skips the expansion that puts it there.
+depth_one_identity_program(Plan) :-
+    Text = "rel user(id: int, name: text) key(1).\nrel selected(choice: user).\nselected(user(Id, Name)) <- user(Id, Name).\n",
+    string_codes(Text, Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(fixture(depth_one_identity, Program, [], [], [])-Bindings, Plan).
+
+test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
+    depth_one_identity_program(Plan),
+    lower_program(Plan, Lowered),
+    arg(5, Lowered, LevelStatements),
+    memberchk(levelstmt(selected/1, _, InsertSqls, DeltaSql, _, _), LevelStatements),
+    atomic_list_concat(InsertSqls, ' ', Sql),
+    once(sub_atom(Sql, _, _, _, 'SELECT b0."__id" FROM "user" b0')),
+    \+ sub_atom(Sql, _, _, _, '__ref_user'),
+    once(sub_atom(DeltaSql, _, _, _, 'FROM "__frontier_user" d0, "user" r0')),
+    \+ sub_atom(DeltaSql, _, _, _, '__ref_user').
+
 :- end_tests(relation_depth_lowering).

@@ -1033,11 +1033,87 @@ expand_relation_pattern_rule(Types, RelPlans, (Head0 <- Body0), (Head <- Body)) 
     conjunction_goals(Body0, Goals0),
     rewrite_relation_atom(Types, RelPlans, Head0, Head, st([], []), State1),
     rewrite_relation_goals(Types, RelPlans, Goals0, Goals, State1,
-                           st(_, DictionaryAtoms)),
+                           st(_, DictionaryAtoms0)),
+    elide_dictionary_atoms_the_body_already_joins(Goals, DictionaryAtoms0,
+                                                  DictionaryAtoms, Elided),
     append(Goals, DictionaryAtoms, AllGoals),
     goals_conjunction(AllGoals, Body),
-    check_relation_patterns_lowered(Types, RelPlans, Head, Body).
+    check_relation_patterns_lowered(Types, RelPlans, Elided, Head, Body).
 expand_relation_pattern_rule(_, _, Rule, Rule).
+
+% ── the dictionary atom the body already is ──────────────────────────────────
+%
+% A dictionary atom exists to name a value's identity endpoint. When the rule's
+% body ALREADY reads the very row that value is -- the same relation, the same
+% argument variables, position for position -- the endpoint is that atom's own
+% `__id` and the dictionary join is the table joined to a view of itself:
+%
+%   rel user(id: int, name: text) key(1).
+%   rel selected(choice: user).
+%   selected(user(Id, Name)) <- user(Id, Name).
+%
+%   with the elision  INSERT ... SELECT b0."__id" FROM "user" b0
+%   without it        INSERT ... SELECT b1."__id" FROM "user" b0, "__ref_user" b1
+%                                WHERE b1."id" = b0."id" AND b1."name" = b0."name"
+%
+% The second form is what the depth-N rewrite emitted at 472320f4: correct, and
+% a self-join through a TEMP VIEW over the same table on every value column,
+% which the incremental arm pays again (a 3-way delta join for a rule with one
+% body atom). bind_reference_target_identity/6 has bound a whole body atom to
+% its alias's `__id` since before that commit; what the rewrite changed is that
+% the head no longer HOLDS the atom, so nothing looked the binding up. Putting
+% the atom back where it is redundant restores the one-table plan and keeps the
+% depth-N machinery for the levels that genuinely need it.
+%
+% THREE CONDITIONS, all necessary:
+%
+%   the endpoint is unified with the body atom, so the head reads the atom
+%   again and compile_pattern_arg resolves it through Bound;
+%
+%   the endpoint occurs NOWHERE in the body goals, or the substitution would
+%   put a compound back into a ref column that is being READ (a body-side
+%   relation pattern is a genuine dictionary join and stays one); and
+%
+%   the endpoint occurs in no OTHER dictionary atom, or a parent level would
+%   receive a compound where it expects its child's endpoint variable.
+%
+% Everything outside those three keeps the join it had, which is why this is an
+% elision and not a second lowering strategy.
+elide_dictionary_atoms_the_body_already_joins(Goals, Atoms0, Atoms, Elided) :-
+    elide_dictionary_atoms(Goals, Atoms0, [], Atoms, Elided).
+
+elide_dictionary_atoms(_, [], _, [], []).
+elide_dictionary_atoms(Goals, [Atom | Rest], Seen, Kept, Elided) :-
+    append(Seen, Rest, OtherAtoms),
+    (   dictionary_atom_is_the_body_atom(Goals, OtherAtoms, Atom, Target)
+    ->  Kept = More, Elided = [Target | MoreElided], NextSeen = Seen
+    ;   Kept = [Atom | More], Elided = MoreElided, NextSeen = [Atom | Seen]
+    ),
+    elide_dictionary_atoms(Goals, Rest, NextSeen, More, MoreElided).
+
+dictionary_atom_is_the_body_atom(Goals, OtherAtoms, DictionaryAtom, Target) :-
+    DictionaryAtom =.. [Table, Endpoint | Args],
+    var(Endpoint),
+    atom_concat('__ref_', TypeName, Table),
+    Target =.. [TypeName | Args],
+    identical_member(Goals, Target),
+    \+ holds_variable(Goals, Endpoint),
+    \+ holds_variable(OtherAtoms, Endpoint),
+    Endpoint = Target.
+
+% Membership by term IDENTITY. `memberchk/2` would UNIFY, which for a body of
+% variables succeeds against the wrong atom and binds the rule's own variables
+% to each other -- the same reason memoized_relation_value/3 is hand-walked.
+identical_member([Goal | Rest], Target) :-
+    ( Goal == Target -> true ; identical_member(Rest, Target) ).
+
+holds_variable(Term, Variable) :-
+    (   Term == Variable
+    ->  true
+    ;   compound(Term),
+        arg(_, Term, Sub),
+        holds_variable(Sub, Variable)
+    ).
 
 rewrite_relation_goals(_, _, [], [], State, State).
 rewrite_relation_goals(Types, RelPlans, [Goal0 | Rest0], [Goal | Rest],
@@ -1107,8 +1183,16 @@ memoized_relation_value([Term-Endpoint | Rest], Value, Found) :-
 % joins, or inside a splice construct, whose arguments are trigger occurrences
 % rather than level atoms. Named here rather than silently compiled, which is
 % exactly what the old json_extract fallthrough did.
-check_relation_patterns_lowered(Types, RelPlans, Head, Body) :-
-    (   relation_pattern_residue(Types, RelPlans, Head, Body, Residue)
+% Elided is the list of relation terms put BACK into the rule by
+% elide_dictionary_atoms_the_body_already_joins/4. Those are lowered -- through
+% the body atom's own identity bind rather than through a dictionary join --
+% so they are not residue. Compared by identity, and the whole list is walked
+% rather than only the first residue, so a genuinely unlowerable term sitting
+% behind an elided one is still the one reported.
+check_relation_patterns_lowered(Types, RelPlans, Elided, Head, Body) :-
+    (   relation_pattern_residue(Types, RelPlans, Head, Body, Residue),
+        Residue = relation_pattern_not_lowerable(_, _, _, Value),
+        \+ identical_member(Elided, Value)
     ->  throw(unsupported_construct(Residue))
     ;   true
     ).
@@ -1132,8 +1216,11 @@ relation_pattern_residue(Types, RelPlans, Head, Body,
     nth1(Position, ColumnTypes, ref(TypeName)),
     nth1(Position, Columns, Column),
     arg(Position, Atom, Value),
-    relation_value_shape(Types, TypeName, Value),
-    !.
+    relation_value_shape(Types, TypeName, Value).
+% Left NONDETERMINISTIC on purpose. Both callers commit to the first solution
+% through their own `->`, and check_relation_patterns_lowered/5 has to be able
+% to step PAST a term the elision put back before deciding there is no residue.
+% A cut here made the first witness the only one it could ever see.
 
 % Runs even when the program declares NO type. A rule with a decode goal and
 % no struct type must reach decode_source_not_struct, and skipping the pass on

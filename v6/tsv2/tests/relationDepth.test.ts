@@ -16,10 +16,18 @@
  * end-state equality alone).
  *
  * WHAT IS ASSERTED, per statement:
+ *   0. EVERY ROW SOURCE, per delta arm, by name and in FROM order. This is the
+ *      assertion the first version of this file did not have, and its absence
+ *      is how a real regression walked past every other check here: a head
+ *      value that IS a body atom had its endpoint interned anyway, so the
+ *      target table was joined to a TEMP VIEW over itself on every value
+ *      column. That extra source is a dictionary and is reached by SEARCH, so
+ *      the dictionary-name and access-method assertions below were both happy.
+ *      An access method is not a count; the count is asserted here.
  *   1. ONE HOP PER LEVEL, per delta arm. A depth-N read names exactly the N
- *      dictionary views on the path, each once. This is what says the lowering
- *      recurses rather than flattening, and that it does not join the same
- *      level twice.
+ *      dictionary views on the path, each once. A level the rule's own body
+ *      already reads is NOT one of them -- its endpoint is that atom's `__id`
+ *      -- which is why a depth-2 construction names two views and not three.
  *   2. NO SCAN, ANYWHERE IN THE PLAN. Not "no scan of a dictionary": SQLite
  *      FLATTENS `__ref_<type>` (a plain view over the target table) into the
  *      base table and reports the view's own alias `t`, so the plan text never
@@ -41,6 +49,15 @@
  *   on assertion 1 -- zero `__ref_` views where three and two are required.
  *   The depth-3 tests stay green, because their gen_emitted modules were not
  *   recompiled: an incomplete sabotage, recorded as such.
+ *
+ *   lower.pl elide_dictionary_atoms_the_body_already_joins/4 forced to a
+ *   no-op and the two construction modules recompiled (run 2026-07-30,
+ *   reverted). Both construction tests go red on the view list, verbatim:
+ *     actual: [ '__ref_file', '__ref_fpath', '__ref_repo' ]
+ *     expected: [ '__ref_fpath', '__ref_repo' ]
+ *     actual: [ '__ref_file', '__ref_fpath', '__ref_repo', '__ref_span' ]
+ *     expected: [ '__ref_file', '__ref_fpath', '__ref_repo' ]
+ *   Both destructure tests stay green, correctly: nothing about a READ moved.
  *
  *   intern_relation_value/6's memo lookup forced to always fail. Every
  *   conformance fixture and the whole sweep stay GREEN -- the rows are the
@@ -118,6 +135,27 @@ function dictionaryJoinsPerArm(sql: string): number {
   return joins / arms;
 }
 
+/**
+ * EVERY row source this statement names, per delta arm, in FROM order.
+ *
+ * Counting `__ref_` views alone is structurally blind to an extra ORDINARY
+ * table, and that blindness let a real regression through: a depth-1
+ * construction whose head value IS a body atom
+ * (`selected(user(Id, Name)) <- user(Id, Name)`) went from
+ * `FROM "user" b0` to `FROM "user" b0, "__ref_user" b1` -- the table joined to
+ * a view of itself on every value column -- and every dictionary-name and
+ * access-method assertion in this file stayed green, because the extra source
+ * IS a dictionary and IS reached by SEARCH. What changed was the number of
+ * tables, so that is what is asserted now, name by name (count-test law: the
+ * receipt has to be able to see the thing that moved).
+ */
+function rowSourcesPerArm(sql: string): string[][] {
+  return sql.split(" UNION ALL ").map((arm) => {
+    const fromClause = arm.slice(arm.indexOf(' FROM "'));
+    return [...fromClause.matchAll(/"([a-z_0-9]+)" [bdrn]\d+/g)].map((match) => match[1]!);
+  });
+}
+
 function queryPlan(seam: ISqlSeam, sql: string): Promise<string[]> {
   return firstValueFrom(
     seam.runner
@@ -166,12 +204,23 @@ test("depth 2 construction joins one dictionary per level, all indexed", async (
   const seam = await seamWithRows(depth2.program as EmittedProgram, DEPTH2_ARRIVAL);
   const sql = insertSqlFor(depth2.incrementalPlan, "span");
 
+  // TWO dictionary views, not three: the `file` level is the rule's own
+  // target-membership atom, so its endpoint is that atom's `__id` and a
+  // `__ref_file` join would be `file` joined to a view of itself.
   assert.deepEqual(
     dictionaryViews(sql),
-    ["__ref_file", "__ref_fpath", "__ref_repo"],
-    `span builds file(repo, fpath): exactly three levels, each once. got: ${sql}`,
+    ["__ref_fpath", "__ref_repo"],
+    `span builds file(repo, fpath): the two nested levels, each once. got: ${sql}`,
   );
-  assert.equal(dictionaryJoinsPerArm(sql), 3, `one join per level, no repeats: ${sql}`);
+  assert.equal(dictionaryJoinsPerArm(sql), 2, `one join per nested level, no repeats: ${sql}`);
+  assert.deepEqual(
+    rowSourcesPerArm(sql),
+    [
+      ["__frontier_raw", "file", "__ref_repo", "__ref_fpath"],
+      ["__frontier_file", "file", "raw", "__ref_repo", "__ref_fpath"],
+    ],
+    `every table each arm names, no extras: ${sql}`,
+  );
   assertNoJsonExtractOverRefColumn(sql);
   assertEveryHopIsIndexed(await queryPlan(seam, sql), sql, 3);
 });
@@ -188,6 +237,11 @@ test("depth 2 destructure reads two hops, both keyed on __id", async () => {
     `the wildcard repo position must cost no join. got: ${sql}`,
   );
   assert.equal(dictionaryJoinsPerArm(sql), 2, `one join per level, no repeats: ${sql}`);
+  assert.deepEqual(
+    rowSourcesPerArm(sql),
+    [["__frontier_span", "__ref_fpath", "__ref_file"]],
+    `every table the arm names, no extras: ${sql}`,
+  );
   assertNoJsonExtractOverRefColumn(sql);
   const plan = await queryPlan(seam, sql);
   assertEveryHopIsIndexed(plan, sql, 2);
@@ -206,6 +260,11 @@ test("depth 3 destructure reads three hops, all keyed on __id", async () => {
     `located -> span -> file -> fpath is three hops. got: ${sql}`,
   );
   assert.equal(dictionaryJoinsPerArm(sql), 3, `one join per level, no repeats: ${sql}`);
+  assert.deepEqual(
+    rowSourcesPerArm(sql),
+    [["__frontier_located", "__ref_fpath", "__ref_file", "__ref_span"]],
+    `every table the arm names, no extras: ${sql}`,
+  );
   assertNoJsonExtractOverRefColumn(sql);
   const plan = await queryPlan(seam, sql);
   assertEveryHopIsIndexed(plan, sql, 3);
@@ -216,10 +275,20 @@ test("depth 3 construction interns each level once", async () => {
   const seam = await seamWithRows(depth3.program as EmittedProgram, DEPTH3_ARRIVAL);
   const sql = insertSqlFor(depth3.incrementalPlan, "located");
 
+  // THREE views for four levels, same reason as depth 2: the outermost level
+  // (`span`) is the rule's own target-membership atom.
   assert.deepEqual(
     dictionaryViews(sql),
-    ["__ref_file", "__ref_fpath", "__ref_repo", "__ref_span"],
-    `span(file(repo, fpath), Start, End) is four levels. got: ${sql}`,
+    ["__ref_file", "__ref_fpath", "__ref_repo"],
+    `span(file(repo, fpath), Start, End): the three nested levels. got: ${sql}`,
+  );
+  assert.deepEqual(
+    rowSourcesPerArm(sql),
+    [
+      ["__frontier_rawk", "span", "__ref_repo", "__ref_fpath", "__ref_file"],
+      ["__frontier_span", "span", "rawk", "__ref_repo", "__ref_fpath", "__ref_file"],
+    ],
+    `every table each arm names, no extras: ${sql}`,
   );
   assertNoJsonExtractOverRefColumn(sql);
   // A construction keys on the target's identity UNIQUE rather than on __id
