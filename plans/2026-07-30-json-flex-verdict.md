@@ -558,9 +558,9 @@ into the OS temp dir. Every database is `:memory:`. No daemon, no
 
 - Work type: grade-then-harden lab, worktree `agent-af3083d144be9043f`
 - Base sha: `a116e3e9`
-- Lab files: `v6/prolog/labs/json_flex/{0_receipts.pl,1_sqlite_receipts.mjs}` —
-  DELETED on landing; the commit holding the last copy is recorded in the landing
-  commit message, recoverable with `git show <sha>:<path>`
+- Lab files: `v6/prolog/labs/json_flex/{0_receipts.pl,1_sqlite_receipts.mjs,corpus.jsonl}` —
+  DELETED on landing per the lab protocol. **Last copy: `6dde7f9a`.** Recover with
+  `git show 6dde7f9a:v6/prolog/labs/json_flex/1_sqlite_receipts.mjs`
 - Production edits: `conformance/ticklog.pl`, `conformance/body.pl`,
   `0_type_plane.pl`, `compile/sweep.pl`, `compile/lower.pl`, `compile/emit_ts.pl`,
   `compile/test/plunit_tests.pl`, `tsv2/runtime/{types,ticklog,tickLoop}.ts`,
