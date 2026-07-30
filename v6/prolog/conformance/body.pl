@@ -116,6 +116,15 @@ solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, Rig
 
 % ═══ json ═══════════════════════════════════════════════════════════════════
 
+% AN UNBOUND VALUE IS A NAMED REFUSAL, not an answer. Without this clause the
+% next one UNIFIES the unbound input with the atom `{}` and hands back
+% `obj([])`: `json_canon(Free, C)` answered "the empty object" and bound the
+% caller's variable to `{}` on the way out (json_flex lab receipt, 2026-07-30).
+% The obj/1 clause below would do the same one step later. Every shipped path
+% reaches json_canon through eval_expr/2, which already throws
+% `unbound_in_expression` first, so this is a latent hole rather than a live
+% one -- and latent silent-wrong-answer is exactly what a refusal is for.
+json_canon(Value, _) :- var(Value), !, throw(json_value_unbound).
 % The EMPTY object is the atom `{}`, not `{}`/1: that is what the term door's
 % own reader produces for `{}` (term_to_atom gives arity 0), so the text door
 % mints the same atom and both arrive here.

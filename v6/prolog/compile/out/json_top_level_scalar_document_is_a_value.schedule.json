@@ -1,0 +1,1 @@
+[[{"rel":"payload","sign":"add","row":["number","42"]},{"rel":"payload","sign":"add","row":["negative","-7"]},{"rel":"payload","sign":"add","row":["text_scalar","\"\\\"quoted\\\"\""]},{"rel":"payload","sign":"add","row":["object","{\"a\":1}"]},{"rel":"label","sign":"add","row":["looks_like_json","{\"a\":1}"]},{"rel":"label","sign":"add","row":["looks_like_number","42"]}]]

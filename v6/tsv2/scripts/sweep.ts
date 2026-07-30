@@ -38,7 +38,7 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import { rowValueFromSql } from "../runtime/rows.ts";
-import type { IArrivalBatch, IBootStatement, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
+import type { IArrivalBatch, IBootStatement, IRowColumnType, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
@@ -120,21 +120,27 @@ function readOracleFinalLine(name: string): string | null {
  *  exercised until a struct column arrived whose stored value IS canonical
  *  JSON text -- the tick log printed the object and the final state printed
  *  the same bytes wrapped in quotes. */
-function finalValueJson(value: unknown): string {
+function finalValueJson(value: unknown, type?: IRowColumnType): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") {
-    return TickLogEmitter.valueText(value as IRowValue);
+    return TickLogEmitter.valueText(value as IRowValue, type);
   }
-  return TickLogEmitter.valueText(String(value));
+  return TickLogEmitter.valueText(String(value), type);
 }
 
-function finalStateLine(rowsByRel: Record<string, readonly (readonly unknown[])[]>): string {
+function finalStateLine(
+  rowsByRel: Record<string, readonly (readonly unknown[])[]>,
+  relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>,
+): string {
   const relNames = Object.keys(rowsByRel).sort();
   const parts: string[] = [];
   for (const rel of relNames) {
     const rows = rowsByRel[rel]!;
     if (rows.length === 0) continue;
-    const rowTexts = rows.map((row) => `[${row.map(finalValueJson).join(",")}]`).sort();
+    const types = relColumnTypes?.[rel];
+    const rowTexts = rows
+      .map((row) => `[${row.map((value, index) => finalValueJson(value, types?.[index])).join(",")}]`)
+      .sort();
     parts.push(`${JSON.stringify(rel)}:[${rowTexts.join(",")}]`);
   }
   return `{"final":{${parts.join(",")}}}`;
@@ -160,7 +166,7 @@ function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<str
     map((entries) => {
       const rowsByRel: Record<string, readonly (readonly unknown[])[]> = {};
       for (const entry of entries) rowsByRel[entry.rel] = entry.rows;
-      return finalStateLine(rowsByRel);
+      return finalStateLine(rowsByRel, program.relColumnTypes);
     }),
   );
 }

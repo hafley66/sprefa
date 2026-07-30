@@ -255,7 +255,11 @@ function columnProblem(type: IRowColumnType | undefined, value: unknown): string
   if (type === "int") return Number.isInteger(value) ? null : "must be an int";
   if (type === "float") return typeof value === "number" && Number.isFinite(value) ? null : "must be a float";
   if (type === "bool") return typeof value === "boolean" ? null : "must be a bool";
-  if (type === "text") return isRowValue(value) ? null : "must be a string, number or boolean";
+  // `json` takes exactly what `text` takes, and deliberately so: it WAS text
+  // at this seam until the tick-log encoder needed the two separated, and
+  // widening what the boundary accepts is a different decision from teaching
+  // the log how to print it. A json document arrives as its text.
+  if (type === "text" || type === "json") return isRowValue(value) ? null : "must be a string, number or boolean";
   return null;
 }
 

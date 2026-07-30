@@ -586,12 +586,24 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
     format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
 
 boundary_column_type(ref(_), ref) :- !.
-% A `json` column is TEXT at the driver seam: rowValueFromSql/2 hands the
-% stored text back unchanged and ticklog.ts's encodeValue already renders a
-% string that starts with `{` or `[` as a canonical JSON value. Widening
-% IRowColumnType with a "json" member would buy nothing and would have to be
-% mirrored in every seam that switches on the type.
-boundary_column_type(json, text) :- !.
+% A `json` column KEEPS its own name at the driver seam. It used to collapse
+% to `text` on the premise that "encodeValue already renders a string that
+% starts with `{` or `[` as a canonical JSON value, so widening
+% IRowColumnType would buy nothing". The json_flex lab measured that premise
+% and it is false in both directions:
+%
+%   json column holding `42`        -> string "42", misses the first-char
+%                                     sniff, prints as "42" where the oracle
+%                                     prints 42. Fifteen of twenty-three
+%                                     value kinds take that path, including
+%                                     null, true and every number.
+%   text column holding `{"a":1}`   -> HITS the sniff and prints as an
+%                                     object where the oracle prints a string.
+%
+% The type is the only thing that separates those two, and it is already in
+% hand here. `rowValueFromSql` needs no new arm (json passes through the same
+% default text does); the seam that switches on it is ticklog.ts's encoder.
+boundary_column_type(json, json) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-

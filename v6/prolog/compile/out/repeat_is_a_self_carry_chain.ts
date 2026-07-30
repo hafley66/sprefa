@@ -138,13 +138,13 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    kick: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1" FROM "kick"`, relColumns.kick!, relColumnTypes.kick!),
+    kick: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1" FROM "kick"`, relColumns.kick!, relColumnTypes.kick!),
     pulse: selectRows(seam, `SELECT "next" FROM "pulse"`, relColumns.pulse!, relColumnTypes.pulse!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  kick: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1" FROM "kick"`,
+  kick: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1" FROM "kick"`,
   pulse: `SELECT "next" FROM "pulse"`,
 };
 
@@ -175,7 +175,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "kick", kind: "log", tableName: "kick", deltaTableName: "__delta_kick", frontierTableName: "__frontier_kick", nextFrontierTableName: "__next_frontier_kick", columns: ["col1"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "kick" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' THEN json_extract("col1", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("col1", '$.args')) || ')' ELSE "col1" END AS "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_kick" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"` },
+  { rel: "kick", kind: "log", tableName: "kick", deltaTableName: "__delta_kick", frontierTableName: "__frontier_kick", nextFrontierTableName: "__next_frontier_kick", columns: ["col1"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "kick" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_kick" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"` },
   { rel: "pulse", kind: "log", tableName: "pulse", deltaTableName: "__delta_pulse", frontierTableName: "__frontier_pulse", nextFrontierTableName: "__next_frontier_pulse", columns: ["next"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pulse" WHERE "_sign" IN (-1, 1) GROUP BY "next", "_sign"` },
 ];
 

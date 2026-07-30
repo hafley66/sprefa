@@ -167,7 +167,12 @@ export class LiveEngine implements ILiveEngine {
       map((step): ITickOutcome => {
         const outcome = {
           tick: step.tickNumber,
-          line: TickLogEmitter.line(step.tickNumber, step.deltas),
+          // The served log and the fixture-replay log are the SAME contract, so
+          // this passes the program's column types exactly as tickLoop.ts does.
+          // Without them a `json` or `ref` column prints as a JSON string here
+          // and as a JSON value there, and the served leg's whole reason to
+          // exist is that the two agree byte for byte.
+          line: TickLogEmitter.line(step.tickNumber, step.deltas, this.program.relColumnTypes),
           deltas: step.deltas,
         };
         queued.subscriber.next(outcome);

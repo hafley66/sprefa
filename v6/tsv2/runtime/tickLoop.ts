@@ -62,7 +62,7 @@ export const TickFold: ITickFold = {
         );
       }),
       filter(hasDeltas),
-      map((step) => TickLogEmitter.line(step.tickNumber, step.deltas)),
+      map((step) => TickLogEmitter.line(step.tickNumber, step.deltas, program.relColumnTypes)),
     );
   },
 };

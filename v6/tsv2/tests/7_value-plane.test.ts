@@ -89,7 +89,9 @@ test("bool filters use an indexed SQLite search", async () => {
 
 test("tick boundary emits booleans and shortest finite float JSON", () => {
   assert.deepEqual(
-    [true, false, -0, 0.30000000000000004].map(TickLogEmitter.valueText),
+    // Not point-free: `valueText` takes an optional COLUMN TYPE as its second
+    // parameter and `Array.map` would hand it the index.
+    [true, false, -0, 0.30000000000000004].map((value) => TickLogEmitter.valueText(value)),
     ["true", "false", "0", "0.30000000000000004"],
   );
   assert.throws(() => TickLogEmitter.valueText(Number.NaN), /non-finite float/);

@@ -1,0 +1,4 @@
+rel raw_doc(body: json).
+rel key_seen(name: text).
+
+key_seen(Key) <- raw_doc(Body), decode(Body, {$Key: _}).

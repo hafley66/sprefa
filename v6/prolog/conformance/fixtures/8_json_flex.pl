@@ -1,0 +1,270 @@
+% fixtures/8_json_flex.pl : the json state-machine coverage wave
+% (plans/2026-07-30-json-flex-lab-header.md, verdict
+% plans/2026-07-30-json-flex-verdict.md).
+%
+% The json arm landed with 23 fixture entries and none of them touched a
+% control character, a unicode key, a non-ASCII sort pair, an integer past
+% 2^53, an empty-string key, or a document whose top level is a scalar. Every
+% fixture here is one of those, and each one exists because the lab measured
+% a door disagreement or an untested agreement, never to restate a shape
+% json_arm.pl already covers.
+%
+% Owner: the json_flex lab wave. Grading is the ordinary corpus grading: the
+% oracle runs these through engine.pl, the sweep compiles them and diffs the
+% tick log byte-for-byte.
+
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+:- op(700,  xfx, :=).
+
+% ═══ Q1 STRING ESCAPES ══════════════════════════════════════════════════════
+
+% FAIL-FIRST at the wave's base (a116e3e9). The tick-log escape rule lived in
+% two clause-for-clause mirrors, conformance/ticklog.pl:escape_json_codes/2 and
+% 0_type_plane.pl:escape_json_codes/2, and both spelled the hex escape
+% `format(atom(H), '\\u~`0t~16r~4|', [Code])`. `~4|` is a COLUMN stop measured
+% from the start of the atom, and `\u` already occupies two of those columns,
+% so the escape came out with TWO hex digits: code 12 rendered `\u0c`, and the
+% next source character was then appended to it. Receipt, before the fix:
+%
+%   value_json('a\fb', J)  ->  J = '"a\u0cb"'
+%   JSON.parse('"a\u0cb"') ->  SyntaxError: Bad Unicode escape in JSON
+%
+% The oracle's own tick log was not JSON. The emitter side is
+% JSON.stringify, which is correct and also uses the SHORT escapes \b \f \r,
+% so the two doors disagreed on every one of these bytes as well.
+%
+% Nothing in the 209-fixture corpus carried a control character, which is why
+% a broken escape shipped through every byte-diff gate the project has.
+fixture(json_string_control_escapes_are_valid_json,
+  prog([col_type(note/1, body, text), col_type(seen/1, body, text)],
+       [ (seen(Body) <- note(Body)) ]),
+  [],
+  [ [ +note('back\bspace'), +note('form\ffeed'), +note('carriage\rreturn'),
+      +note('unit\x1\sep'), +note('tab\there'), +note('line\nfeed') ] ],
+  [ final(seen/1, [ seen('back\bspace'), seen('carriage\rreturn'),
+                    seen('form\ffeed'), seen('line\nfeed'),
+                    seen('tab\there'), seen('unit\x1\sep') ]),
+    ticks(1) ]).
+
+% The same characters INSIDE a json document rather than as a whole column
+% value: the escape rule has to hold under the object encoder too, where the
+% text passes through json_string_text/2 rather than through the top-level
+% value_json/2 clause.
+fixture(json_control_escapes_inside_a_document,
+  prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
+       [ (echoed(Body) <- raw_doc(Body)) ]),
+  [ raw_doc({tab: 'a\tb', formfeed: 'a\fb', quote: 'a"b', solidus: 'a/b'}) ],
+  [],
+  [ final(echoed/1, [ echoed(obj([ formfeed-'a\fb', quote-'a"b',
+                                   solidus-'a/b', tab-'a\tb' ])) ]) ]).
+
+% ═══ Q3 KEYS ════════════════════════════════════════════════════════════════
+
+% Non-ASCII keys, and the SORT they land in. This is the cross-target contract
+% the canonical_json_text ruling fixed and nothing pinned: prolog `keysort` on
+% atoms is code-POINT order, JS `Array.prototype.sort` on strings is UTF-16
+% code-UNIT order, and the two agree everywhere except the astral plane. This
+% fixture pins the BMP half, which both doors get right; the astral half is a
+% named card in the verdict (slot_key_collation) because no shipped program
+% can produce an astral key today and closing it is a contract decision, not a
+% bug fix.
+fixture(json_non_ascii_keys_sort_by_code_point,
+  prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
+       [ (echoed(Body) <- raw_doc(Body)) ]),
+  [ raw_doc({'z': 1, 'é': 2, 'a': 3, 'Z': 4}) ],
+  [],
+  [ final(echoed/1, [ echoed(obj([ 'Z'-4, 'a'-3, 'z'-1, 'é'-2 ])) ]) ]).
+
+% NFC and NFD are DIFFERENT keys. Neither door normalizes, json1 does not
+% normalize, and JSONTestSuite's own transform corpus
+% (object_key_nfc_nfd.json) exists because implementations disagree. Pinned
+% here so a future "helpful" normalization is a fixture failure.
+%
+% Both keys are spelled with explicit code escapes, never as literal source
+% bytes: the composed and decomposed spellings LOOK identical in every editor
+% and several tools in this repo's own authoring path silently normalize one
+% into the other, which turns the fixture into `json_dup_key` with no visible
+% cause. `\x` escapes are the only spelling that survives that.
+fixture(json_nfc_and_nfd_keys_stay_distinct,
+  prog([col_type(raw_doc/1, body, json), col_type(key_seen/1, name, text)],
+       [ (key_seen(Key) <- raw_doc(Body), decode(Body, {$Key: _})) ]),
+  [ raw_doc({'caf\xe9\': 1, 'cafe\x301\': 2}) ],
+  [],
+  % Standard order of atoms is code-point order, so the DECOMPOSED spelling
+  % (`e` = U+0065 at position 3) sorts before the composed one (U+00E9).
+  [ final(key_seen/1, [ key_seen('cafe\x301\'), key_seen('caf\xe9\') ]) ]).
+
+% The empty-string key. Legal JSON, legal here, and it survives key capture:
+% the one key spelling that cannot be written as a bare identifier.
+fixture(json_empty_string_key_round_trips,
+  prog([col_type(raw_doc/1, body, json), col_type(pair/2, name, text),
+        col_type(pair/2, value, int)],
+       [ (pair(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
+  [ raw_doc({'': 7, a: 8}) ],
+  [],
+  [ final(pair/2, [ pair('', 7), pair(a, 8) ]) ]).
+
+% A document whose key IS the `$` hole marker's spelling, and a document whose
+% key is the `**` descent marker's spelling. Both are ordinary data on the
+% VALUE plane; the marker meaning lives only in a PATTERN. The verdict records
+% the other half of this measurement as a named card: on the pattern plane the
+% two markers are unconditional, so a literal `$k` or `**` key can never be
+% matched by an exact-key pattern.
+fixture(json_marker_shaped_keys_are_ordinary_data,
+  prog([col_type(raw_doc/1, body, json), col_type(pair/2, name, text),
+        col_type(pair/2, value, int)],
+       [ (pair(Key, Value) <- raw_doc(Body), decode(Body, {$Key: Value})) ]),
+  [ raw_doc({'$ref': 1, '**': 2, plain: 3}) ],
+  [],
+  [ final(pair/2, [ pair('$ref', 1), pair('**', 2), pair(plain, 3) ]) ]).
+
+% ═══ Q1 NUMBERS ═════════════════════════════════════════════════════════════
+
+% Integers at the SAFE-INTEGER boundary, both signs. The @libsql
+% number->REAL corruption class bit this project twice already (the sweep's
+% bigint-bind fix and the boot-bind fix); this pins where the seam actually
+% ends so the next widening is a fixture failure and not a field report.
+%
+% THE EDGE IS EXACTLY ±(2^53 - 1) AND IT IS A READ-SIDE CLIFF, measured by the
+% json_flex lab against @libsql 0.17.4 (intMode "number", runtime/rows.ts's
+% own header states the choice):
+%
+%   INSERT 9007199254740992           -> ok, the row is in the table
+%   SELECT "v" WHERE "v" = 9007199254740992
+%                                     -> RangeError: Received integer which
+%                                        cannot be safely represented as a
+%                                        JavaScript number
+%
+% A program can store an integer it can never read back, and the failure is a
+% driver RangeError naming no rel and no column. Same throw for a wide integer
+% reached through `json_extract` inside a document. Beyond i64 the failure
+% mode changes rather than stops: json1 keeps the source text in `json()` but
+% `json_extract` hands back a REAL, and the tick-log canon (JSON.parse then
+% JSON.stringify) rewrites 9223372036854775807 as 9223372036854776000 with no
+% error at all. The oracle keeps every one of those exactly, so wide integers
+% are a SILENT cross-door divergence above this boundary. Priced as
+% slot_json_bignum in plans/2026-07-30-json-flex-verdict.md; deliberately not
+% fixed here, because every option is either a driver-wide `intMode` change or
+% a new dependency.
+fixture(json_safe_integer_boundary_survives_both_doors,
+  prog([col_type(measure/2, name, text), col_type(measure/2, value, int),
+        col_type(carried/2, name, text), col_type(carried/2, value, int)],
+       [ (carried(Name, Value) <- measure(Name, Value)) ]),
+  [],
+  [ [ +measure(max_safe, 9007199254740991),
+      +measure(min_safe, -9007199254740991),
+      +measure(small, 1) ] ],
+  [ final(carried/2, [ carried(max_safe, 9007199254740991),
+                       carried(min_safe, -9007199254740991),
+                       carried(small, 1) ]),
+    ticks(1) ]).
+
+% ═══ Q1 CONTAINERS ══════════════════════════════════════════════════════════
+
+% Empty containers at every position: an empty object as a value, an empty
+% array as a value, and both nested. `{}` is the ATOM on both doors and `[]`
+% is the empty list, so this is the pair most likely to fall through an
+% encoder clause onto the string path.
+fixture(json_empty_containers_nest,
+  prog([col_type(raw_doc/1, body, json), col_type(echoed/1, body, json)],
+       [ (echoed(Body) <- raw_doc(Body)) ]),
+  [ raw_doc({obj: {}, arr: [], nested: [{}, []], deep: {inner: {}}}) ],
+  [],
+  [ final(echoed/1, [ echoed(obj([ arr-[], deep-obj([inner-obj([])]),
+                                   nested-[obj([]), []],
+                                   obj-obj([]) ])) ]) ]).
+
+% Deep nesting through decode. json1's own parser caps document depth
+% (measured: json_valid accepts 1000 and refuses 2000 on both builds), so this
+% sits an order of magnitude under the cap and pins that the accumulated
+% `json_extract` path an exact-key chain builds is not itself the limit.
+fixture(json_deep_exact_key_chain_binds,
+  prog([col_type(raw_doc/1, body, json), col_type(found/1, leaf, int)],
+       [ (found(Leaf) <-
+            raw_doc(Body),
+            decode(Body, {a: {b: {c: {d: {e: {f: {g: {h: Leaf}}}}}}}})) ]),
+  [ raw_doc({a: {b: {c: {d: {e: {f: {g: {h: 9}}}}}}}}) ],
+  [],
+  [ final(found/1, [ found(9) ]) ]).
+
+% FAIL-FIRST at the wave's base. A json DOCUMENT whose top level is a scalar
+% is ordinary JSON (RFC 8259 §2: a value, not necessarily an object or array)
+% and json1 accepts every one of these. The tick-log encoder on the tsv2 side
+% decided whether a string was structure by SNIFFING ITS FIRST CHARACTER:
+%
+%   if (value[0] !== "{" && value[0] !== "[") return null;   // ticklog.ts
+%
+% so a json column holding `42` came back across the driver seam as the string
+% "42", missed the sniff, and printed as the JSON STRING "42" while the oracle
+% printed the NUMBER 42. Fifteen of the lab's twenty-three value kinds took
+% that path, including `null`, `true` and every number.
+%
+% The fix is type-directed rather than another sniff: `json` stops collapsing
+% to `text` at the driver seam (emit_ts.pl boundary_column_type/2) and the
+% encoder renders a json-typed column as a json VALUE at any top level. That
+% also closes the mirror-image hole the sniff had -- a `text` column whose
+% value happens to start with `{` and parse as JSON was being rendered as
+% structure -- which the second rule here pins: `label` is text, carries the
+% same bytes, and must stay a string.
+fixture(json_top_level_scalar_document_is_a_value,
+  prog([col_type(payload/2, name, text), col_type(payload/2, body, json),
+        col_type(label/2, name, text), col_type(label/2, body, text),
+        col_type(echoed/2, name, text), col_type(echoed/2, body, json),
+        col_type(labelled/2, name, text), col_type(labelled/2, body, text)],
+       [ (echoed(Name, Body) <- payload(Name, Body)),
+         (labelled(Name, Body) <- label(Name, Body)) ]),
+  [],
+  [ [ +payload(number, 42),
+      +payload(negative, -7),
+      +payload(text_scalar, '"quoted"'),
+      +payload(object, {a: 1}),
+      +label(looks_like_json, '{"a":1}'),
+      +label(looks_like_number, '42') ] ],
+  [ final(echoed/2, [ echoed(negative, -7), echoed(number, 42),
+                      echoed(object, obj([a-1])),
+                      echoed(text_scalar, '"quoted"') ]),
+    final(labelled/2, [ labelled(looks_like_json, '{"a":1}'),
+                        labelled(looks_like_number, '42') ]),
+    ticks(1) ]).
+
+% ═══ Q2 PRESENT-NULL vs ABSENT ══════════════════════════════════════════════
+
+% The one behaviour both doors already agree on, pinned so the fix for the
+% cards around it cannot move it by accident: an exact-key pattern binds a
+% present value and yields NOTHING for a missing key, with no error either
+% way. json_arm.pl's decode_missing_key_fails_quietly covers the same ground
+% at the oracle only (empty Schedule, vacuous tick log); this one runs under a
+% real arrival so the tick-log leg grades it too.
+fixture(json_absent_key_yields_no_row_under_arrivals,
+  prog([col_type(raw_doc/1, body, json), col_type(found/2, name, text),
+        col_type(found/2, value, text)],
+       [ (found(present, Value) <- raw_doc(Body), decode(Body, {present: Value})),
+         (found(missing, Value) <- raw_doc(Body), decode(Body, {missing: Value})) ]),
+  [],
+  [ [ +raw_doc({present: here}) ] ],
+  [ final(found/2, [ found(present, here) ]),
+    ticks(1) ]).
+
+% ═══ Q6 FAN-OUT ═════════════════════════════════════════════════════════════
+
+% The three fanning productions in ONE rule, so the emitted plan has to carry
+% one json_each for the spread, one json_each for the key capture, and one
+% json_tree for the descent, and the row count is their product. The
+% cardinality IS the receipt: an implementation that answered the first match
+% only (a `memberchk` on the oracle, a correlated scalar subquery on the
+% emitter) produces 1 row here instead of 4.
+fixture(json_spread_and_capture_and_descent_multiply,
+  prog([col_type(spec/1, body, json), col_type(hit/3, item, int),
+        col_type(hit/3, name, text), col_type(hit/3, leaf, int)],
+       [ (hit(Item, Key, Leaf) <-
+            spec(Body),
+            decode(Body, {items: spread({n: Item})}),
+            decode(Body, {tags: {$Key: _}}),
+            decode(Body, {'**': {leaf: Leaf}})) ]),
+  [ spec({items: [{n: 1}, {n: 2}],
+          tags: {red: 1, blue: 2},
+          box: {leaf: 5}}) ],
+  [],
+  [ final(hit/3, [ hit(1, blue, 5), hit(1, red, 5),
+                   hit(2, blue, 5), hit(2, red, 5) ]) ]).
