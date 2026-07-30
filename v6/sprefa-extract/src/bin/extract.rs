@@ -19,7 +19,8 @@ use clap::Parser;
 
 use sprefa_extract::{
     dispatch, file_fact, flatten, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
-    source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest, ScipMode, SCHEMA,
+    scip_file_edges_jsonl, source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest,
+    ScipMode, SCHEMA,
 };
 
 /// Self-describing enough that `extract --help` + `extract --schema` are a
@@ -51,6 +52,13 @@ SCIP FACTS MODE
   type-definition / references). The rows are unjoined on purpose; filtering and
   joining them is what yields definitions, references, locals and impl edges,
   and those machines belong above this binary.
+
+DEPENDENCY EDGES
+  `--scip-deps --project-root DIR` with `--scip-index FILE` or `--scip-build`
+  folds the index into file_edge rows: the module graph, with no module resolver
+  in v6 at all. Graded against madge over 212 real files at recall 0.992 and
+  precision 0.988; both divergence classes are corpus-definition or semantic
+  reach, not resolution errors.
 
 FILE FACT
   `--file-fact` prepends one `file` record to the normal stream: path, content
@@ -131,6 +139,21 @@ those machines belong above this binary.
 PATH... under this flag only selects the indexer for --scip-build; the facts
 cover every document in the index either way.";
 
+const SCIP_DEPS_LONG: &str = "\
+Fold a SCIP index into file_edge rows: src_path holds a reference to a symbol
+defined in dst_path, and symbols counts how many distinct symbols cross. This is
+v6's module graph without a module resolver: the indexer already resolved every
+reference, so the graph falls out of the index.
+
+Graded against madge over v6/tsv2 (212 TypeScript files): 746 of madge's 752
+edges agree, recall 0.992, precision 0.988. The 6 madge-only edges are files the
+corpus tsconfig excludes, which the indexer therefore never saw; the 9 scip-only
+edges are inferred type references with no import statement, which a syntactic
+import scanner cannot see.
+
+Unlike --scip-facts this needs no file content: both ends of the join are in the
+index.";
+
 const FILE_FACT_LONG: &str = "\
 Prepend one `file` record carrying the path, the content digest every resolved
 edge is keyed on, the byte count and the line count. Off by default so existing
@@ -189,6 +212,15 @@ struct Cli {
     )]
     scip_build: bool,
 
+    /// Stream file-to-file dependency edges folded from a SCIP index.
+    #[arg(
+        long,
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve", "scip_facts", "file_fact"],
+        long_help = SCIP_DEPS_LONG,
+    )]
+    scip_deps: bool,
+
     /// Stream the raw SCIP index as facts: occurrences, symbols, relationships.
     #[arg(
         long,
@@ -246,6 +278,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.resolve {
         stream_resolve(&cli)?;
+        return Ok(());
+    }
+
+    if cli.scip_deps {
+        for line in scip_file_edges_jsonl(&scip_request(&cli))? {
+            println!("{line}");
+        }
         return Ok(());
     }
 

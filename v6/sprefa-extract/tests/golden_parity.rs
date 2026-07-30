@@ -238,6 +238,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             FlatFact::ScipSymbolRow { .. } => {}
             FlatFact::ScipRelationshipRow { .. } => {}
             FlatFact::FileRow { .. } => {}
+            FlatFact::FileEdgeRow { .. } => {}
         }
     }
     set

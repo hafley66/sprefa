@@ -39,8 +39,8 @@ pub use lang::{
     KotlinSource, PrologSource, RustSource, TsSource,
 };
 pub use project::{
-    resolve_project, resolve_project_jsonl, scip_facts, scip_facts_jsonl, ProjectError,
-    ResolveArms, ResolveRequest, ScipMode,
+    resolve_project, resolve_project_jsonl, scip_facts, scip_facts_jsonl, scip_file_edges_jsonl,
+    FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipMode,
 };
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
@@ -54,4 +54,6 @@ pub use seams::{
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};
-pub use wire::{file_fact, flatten, flatten_jsonl, flatten_scip, FlatFact, SpanOut, SCHEMA};
+pub use wire::{
+    file_fact, flatten, flatten_jsonl, flatten_scip, scip_file_edges, FlatFact, SpanOut, SCHEMA,
+};

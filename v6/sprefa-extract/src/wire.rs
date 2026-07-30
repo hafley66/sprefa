@@ -43,6 +43,7 @@ RECORD SHAPES
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
+  record=file_edge  src_path=<string>  dst_path=<string>  symbols=<u32>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
   record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>
   record=scip_symbol  path=<string|null>  symbol=<string>  display_name=<string>  kind=<i32>
@@ -81,6 +82,8 @@ FIELDS
   definition   roles & DEFINITION, hoisted out of the bitfield.
   display_name the symbol's name as scip records it.
   related_symbol  the other end of a scip.proto Relationship.
+  src_path/dst_path  the two ends of a file dependency edge.
+  symbols      how many distinct symbols cross one file edge.
 
 KIND VOCABULARIES (the `kind` field)
   type node   struct enum trait class interface alias function method const
@@ -107,6 +110,11 @@ SCIP FACTS MODE (--scip-facts)
   definition true, a reference is one without, a local is a `local `-prefixed
   symbol, and an implements edge is a scip_relationship with is_implementation.
   Those filters and joins belong above this binary.
+
+DEPENDENCY EDGES (--scip-deps)
+  Folds a SCIP index into file_edge rows: v6's module graph, produced with no
+  module resolver in the crate at all. Graded against madge over 212 real
+  TypeScript files at recall 0.992 and precision 0.988.
 
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,
@@ -427,4 +435,80 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
         });
     }
     out
+}
+
+/// Fold a loaded SCIP index into file-to-file dependency edges: `src` holds a
+/// non-definition occurrence of a symbol defined in `dst`.
+///
+/// WHY THIS IS THE ONE DERIVED RELATION THE EXTRACTOR PROJECTS. The fold is
+/// exactly the join a dl rule would write over `flatten_scip`'s occurrence rows,
+/// and by the standing law those machines live in prolog. It is here anyway
+/// because the amplification is measured: over v6/tsv2, 212 TypeScript files
+/// produce 122,317 occurrence rows and 755 edges. Sending 122,317 rows across
+/// the wire to compute 755 is the shape the N+1 law exists to stop. The raw rows
+/// remain available for every join that is not this one.
+///
+/// GRADED AGAINST MADGE over that same corpus: 746 of madge's 752 edges agree,
+/// recall 0.992, precision 0.988. Both divergence classes are understood and
+/// neither is a resolution error.
+///  - 6 madge-only edges are all from `labs/`, which the corpus tsconfig's
+///    `include` omits. scip-typescript indexes the tsconfig program; madge walks
+///    the filesystem. The two tools disagree about the corpus, not the graph.
+///  - 9 scip-only edges are all references to declarations in one types module
+///    from files with NO import of it. SCIP sees an inferred type reaching them
+///    through another module's signature; madge scans import syntax and cannot.
+///    SCIP is right and strictly sees more, the same shape as the flagship
+///    callgraph result.
+///
+/// LOCAL SYMBOLS ARE EXCLUDED. scip reuses `local N` per document, so a `local`
+/// symbol in two files is two different things and joining on it would mint
+/// edges between unrelated files.
+pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut defining_document: BTreeMap<&str, &str> = BTreeMap::new();
+    for document in &index.documents {
+        for occurrence in &document.occurrences {
+            if !occurrence.roles.contains(OccurrenceRole::DEFINITION)
+                || occurrence.symbol.starts_with("local ")
+            {
+                continue;
+            }
+            defining_document
+                .entry(&occurrence.symbol)
+                .or_insert(&document.relative_path);
+        }
+    }
+
+    // (src, dst) -> the distinct symbols crossing it. A BTreeSet both dedups a
+    // symbol referenced many times in one file and keeps the output ordered.
+    let mut crossings: BTreeMap<(&str, &str), BTreeSet<&str>> = BTreeMap::new();
+    for document in &index.documents {
+        for occurrence in &document.occurrences {
+            if occurrence.roles.contains(OccurrenceRole::DEFINITION)
+                || occurrence.symbol.starts_with("local ")
+            {
+                continue;
+            }
+            let Some(target) = defining_document.get(occurrence.symbol.as_str()) else {
+                continue;
+            };
+            if *target == document.relative_path {
+                continue;
+            }
+            crossings
+                .entry((&document.relative_path, target))
+                .or_default()
+                .insert(&occurrence.symbol);
+        }
+    }
+
+    crossings
+        .into_iter()
+        .map(|((src, dst), symbols)| FlatFact::FileEdgeRow {
+            src_path: src.to_string(),
+            dst_path: dst.to_string(),
+            symbols: symbols.len() as u32,
+        })
+        .collect()
 }

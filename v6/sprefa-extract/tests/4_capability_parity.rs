@@ -146,6 +146,8 @@ enum LibraryCapability {
     ScipFacts,
     /// `wire::file_fact`: one file's digest, byte count and line count.
     FileFact,
+    /// `wire::scip_file_edges`: the module graph folded out of a SCIP index.
+    ScipFileEdges,
 }
 
 /// Kept in step with the enum by the length assertion in the test below.
@@ -161,8 +163,9 @@ const ALL: &[LibraryCapability] = &[
     LibraryCapability::FlattenProjectType,
     LibraryCapability::ScipFacts,
     LibraryCapability::FileFact,
+    LibraryCapability::ScipFileEdges,
 ];
-const DECLARED_CAPABILITIES: usize = 11;
+const DECLARED_CAPABILITIES: usize = 12;
 
 /// How the binary reaches one library capability.
 enum CliReach {
@@ -322,6 +325,17 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
             args: strings(&["--file-fact", "tests/fixtures/ts/sample.ts"]),
             record: "file",
             absent_without: Some(strings(&["tests/fixtures/ts/sample.ts"])),
+        },
+        ScipFileEdges => CliReach::Emits {
+            args: strings(&[
+                "--scip-deps",
+                "--project-root",
+                "tests/fixtures/ts",
+                "--scip-build",
+                "tests/fixtures/ts/scip/alpha.ts",
+            ]),
+            record: "file_edge",
+            absent_without: Some(strings(&["tests/fixtures/ts/scip/gamma.ts"])),
         },
         FlattenProjectType => CliReach::LibraryOnly {
             reason: "the span-and-blob project-edge shape predates the flat-fields \

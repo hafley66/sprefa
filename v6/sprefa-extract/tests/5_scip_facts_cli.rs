@@ -129,3 +129,67 @@ fn file_fact_counts_lines_the_way_an_editor_does() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `--scip-deps` folds the index into file-to-file edges. The fixture trio is the
+/// minimal case that matters: gamma imports from alpha, and beta exports a
+/// same-named symbol nobody imports, so a name-match would be ambiguous and bind
+/// nothing. The indexer resolves it, which is the whole reason this path exists.
+///
+/// v6 has NO TypeScript module resolver. The spelunk named that as the blocker
+/// for a native dep(src,dst); this is the bypass, and the edge below is produced
+/// with no resolver anywhere in the crate.
+#[test]
+fn scip_deps_folds_the_index_into_file_edges() {
+    let edges = run(&[
+        "--scip-deps",
+        "--project-root",
+        "tests/fixtures/ts",
+        "--scip-build",
+        "tests/fixtures/ts/scip/alpha.ts",
+    ]);
+    assert_eq!(
+        edges,
+        "{\"record\":\"file_edge\",\"src_path\":\"scip/gamma.ts\",\
+         \"dst_path\":\"scip/alpha.ts\",\"symbols\":2}\n"
+    );
+    // beta.ts exports a symbol with the same name as alpha's and nothing imports
+    // it. An edge into beta would mean the fold joined on names rather than on
+    // the indexer's resolution.
+    assert!(!edges.contains("beta.ts"));
+}
+
+/// Local symbols are document-scoped: scip reuses `local 0` in every file, so
+/// joining on them would mint an edge between every pair of files that happens
+/// to have a local. The ts fixture root has 100+ local occurrences and the fold
+/// produces exactly one edge, which is the assertion.
+#[test]
+fn scip_deps_never_joins_on_document_scoped_local_symbols() {
+    let facts = run(&[
+        "--scip-facts",
+        "--project-root",
+        "tests/fixtures/ts",
+        "--scip-build",
+        "tests/fixtures/ts/scip/alpha.ts",
+    ]);
+    let locals = facts
+        .lines()
+        .filter(|line| line.contains("\"symbol\":\"local "))
+        .count();
+    assert!(
+        locals > 50,
+        "the fixture root should be dense with local symbols, found {locals}"
+    );
+
+    let edges = run(&[
+        "--scip-deps",
+        "--project-root",
+        "tests/fixtures/ts",
+        "--scip-build",
+        "tests/fixtures/ts/scip/alpha.ts",
+    ]);
+    assert_eq!(
+        edges.lines().count(),
+        1,
+        "{locals} local occurrences must contribute no edges, got: {edges}"
+    );
+}

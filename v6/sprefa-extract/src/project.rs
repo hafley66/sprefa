@@ -183,6 +183,28 @@ pub fn scip_facts_jsonl(request: &ResolveRequest) -> Result<Vec<String>, Project
     Ok(sorted_lines(scip_facts(request)?))
 }
 
+/// Load the SCIP index the request names and fold it to file-to-file dependency
+/// edges. This is v6's answer to the missing TypeScript module resolver: the
+/// indexer already resolved every reference, so the module graph falls out of
+/// the index without a resolver existing at all.
+///
+/// Unlike `scip_facts` this needs no reader: the fold joins symbols to the
+/// documents that define them, and both sides are in the index.
+pub fn scip_file_edges(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectError> {
+    let inputs = read_inputs(request.paths)?;
+    let Some(index) = load_scip(request, &inputs)? else {
+        return Err(ProjectError::ScipIndexerUnavailable(
+            "file edges need --scip-index or --scip-build".to_string(),
+        ));
+    };
+    Ok(crate::wire::scip_file_edges(&index))
+}
+
+/// Serialize file edges to sorted JSONL lines.
+pub fn scip_file_edges_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(scip_file_edges(request)?))
+}
+
 /// Serialize resolved facts to sorted JSONL lines, the byte-stable form the CLI
 /// prints and the goldens pin.
 pub fn resolve_project_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {

@@ -1418,6 +1418,26 @@ pub enum FlatFact {
         is_type_definition: bool,
         is_definition: bool,
     },
+    /// One file-to-file dependency edge, derived from a SCIP index: `src_path`
+    /// contains a non-definition occurrence of a symbol whose definition lives
+    /// in `dst_path`. `symbols` is how many distinct symbols cross that edge.
+    ///
+    /// This is the ONE derived relation the extractor projects rather than
+    /// leaving to the dl layer, and the reason is measured, not stylistic: over
+    /// v6/tsv2 (212 TypeScript files) the raw occurrence rows are 122,317 and
+    /// the edges they fold to are 755. Shipping the occurrences to compute the
+    /// edges above the wire is a 160x amplification of a fact one pass over a
+    /// hashmap produces here. The raw rows stay available under `--scip-facts`
+    /// for every other join.
+    ///
+    /// It is v5's `module_edge` by another name, and it exists because v6 has no
+    /// TypeScript module resolver; SCIP bypasses the resolver entirely.
+    #[serde(rename = "file_edge")]
+    FileEdgeRow {
+        src_path: String,
+        dst_path: String,
+        symbols: u32,
+    },
     /// One file, once: its byte length and line count. v5's `file_lines` and
     /// the size half of `content`. `digest` is the same BlobHash the phase-2
     /// cache and every resolved edge key on, so this row is what lets a
