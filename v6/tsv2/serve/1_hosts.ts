@@ -129,20 +129,100 @@ export const WitnessCache: IWitnessCache = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Template fill + spawn. `{col}` splices the value straight into the command
-// line; `$col` is left in the text and exported as an environment variable so
-// the child's own shell expands it (1_host_expand.pl `validate_template/3`
-// already refuses a template that references an output or an unknown column,
-// so nothing here has to re-check the reference set).
+// Template fill + spawn. `{col}` splices the value into the command line,
+// ESCAPED for the quoting context it lands in; `$col` is left in the text and
+// exported as an environment variable so the child's own shell expands it
+// (1_host_expand.pl `validate_template/3` already refuses a template that
+// references an output or an unknown column, so nothing here has to re-check
+// the reference set).
 // ─────────────────────────────────────────────────────────────────────────────
 
 function shellText(value: IRowValue): string {
   return String(value);
 }
 
+/** The shell quoting context a `{col}` placeholder sits in, which is what
+ *  decides how its value must be escaped. */
+type QuoteContext = "bare" | "single" | "double";
+
+/**
+ * POSIX sh escaping of one value FOR THE CONTEXT IT LANDS IN.
+ *
+ * `{col}` used to splice raw into a command line that `runShellLine` spawns
+ * with `shell: true`, which made every host input arbitrary code: the review's
+ * probe created a file on disk from an ordinary arrival, and host inputs are
+ * file paths and globs read off disk. Receipt and the five payloads:
+ * tests/hostTemplateQuoting.test.ts.
+ *
+ * Three escapings and not one, because all three contexts are in live use and
+ * the usual advice (wrap in single quotes) is wrong in two of them: inside
+ * `'...'` it yields `''value''`, and inside `"..."` it puts literal quote
+ * characters into the child's output. Either would break byte identity for
+ * goldens that depend on the exact text a host prints.
+ *
+ *   single  everything is literal until the next `'`, so the only escape needed
+ *           is `'` itself: close, emit an escaped quote, reopen.
+ *   double  `\`, backtick, `$` and `"` are the four characters the shell still
+ *           acts on; backslash-escape them and the rest is literal.
+ *   bare    nothing is safe, so the value is wrapped in single quotes. That
+ *           also fixes a latent bug: a bare `{path}` holding a space used to be
+ *           word-split into two arguments.
+ *
+ * A value carrying no metacharacters comes out unchanged in all three, which is
+ * what keeps every shipped template's output byte identical.
+ */
+function escapeForShell(value: string, context: QuoteContext): string {
+  if (context === "single") return value.split("'").join(`'\\''`);
+  if (context === "double") return value.replace(/[\\$`"]/g, (character) => `\\${character}`);
+  return `'${value.split("'").join(`'\\''`)}'`;
+}
+
+/**
+ * Walk the template as the shell would, tracking quote state, and splice each
+ * value escaped for the state it lands in.
+ *
+ * The scan models only what a template can contain: `\` escapes the next
+ * character outside single quotes, `'` toggles single quoting unless already
+ * inside double, `"` toggles double unless already inside single. A `{name}`
+ * that is not an input column is left alone, which is what lets
+ * `printf '{"path":"%s"}\n'` (v5-git-diags.dl6:108) keep its JSON braces.
+ */
 function fillTemplate(template: string, inputs: ReadonlyMap<string, IRowValue>): string {
-  let filled = template;
-  for (const [name, value] of inputs) filled = filled.split(`{${name}}`).join(shellText(value));
+  let context: QuoteContext = "bare";
+  let filled = "";
+  let index = 0;
+  while (index < template.length) {
+    const character = template[index]!;
+    if (character === "\\" && context !== "single") {
+      filled += character + (template[index + 1] ?? "");
+      index += 2;
+      continue;
+    }
+    if (character === "'" && context !== "double") {
+      context = context === "single" ? "bare" : "single";
+      filled += character;
+      index += 1;
+      continue;
+    }
+    if (character === '"' && context !== "single") {
+      context = context === "double" ? "bare" : "double";
+      filled += character;
+      index += 1;
+      continue;
+    }
+    if (character === "{") {
+      const close = template.indexOf("}", index);
+      const name = close === -1 ? null : template.slice(index + 1, close);
+      const value = name === null ? undefined : inputs.get(name);
+      if (value !== undefined) {
+        filled += escapeForShell(shellText(value), context);
+        index = close + 1;
+        continue;
+      }
+    }
+    filled += character;
+    index += 1;
+  }
   return filled;
 }
 
