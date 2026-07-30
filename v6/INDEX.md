@@ -54,7 +54,6 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 312 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/ordered_aggregate/README.md](prolog/labs/ordered_aggregate/README.md) | 86 | Ordered aggregate lab receipts |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-extract/tests/fixtures/deps/README.md](sprefa-extract/tests/fixtures/deps/README.md) | 16 |  |
@@ -801,17 +800,6 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
-```
-
-### prolog/labs/ordered_aggregate/README.md
-```
-1:# Ordered aggregate lab receipts
-8:## Q1 and Q4
-20:## Q2
-31:## Q3
-52:## Q5 and Q6
-65:## Commands
-74:## Coordinator re-verification (post-landing)
 ```
 
 ### skills/mermaid-living-map.md

@@ -8,8 +8,11 @@ symbol interning at the head column. `src/ast.rs:439-484` contains
 `JsonGroupArray` and `JsonGroupObject`; V5 has no `group_concat` aggregate
 spelling in the source.
 
-The runnable lab receipts are in the lab's README and companion scripts
-(lab files die on landing; last copy hash recorded below). `node probe.mjs`
+The runnable lab receipts are in the lab's README and companion scripts.
+Lab files died on landing per protocol; the last full copy is at commit
+`c45e3a46` (`git show c45e3a46:v6/prolog/labs/ordered_aggregate/README.md`
+recovers the receipt doc, likewise probe.mjs / oracle_ordering.pl /
+nesting_probe.dl6 / nesting_schedule.json and the .out files). `node probe.mjs`
 exits 0. The Prolog ordering script exits 0. The nesting oracle exits 0.
 
 Coordinator re-verification: all three re-run clean. The agent's `bop check`
