@@ -1,0 +1,9 @@
+[
+  [ {"rel":"attach","sign":"add","row":["fast"]}, {"rel":"attach","sign":"add","row":["slow"]} ],
+  [ {"rel":"produce","sign":"add","row":["a"]}, {"rel":"produce","sign":"add","row":["b"]} ],
+  [ {"rel":"poll","sign":"add","row":["fast"]} ],
+  [ {"rel":"poll","sign":"add","row":["fast"]} ],
+  [ {"rel":"poll","sign":"add","row":["slow"]} ],
+  [ {"rel":"produce","sign":"add","row":["c"]} ],
+  [ {"rel":"poll","sign":"add","row":["fast"]} ]
+]

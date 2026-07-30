@@ -1,0 +1,8 @@
+[
+  [ {"rel":"prod_b","sign":"add","row":["b1"]} ],
+  [ {"rel":"sel","sign":"add","row":["s1"]} ],
+  [ {"rel":"prod_a","sign":"add","row":["a1"]}, {"rel":"prod_b","sign":"add","row":["b2"]} ],
+  [ {"rel":"sel","sign":"add","row":["s2"]} ],
+  [ {"rel":"sel","sign":"add","row":["s3"]} ],
+  [ {"rel":"sel","sign":"add","row":["s4"]} ]
+]

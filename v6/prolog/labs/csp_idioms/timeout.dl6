@@ -1,0 +1,29 @@
+# idiom 6: timeout. Select between a channel and a clock.
+# The clock is an ordinary world-fed rel here (ruling clock_residency =
+# world_fed_bind_not_construct); on a served engine the same rows come from an
+# interval bind, so the program text does not change between the two doors.
+#
+# Go equivalent (unexecuted, the external referent):
+#   select {
+#   case v := <-work:            use(v)
+#   case <-time.After(2 * time.Second): timedOut()
+#   }   // whichever fires first wins; the timer is armed per request
+#
+rel request(id: text)           log keep(all).
+rel response(id: text)          log keep(all).
+rel clock(at: int)              log keep(all).
+rel deadline(id: text, at: int) key(1).
+rel timed_out(id: text)         log keep(all).
+
+now_at(max(At))   <- clock(At).
+answered(Id)      <- response(Id).
+fired(Id)         <- timed_out(Id).
+
+deadline(Id, Due) <+ request(Id), latest(now_at(Now)), Due := Now + 2.
+
+# the guard trio: not answered, and not ALREADY timed out. Without not(fired(Id))
+# the timeout re-fires on every later clock row, because there is no retracting
+# edge head to clear the deadline. That is boilerplate the idiom cannot drop.
+overdue(Id)       <- deadline(Id, Due), now_at(Now), Now > Due,
+                     not(answered(Id)), not(fired(Id)).
+timed_out(Id)     <+ clock(_At), latest(overdue(Id)).

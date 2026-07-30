@@ -1,0 +1,8 @@
+[
+  [ {"rel":"offer","sign":"add","row":["v1"]} ],
+  [ {"rel":"offer","sign":"add","row":["v2"]} ],
+  [ {"rel":"arrive","sign":"add","row":["r1"]} ],
+  [ {"rel":"arrive","sign":"add","row":["r2"]} ],
+  [ {"rel":"arrive","sign":"add","row":["r3"]} ],
+  [ {"rel":"offer","sign":"add","row":["v3"]} ]
+]

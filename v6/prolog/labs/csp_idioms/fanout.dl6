@@ -1,0 +1,34 @@
+# idiom 4b: fan-out. One producer log, N independent readers, each at its own pace.
+# Every reader sees EVERY item (broadcast), unlike the worker pool where an item
+# belongs to exactly one taker. N readers cost zero extra rules: a reader is a row.
+#
+# Go equivalent (unexecuted, the external referent):
+#   subs := []chan string{make(chan string, 8), make(chan string, 8)}
+#   go func() { for v := range src { for _, s := range subs { s <- v } } }()
+#   // each subscriber drains its own buffer at its own rate
+#
+# NOTE: this rel is `attach`, not `subscribe`. `subscribe` is a RESERVED word
+# (registry.pl:52) and naming a rel that way is error-census finding E2.
+#
+rel produce(payload: text)               log keep(all).
+rel attach(reader: text)              log keep(all).
+rel poll(reader: text)                   log keep(all).
+rel pending(ordinal: int, payload: text) log keep(all).
+rel cursor(name: text, at: int)          key(1).
+rel read_at(reader: text, at: int)       key(1).
+rel delivered(reader: text, ordinal: int, payload: text) log keep(all).
+
+cursor('q', 1)           <+ produce(_Payload), not(cursor('q', _At)).
+pending(1, Payload)      <+ produce(Payload), not(cursor('q', _At)).
+cursor('q', NextAt)      <+ produce(_Payload), pre(cursor('q', At)), NextAt := At + 1.
+pending(NextAt, Payload) <+ produce(Payload), pre(cursor('q', At)), NextAt := At + 1.
+
+read_at(Reader, 0)       <+ attach(Reader).
+
+item(Ordinal, Payload)        <- pending(Ordinal, Payload).
+unread(Reader, Ordinal)       <- read_at(Reader, At), item(Ordinal, _Payload), Ordinal > At.
+next_for(Reader, min(Ordinal)) <- unread(Reader, Ordinal).
+lag(Reader, count(Ordinal))   <- unread(Reader, Ordinal).
+
+read_at(Reader, Ordinal)                  <+ poll(Reader), latest(next_for(Reader, Ordinal)).
+delivered(Reader, Ordinal, Payload)       <+ poll(Reader), latest(next_for(Reader, Ordinal)), latest(item(Ordinal, Payload)).

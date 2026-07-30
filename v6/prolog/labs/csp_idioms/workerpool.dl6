@@ -1,0 +1,29 @@
+# idiom 2: worker pool. N consumers, one queue, each item taken by EXACTLY one.
+#
+# Go equivalent (unexecuted, the external referent):
+#   jobs := make(chan string, 8)
+#   for w := 1; w <= 2; w++ {
+#     go func(id int) { for job := range jobs { handle(id, job) } }(w)
+#   }
+#   // the runtime guarantees one receive per value: two workers never
+#   // observe the same job, whatever the scheduling
+#
+rel produce(payload: text)               log keep(all).
+rel poll(worker: text)                   log keep(all).
+rel pending(ordinal: int, payload: text) log keep(all).
+rel cursor(name: text, at: int)          key(1).
+rel taken(ordinal: int)                  key(1).
+rel assigned(ordinal: int, worker: text, payload: text) log keep(all).
+
+cursor('q', 1)           <+ produce(_Payload), not(cursor('q', _At)).
+pending(1, Payload)      <+ produce(Payload), not(cursor('q', _At)).
+cursor('q', NextAt)      <+ produce(_Payload), pre(cursor('q', At)), NextAt := At + 1.
+pending(NextAt, Payload) <+ produce(Payload), pre(cursor('q', At)), NextAt := At + 1.
+
+item(Ordinal, Payload)   <- pending(Ordinal, Payload).
+ready_min(min(Ordinal))  <- item(Ordinal, _Payload), not(taken(Ordinal)).
+
+taken(Ordinal)                     <+ poll(_Worker), latest(ready_min(Ordinal)).
+assigned(Ordinal, Worker, Payload) <+ poll(Worker), latest(ready_min(Ordinal)), latest(item(Ordinal, Payload)).
+
+backlog(count(Ordinal))  <- item(Ordinal, _Payload), not(taken(Ordinal)).

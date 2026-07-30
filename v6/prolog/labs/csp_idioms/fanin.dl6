@@ -1,0 +1,24 @@
+# idiom 4a: fan-in. N producers -> one ordered channel (one cursor over the merge).
+#
+# Go equivalent (unexecuted, the external referent):
+#   func merge(a, b <-chan string) <-chan string {
+#     out := make(chan string)
+#     go func() { for v := range a { out <- v } }()
+#     go func() { for v := range b { out <- v } }()
+#     return out            // interleaving is scheduler-chosen, order per-input kept
+#   }
+#
+rel produce_a(payload: text)             log keep(all).
+rel produce_b(payload: text)             log keep(all).
+rel pending(ordinal: int, payload: text) log keep(all).
+rel cursor(name: text, at: int)          key(1).
+
+# the merge point. Source tag kept so the same payload from two producers is
+# two rows: a bare merged(Payload) is a SET and would collapse them.
+merged('pa', Payload) <- produce_a(Payload).
+merged('pb', Payload) <- produce_b(Payload).
+
+cursor('q', 1)           <+ merged(_Source, _Payload), not(cursor('q', _At)).
+pending(1, Payload)      <+ merged(_Source, Payload), not(cursor('q', _At)).
+cursor('q', NextAt)      <+ merged(_Source, _Payload), pre(cursor('q', At)), NextAt := At + 1.
+pending(NextAt, Payload) <+ merged(_Source, Payload), pre(cursor('q', At)), NextAt := At + 1.

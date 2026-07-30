@@ -1,0 +1,35 @@
+# idiom 7: done / cancellation channel. One `done` row stops all takers.
+# Graded: is the stop same-tick or next-tick, and do in-flight items leak?
+#
+# Go equivalent (unexecuted, the external referent):
+#   for {
+#     select {
+#     case <-ctx.Done(): return          // every taker stops
+#     case v := <-jobs:  handle(v)
+#     }
+#   }   // Go's select is RANDOM when both are ready: a cancelled loop may still
+#       // take one more job. The dl6 version below is not random.
+#
+rel produce(payload: text)               log keep(all).
+rel drain(cause: text)                   log keep(all).
+rel done(cause: text)                    log keep(all).
+rel pending(ordinal: int, payload: text) log keep(all).
+rel cursor(name: text, at: int)          key(1).
+rel taken(ordinal: int)                  key(1).
+rel chan(ordinal: int, payload: text)    log keep(all).
+
+cursor('q', 1)           <+ produce(_Payload), not(cursor('q', _At)).
+pending(1, Payload)      <+ produce(Payload), not(cursor('q', _At)).
+cursor('q', NextAt)      <+ produce(_Payload), pre(cursor('q', At)), NextAt := At + 1.
+pending(NextAt, Payload) <+ produce(Payload), pre(cursor('q', At)), NextAt := At + 1.
+
+item(Ordinal, Payload)   <- pending(Ordinal, Payload).
+cancelled(Cause)         <- done(Cause).
+ready_min(min(Ordinal))  <- item(Ordinal, _Payload), not(taken(Ordinal)).
+
+taken(Ordinal)           <+ drain(_Cause), not(cancelled(_Any)), latest(ready_min(Ordinal)).
+chan(Ordinal, Payload)   <+ drain(_Cause), not(cancelled(_Any)),
+                            latest(ready_min(Ordinal)), latest(item(Ordinal, Payload)).
+
+# what never got taken once cancellation landed
+leaked(count(Ordinal))   <- item(Ordinal, _Payload), not(taken(Ordinal)).
