@@ -12,6 +12,50 @@
 % render joins -- and the grade that the two sides still print the same bytes.
 %
 % Owner: coordinator (struct-as-rows arc).
+%
+% ── KNOWN: 18 of the 19 fixtures here fail roundtrip.sh's G1 ────────────────
+% Measured 2026-07-30 at 6c3a7e2d+. G1 asserts parse_dl(print_dl(Term)) =@= Term
+% and reports fail(not_variant) for every fixture below that declares a
+% referenced relation. The one that passes (struct_column_type_unknown_rejected)
+% is the one whose referenced name has no declaration at all.
+%
+% It is NOT a fixture spelling problem, and rewriting the terms alone makes it
+% worse. The two doors disagree about where relation-reference normalization
+% lives:
+%
+%   parse_dl.pl:574 normalize_relation_value_decls/2 synthesizes type_decl/2
+%     from the referenced rel's own decl and KEEPS that rel's col_type/3 rows,
+%     so the parser's output always carries BOTH forms.
+%   print_dl.pl:209 decl_ref_order/2 emits a decl line for the type_decl AND a
+%     second one for the same rel's col_type ref, so a term carrying both forms
+%     prints `rel <target>(...)` TWICE.
+%
+% Every candidate fixture term therefore misses in one direction or the other:
+%
+%   type_decl alone (what is committed here)  parse adds the col_type rows
+%   col_type rows alone                       parse adds the type_decl
+%   both                                      print duplicates the decl line,
+%                                             and reparsing the duplicate drops
+%                                             the type entirely, because
+%                                             parse_dl.pl:603 relation_schema/4
+%                                             arity-checks the doubled column
+%                                             list and stops synthesizing
+%
+% The fix is coupled and one half of it is compiler-side. Both halves measured
+% together on scratch copies 2026-07-30:
+%
+%   (a) print_dl.pl decl_ref_order/2 skips the bare Name/Arity item when a
+%       type_decl(Name, Specs) of the same arity is already printing that rel
+%       (4 lines, one added guard predicate);
+%   (b) every type_decl(N, Specs) here gains the explicit col_type(N/Arity, ...)
+%       rows the parser produces, in place.
+%
+% Receipts: (a)+(b) together take this file to 19/19 on G1, and the printed
+% .dl6 text is BYTE-IDENTICAL to today's for all 19 fixtures, so dl_view and
+% the text door do not move. (b) alone duplicates a decl line in 18 of the 19
+% rendered views and must not land by itself. (a) alone changes nothing.
+%
+% Held because print_dl.pl was outside this lane's file ownership.
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
