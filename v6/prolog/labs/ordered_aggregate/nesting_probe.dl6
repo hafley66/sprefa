@@ -1,0 +1,3 @@
+rel child(group_name: text, payload: json).
+rel nested(group_name: text, payloads: json).
+nested(GroupName, json_array(Payload)) <- child(GroupName, Payload).
