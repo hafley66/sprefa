@@ -21,6 +21,7 @@ pub mod family;
 pub mod lang;
 pub mod project;
 pub mod rows;
+pub mod schema;
 pub mod scip;
 pub mod seams;
 pub mod shape;
