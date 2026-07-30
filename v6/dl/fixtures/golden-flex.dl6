@@ -1,0 +1,285 @@
+# golden-flex.dl6 -- ONE program that exercises every live surface construct.
+#
+# WHY THIS FILE EXISTS. The fixture corpus is one-construct-per-fixture: it
+# proves each construct in isolation and almost never COMPOSES two of them.
+# That shape let real defects through with every gate green (depth>=2 relation
+# references silently empty in both directions, chained decode oracle-dead,
+# two-door decl normalization disagreement, keyed-arrival divergence). This is
+# the composition program: one coherent file, every live construct, graded at
+# three cardinalities (0 rows / 1 row / >=100 rows per input rel) plus a
+# perturbed schedule, oracle vs BOTH emitter modes, tick log AND final state,
+# and then again end to end through the served HTTP engine.
+#
+# THE DOMAIN, contrived on purpose so composition has somewhere to happen: an
+# ORCHARD. Trees sit at plots inside patches, get picked, get graded, get
+# weighed by a shell host, and a clock bind drives the roll-call.
+#
+# EVERY CONSTRUCT CARRIES A COMMENT NAMING IT. compile/scripts/golden_coverage.pl
+# reads registry.pl's live surface rows and this file's own parsed term and
+# FAILS, naming the construct, if any live registry row is not exercised here.
+# A construct added to the registry therefore breaks this golden until the
+# golden flexes it. That is the language-kept-in-check mechanism; it is a gate,
+# not a doc.
+#
+# ═══ NAMED REFUSALS (part of the flex; the coverage gate asserts each one) ═══
+# Every line below is a construct or composition this program CANNOT express.
+# None of them is worked around: the refusal name is the record.
+#
+#   pre/1                          registry status `refused`. In an edge body it
+#                                  is edge_body_needs_pre -- the fold is
+#                                  occurrence-ordered and cross-arm, which is a
+#                                  new execution shape (ARCH pre_occurrence_loop).
+#                                  The ORACLE runs it; the compiler refuses it,
+#                                  so a program using it is ungradeable.
+#   json_each/2                    registry status `refused`.
+#   json_array/1, json_object/2    aggregate heads, registry status `refused`
+#                                  (ruling json_ticklog_encoding executed on the
+#                                  log side; emission still owed).
+#   sg_pattern/3                   registry status `refused`
+#                                  (slot_sg_metavariable_semantics).
+#   set/0                          removed word: unsupported_surface(
+#                                  removed_word(set)).
+#   zip/2                          reserved.
+#   subscribe/1, unsubscribe/1,    reserved lifecycle wrappers; their kernel
+#   complete/1, error/1            forms are next/finalize on the demand rel.
+#
+#   BRACES AND LIST VALUES         MEASURED writing this file. A braces literal
+#                                  in a head or a `:=` right-hand side is
+#                                  unsupported_construct(json_value_expression(
+#                                  {row: _, col: _})) -- braces/list VALUES were
+#                                  un-refused for a while and silently stored
+#                                  "null"/`{}(...)`, and the refusal is the fix.
+#                                  Consequence for this file: struct values
+#                                  cannot be BUILT in a rule, so the value plane
+#                                  below arrives from the world (an arrival row
+#                                  or a host's JSON stdout), which is the only
+#                                  live path. `concat([...])` still carries the
+#                                  list-literal grammar, since concat is an
+#                                  expression call rather than a stored value.
+#   NESTED BRACES                  same refusal, one level deeper, so a two-hop
+#                                  struct value can never be assembled in-language
+#                                  at all -- it only ever arrives whole.
+#   float / bool IN sh AND bind    MEASURED writing this file, NEW: `rel` decls
+#                                  accept int|text|json|bool|float plus struct
+#                                  names (parse_dl.pl typed_column_type/3) but
+#                                  `sh` and `bind` decls run through
+#                                  decl_b_column_type/5, which knows only
+#                                  int|text|json. A `float` or `bool` column
+#                                  there silently degrades to the untyped `none`
+#                                  and reports unsupported_surface(
+#                                  column_type_wrapper(Name, Column, none)).
+#                                  Struct type names DO work there. The two
+#                                  declaration doors disagree on the type
+#                                  vocabulary; the host below therefore carries
+#                                  INT grams, not float kilos.
+#   BARE TOP-LEVEL FACT            `quarantined('weed').` at top level lowers to
+#                                  a level rule over a minted literal seed and is
+#                                  refused level_rule_no_positive_body. Every
+#                                  seed here arrives over the wire.
+#   keyed ON A LEVEL HEAD          keyed_level_head. Every keyed rel below is an
+#                                  EDGE head.
+#   edge INTO AN UNKEYED SET       edge_into_unkeyed_set(Ref). Every `<+` head
+#                                  below is either `log` or `key(...)`.
+#   sh TEMPLATE CONTRACT           a template must reference every declared
+#                                  input, else template_mismatch(
+#                                  unreferenced_input(Column)).
+#   CONCAT TAKES VALUES ONLY       an expression CALL inside concat's list is
+#                                  non_display_in_concat(Call); binding it
+#                                  through `:=` first does not help, because
+#                                  `:=` stores the unevaluated call.
+#
+#   norm/1  --  NEW LIVE DEFECT, NOT A REFUSAL. `expression(norm/1, text_scalar,
+#                                  ...)` is a LIVE registry row with ZERO
+#                                  conformance coverage (grep: no fixture
+#                                  mentions it), and the two engines DISAGREE:
+#                                    program  route_key(Raw, norm(Raw)) <- route(Raw).
+#                                    arrival  route("Hello World")
+#                                    oracle   route_key["Hello World","norm(Hello World)"]
+#                                    emitter  route_key["Hello World","helloworld"]
+#                                  The oracle stores the unevaluated term; the
+#                                  emitter lowers it to SQL and evaluates it.
+#                                  `norm` is therefore UNGRADEABLE and cannot
+#                                  appear in this program. scripts/golden-flex.sh
+#                                  runs that exact two-line probe as an INVERTED
+#                                  receipt: it asserts the divergence still
+#                                  exists, so whoever fixes the oracle side is
+#                                  told, by a red gate, to promote norm into
+#                                  this file.
+#
+# ═══ the value plane: struct types, one chain two deep ══════════════════════
+# A bare `rel` whose NAME is used as another column's TYPE is a struct type
+# (type_decl/2 in term form; ruling compound_storage = struct_as_rows). `plot`
+# is the leaf, `patch` carries a plot, and `tree.site` carries a patch -- so
+# reading one `tree` row is a two-hop dictionary chain. Both hop targets are
+# ordinary public rels and appear in the tick log in the same tick as the parent.
+rel plot(row: int, col: int).                      # type_decl/2 leaf; col_type/3 int
+rel patch(label: text, at: plot).                  # depth 1: a struct field typed by a struct
+
+# ═══ the world's arrival targets (EDB) ══════════════════════════════════════
+# Nothing derives these; the schedule pushes them. Every column carries a
+# col_type/3 entry, including the two non-scalar scalars (bool, float).
+rel tree(tree_id: int, species: text, site: patch).   # depth 2: patch -> plot
+rel pick_event(tree_id: int, picker: text, kilos: float, sugar: int).
+rel retire_event(tree_id: int).
+rel quarantined(species: text).
+rel sensor(tree_id: int, healthy: bool).
+
+# `log` + `keep(all)`: the append-only picking journal, nothing pruned.
+rel pick_log(tree_id: int, picker: text) log keep(all).
+# `log` + `keep(count(N))`: the same journal, bounded. Retention lowers to one
+# set-based DELETE ... RETURNING into the negative-delta path.
+rel recent_pick(tree_id: int, picker: text) log keep(count(2)).
+
+# enum_decl/2 with the `;` variant separator. Variants become typed variant rels
+# (grade_ripe/2, grade_green/2, grade_bruised/2, each carrying a leading
+# reference id column) plus the derived tag view grade_tag/2.
+rel grade(ripe(sugar: int) ; green(days: int) ; bruised(reason: text)).
+
+# ═══ the shell host (sh_decl/4) and the clock bind (bind_decl/2) ════════════
+# Hermetic: printf only, no network, no filesystem. The answer is
+# content-addressed on the declared inputs, so the same (tree, grams) pair is
+# one subprocess no matter how many rules demand it.
+sh weigh(tree_id: int, grams: int) -> (label: text) =
+  `printf '%s' "tree-{tree_id}-at-{grams}g"`.
+
+# The cadence is the literal `1` the roll_call rule reads in the bind atom's
+# first column. Nothing outside the program chose it.
+bind interval(period: int, bucket: int).
+
+# ═══ level rules (<-) ═══════════════════════════════════════════════════════
+
+# decode/2 over a struct-typed column: one hop out of the dictionary.
+rel tree_label(tree_id: int, label: text).
+tree_label(TreeId, Label) <- tree(TreeId, _Species, Site), decode(Site, {label: Label}).
+
+# not/1 as a level-body anti-join, plus `\==` (identity comparison), `>`
+# (ordered comparison), and `:=` binding an arithmetic expression that uses
+# `*`, `+` and `mod` -- the three arithmetic operators with no other home here.
+rel pickable(tree_id: int, species: text, lane: int).
+pickable(TreeId, Species, Lane) <-
+  tree(TreeId, Species, _Site),
+  not(quarantined(Species)),
+  Species \== 'weed',
+  TreeId > 0,
+  Lane := (TreeId * 3 + 1) mod 7.
+
+# `is`, the second registered bind operator, carrying `-` and `/`. Kept beside
+# `:=` deliberately: both are live registry rows and the corpus only ever wrote
+# one of them.
+rel lane_gap(tree_id: int, gap: int).
+lane_gap(TreeId, Gap) <- pickable(TreeId, _Species, Lane), Gap is (Lane - 1) / 2.
+
+# combine/variadic: the registered splice sugar. Its atoms become one
+# conjunction, so this is the long way to write a join -- written the long way
+# precisely because nothing in the corpus ever did. `==` compares the bool.
+rel monitored(tree_id: int, species: text).
+monitored(TreeId, Species) <-
+  combine(pickable(TreeId, Species, _Lane), sensor(TreeId, Healthy)),
+  Healthy == true.
+
+# next/1: the same splice around one atom. `norm(...)` is the registered text
+# scalar; `concat([...])` carries the list-literal grammar and mixes an atom, an
+# int, a bound variable and a string in one list.
+#
+rel display(tree_id: int, note: text).
+display(TreeId, Note) <-
+  next(monitored(TreeId, Species)),
+  Note := concat(['tree ', TreeId, ' is ', Species, " (monitored)"]).
+
+# `<`, `=<` and `>=`, the three remaining ordered comparisons, over the float
+# column -- so the float type is exercised by more than storage.
+rel heavy_pick(tree_id: int, kilos: float).
+heavy_pick(TreeId, Kilos) <-
+  pick_event(TreeId, _Picker, Kilos, _Sugar),
+  Kilos >= 1.5,
+  Kilos < 100.0,
+  Kilos =< 99.5.
+
+# kwargs partial application: a body atom naming SOME declared columns; the
+# omitted ones become fresh anonymous variables. `_` wildcards and a
+# single-quoted atom constant appear here too.
+rel picked_by_ada(tree_id: int).
+picked_by_ada(TreeId) <- pick_event(tree_id: TreeId, picker: 'ada').
+
+# ═══ aggregate heads: all five, over a plain grouping column ═══════════════
+rel pick_stats(tree_id: int, picks: int, total: int, lowest: int, highest: int).
+pick_stats(TreeId, count(Sugar), sum(Sugar), min(Sugar), max(Sugar)) <-
+  pick_event(TreeId, _Picker, _Kilos, Sugar).
+
+rel mean_kilos(tree_id: int, kilos: float).
+mean_kilos(TreeId, avg(Kilos)) <- pick_event(TreeId, _Picker, Kilos, _Sugar).
+
+# ═══ edge rules (<+) ═══════════════════════════════════════════════════════
+
+# A bare positive atom in an edge body is the TRIGGER (an occurrence, not a
+# state read). now/1 reads the emitted __tick counter.
+rel pick_tick(tree_id: int, tick: int) log keep(all).
+pick_tick(TreeId, Tick) <+ pick_event(TreeId, _Picker, _Kilos, _Sugar), now(Tick).
+
+# The two journals, one unbounded and one bounded, off the same trigger.
+pick_log(TreeId, Picker) <+ pick_event(TreeId, Picker, _Kilos, _Sugar).
+recent_pick(TreeId, Picker) <+ pick_event(TreeId, Picker, _Kilos, _Sugar).
+
+# key(...) on an EDGE head: last picker wins per tree, replace not accumulate.
+# latest/1 samples the current base table of a level rel (the N->(0|1)
+# coercion) without becoming a second trigger, which is what keeps this rule
+# firing once per pick rather than once per (pick x pickable) pair.
+rel last_picker(tree_id: int, picker: text) key(1).
+last_picker(TreeId, Picker) <+
+  pick_event(TreeId, Picker, _Kilos, _Sugar),
+  latest(pickable(TreeId, _Species, _Lane)).
+
+# finalize/1 in an edge body: the departure frontier. A tree whose `pickable`
+# row left last tick shows up here exactly once, one tick later.
+rel fell_out(tree_id: int, species: text) log keep(all).
+fell_out(TreeId, Species) <+ finalize(pickable(TreeId, Species, _Lane)).
+
+# not/1 in an EDGE body, around one plain relation atom (the guard seam).
+rel unmonitored_pick(tree_id: int) key(1).
+unmonitored_pick(TreeId) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  not(monitored(TreeId, _Species)).
+
+# ═══ the host call and the bind read ═══════════════════════════════════════
+# `weigh` resolves to the sh signature above, so this body atom is a host call
+# (probe/4 in term form): declared inputs first, declared outputs after. The
+# grams come from the sum aggregate, so the host's demand is derived, not fed.
+rel weighed(tree_id: int, grams: int, label: text).
+weighed(TreeId, Grams, Label) <-
+  pick_stats(TreeId, _Picks, Grams, _Lowest, _Highest),
+  weigh(TreeId, Grams, Label).
+
+# The bind read: `interval(1, Bucket)` -- the literal 1 IS the cadence the
+# emitted bind plan carries, and Bucket is floor(epoch_secs / period).
+rel roll_call(tree_id: int, bucket: int).
+roll_call(TreeId, Bucket) <- pickable(TreeId, _Species, _Lane), interval(1, Bucket).
+
+# ═══ match/2 block sugar ═══════════════════════════════════════════════════
+# Arms expand to one ordinary rule each; enum coverage is checked against the
+# variants (a missing variant with no catch-all is match_nonexhaustive). `true`
+# is the registered zero-arity guard on the catch-all arm, and `==` guards the
+# other two.
+rel graded(grade_id: int, verdict: text).
+match grade_tag(GradeId, Tag) (
+  ; Tag == 'ripe'  |-> graded(GradeId, "pick it")
+  ; Tag == 'green' |-> graded(GradeId, "wait")
+  ; true           |-> graded(GradeId, "compost")
+).
+
+# The same sugar on the EDGE arrow, so both arm arrows are exercised.
+rel retired_tree(tree_id: int) key(1).
+match retire_event(TreeId) (
+  ; TreeId > 0 |+> retired_tree(TreeId)
+).
+
+# ═══ ts_query/1: a tree-sitter query as a compiled VALUE ═══════════════════
+# The value compiles to exact query text. Its HOST EXECUTION is phase 2 and is
+# named unsupported_host_execution_phase_2(tree_sitter_query); the value is the
+# live half of the registry row and is what this carries.
+rel orchard_query(query: text).
+orchard_query(ts_query([node('call_expression', [capture('callee', 'wildcard')])])) <-
+  quarantined(_Species).
+
+# ═══ query/1: the read surface ═════════════════════════════════════════════
+? display(_TreeId, _Note).
+? pick_stats(_StatTree, _Picks, _Total, _Lowest, _Highest).
