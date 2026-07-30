@@ -169,7 +169,7 @@ function applyNaiveRetention(seam: ISqlSeam): Observable<void> {
 }
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const eventDiff = multisetDiff(before.event, after.event); const event = { add: eventDiff.add, del: [] };
+  const event = multisetDiff(before.event, after.event);
   return {
     rels: [
       { rel: "event", add: event.add, del: event.del },

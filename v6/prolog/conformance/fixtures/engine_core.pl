@@ -7,12 +7,116 @@
 :- op(700,  xfx, :=).
 
 % keep(count(N)) prunes a Log rel to its newest N stamps at tick end.
+%
+% The deltas/2 leg was ADDED after the time-plane lab named this fixture's
+% final/2-only expectation as the reason the retention hole survived three
+% arcs: for the corpus's only keep(count(N)) fixture, grading the end state
+% alone cannot see whether the prune was reported or silently dropped, and it
+% was silently dropped. Retention is now graded on both legs.
 fixture(retention_count_prunes_oldest,
   prog([ kind(event/1, log), keep(event/1, count(2)) ],
        []),
   [],
   [ [ +event(one) ], [ +event(two) ], [ +event(three) ] ],
-  [ final(event/1, [ event(three), event(two) ]) ]).
+  [ deltas(event/1, [ [ +event(one) ],
+                      [ +event(two) ],
+                      [ -event(one), +event(three) ] ]),
+    final(event/1, [ event(three), event(two) ]) ]).
+
+% Retention reports the reclamation. The prune is an ordinary minus delta at
+% the tick boundary, so the bound the program declared is graded rather than
+% inferred from the final state.
+%
+% FAIL-FIRST: red on both doors before the retention-minus change
+% (plans/2026-07-30-time-plane-unification-verdict.md recommendation 1). The
+% oracle's boundary_deltas/6 diffed stamps in one direction only (new stamps
+% became LogAdds, vanished stamps became nothing) and the emitter's
+% boundaryDelta suppressed a log rel's negative weight behind a
+% `kind === "set"` guard, so both doors dropped the prune symmetrically. The
+% pre-change reading was tick 3 = [ +event(three) ] with no minus, which is
+% the retention-grading gap this fixture closes.
+%
+% R7 is not weakened: the minus does not say the occurrence un-happened, it
+% says the STORAGE row was reclaimed under a bound the program declared.
+% Only keep(...) can emit it; retract_from_log/1 still throws.
+fixture(retention_prune_is_a_visible_minus,
+  prog([ kind(event/1, log), keep(event/1, count(2)) ],
+       []),
+  [],
+  [ [ +event(one) ], [ +event(two) ], [ +event(three) ] ],
+  [ deltas(event/1, [ [ +event(one) ],
+                      [ +event(two) ],
+                      [ -event(one), +event(three) ] ]) ]).
+
+% finalize over a Log rel fires on the retention prune. THE NATURAL SPELLING
+% WORKS, which SUPERSEDES the refusal three prior arcs proposed for it:
+% plans/2026-07-30-rel-as-stream-lab.md card 4,
+% plans/2026-07-29-update-arm-verdict.md SLOT-LOG-FINALIZE-REFUSAL, and
+% plans/2026-07-28-consumption-arms-verdict.md assertion 17 all recommended
+% refusing `finalize(logrel(...))` because it was statically dead -- retention
+% pruned with no delta, so the arm had nothing to bind and failed silently.
+% The time-plane verdict priced both directions and the fix won: a refusal
+% needs two implementations plus a fail-first fixture, while making the
+% spelling work needed the retention minus that was wanted anyway.
+%
+% Reading, per compile/TICK-MODEL.md 5.1: this binds the (dS)- of the RETAINED
+% WINDOW, never of the occurrence. The firing already happened and every rule
+% that was going to see it already saw it; what departs is the stored record,
+% under the bound the program itself declared.
+%
+% Cost, named rather than discovered later: a pruning log rel with a finalize
+% listener mints drain ticks for the departures, so this 4-tick schedule runs
+% to 6. Programs that do not bind finalize on that rel pay nothing, because
+% listened_departure_refs/2 gates the carry.
+fixture(finalize_over_log_fires_on_retention_prune,
+  prog([ kind(ev/2, log), keep(ev/2, count(2)),
+         kind(gone/2, log), keep(gone/2, all) ],
+       [ (gone(Ordinal, Payload) <+ finalize(ev(Ordinal, Payload))) ]),
+  [],
+  [ [ +ev(1, a) ], [ +ev(2, b) ], [ +ev(3, c) ], [ +ev(4, d) ] ],
+  [ deltas(ev/2, [ [ +ev(1, a) ],
+                   [ +ev(2, b) ],
+                   [ -ev(1, a), +ev(3, c) ],
+                   [ -ev(2, b), +ev(4, d) ],
+                   [], [] ]),
+    deltas(gone/2, [ [], [], [],
+                     [ +gone(1, a) ],
+                     [ +gone(2, b) ],
+                     [] ]),
+    final(ev/2, [ ev(3, c), ev(4, d) ]),
+    final(gone/2, [ gone(1, a), gone(2, b) ]),
+    ticks(6) ]).
+
+% created_at and updated_at are ordinary columns two ordinary edge rules fill.
+% Promoted from the time-plane lab (T15,
+% plans/2026-07-30-time-plane-unification-verdict.md candidate 3), where it is
+% the receipt that refutes the auto-metadata-plane hypothesis: the semantics
+% the plane would add already ship, with zero new constructs, so an auto plane
+% would cost 7.5 bytes/row on every rel to serve the rels that asked for it.
+%
+% now/1 supplies the tick, pre/1 carries the birth tick across a keyed
+% replace, not/1 supplies the base case. The two rules are the two branches of
+% one fold: in rx this is groupBy + scan, with pre/1 as the accumulator and
+% not/1 as the seed.
+%
+% The graded value is thing(1, c, 1, 3): payload advanced to the third
+% arrival, created pinned at tick 1, updated advanced to tick 3. The NAIVE
+% one-rule spelling (drop the pre/1 rule) instead yields thing(1, c, 3, 3) --
+% a column named created_at_tick holding updated_at semantics, silently. That
+% trap is the honest argument for sugar later; this fixture is the oracle any
+% such sugar has to match.
+fixture(created_at_pinned_updated_at_advances,
+  prog([ kind(arrive/2, log), keep(arrive/2, all),
+         keyed(thing/4, [1]) ],
+       [ (thing(Id, Payload, Born, Tick) <+
+              arrive(Id, Payload), now(Tick),
+              pre(thing(Id, _Old, Born, _Was))),
+         (thing(Id, Payload, Tick, Tick) <+
+              arrive(Id, Payload), now(Tick),
+              not(thing(Id, _AnyPayload, _AnyBorn, _AnyUpdated))) ]),
+  [],
+  [ [ +arrive(1, a) ], [ +arrive(1, b) ], [ +arrive(1, c) ] ],
+  [ final(thing/4, [ thing(1, c, 1, 3) ]) ]).
 
 % A Log rel without a keep clause is a load error (q10: REQUIRED).
 fixture(log_without_retention_rejected,

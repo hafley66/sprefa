@@ -1,11 +1,49 @@
 # Time-plane unification lab, verdict
 
 Header: `plans/2026-07-30-time-plane-unification-header.md`. Base
-`51d0e193baa6c68c3e0525dfafb1e51c029614ae`. Runnable half
+`51d0e193baa6c68c3e0525dfafb1e51c029614ae`. Runnable half was
 `v6/prolog/labs/time_plane/`, entry `bash v6/prolog/labs/time_plane/receipts.sh`
-(exit 0 = every receipt held). Current run: **15 reference-engine receipts +
+(exit 0 = every receipt held). Final run: **15 reference-engine receipts +
 prototype blast-radius leg + one two-door case + cost measurement + sabotage,
 7 PASS 0 FAIL.**
+
+---
+
+## LANDED + LAB DEATH (2026-07-30)
+
+The lab directory is DELETED per the lab protocol. **Last copy:
+`f044ce06ce41a3bfea66da3bf1789896991fc77d`** — recover any file with
+`git show f044ce06:v6/prolog/labs/time_plane/<name>`.
+
+Recommendation 1 and item 4 (the coverage finding) are executed. Items 2 and 3
+are design record only, as the verdict recommends: the planes are NOT unified,
+and `created_at`/`updated_at` sugar stays an open ergonomics call with an
+oracle fixture now pinning the semantics it would have to match.
+
+| what landed | where |
+|---|---|
+| retention emits an ordinary minus | `engine.pl boundary_deltas/6`, `1_incremental.ts boundaryDelta`, `emit_ts.pl diff_local_line/2` |
+| R7 restated, storage rows vs occurrences | `v6/prolog/compile/TICK-MODEL.md` section 5.1 (+ section 2 correction) |
+| `retention_prune_is_a_visible_minus` | `fixtures/engine_core.pl`, fail-first |
+| `finalize_over_log_fires_on_retention_prune` | `fixtures/engine_core.pl` |
+| `created_at_pinned_updated_at_advances` | `fixtures/engine_core.pl` |
+| `set_rel_identical_arrival_is_one_occurrence` + `log_rel_identical_arrival_is_two_occurrences` | `fixtures/occurrence_identity.pl` |
+| `deltas/2` leg on `retention_count_prunes_oldest` | `fixtures/engine_core.pl` |
+
+**Correction to Q3/Q5, found in landing.** The banked patch had TWO suppression
+sites; there are **THREE**. `emit_ts.pl diff_local_line/3` emitted a literal
+`del: []` for any rel carrying a `keep` clause, which is the NAIVE referee's
+copy of the same suppression. The lab swept the incremental mode only, so this
+site was invisible to it; the naive sweep goes WRONG on both retention fixtures
+without it. The special case is removed rather than inverted, because the naive
+snapshot straddles retention and the plain `multisetDiff` already computes the
+del correctly. Q5's site inventory should read three, not two.
+
+Everything else the verdict measured held exactly: **one artifact line
+regraded corpus-wide** (`retention_count_prunes_oldest.oracle.jsonl` tick 3),
+0 wrong on the sweep in both modes, and `finalize` over a log rel fires,
+superseding the refusal proposed by stream-lab card 4, update-arm
+`SLOT-LOG-FINALIZE-REFUSAL`, and consumption-arms assertion 17.
 
 The user's spine, verbatim: "log rel is just rel with a time column ... rels
 should have auto created_at_tick and updated_at_tick so to speak, and we could

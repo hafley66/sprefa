@@ -51,7 +51,7 @@
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 437 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 311 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
-| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
+| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -59,7 +59,6 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -775,10 +774,11 @@
 1:# TICK MODEL: the semiring/grading semantics behind the clock checker
 10:## 1. Objects: three semirings
 26:## 2. The derivative reading (lifecycle = sign decomposition)
-50:## 3. Grading: what tick a thing is on
-68:## 4. Coercions between rings (the A2 analysis)
-84:## 5. Theorems already shipped (each = a ring error made a refusal)
-103:## 6. What the checker does (phase 5 spec)
+56:## 3. Grading: what tick a thing is on
+74:## 4. Coercions between rings (the A2 analysis)
+90:## 5. Theorems already shipped (each = a ring error made a refusal)
+109:### 5.1 R7 restated: storage rows are not occurrences
+163:## 6. What the checker does (phase 5 spec)
 ```
 
 ### prolog/conformance/FIXTURES.md
@@ -842,14 +842,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
