@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"labelled":{"add":[[1,"oak"],[2,"unnamed"]],"del":[]},"ping":{"add":[[1],[2]],"del":[]}}}
+{"tick":2,"deltas":{"name":{"add":[[2,"elm"]],"del":[]}}}
+{"tick":3,"deltas":{"labelled":{"add":[[2,"elm"]],"del":[]},"ping":{"add":[[2]],"del":[]}}}
+{"tick":4,"deltas":{}}

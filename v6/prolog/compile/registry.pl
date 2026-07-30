@@ -53,6 +53,26 @@ surface(subscribe/1,    time,      refs_of_arg(1, pos, trigger), wrapper(rel_ato
 surface(error/1,        time,      refs_of_arg(1, pos, trigger), wrapper(rel_atom, refuse(lifecycle)), reserved).
 
 surface(not/1,          sign,      arm(neg),                     wrapper(body_item, lower),             live).
+% RULING null_design = get_else_use_site_never_storage (conformance/rulings.pl,
+% ARCH get_else_wiring). `coalesce(rel_atom(Bound..., Out), Default)` is the
+% total read: Out binds from the row when one exists, from Default when none
+% does, and the tuple survives either way. Null never reaches storage or the
+% type system; absence stays row absence and the consumer that wants totality
+% spells the default itself. Datomic `get-else` is the prior art; the WORD is
+% `coalesce` because the vocabulary law admits only rxjs/prolog/SQL words and
+% COALESCE is SQL's name for exactly this.
+%
+% SUGAR axis, and it means it: 0_coalesce_expand.pl (expansion phase 45, the
+% one module BOTH doors consult) rewrites every coalesce into two ordinary
+% clauses -- the bare/latest read, and not(...) plus a `:=` of the default --
+% before analyze.pl or engine.pl ever sees a program. The gate word is
+% `expand(coalesce)` rather than `lower` because nothing in lower.pl handles
+% this functor and nothing should: a coalesce reaching the lowering would be a
+% phase-order defect, and the expander's own coalesce_not_top_level refusal is
+% what makes that unreachable. The AnalyzeRole is stated honestly all the same,
+% so the pre-expansion readers (print_dl.pl's decl synthesis) see the source
+% relation as the sampled reference it is.
+surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, expand(coalesce)), live).
 surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, refuse(goal)),       refused).
 % Contextual gate, same shape as latest/1: live around a plain VARIABLE in an
 % edge body (lowered to a read of the emitted __tick counter); analyze.pl

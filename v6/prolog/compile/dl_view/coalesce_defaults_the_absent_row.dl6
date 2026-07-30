@@ -1,0 +1,5 @@
+rel repo(name: text).
+rel latest_commit(name: text, commit: text).
+rel repo_latest(name: text, commit: text).
+
+repo_latest(Name, Commit) <- repo(Name), coalesce(latest_commit(Name, Commit), 'absent').

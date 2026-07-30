@@ -1094,6 +1094,24 @@ parse_surface_wrapper(expr, 1, Codes, [Expr], Vars0, Vars) :-
     parse_full(expr(Expr, Vars0, Vars), Codes).
 parse_surface_wrapper(expr_pair, 2, Codes, [Left, Right], Vars0, Vars) :-
     parse_two_args(Codes, Left, Right, Vars0, Vars).
+% `coalesce(rel_atom(...), Default)`: a relation atom, then one value. Its own
+% shape rather than expr_pair because the first argument must be a relation
+% atom (expr would read `latest_commit(Repo, Commit)` as an expression call and
+% the expander's coalesce_source_not_rel_atom would fire on a term the author
+% spelled correctly), and its own shape rather than rel_atom because rel_atom
+% takes no second argument. Reserving the WORD is the point: an unrecognised
+% body word parses as an ordinary relation atom, which for a misspelled
+% coalesce would be a silently empty EDB rather than a finding.
+parse_surface_wrapper(rel_atom_default, 2, Codes, [Atom, Default], Vars0, Vars) :-
+    parse_full(rel_atom_default_args(Atom, Default, Vars0, Vars), Codes).
+
+rel_atom_default_args(Atom, Default, Vars0, Vars, S0, S) :-
+    ws0(S0, S1),
+    rel_atom_term(Atom, Vars0, Vars1, S1, S2),
+    ws0(S2, S3),
+    lit_dcg(`,`, S3, S4),
+    ws0(S4, S5),
+    expr(Default, Vars1, Vars, S5, S).
 
 surface_arity_matches(variadic, _).
 surface_arity_matches(Arity, Args) :- integer(Arity), length(Args, Arity).

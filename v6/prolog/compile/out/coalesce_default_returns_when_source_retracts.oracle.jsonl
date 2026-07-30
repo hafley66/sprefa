@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"latest_commit":{"add":[["alpha","sha-1"]],"del":[]},"repo_latest":{"add":[["alpha","sha-1"]],"del":[["alpha","absent"]]}}}
+{"tick":2,"deltas":{"latest_commit":{"add":[],"del":[["alpha","sha-1"]]},"repo_latest":{"add":[["alpha","absent"]],"del":[["alpha","sha-1"]]}}}

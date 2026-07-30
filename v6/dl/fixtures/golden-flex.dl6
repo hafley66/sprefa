@@ -297,6 +297,21 @@ last_picker(TreeId, Picker) <+
   pick_event(TreeId, Picker, _Kilos, _Sugar),
   latest(pickable(TreeId, _Species, _Lane)).
 
+# coalesce/2, the use-site total read (ruling null_design =
+# get_else_use_site_never_storage). `last_picker` is SPARSE by construction:
+# the trees arrive on tick 2 and the picks on tick 3, so on tick 2 every
+# pickable tree has no picker at all. Without coalesce those tuples drop out of
+# the join -- an inner-join effect nobody wants. With it, every pickable tree
+# answers, the pickerless ones with a value THIS rule chose, and the row flips
+# to the real picker on tick 3 and departs on tick 8 with its `pickable` row.
+# Null never enters storage or the type system; absence stays row absence and
+# the default is an ordinary `text` value spelled by the consumer that wanted
+# totality. It is SUGAR: one rule, two ordinary clauses, no new lowering.
+rel picker_of(tree_id: int, picker: text).
+picker_of(TreeId, Picker) <-
+  pickable(TreeId, _Species, _Lane),
+  coalesce(last_picker(TreeId, Picker), 'nobody').
+
 # finalize/1 in an edge body: the departure frontier. A tree whose `pickable`
 # row left last tick shows up here exactly once, one tick later.
 rel fell_out(tree_id: int, species: text) log keep(all).

@@ -14,32 +14,56 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the JSON-WIRING lane (2026-07-30), which wired the ruled json
-surface into the production doors: brace literals and patterns, `$` key holes,
-`**` descent, array spread, `list(text)`, and `json` as its own storage kind
-(it had been an alias for `text`, which erased the bit the lowering dispatch
-reads). The counts before it were 155 / 61 / 94 / 92. Arcs before that, most
-recent first: STRUCT-AS-ROWS (which took 139 / 87 / 85 to those numbers),
-FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT. The prose sections below this one
-are historical and were written against the 110-fixture corpus; the numbers
-here and in the two tables that follow come from `out/manifest.json` +
-`out/run-results.json`.
+Refreshed by the COALESCE lane (2026-07-30), which wired ruling `null_design =
+get_else_use_site_never_storage` into both doors as `coalesce/2`, the use-site
+total read. The counts before it were 201 / 60 / 141 / 139. Arcs before that,
+most recent first: JSON-WIRING (which took 155 / 61 / 94 / 92 to those
+numbers), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT. The prose
+sections below this one are historical and were written against the
+110-fixture corpus; the numbers here and in the two tables that follow come
+from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 201 |
-| UNSUPPORTED (compiler refuses, named construct) | 60 |
-| compiled (lowering + emission succeeded) | 141 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 139 |
+| fixtures swept | 209 |
+| UNSUPPORTED (compiler refuses, named construct) | 64 |
+| compiled (lowering + emission succeeded) | 145 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 143 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 139 + 2 + 60 = 201.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED = 143 + 2 + 64 = 209.
 
 Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 139/0/2. The final-state
-grading leg agrees too: `final_identical=139`, `final_wrong=2` (the same two
+`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 143/0/2. The final-state
+grading leg agrees too: `final_identical=143`, `final_wrong=2` (the same two
 rejection-path fixtures).
+
+### What the coalesce lane moved
+
++8 fixtures (`conformance/fixtures/7_coalesce.pl`), 4 compiling IDENTICAL in
+both modes and 4 landing in UNSUPPORTED as named refusals. ZERO movement in
+any prior bucket, and none gone: the only manifest churn against the previous
+run is prolog variable NUMBERING inside refusal reason strings.
+
+`coalesce/2` adds no lowering. It is a compile-time desugar
+(`0_coalesce_expand.pl`, expansion phase 45, the one module both doors
+consult): one rule becomes two ordinary clauses of the same head, the read and
+`not(...)` plus a `:=` of the default. Multiple head clauses, stratified
+negation and `:=` binds were already shipped, so the construct inherits the
+incremental delta path, the negation path's retraction flip and the naive
+referee rather than growing the emitter. The EDGE arm is `latest(...)`, since a
+bare atom in an edge body is a trigger.
+
+The four refusals are thrown by the shared expander, so the compiler's reasons
+are the oracle's reasons fixture for fixture: `coalesce_no_output`,
+`coalesce_multiple_outputs`, `coalesce_default_not_literal`,
+`coalesce_not_top_level`.
+
+Cost receipt (`v6/tsv2/tests/coalesceCounts.test.ts`): statements per tick are
+exactly 33 at 5, 100 and 1,000 source rows, and the default arm's `NOT EXISTS`
+plans as `SEARCH n0 USING PRIMARY KEY` with the delta side on
+`__frontier_repo`, read by EXPLAIN over the real captured `insertSql`.
 
 ### What the json-wiring lane moved
 
