@@ -163,6 +163,9 @@ engine_check_order([ key_position_out_of_range,
                      missing_retention,
                      keep_on_non_log_rel,
                      aggregate_in_edge_head,
+                     % After the edge class, which is the more specific fact
+                     % about an edge program; this one is level rules only.
+                     aggregate_not_implemented,
                      finalize_in_level_rule,
                      latest_in_level_rule,
                      pre_in_level_rule ]).
@@ -210,6 +213,9 @@ engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
 engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
 % The oracle names this one without a reference, and always has.
 engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
+engine_refusal(aggregate_not_implemented,
+               unimplemented(Ref, Signature, Implemented),
+               aggregate_not_implemented(Ref, Signature, Implemented)).
 engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
 engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
 engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).

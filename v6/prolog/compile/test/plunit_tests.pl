@@ -2147,6 +2147,23 @@ test(keep_on_non_log_rel_both_doors) :-
     OracleVerdict == keep_on_non_log_rel(state/1),
     CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
 
+% An aggregate spelling NEITHER door implements. Same term at both doors,
+% because there is nothing for the two vocabularies to disagree about: the
+% word is not evaluable anywhere. The payload lists the aggregates that do
+% lower, read off the registry, which is the only actionable thing a refusal
+% for a word the author reasonably expected can carry.
+%
+% Before the registry row, this program compiled clean at both doors and
+% stored one row per input holding the literal text `group_concat(ada)`.
+test(unimplemented_aggregate_refuses_at_both_doors) :-
+    Prog = prog([], [ (roster(group_concat(Name)) <- member_of(Name)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    Expected = aggregate_not_implemented(roster/1, group_concat/1,
+                                         [avg, count, max, min, sum]),
+    OracleVerdict == Expected,
+    CompilerVerdict == unsupported_construct(Expected).
+
 % RESERVED body words. The compiler refused these before the trigger became
 % shared and the ORACLE had no clause for any of them, so the same program was
 % a named error at one door and zero silent rows at the other:
@@ -2764,11 +2781,37 @@ test(every_registry_aggregate_row_is_an_oracle_aggregate) :-
              AggregateRules =@= [Rule],
              PlainLevel == [] )).
 
-% The registry has to actually carry the seven, or the test above is vacuous.
-test(registry_carries_the_seven_aggregate_rows) :-
+% The registry has to actually carry them, or the test above is vacuous.
+% group_concat/1 joined the axis as a REFUSAL: SQLite has it, this language
+% does not, and without a row the head argument fell through to generic
+% compound rendering and stored one row of call text per input.
+test(registry_carries_the_eight_aggregate_rows) :-
     findall(Signature, surface(Signature, aggregate, _, _, _), Rows),
     msort(Rows, Sorted),
-    Sorted == [ avg/1, count/1, json_array/1, json_object/2, max/1, min/1, sum/1 ].
+    Sorted == [ avg/1, count/1, group_concat/1, json_array/1, json_object/2,
+                max/1, min/1, sum/1 ].
+
+% The aggregate axis carries THREE kinds of row and they are three different
+% statements, which is why they need three different lowering roles rather
+% than one `refused` status:
+%
+%   head(lower)                   both doors evaluate it
+%   head(refuse(aggregate))       oracle evaluates it, compiler refuses --
+%                                 the oracle is the wider language on purpose
+%   head(refuse(not_implemented)) NEITHER door evaluates it, so both refuse
+%                                 at load and no program can reach the value
+%
+% Collapsing the last two would either make group_concat silently computable
+% by the oracle (it has no agg_compute clause, so the rule would fail and
+% derive nothing) or make the json pair refuse on a door that implements it.
+test(aggregate_axis_carries_three_distinct_roles) :-
+    surface(count/1, aggregate, _, head(lower), live),
+    surface(json_array/1, aggregate, _, head(refuse(aggregate)), refused),
+    surface(group_concat/1, aggregate, _, head(refuse(not_implemented)),
+            refused).
+
+% The both-doors half of this row lives in the cross_plane_check_parity unit,
+% beside every other shared refusal, because door_verdict/3 is that unit's.
 
 % The oracle stays WIDER than the compiler. Both json rows are refused by the
 % compiler and both are still oracle aggregates.
