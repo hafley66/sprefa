@@ -45,6 +45,15 @@ arch:
 prolog-lint:
 	cd {{v6}}/prolog && bash tools/prolog-lint.sh
 
+# ratcheted compiler-cost gate: SWI inference counts per pinned .dl6 program
+# per phase, against scripts/compile-speed-baseline.tsv. Inferences because
+# they are byte-reproducible run to run where wall ms is not -- the 255s
+# clock_check SCC regression was invisible to every gate that existed.
+# Wall ms printed informationally, never gated.
+# (expect: COMPILE_SPEED programs=4 phases=24 regressions=0 improvements=0 OK)
+compile-speed:
+	cd {{v6}}/prolog/compile && bash scripts/1_compile_speed.sh
+
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
@@ -167,6 +176,40 @@ one-subscribe:
 ghcacher-golden:
 	bash {{v6}}/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
 
+# STOPPING-POINT PROGRAM #7: the RTK Query example corpus through the extraction
+# spine. Four ast-grep patterns batch through ONE in-tree extractor process per
+# file digest; the .dl6 does every union, capture join and scope-containment
+# join. Graded against committed expected rows: exact half-open byte spans, the
+# five-tick delta shape, demand add/del totals, and process count.
+#
+# The program, runner and pinned corpus all landed in 51ba4161 and were never
+# wired into a battery; this recipe is that wiring, not a second rig. Its runner
+# still lives under tsv2/labs/ and by the lab protocol ("labs die on landing")
+# that residency is debt someone owns -- named here rather than moved, because
+# the file is not this lane's.
+#
+# SABOTAGE RECEIPT (run 2026-07-30, reverted; tree clean after): added one
+# `sabotage: builder.query(...)` endpoint to the pinned corpus fixture
+# tests/fixtures/ast_pattern/0_rtkq.ts. The api_scope assertion went RED on the
+# BYTE SPANS, not just the row count -- expected [api.ts,271,475] and
+# [api.ts,505,643], got [api.ts,271,534] and [api.ts,564,702] -- ERR_ASSERTION,
+# exit 1. Spans shifting is the discriminating signal: a gate that only counted
+# rows would have caught the new endpoint but not a corpus edit that moves
+# existing ones.
+# (expect: exit 0, five ticks, responseRows [9,6], 2 processes, 2 demands)
+rtkq-golden:
+	bash {{v6}}/tsv2/scripts/6_rtkq-extraction-golden.sh
+
+# STOPPING-POINT PROGRAM #5: the multirepo dep/repo/rev crawl, both engines over
+# one pinned four-repo corpus. v5 runs examples/version-skew.dl byte-unmodified
+# against a generated SPREFA_CONFIG; v6 runs goldens/multirepo_crawl over the
+# same repos with the repo set posted as EDB rows. Every differing row is
+# bucketed with a proof read from the corpus go.mod bytes.
+# (expect: MULTIREPO CRAWL GRADED: 4/4 rels byte-identical, 1 named gap
+#  (dep_ver = min/max over text refused), 0 unclassified, exit 0)
+multirepo-golden:
+	bash {{v6}}/tsv2/goldens/multirepo_crawl/2_gate.sh
+
 # checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
 # regenerated + diffed against their .dl6 source; target/release/dl and
 # sprefa-extract's release binary refused if a source .rs/Cargo.toml is
@@ -174,6 +217,17 @@ ghcacher-golden:
 # (expect: STALENESS_GATE_OK, exit 0)
 staleness-gate:
 	bash {{v6}}/tools/staleness-gate.sh
+
+# throughput floor at scale: s2 / 10k arrivals through the tsv2 emitter.
+# statements-per-tick set is gated EXACTLY and must be the same at 10k and 1k
+# (that equality across sizes is the delta-proportionality proof); ticks,
+# arrivals, final rows and incrementalSafe are exact; wall gets a deliberately
+# loose 3x floor because CI variance is real and a tight wall gate gets
+# loosened until it catches nothing. Every run appends to
+# goldens/scale-floor-history.jsonl so the curve exists over time.
+# (expect: SCALE_FLOOR s2 rows=10000 stmts/tick=[37,41] flat-vs-1000 ... OK)
+scale-floor:
+	cd {{v6}}/tsv2 && bash scripts/7_scale-floor.sh
 
 # ── benches ──
 
@@ -187,4 +241,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden

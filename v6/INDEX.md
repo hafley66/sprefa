@@ -59,10 +59,10 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
+| [tsv2/goldens/multirepo_crawl/README.md](tsv2/goldens/multirepo_crawl/README.md) | 74 | multirepo_crawl — stopping-point program #5, graded against v5 |
 | [tsv2/rxoracle/README.md](tsv2/rxoracle/README.md) | 171 | rxoracle -- grading sprefa's event sequence against literal rxjs |
 
 ## Full header index
@@ -843,14 +843,6 @@
 156:## Breakpoint ramp — tight gun 700 MB
 ```
 
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
-```
-
 ### tsv2/CRAWL-BENCH.md
 ```
 1:# Grafana crawl bench
@@ -870,6 +862,16 @@
 ### tsv2/goldens/ghcacher_tick_golden/README.md
 ```
 1:# Ghcacher clock golden
+```
+
+### tsv2/goldens/multirepo_crawl/README.md
+```
+1:# multirepo_crawl — stopping-point program #5, graded against v5
+16:## The result
+25:## The one named gap
+43:## Two differences in kind, stated rather than hidden
+59:## A v5 oddity this rig noticed
+68:## Zero new constructs
 ```
 
 ### tsv2/rxoracle/README.md
