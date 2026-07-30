@@ -175,6 +175,13 @@
     "finalDetail": ""
   },
   {
+    "name": "backslash_in_string_literal_survives_both_doors",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "flow_arg_param_hop_is_positional_and_site_pinned",
     "bucket": "identical",
     "detail": "",

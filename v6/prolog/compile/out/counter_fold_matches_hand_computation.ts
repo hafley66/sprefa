@@ -217,7 +217,8 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "hot", headDeltaTableName: "__delta_hot", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "hot" ("name") SELECT DISTINCT d0."name" FROM "__frontier_counter" d0 WHERE d0."_phase" >= 0 AND (d0."next" >= 2) RETURNING "name"`, selectSql: `SELECT "name" FROM "hot"`, recomputeSql: `DELETE FROM "hot";\nINSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`, supportSql: [`DELETE FROM "__support_next_hot"`, `INSERT INTO "__support_next_hot" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "counter" b0 WHERE (b0."next" >= 2) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "hot" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_hot" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "hot" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "hot" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+  { headRel: "hot", headDeltaTableName: "__delta_hot", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "hot" ("name") SELECT DISTINCT d0."name" FROM "__frontier_counter" d0 WHERE d0."_phase" >= 0 AND (d0."next" >= 2) RETURNING "name"`, selectSql: `SELECT "name" FROM "hot"`, recomputeSql: `DELETE FROM "hot";
+INSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`, supportSql: [`DELETE FROM "__support_next_hot"`, `INSERT INTO "__support_next_hot" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "counter" b0 WHERE (b0."next" >= 2) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "hot" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_hot" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "hot" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "hot" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 const EDGE_COUNTER_0_PROJECT_SQL = `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "__pre_counter" b0 WHERE b0."name" = ?1`;
@@ -267,7 +268,8 @@ function resolveCounter_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArr
 }
 
 function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_counter";\nINSERT INTO "__pre_counter" ("name", "next") SELECT "name", "next" FROM "counter"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_counter";
+INSERT INTO "__pre_counter" ("name", "next") SELECT "name", "next" FROM "counter"`);
 }
 
 interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }
@@ -408,7 +410,8 @@ function orderedCarryAdditions(mid: Snapshot, after: Snapshot, boundary: ITickDe
 }
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "hot";\nINSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`;
+  const sql = `DELETE FROM "hot";
+INSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 

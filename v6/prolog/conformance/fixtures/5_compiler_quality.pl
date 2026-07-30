@@ -156,3 +156,47 @@ fixture(higher_order_call_over_atom_rejected,
   [],
   [],
   [ throws(dynamic_relation_name(call/1)) ]).
+
+% ═══ D2: a backslash in a string constant survives both doors ═══════════════
+%
+% A backslash was deleted TWICE on the way from .dl6 text to a running
+% program, and neither deletion said anything:
+%
+%   parse_dl.pl quoted_chars/4 -> escape_code/2's catch-all `escape_code(C, C)`
+%   turns every unrecognized `\X` into plain `X`, so `\d` parsed as `d`.
+%
+%   emit_ts.pl js_template/2 wrote SQL text into a JS TEMPLATE LITERAL while
+%   escaping only the backtick and `${`, so a backslash that did survive the
+%   parser was then eaten by JavaScript's own template-literal escaping.
+%
+% `${` being escaped and `\` not is what made this a PARTIAL escape rather
+% than a decision. The user-visible cost was that any regex in a .dl6 program
+% had to be backslash-free.
+%
+% THE RULE, now stated in both places: `\n`, `\t` and `\r` are real escapes,
+% `\\` is one backslash, `\'` and `\"` are the quote character, and EVERY
+% OTHER `\X` is two characters, the backslash and X, unchanged. The strings
+% this language carries are regexes and shell fragments, where `\d` and `\.`
+% are the common case and a silently deleted backslash is a wrong pattern
+% with no error.
+%
+% This fixture is the EMITTER half (the parser half is
+% plunit_tests.pl:backslash_escapes_follow_the_stated_rule, which is where a
+% hand-written `\d` can be put through parse_dl; a printed .dl6 view always
+% doubles its backslashes, so round-trip alone cannot see that clause).
+%
+% RED RECEIPT, taken at a4629623 -- the emitted comparison SQL, in which the
+% backslash is gone before sqlite ever sees it:
+%
+%   SELECT b0."text_value" FROM "raw" b0 WHERE b0."text_value" = 'digit d here'
+%
+% so the emitter matched the row WITHOUT the backslash and the oracle matched
+% the row WITH it: two engines, two different rows, no error on either.
+fixture(backslash_in_string_literal_survives_both_doors,
+  prog([ col_type(raw/1, text_value, text),
+         col_type(hit/1, text_value, text) ],
+       [ (hit(Value) <- raw(Value), Value == 'digit \\d here') ]),
+  [],
+  [ [ +raw('digit \\d here'), +raw('digit d here') ] ],
+  [ final(hit/1, [ hit('digit \\d here') ]),
+    ticks(1) ]).

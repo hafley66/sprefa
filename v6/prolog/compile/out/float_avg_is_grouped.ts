@@ -170,11 +170,13 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "mean", headDeltaTableName: "__delta_mean", headColumns: ["group", "value"], insertSql: null, selectSql: `SELECT "group", "value" FROM "mean"`, recomputeSql: `DELETE FROM "mean";\nINSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mean"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mean" ("group") SELECT DISTINCT d0."group" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "mean" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`, insertScopedSql: [`INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_mean") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "value"`] } },
+  { headRel: "mean", headDeltaTableName: "__delta_mean", headColumns: ["group", "value"], insertSql: null, selectSql: `SELECT "group", "value" FROM "mean"`, recomputeSql: `DELETE FROM "mean";
+INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mean"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mean" ("group") SELECT DISTINCT d0."group" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "mean" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`, insertScopedSql: [`INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_mean") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "value"`] } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "mean";\nINSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`;
+  const sql = `DELETE FROM "mean";
+INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 

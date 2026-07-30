@@ -1532,6 +1532,60 @@ test(emitter_carries_world_plans_and_demand_sql) :-
                   'CREATE TABLE "__host_response_tree_sitter"')),
     !.
 
+% ── D2: the backslash escape rule, both doors ───────────────────────────────
+%
+% quoted_chars/4 ended in a catch-all that DROPPED the backslash of any
+% unrecognized escape, so `\d` parsed as `d`: a regex written in a .dl6 string
+% silently became a different regex. The emitter deleted it a second time, in
+% emit_ts.pl:js_template/2 (that half is graded by
+% conformance/fixtures/5_compiler_quality.pl:
+% backslash_in_string_literal_survives_both_doors).
+%
+% THE RULE: \n \t \r are real escapes, \\ is one backslash, the string's own
+% quote is itself, and every OTHER \X is two characters, the backslash and X.
+%
+% RED RECEIPT (catch-all restored, run and reverted): the first assertion
+% fails with the parsed atom holding `digit d here` -- 12 characters where the
+% source wrote 13, and no finding, no error, no diagnostic anywhere. Verbatim:
+%
+%   test hosts_wiring:backslash_escapes_follow_the_stated_rule: assertion
+%   at line 1557 failed
+%   Assertion: [100,105,103,105,116,32,100,32,104,101,114,101]
+%           == [100,105,103,105,116,32,92,100,32,104,101,114,101]
+%
+% (92 is the backslash the source wrote and the parser dropped.) The
+% print-and-reparse test below stays GREEN through that sabotage, which is
+% exactly why round-trip could never have caught this.
+test(backslash_escapes_follow_the_stated_rule) :-
+    string_codes("rel hit(pattern: text).\nhit('digit \\d here') <- seed(_).\n", Codes),
+    parse_dl(Codes, Program, _, []),
+    arg(2, Program, Rules),
+    memberchk((hit(Kept) <- _), Rules),
+    atom_codes(Kept, KeptCodes),
+    atom_codes('digit \\d here', WantCodes),
+    assertion(KeptCodes == WantCodes),
+
+    % \\ is one backslash and \n is a real newline, in the same string.
+    string_codes("rel hit(pattern: text).\nhit('one\\\\two\\nthree') <- seed(_).\n", TwoCodes),
+    parse_dl(TwoCodes, TwoProgram, _, []),
+    arg(2, TwoProgram, TwoRules),
+    memberchk((hit(Mixed) <- _), TwoRules),
+    atom_codes(Mixed, MixedCodes),
+    atom_codes('one\\two\nthree', MixedWant),
+    assertion(MixedCodes == MixedWant).
+
+% Round trip: a printed .dl6 view of a backslash-carrying string must reparse
+% to the same value. print_dl.pl doubles the backslash, so this is the clause
+% pair \\ -> one backslash meeting the printer, and it is the reason the
+% corpus round-trip alone could never have caught the rule above.
+test(backslash_survives_print_and_reparse) :-
+    string_codes("rel hit(pattern: text).\nhit('digit \\d here') <- seed(_).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, Reparsed, _, []),
+    Program =@= Reparsed.
+
 :- end_tests(hosts_wiring).
 
 % ═══════════════════════════════════════════════════════════════════════════

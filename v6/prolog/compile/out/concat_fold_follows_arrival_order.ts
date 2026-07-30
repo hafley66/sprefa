@@ -212,7 +212,8 @@ function resolveLogText_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArr
 }
 
 function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_log_text";\nINSERT INTO "__pre_log_text" ("channel", "next") SELECT "channel", "next" FROM "log_text"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_log_text";
+INSERT INTO "__pre_log_text" ("channel", "next") SELECT "channel", "next" FROM "log_text"`);
 }
 
 interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }

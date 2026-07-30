@@ -294,16 +294,32 @@ string_lit(Str, S0, S) :-
 quoted_chars(Quote, [Quote, Quote | Rest], [Quote | More], S) :- !,
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [Quote | Rest], [], Rest) :- !.
-quoted_chars(Quote, [0'\\, Esc | Rest], [Code | More], S) :- !,
-    escape_code(Esc, Code),
+quoted_chars(Quote, [0'\\, Esc | Rest], Codes, S) :- !,
+    escape_codes(Quote, Esc, Codes, More),
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [C | Rest], [C | More], S) :-
     quoted_chars(Quote, Rest, More, S).
 
-escape_code(0'n, 0'\n) :- !.
-escape_code(0't, 0'\t) :- !.
-escape_code(0'r, 0'\r) :- !.
-escape_code(C, C).
+% THE ESCAPE RULE, and the other half of it lives in emit_ts.pl:js_template/2.
+%
+%   \n \t \r   the three real escapes
+%   \\         one backslash
+%   \' \"      the string's own quote character
+%   \X         TWO characters: the backslash and X, unchanged
+%
+% The last line is the whole decision. This used to end in a catch-all
+% `escape_code(C, C)` that DROPPED the backslash, so `\d` parsed as `d` and a
+% regex written in a .dl6 string became a different regex with no error --
+% which is why every regex in this repo's .dl6 files is backslash-free. The
+% strings this language carries are regexes and shell fragments, where `\d`
+% and `\.` are the common case, and there is no reading of `\d` under which
+% `d` is what the author meant.
+escape_codes(_, 0'n,  [0'\n  | More], More) :- !.
+escape_codes(_, 0't,  [0'\t  | More], More) :- !.
+escape_codes(_, 0'r,  [0'\r  | More], More) :- !.
+escape_codes(_, 0'\\, [0'\\  | More], More) :- !.
+escape_codes(Quote, Quote, [Quote | More], More) :- !.
+escape_codes(_, Other, [0'\\, Other | More], More).
 
 % ═══ variables (Name-Var accumulator threaded explicitly through every
 % grammar predicate that can introduce or reference one) ════════════════════
