@@ -18,6 +18,7 @@
 :- discontiguous bug/3.
 :- discontiguous directive/2.
 :- discontiguous user_card/2.
+:- discontiguous answered/2.
 
 session(id, '20260730.1').
 session(date, '2026-07-30').
