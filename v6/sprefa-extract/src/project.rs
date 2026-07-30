@@ -157,15 +157,46 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     Ok(facts)
 }
 
+/// Load the SCIP index the request names and flatten it to raw index facts:
+/// occurrences, symbol information, relationships. No resolve arm runs.
+///
+/// This is the whole v5 `scip_*` relation family's input in one call. Every one
+/// of those ten relations is a filter or a join over these three rows, and the
+/// joins live in the dl layer by standing law.
+pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectError> {
+    let Some(root) = request.project_root else {
+        return Err(ProjectError::ScipNeedsRoot);
+    };
+    let inputs = read_inputs(request.paths)?;
+    let Some(index) = load_scip(request, &inputs)? else {
+        return Err(ProjectError::ScipIndexerUnavailable(
+            "scip facts need --scip-index or --scip-build".to_string(),
+        ));
+    };
+    let root = root.to_path_buf();
+    let reader =
+        move |relative: &str| -> Option<Vec<u8>> { std::fs::read(root.join(relative)).ok() };
+    Ok(crate::wire::flatten_scip(&index, &reader))
+}
+
+/// Serialize scip facts to sorted JSONL lines.
+pub fn scip_facts_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(scip_facts(request)?))
+}
+
 /// Serialize resolved facts to sorted JSONL lines, the byte-stable form the CLI
 /// prints and the goldens pin.
 pub fn resolve_project_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {
-    let mut lines: Vec<String> = resolve_project(request)?
+    Ok(sorted_lines(resolve_project(request)?))
+}
+
+fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
+    let mut lines: Vec<String> = facts
         .iter()
         .map(|fact| serde_json::to_string(fact).expect("flat fact is serializable"))
         .collect();
     lines.sort();
-    Ok(lines)
+    lines
 }
 
 fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {

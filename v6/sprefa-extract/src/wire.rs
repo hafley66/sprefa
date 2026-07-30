@@ -14,8 +14,9 @@
 
 use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, ProjectEdge, TypeF};
 use crate::rows::FamilyBundle;
-use crate::shape::Strings;
+use crate::shape::{BlobHash, Strings};
 use crate::source::ExtractOutput;
+use crate::types::{OccurrenceRole, ScipIndex};
 
 pub use crate::types::{FlatFact, SpanOut};
 
@@ -42,6 +43,10 @@ RECORD SHAPES
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
+  record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
+  record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>
+  record=scip_symbol  path=<string|null>  symbol=<string>  display_name=<string>  kind=<i32>
+  record=scip_relationship  symbol=<string>  related_symbol=<string>  is_reference=<bool>  is_implementation=<bool>  is_type_definition=<bool>  is_definition=<bool>
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
@@ -67,6 +72,15 @@ FIELDS
   caller_site_end    end byte of the call site that produced a resolved edge.
   owner_path   file holding the declaration that makes a resolved type reference.
   target_path  file holding the declaration a resolved type reference names.
+  digest       the file's content key, the same one resolved edges are keyed on.
+  bytes        the file's length in bytes.
+  lines        the file's line count as an editor shows it: an unterminated last
+               line still counts, an empty file is 0.
+  symbol       a SCIP symbol string; `local `-prefixed symbols are document-scoped.
+  roles        the raw scip.proto SymbolRole bitfield, kept whole.
+  definition   roles & DEFINITION, hoisted out of the bitfield.
+  display_name the symbol's name as scip records it.
+  related_symbol  the other end of a scip.proto Relationship.
 
 KIND VOCABULARIES (the `kind` field)
   type node   struct enum trait class interface alias function method const
@@ -86,6 +100,17 @@ PHASE-1 LIMITS (default mode)
   No name resolution: type edges, caller->callee links, and cross-file joins are
   NOT emitted. `site` records carry the callee name as written; `sig` records
   carry the referenced type's bare name.
+
+SCIP FACTS MODE (--scip-facts)
+  Streams a loaded SCIP index as raw rows: scip_occurrence, scip_symbol,
+  scip_relationship. Deliberately UNJOINED. A definition is an occurrence with
+  definition true, a reference is one without, a local is a `local `-prefixed
+  symbol, and an implements edge is a scip_relationship with is_implementation.
+  Those filters and joins belong above this binary.
+
+FILE FACT (--file-fact)
+  Prepends one `file` row to the normal stream, carrying the content digest,
+  byte count and line count. It rides the same read as extraction.
 
 PROJECT MODE (--resolve)
   `--resolve PATH...` runs phase 2 over the supplied files as one project.
@@ -252,6 +277,105 @@ pub fn flatten_project_type(
                 to_blob: edge.dst_blob.to_hex(),
                 to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
             }
+        })
+        .collect()
+}
+
+/// One file's identity row: the content key every resolved edge and every
+/// phase-2 cache entry is already keyed on, plus its size in bytes and lines.
+///
+/// The line count is the point. It is v5's `file_lines`, and it was
+/// inexpressible from v6 because nothing carried it across the wire even though
+/// the extractor holds the bytes. Counting is one pass over content the caller
+/// already read, so this costs nothing to produce and saves the consumer from
+/// reading every file a second time to count newlines.
+///
+/// LINE COUNTING CONVENTION: the number of lines a text editor shows. A file
+/// with no trailing newline still counts its last partial line, and an empty
+/// file has zero lines.
+pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
+    let newlines = content.iter().filter(|byte| **byte == b'\n').count();
+    let unterminated = !content.is_empty() && !content.ends_with(b"\n");
+    FlatFact::FileRow {
+        path: path.to_string(),
+        digest: BlobHash::of(content).to_hex(),
+        bytes: content.len() as u32,
+        lines: (newlines + usize::from(unterminated)) as u32,
+    }
+}
+
+/// Flatten a loaded SCIP index to raw flat facts: every occurrence, every symbol
+/// information row, every relationship.
+///
+/// DELIBERATELY UNJOINED. v5 spells ten separate relations over this data
+/// (`scip_occurrence`, `scip_def`, `scip_ref`, `scip_name`, `scip_local`,
+/// `scip_binding`, `scip_impl`, `scip_edge`, `scip_fn_edge`,
+/// `scip_callee_type`). Every one of them is a filter or a join over these three
+/// rows, and the standing law puts those machines in the dl layer: the extractor
+/// stays a fact producer. Projecting ten relations here would also weld v5's
+/// relation vocabulary into a crate that must survive the rust port unchanged.
+///
+/// `reader` supplies each document's bytes, because SCIP ranges are (line, col)
+/// in the document's own position encoding and this wire is byte offsets. A
+/// document the reader cannot read contributes its symbols and relationships but
+/// no occurrences, and an occurrence whose range does not convert is dropped
+/// rather than clamped into a lie (the `byte_range` law).
+pub fn flatten_scip(index: &ScipIndex, reader: &dyn Fn(&str) -> Option<Vec<u8>>) -> Vec<FlatFact> {
+    let mut out = Vec::new();
+    for document in &index.documents {
+        let content = reader(&document.relative_path);
+        if let Some(content) = &content {
+            for occurrence in &document.occurrences {
+                let Some(span) =
+                    crate::scip::byte_range(content, occurrence.range, document.position_encoding)
+                else {
+                    continue;
+                };
+                out.push(FlatFact::ScipOccurrenceRow {
+                    path: document.relative_path.clone(),
+                    symbol: occurrence.symbol.clone(),
+                    start: span.start,
+                    end: span.end(),
+                    roles: occurrence.roles.0,
+                    definition: occurrence.roles.contains(OccurrenceRole::DEFINITION),
+                });
+            }
+        }
+        for info in &document.symbols {
+            out.push(FlatFact::ScipSymbolRow {
+                path: Some(document.relative_path.clone()),
+                symbol: info.symbol.clone(),
+                display_name: info.display_name.clone(),
+                kind: info.kind,
+            });
+            out.extend(relationship_rows(info));
+        }
+    }
+    // External symbols belong to no document: they are what the corpus
+    // references and does not define, which is exactly how a consumer tells a
+    // library call from a corpus call.
+    for info in &index.external_symbols {
+        out.push(FlatFact::ScipSymbolRow {
+            path: None,
+            symbol: info.symbol.clone(),
+            display_name: info.display_name.clone(),
+            kind: info.kind,
+        });
+        out.extend(relationship_rows(info));
+    }
+    out
+}
+
+fn relationship_rows(info: &crate::types::ScipSymbolInfo) -> Vec<FlatFact> {
+    info.relationships
+        .iter()
+        .map(|related| FlatFact::ScipRelationshipRow {
+            symbol: info.symbol.clone(),
+            related_symbol: related.symbol.clone(),
+            is_reference: related.is_reference,
+            is_implementation: related.is_implementation,
+            is_type_definition: related.is_type_definition,
+            is_definition: related.is_definition,
         })
         .collect()
 }

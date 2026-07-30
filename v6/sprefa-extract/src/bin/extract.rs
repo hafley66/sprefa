@@ -18,8 +18,8 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    dispatch, flatten, query_patterns, resolve_project_jsonl, source_for, AstPatternQuery,
-    FamilyMask, ResolveArms, ResolveRequest, ScipMode, SCHEMA,
+    dispatch, file_fact, flatten, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
+    source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest, ScipMode, SCHEMA,
 };
 
 /// Self-describing enough that `extract --help` + `extract --schema` are a
@@ -43,6 +43,19 @@ PROJECT MODE
   --project-root is what SCIP document paths are relative to, so it is required
   by both SCIP modes. --scip-build runs one indexer, so every supplied path must
   be the same language; ts, go and rust have indexers.
+
+SCIP FACTS MODE
+  `--scip-facts --project-root DIR` with `--scip-index FILE` or `--scip-build`
+  streams the index itself as flat facts: scip_occurrence (symbol mentions with
+  byte spans), scip_symbol (symbol information), scip_relationship (implements /
+  type-definition / references). The rows are unjoined on purpose; filtering and
+  joining them is what yields definitions, references, locals and impl edges,
+  and those machines belong above this binary.
+
+FILE FACT
+  `--file-fact` prepends one `file` record to the normal stream: path, content
+  digest, byte count, line count. It rides the same read, so line counting never
+  costs a second pass or a second process.
 
 PATTERN MODE
   Repeat `--ast-pattern ID=PATTERN` to run several ast-grep patterns over one
@@ -101,6 +114,26 @@ index means one indexer, so every supplied path must be the same language;
 ts uses scip-typescript, go uses scip-go, rust uses rust-analyzer. This spawns a
 foreign process and is slow: prefer --scip-index when you already have one.";
 
+const SCIP_FACTS_LONG: &str = "\
+Load a SCIP index (--scip-index or --scip-build) and stream it as flat facts:
+one scip_occurrence row per symbol mention with byte spans, one scip_symbol row
+per symbol information entry, one scip_relationship row per symbol relationship.
+No resolve arm runs and no source file is parsed.
+
+The rows are deliberately unjoined. Filtering and joining them is what produces
+the distinctions a caller wants (a definition is an occurrence with definition
+true, a reference is one without, a local is a `local `-prefixed symbol), and
+those machines belong above this binary.
+
+PATH... under this flag only selects the indexer for --scip-build; the facts
+cover every document in the index either way.";
+
+const FILE_FACT_LONG: &str = "\
+Prepend one `file` record carrying the path, the content digest every resolved
+edge is keyed on, the byte count and the line count. Off by default so existing
+output is unchanged; on, it rides the same invocation, so counting lines never
+costs a second read of the file.";
+
 const BENCH_LONG: &str = "\
 Extract + flatten, then print one summary line to stderr (per-family node counts
 and total fact count) and emit nothing to stdout. Use it to check which families
@@ -132,14 +165,14 @@ struct Cli {
     resolve: bool,
 
     /// Root that SCIP document paths are relative to; also the --scip-build root.
-    #[arg(long, value_name = "DIR", requires = "resolve", long_help = PROJECT_ROOT_LONG)]
+    #[arg(long, value_name = "DIR", long_help = PROJECT_ROOT_LONG)]
     project_root: Option<PathBuf>,
 
     /// Load a prebuilt index.scip into the resolve context.
     #[arg(
         long,
         value_name = "FILE",
-        requires_all = ["resolve", "project_root"],
+        requires = "project_root",
         conflicts_with = "scip_build",
         long_help = SCIP_INDEX_LONG,
     )]
@@ -148,10 +181,23 @@ struct Cli {
     /// Build the index with the language's own indexer, then load it.
     #[arg(
         long,
-        requires_all = ["resolve", "project_root"],
+        requires_all = ["project_root"],
         long_help = SCIP_BUILD_LONG,
     )]
     scip_build: bool,
+
+    /// Stream the raw SCIP index as facts: occurrences, symbols, relationships.
+    #[arg(
+        long,
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve"],
+        long_help = SCIP_FACTS_LONG,
+    )]
+    scip_facts: bool,
+
+    /// Prepend one `file` record: path, content digest, byte count, line count.
+    #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
+    file_fact: bool,
 
     /// Ast-grep pattern in ID=PATTERN form. Repeat to batch patterns over one parse.
     #[arg(
@@ -200,6 +246,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    if cli.scip_facts {
+        for line in scip_facts_jsonl(&scip_request(&cli))? {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
     if cli.paths.len() != 1 {
         return Err("exactly one PATH is required unless --resolve is given".into());
     }
@@ -212,6 +265,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream_ast_queries(&path_str, &content, &queries)?;
         return Ok(());
     }
+    // The file row rides the SAME read as extraction: counting lines must never
+    // cost a second pass over the file, let alone a second subprocess.
+    if cli.file_fact {
+        println!(
+            "{}",
+            serde_json::to_string(&file_fact(&path_str, &content))?
+        );
+    }
     let mask = cli
         .family
         .as_deref()
@@ -223,6 +284,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         stream(&path_str, &content, mask)?;
     }
     Ok(())
+}
+
+/// The SCIP-mode half of the CLI's flags, shared by `--resolve` and
+/// `--scip-facts`.
+fn scip_request(cli: &Cli) -> ResolveRequest<'_> {
+    ResolveRequest {
+        paths: &cli.paths,
+        arms: ResolveArms::default(),
+        scip: match (&cli.scip_index, cli.scip_build) {
+            (Some(path), _) => ScipMode::Load(path),
+            (None, true) => ScipMode::Build,
+            (None, false) => ScipMode::Off,
+        },
+        project_root: cli.project_root.as_deref(),
+    }
 }
 
 fn split_assignment<'a>(flag: &str, value: &'a str) -> Result<(&'a str, &'a str), String> {
@@ -313,16 +389,9 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         },
         Some(families) => parse_arms(families)?,
     };
-    let scip = match (&cli.scip_index, cli.scip_build) {
-        (Some(path), _) => ScipMode::Load(path),
-        (None, true) => ScipMode::Build,
-        (None, false) => ScipMode::Off,
-    };
     let request = ResolveRequest {
-        paths: &cli.paths,
         arms,
-        scip,
-        project_root: cli.project_root.as_deref(),
+        ..scip_request(cli)
     };
     for line in resolve_project_jsonl(&request)? {
         println!("{line}");

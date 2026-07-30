@@ -34,7 +34,7 @@ use prost::Message;
 use crate::shape::Span;
 use crate::types::{
     OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipOccurrence,
-    ScipSource, ScipSymbolInfo,
+    ScipRelationship, ScipSource, ScipSymbolInfo,
 };
 
 // doc(hidden): the generated rustdoc carries fenced symbol-grammar examples
@@ -298,14 +298,25 @@ fn copy_sources(
     Ok(())
 }
 
-/// proto -> diet: keep symbol + range + role (+ display_name/kind on symbol
-/// infos, position_encoding on documents, the tool identity); drop docs,
-/// diagnostics, signatures, relationships, syntax kinds.
+/// proto -> diet: keep symbol + range + role (+ display_name/kind/relationships
+/// on symbol infos, position_encoding on documents, the tool identity); drop
+/// docs, diagnostics, signatures, syntax kinds.
 fn diet(index: &proto::Index) -> ScipIndex {
     let symbol = |si: &proto::SymbolInformation| ScipSymbolInfo {
         symbol: si.symbol.clone(),
         display_name: si.display_name.clone(),
         kind: si.kind,
+        relationships: si
+            .relationships
+            .iter()
+            .map(|rel| ScipRelationship {
+                symbol: rel.symbol.clone(),
+                is_reference: rel.is_reference,
+                is_implementation: rel.is_implementation,
+                is_type_definition: rel.is_type_definition,
+                is_definition: rel.is_definition,
+            })
+            .collect(),
     };
     ScipIndex {
         documents: index

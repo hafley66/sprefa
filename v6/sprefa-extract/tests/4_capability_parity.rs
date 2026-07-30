@@ -141,6 +141,11 @@ enum LibraryCapability {
     WireSchema,
     /// `wire::flatten_project_type`: the span-addressed project-edge wire.
     FlattenProjectType,
+    /// `wire::flatten_scip` / `project::scip_facts`: the loaded SCIP index as
+    /// raw occurrence, symbol and relationship rows.
+    ScipFacts,
+    /// `wire::file_fact`: one file's digest, byte count and line count.
+    FileFact,
 }
 
 /// Kept in step with the enum by the length assertion in the test below.
@@ -154,8 +159,10 @@ const ALL: &[LibraryCapability] = &[
     LibraryCapability::ScipIndexBuild,
     LibraryCapability::WireSchema,
     LibraryCapability::FlattenProjectType,
+    LibraryCapability::ScipFacts,
+    LibraryCapability::FileFact,
 ];
-const DECLARED_CAPABILITIES: usize = 9;
+const DECLARED_CAPABILITIES: usize = 11;
 
 /// How the binary reaches one library capability.
 enum CliReach {
@@ -295,6 +302,26 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
         WireSchema => CliReach::Prints {
             args: strings(&["--schema"]),
             contains: "record=resolved_type_edge",
+        },
+        // Built over its own root rather than the shared ts index: the
+        // relationship rows this reach proves only exist in the implements
+        // fixture, and a reach that could pass on an index without them would
+        // not be proving retention.
+        ScipFacts => CliReach::Emits {
+            args: strings(&[
+                "--scip-facts",
+                "--project-root",
+                "tests/fixtures/scip_rel",
+                "--scip-build",
+                "tests/fixtures/scip_rel/animal.ts",
+            ]),
+            record: "scip_relationship",
+            absent_without: Some(strings(&["tests/fixtures/scip_rel/animal.ts"])),
+        },
+        FileFact => CliReach::Emits {
+            args: strings(&["--file-fact", "tests/fixtures/ts/sample.ts"]),
+            record: "file",
+            absent_without: Some(strings(&["tests/fixtures/ts/sample.ts"])),
         },
         FlattenProjectType => CliReach::LibraryOnly {
             reason: "the span-and-blob project-edge shape predates the flat-fields \
