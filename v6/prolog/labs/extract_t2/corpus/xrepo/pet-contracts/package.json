@@ -1,0 +1,8 @@
+{
+  "name": "pet-contracts",
+  "version": "1.4.0",
+  "description": "Publishes the Petstore OpenAPI contract. openapi.json is the real Swagger Petstore document, vendored byte-unmodified.",
+  "license": "Apache-2.0",
+  "files": ["openapi.json"],
+  "dependencies": {}
+}

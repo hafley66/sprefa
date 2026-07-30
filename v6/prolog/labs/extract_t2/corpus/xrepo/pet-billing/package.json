@@ -1,0 +1,9 @@
+{
+  "name": "pet-billing",
+  "version": "2.0.0",
+  "description": "Consumes a pet-contracts shape WITHOUT declaring the dependency. The negative case for the cross-repo join.",
+  "license": "MIT",
+  "dependencies": {
+    "decimal.js": "^10.4.3"
+  }
+}

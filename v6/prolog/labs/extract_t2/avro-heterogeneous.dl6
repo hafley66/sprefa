@@ -1,0 +1,75 @@
+# avro.dl6 -- reify an Avro schema into the t2 type algebra.
+#
+# Avro is the cheapest format in the survey: a .avsc file IS already JSON, so
+# there is no tool between the repo's file and the json plane at all. Nothing is
+# bought here and nothing is parsed.
+#
+# Source: corpus/avro-interop.avsc, Apache Avro's own cross-language interop
+# test schema, 1,238 bytes, vendored byte-unmodified.
+#
+# WHY THIS DOCUMENT: it is the only file in the corpus that carries EVERY ONE of
+# the header's claimed gaps in one place -- bytes, null, fixed, float and double
+# beside int and long, a union spelled as a bare array, a map, and a record that
+# refers to ITSELF (Node.children is an array of Node). If the algebra breaks
+# anywhere it breaks here.
+#
+# SHAPE NOTE: avro spells a record's fields as an ARRAY of objects, not a map,
+# so the field rules read `fields: spread({...})` with the record's own `name`
+# correlated as a SIBLING inside the same descent match -- the gh-cache flagship
+# pattern, one format over.
+
+rel avro(body: json).
+
+rel type_def(repo: text, type_name: text, kind: text).
+rel field_type_token(repo: text, type_name: text, field_name: text, token: text).
+rel field_union_member(repo: text, type_name: text, field_name: text, member: text).
+rel field_array_items(repo: text, type_name: text, field_name: text, items: text).
+rel field_map(repo: text, type_name: text, field_name: text).
+rel enum_variant(repo: text, type_name: text, variant: text).
+rel fixed_width(repo: text, type_name: text, size: int).
+
+# ── named types: records, enums, fixed ───────────────────────────────────────
+type_def('interop', Name, 'record') <-
+  avro(Body), decode(Body, {'**': {type: 'record', name: Name}}).
+
+type_def('interop', Name, 'enum') <-
+  avro(Body), decode(Body, {'**': {type: 'enum', name: Name}}).
+
+type_def('interop', Name, 'fixed') <-
+  avro(Body), decode(Body, {'**': {type: 'fixed', name: Name}}).
+
+enum_variant('interop', Name, Variant) <-
+  avro(Body), decode(Body, {'**': {type: 'enum', name: Name, symbols: spread(Variant)}}).
+
+# `fixed` is avro's BYTES-WITH-A-WIDTH. The width is data here; the algebra has
+# no column type that carries it, which is exactly slot_bytes_spelling.
+fixed_width('interop', Name, Size) <-
+  avro(Body), decode(Body, {'**': {type: 'fixed', name: Name, size: Size}}).
+
+# ── fields whose type is a bare token ────────────────────────────────────────
+# int, long, float, double, string, boolean, bytes, null -- and also a bare
+# NAMED type reference, since avro spells "the record Node" as the string
+# "Node". One slot, two meanings, resolved by the same join proto.dl6 uses.
+field_type_token('interop', Record, Field, Token) <-
+  avro(Body),
+  decode(Body, {'**': {type: 'record', name: Record, fields: spread({name: Field, type: Token})}}).
+
+# ── union: avro spells it as a bare ARRAY of types ───────────────────────────
+# A spread INSIDE a spread: fan out the record's fields, then fan out the
+# union's members. Only a field whose type is an array matches, so this rule
+# needs no guard to separate unions from everything else.
+field_union_member('interop', Record, Field, Member) <-
+  avro(Body),
+  decode(Body, {'**': {type: 'record', name: Record,
+                       fields: spread({name: Field, type: spread(Member)})}}).
+
+# ── array and map ────────────────────────────────────────────────────────────
+field_array_items('interop', Record, Field, Items) <-
+  avro(Body),
+  decode(Body, {'**': {type: 'record', name: Record,
+                       fields: spread({name: Field, type: {type: 'array', items: Items}})}}).
+
+field_map('interop', Record, Field) <-
+  avro(Body),
+  decode(Body, {'**': {type: 'record', name: Record,
+                       fields: spread({name: Field, type: {type: 'map'}})}}).

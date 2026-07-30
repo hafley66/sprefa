@@ -1,0 +1,49 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "pet-dashboard",
+    "version": "0.3.1"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "DashboardPanel": {
+        "type": "object",
+        "required": ["featured", "theme"],
+        "properties": {
+          "featured": {
+            "$ref": "pet-contracts/openapi.json#/components/schemas/Pet"
+          },
+          "recentOrders": {
+            "type": "array",
+            "items": {
+              "$ref": "pet-contracts/openapi.json#/components/schemas/Order"
+            }
+          },
+          "owner": {
+            "$ref": "pet-contracts/openapi.json#/components/schemas/User"
+          },
+          "theme": {
+            "type": "string",
+            "enum": ["light", "dark"]
+          },
+          "layout": {
+            "$ref": "#/components/schemas/PanelLayout"
+          },
+          "ghost": {
+            "$ref": "pet-contracts/openapi.json#/components/schemas/Invoice"
+          }
+        }
+      },
+      "PanelLayout": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      }
+    }
+  }
+}
