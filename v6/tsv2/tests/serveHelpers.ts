@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { firstValueFrom } from "rxjs";
 import type { SchedulerLike, Subscription } from "rxjs";
 
 import { serveTsv2 } from "../serve/4_http.ts";
@@ -29,7 +30,31 @@ export interface ServedFixture {
   readonly port: number;
   readonly events: readonly IServeEvent[];
   readonly activeSubscribeCount: () => number;
+  /** Drain and close: no new connections accepted, every in-flight request
+   *  answered, and only then the program's sqlite handle dropped. Resolves when
+   *  node's own `server.close` callback has fired. */
   readonly stop: () => Promise<void>;
+}
+
+/**
+ * A port nothing is listening on, obtained by binding one and letting it go.
+ *
+ * The negative CLI receipts need an address that refuses a connection. A
+ * hardcoded high number is the wrong tool for that too: it is only "free" until
+ * a second lane picks the same one. Binding port 0 makes the OS name a port that
+ * was free a moment ago, and closing it hands that name back -- a small race in
+ * theory, and strictly better than a constant in practice.
+ */
+export function reservePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = http.createServer();
+    probe.once("error", reject);
+    probe.listen(0, () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+  });
 }
 
 export function request(port: number, path: string, method: string, body?: string): Promise<HttpResult> {
@@ -50,6 +75,47 @@ export function request(port: number, path: string, method: string, body?: strin
   });
 }
 
+/**
+ * A client that holds ONE keep-alive connection open across several requests.
+ *
+ * This is what makes the shutdown receipt deterministic. Firing a fresh request
+ * and closing the server at the same moment measures nothing useful: the client
+ * side's "connected" does not mean the server has ACCEPTED the connection, so
+ * closing the listening socket drops it and the client sees ECONNREFUSED or
+ * ECONNRESET -- correct behaviour for a closed server, and silent about the
+ * actual question. On an ALREADY-ESTABLISHED keep-alive socket there is no
+ * accept race left: `server.close()` will not touch that connection, and the
+ * next request on it is one the server must still answer. That is exactly the
+ * shape a rig hits when it curls its final relations as the run ends.
+ */
+export interface KeepAliveClient {
+  readonly send: (path: string, method: string, body?: string) => Promise<HttpResult>;
+  readonly close: () => void;
+}
+
+export function keepAliveClient(port: number): KeepAliveClient {
+  const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+  return {
+    send: (path, method, body) =>
+      new Promise<HttpResult>((resolve, reject) => {
+        const outgoing = http.request(
+          { hostname: "127.0.0.1", port, path, method, agent, headers: { "content-type": "application/json" } },
+          (response) => {
+            let text = "";
+            response.on("data", (chunk: Buffer) => {
+              text += chunk.toString();
+            });
+            response.on("end", () => resolve({ statusCode: response.statusCode ?? 0, body: text }));
+          },
+        );
+        outgoing.on("error", reject);
+        if (body !== undefined) outgoing.write(body);
+        outgoing.end();
+      }),
+    close: () => agent.destroy(),
+  };
+}
+
 /** Everything a receipt may pin beyond port/scheduler/db. `watchSource` is the
  *  watcher backend seam (runtime/types.ts `IWatchSource`): a receipt injects a
  *  driveable one so the watch bind's own logic is graded without waiting on the
@@ -60,9 +126,25 @@ export interface ServeOverrides {
   readonly watchSource?: IWatchSource;
 }
 
-/** Start one served process in-process and wait until it is listening. */
+/**
+ * Start one served process in-process and wait until it is listening.
+ *
+ * `port` DEFAULTS TO 0, the ephemeral port. Every receipt used to name a
+ * hardcoded number (17521, 17531, 17541, ...) and every one of those numbers was
+ * a collision waiting for a second lane to run the suite in the same tree --
+ * which is what EADDRINUSE :::17611 was (bug hostdecode_hardcoded_port_collision;
+ * the file even carried a comment claiming its ports were unused "(grepped)",
+ * which was true of the tree and not of the machine). `serveTsv2` already
+ * reports the port it actually bound, off `server.address()`, so callers read
+ * `served.port` and no constant is needed anywhere.
+ *
+ * `stop()` is the real drain: it subscribes the `close` observable the listening
+ * event carries (`server.close(callback)` + dispose), instead of unsubscribing
+ * and sleeping 25ms and hoping. The old shape neither awaited in-flight requests
+ * nor closed the sqlite handle deterministically.
+ */
 export function startServed(
-  port: number,
+  port = 0,
   scheduler?: SchedulerLike,
   dbUrl = ":memory:",
   overrides: ServeOverrides = {},
@@ -75,15 +157,16 @@ export function startServed(
         events.push(event);
         if (event.kind === "listening" && !settled) {
           settled = true;
+          const close = event.close;
           resolve({
             port: event.port,
             events,
             activeSubscribeCount: event.activeSubscribeCount,
             running,
-            stop: async () => {
-              running.unsubscribe();
-              await new Promise<void>((done) => setTimeout(done, 25));
-            },
+            stop: () =>
+              firstValueFrom(close()).then(() => {
+                running.unsubscribe();
+              }),
           });
         }
       },

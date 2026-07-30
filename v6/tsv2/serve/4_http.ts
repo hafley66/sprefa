@@ -364,10 +364,23 @@ function httpServer$(port: number): Observable<{ readonly server: http.Server; r
   });
 }
 
+/**
+ * The DRAIN-THEN-DISPOSE contract. `server.close(callback)` stops accepting new
+ * connections and calls back only once every open one has ended, so an /idb read
+ * already in flight still gets its answer.
+ *
+ * The order matters and used to be the other way round: `disposeProgram` ran
+ * FIRST, which closed the sqlite handle out from under any request still being
+ * served, and a client that had issued its last reads got a dead socket or a 500
+ * after a run that had otherwise succeeded (bug serve_lifecycle_idb_read_race --
+ * the flow rig lost its paired TSVs exactly here). Nothing about the old order
+ * was needed: the program's rows are only reachable THROUGH a request, so there
+ * is no reader left to protect once close's callback has fired.
+ */
 function closeServer$(state: ServerState, server: http.Server): Observable<void> {
   return new Observable<void>((subscriber) => {
-    disposeProgram(state);
     server.close(() => {
+      disposeProgram(state);
       subscriber.next(undefined);
       subscriber.complete();
     });

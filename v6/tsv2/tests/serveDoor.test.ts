@@ -34,7 +34,7 @@ const DOOR_SCHEDULE: readonly IArrivalBatch[] = [
 
 test("receipt (a): door-handwritten served over http matches the oracle tick log byte for byte", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed(17521);
+  const served = await startServed();
   try {
     const loaded = await postProgram(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
@@ -52,7 +52,7 @@ test("receipt (a): door-handwritten served over http matches the oracle tick log
 
 test("receipt (a) guard: a batch naming a rel that is not an arrival target is a 400, not a tick", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed(17522);
+  const served = await startServed();
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
     // `current` is a derived rel: rules head it, the world never does.
@@ -75,7 +75,7 @@ test("receipt (a) guard: a batch naming a rel that is not an arrival target is a
 
 test("receipt (a) refusal: a program the compiler refuses is a 400 and leaves the running program alone", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed(17523);
+  const served = await startServed();
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
     await postArrivals(served.port, [{ rel: "event", sign: "add", row: [1, "boot"] }]);

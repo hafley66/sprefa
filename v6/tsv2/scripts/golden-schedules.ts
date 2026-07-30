@@ -41,15 +41,24 @@ import { join } from "node:path";
 
 import type { IArrivalBatch, IArrivalRow } from "../runtime/types.ts";
 
+/**
+ * FINDING, measured here: `IRowValue` in runtime/types.ts is
+ * `string | number | boolean`, so the declared arrival-row type CANNOT express a
+ * struct value -- while the served engine demonstrably both accepts one and
+ * prints one (tests/serveHost.test.ts asserts a `{ end: 42, start: 17 }` column
+ * in a real tick-log delta). The header and the runtime disagree; this is the
+ * same class as the sh/bind type-vocabulary gap and the JSON-schedule object
+ * gap, and it is recorded rather than papered: the one cast below is the only
+ * place this generator leaves the declared types, and it is named.
+ */
+type StructValue = { readonly [key: string]: number | string | StructValue };
+
 /** One tree's whole arrival set, derived from its index so every cardinality
  *  uses the same generator and 100 rows are not 100 hand-written literals. */
 function treeRow(index: number): IArrivalRow {
   const species = index % 3 === 0 ? "apple" : index % 3 === 1 ? "pear" : "weed";
-  return {
-    rel: "tree",
-    sign: "add",
-    row: [index, species, { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } }],
-  };
+  const site: StructValue = { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } };
+  return { rel: "tree", sign: "add", row: [index, species, site as unknown as string] };
 }
 
 function sugarOf(index: number): number {

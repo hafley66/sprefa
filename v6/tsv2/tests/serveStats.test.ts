@@ -25,7 +25,7 @@ import type { IServeStatsSnapshot } from "../runtime/types.ts";
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 
 test("GET /stats before any program is loaded is a 404, same convention as /idb/:rel", async () => {
-  const served = await startServed(17591);
+  const served = await startServed();
   try {
     const result = await request(served.port, "/stats", "GET");
     assert.equal(result.statusCode, 404);
@@ -36,7 +36,7 @@ test("GET /stats before any program is loaded is a 404, same convention as /idb/
 
 test("GET /stats reports process memory always, and dbstat page bytes for requested tables", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed(17592);
+  const served = await startServed();
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
     await postArrivals(served.port, [{ rel: "event", sign: "add", row: [1, "boot"] }]);

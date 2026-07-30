@@ -40,7 +40,7 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, what: stri
 
 test("sh host: a JSON object stream projects by NAME, and a record missing a declared column is no row", async () => {
   const source = readFileSync(JSON_PROJECTION_DL6, "utf8");
-  const served = await startServed(17611);
+  const served = await startServed();
   try {
     const loaded = await postProgram(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);

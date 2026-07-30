@@ -19,7 +19,12 @@
  * the one file in this arc where the CLI rim's own "async becomes rxjs; sync
  * stays sync" exemption does NOT cover a synchronous child-process call.
  *
- * PORT NOTE: 17580-17582 are not used by any other test file (grepped).
+ * PORT NOTE, corrected: this file used to name 17580-17584 and claim they were
+ * "not used by any other test file (grepped)". That check was of the TREE, not
+ * of the machine, and the whole class bit as EADDRINUSE the moment two lanes ran
+ * the suite at once. Every server here now binds an ephemeral port and the CLI
+ * is told `served.port`; the two negative receipts ask `reservePort()` for an
+ * address that is definitely not listening instead of hoping a constant is free.
  */
 
 import assert from "node:assert/strict";
@@ -27,7 +32,7 @@ import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { startServed } from "./serveHelpers.ts";
+import { reservePort, startServed } from "./serveHelpers.ts";
 
 const BOP = fileURLToPath(new URL("../cli/bop.ts", import.meta.url));
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
@@ -54,20 +59,21 @@ function runBop(args: readonly string[]): Promise<BopResult> {
 }
 
 test("load then q: a program POSTed by `bop load` is readable by `bop q` on the same running server", async () => {
-  const served = await startServed(17580);
+  const served = await startServed();
+  const port = String(served.port);
   try {
-    const loaded = await runBop(["load", DOOR_DL6, "--port", "17580"]);
+    const loaded = await runBop(["load", DOOR_DL6, "--port", port]);
     assert.equal(loaded.status, 0, loaded.stderr);
     const loadedBody = JSON.parse(loaded.stdout) as { readonly loaded: boolean; readonly rels: readonly string[] };
     assert.equal(loadedBody.loaded, true);
     assert.ok(loadedBody.rels.includes("event"), `expected 'event' among rels, got: ${loadedBody.rels.join(",")}`);
 
-    const queriedJson = await runBop(["q", "event", "--port", "17580", "--json"]);
+    const queriedJson = await runBop(["q", "event", "--port", port, "--json"]);
     assert.equal(queriedJson.status, 0, queriedJson.stderr);
     const rows = (JSON.parse(queriedJson.stdout) as { readonly rows: readonly unknown[] }).rows;
     assert.equal(rows.length, 0, "door-handwritten.dl6 seeds no event rows");
 
-    const queriedTable = await runBop(["q", "event", "--port", "17580"]);
+    const queriedTable = await runBop(["q", "event", "--port", port]);
     assert.equal(queriedTable.status, 0, queriedTable.stderr);
     assert.equal(queriedTable.stdout, "", "zero rows render as zero lines in table mode");
   } finally {
@@ -76,21 +82,23 @@ test("load then q: a program POSTed by `bop load` is readable by `bop q` on the 
 });
 
 test("q: nothing listening on the port exits 1 with a clear message, never a stack trace", async () => {
-  const outcome = await runBop(["q", "event", "--port", "17581"]);
+  const idle = String(await reservePort());
+  const outcome = await runBop(["q", "event", "--port", idle]);
   assert.equal(outcome.status, 1);
-  assert.match(outcome.stderr, /no server listening on port 17581/);
+  assert.match(outcome.stderr, new RegExp(`no server listening on port ${idle}`));
 });
 
 test("load: nothing listening on the port exits 1 with a clear message", async () => {
-  const outcome = await runBop(["load", DOOR_DL6, "--port", "17581"]);
+  const idle = String(await reservePort());
+  const outcome = await runBop(["load", DOOR_DL6, "--port", idle]);
   assert.equal(outcome.status, 1);
-  assert.match(outcome.stderr, /no server listening on port 17581/);
+  assert.match(outcome.stderr, new RegExp(`no server listening on port ${idle}`));
 });
 
 test("q: a running server with no program loaded exits 1 (404 'no program loaded')", async () => {
-  const served = await startServed(17582);
+  const served = await startServed();
   try {
-    const outcome = await runBop(["q", "event", "--port", "17582"]);
+    const outcome = await runBop(["q", "event", "--port", String(served.port)]);
     assert.equal(outcome.status, 1, outcome.stdout);
     assert.match(outcome.stderr, /no program loaded/);
   } finally {
@@ -99,10 +107,10 @@ test("q: a running server with no program loaded exits 1 (404 'no program loaded
 });
 
 test("load: a program that hits a named compiler refusal over http exits 2, not 1", async () => {
-  const served = await startServed(17583);
+  const served = await startServed();
   try {
     const ghcacherDl6 = fileURLToPath(new URL("../../dl/fixtures/ghcacher.dl6", import.meta.url));
-    const outcome = await runBop(["load", ghcacherDl6, "--port", "17583"]);
+    const outcome = await runBop(["load", ghcacherDl6, "--port", String(served.port)]);
     assert.equal(outcome.status, 2, outcome.stderr);
     assert.match(outcome.stderr, /unsupported_construct/);
   } finally {
@@ -111,11 +119,12 @@ test("load: a program that hits a named compiler refusal over http exits 2, not 
 });
 
 test("stats: bop reads the existing GET /stats route after load", async () => {
-  const served = await startServed(17584);
+  const served = await startServed();
+  const port = String(served.port);
   try {
-    const loaded = await runBop(["load", DOOR_DL6, "--port", "17584"]);
+    const loaded = await runBop(["load", DOOR_DL6, "--port", port]);
     assert.equal(loaded.status, 0, loaded.stderr);
-    const outcome = await runBop(["stats", "--port", "17584"]);
+    const outcome = await runBop(["stats", "--port", port]);
     assert.equal(outcome.status, 0, outcome.stderr);
     const body = JSON.parse(outcome.stdout) as { readonly memory: unknown; readonly sqlite: unknown };
     assert.ok(body.memory);
