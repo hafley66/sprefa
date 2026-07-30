@@ -41,6 +41,10 @@ lane(spot_check_assimilation_order, opus_readonly, dispatched,
      'review f8ab8ac5..HEAD commit-by-commit, re-run key receipts, inventory every open lab, return classification + optimal fold order').
 lane(phase5_grade_and_fix, opus_worktree, dispatched,
      'grade landing_ready bool/float at tip; fix the two known_failures (serveHost.test.ts removed-syntax retention, 18 roundtrip fixtures); full battery').
+lane_landed(json_v3v4_recovery, 'f9bf09df cherry-picked',
+     'HEADLINE: the json language is NOT lost -- it is v5 at the repo root (src/datapath.rs brace-pattern walker, 5 generations, inner grammar stable since v1, NINE productions); v6 is the generation that dropped it. 22 constructs graded: 8 express today / 4 ugly / 6 behind storage cards / 5 need new surface, ALL 5 = the key axis (key as capture/regex/glob/descent vs decode exact-field). 9 cards for user, top leverage CARD-KEY-CAPTURE (unblocks 4/5), cheapest CARD-SUBTREE-CAPTURE (struct_as_rows already answered it structurally). Card evidence: residency=core_global, arrays=host_flattened, null=row_absence, schema=metadata_only, cycles=refuse. Also found: SYNTAX.md decode row stale vs registry; json_array/json_object refused despite ruled emittable (dispatch, not ruling).').
+finding(phase5_agent_in_main_tree, process,
+        'phase5 opus agent fell back to the SHARED checkout after worktree reap and committed 2ca13e37 directly on the lab branch; coordinator imposed scoped-add rules by message; two-writers-one-tree hazard noted').
 lane(json_v3v4_recovery, opus_worktree, dispatched,
      'recover the v3/v4 json language surface+semantics from ~/projects/sprefa-archive-20260701 (and 20260428); grade against the 5 json_interop_lab cards; decision cards only, zero production syntax').
 lane(file_span_reconcile, opus_worktree, dispatched,
@@ -60,6 +64,30 @@ answered(sprefa_extract_usage,
          'v6.2 spawns the released binary via executor contracts (2 executor keys: shell, sprefa_extract; 14 extract declarations); batching landed (same-tick demands grouped, one stdout fans into typed response rels, flow 7->1 subprocess/path); extractor additions stay typed-rust-side (ast_pattern_query = AstPatternQuery + flat AstCaptureFact, zero DL types in the extractor); locked contracts already match the user policy (sprefa_extract_scope, extractor_trait_boundary, parser_residency); gaps: document_sources (no md/html/xml/toml/yaml Source), file_blob_repo_revision (BlobSource unimplemented, Repo/Rev types absent); named overuse: grafana 40.26 f/s under per-witness subprocess boundary').
 answered(lang_design_lock_state,
          'LOCKED: single rel type model + one checker, host = ordinary RHS atom (? and @ removed), parser residency rust, surface freeze + stop rule, target-neutral plan order, bool/float storage, clock-checker scope. OPEN CARDS: scan/match composition (4 questions + 3 surface cards), json residency/arrays/null/schema/recursion (5 cards), span-spine decision rows, assign 3 cards, decl-legibility cluster, older slot pile. Verdict: value plane + host surface + storage locked; composition surface and json/module/span identity are the remaining design').
+
+% bug(Name, FoundBy, Text). -- every defect any lane surfaces, marked here on arrival.
+bug(ref_pattern_depth2_silent_empty, filespan_lane,
+    'relation pattern at depth>=2: emitted SQL json_extracts a path out of the INTEGER __id endpoint -- always NULL, rel permanently empty, NO refusal (join_column_type_mismatch catches only int columns by accident, path is text); measured oracle span=1/coord=1 vs emitter 0/0; root cause head_target_atoms/4 walks direct head args only; handed to rel_edge_clock_fixpoint lane, stage-1 fix = named refusal on ref columns').
+bug(decode_depth2_oracle_derives_nothing, filespan_lane,
+    'chained decode at depth 2: emitter produces the correct two-hop indexed join (1 row verified), oracle derives NOTHING -- compile_pattern_arg one-level implementation; same lane owns it').
+bug(roundtrip_two_door_decl_disagreement, phase5_lane,
+    'the 18 roundtrip fails = ONE defect: parse_dl:574 always carries type_decl AND col_type forms, print_dl:209 decl_ref_order prints a decl line per form = duplicate rel line on reprint, reparse arity-checks the doubled list and drops the type. Fix measured 19/19 + byte-identical views: 4-line print_dl guard + explicit col_type rows in 4_struct_values.pl, must land TOGETHER; coordinator owns the landing').
+bug(a6_crosscheck_nondiscriminating, opus_review_gate,
+    'sol clock checker A6 "proven" unearned: all-zero-offset graph = crosscheck compares two constants; sabotage receipts S1 (constant observer stays green) + S4 (Grade=0 hardcode stays green); clock_boundary multi-trigger requirement has no negative case (S2 invisible); fix list sent back to sol (nonzero-offset pairing proven by reviewer)').
+bug(flow_call_target_resolver_defect, codex_terra,
+    '32 call-target rows share a call coordinate but select DIFFERENT callees across engines (16 v5-only + 16 v6-only) -- real resolver divergence, distinct from the 110 extraction-input rows; per-edge attribution blocked by the serve-lifecycle flake below').
+bug(serve_lifecycle_idb_read_race, codex_terra,
+    'v6 HTTP server exited before final /idb reads in the flow rig -- paired TSVs lost after a full successful run; same family as the golden/EADDRINUSE flakes; unowned').
+bug(hostdecode_hardcoded_port_collision, phase5_lane,
+    'hostDecode.test.ts EADDRINUSE :::17611 when two lanes run the suite in one tree -- hardcoded test ports collide; passes isolated; unowned').
+bug(run_results_json_mode_dependent, phase5_lane_and_review,
+    'out/run-results.json refusal text differs naive vs incremental (engine.pl retract_from_log suffix) -- whichever sweep mode ran last leaves the checked-in receipt dirty; unowned small').
+bug(phase5_untracked_view, phase5_lane,
+    'dl_view/float_integral_value_keeps_real_storage.dl6 untracked -- bool/float lane never committed its regenerated view (174 tracked / 175 on disk); coordinator to commit').
+bug(diag_rail_template_mismatch_suspect, coordinator_probe,
+    'coordinator probe with diag-rail-shaped host decl (digest input unreferenced in template) refused template_mismatch(unreferenced_input(digest)) by bop check -- diag-rail.dl6 itself has that exact shape, so either the fixture no longer passes the text door or the doors diverge; VERIFY before next lsp-diags run').
+bug(glob_root_level_zero_match, coordinator_probe,
+    'watch glob **/*.ts matches NOTHING for repo-root-level files under git pathspec (files must sit in a subdir) -- known v5-globset-vs-git-pathspec divergence class, new bite: silent empty world, zero diagnostics; candidate for a load-time warning when a watch glob matches zero enumerated files').
 
 % finding(Name, Severity, Text). -- appended as review proceeds.
 finding(match_arm_new_tokens_unruled, syntax_violation,
