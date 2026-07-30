@@ -150,6 +150,22 @@ fixture(json_empty_object_pattern_matches_any_object,
   [],
   [ final(is_object/1, [ is_object(first), is_object(third) ]) ]).
 
+% ruling list_spelling = list_of_type. `list(text)` is a TYPED VIEW over the
+% json carrier: one column in one row holds the whole array, and the array
+% fans out into rows when a rule queries it. The lab graded the alternatives
+% (cons cells, indexed rows) on five axes and measured one 1000-element list
+% at 1 row as a carrier vs 1001 indexed vs 1000 cons cells, all three
+% rendering byte-identically.
+fixture(list_column_fans_out_through_spread,
+  prog([col_type(repo/2, name, text),
+        col_type(repo/2, tags, list(text)),
+        col_type(repo_tag/2, name, text),
+        col_type(repo_tag/2, tag, text)],
+       [ (repo_tag(Name, Tag) <- repo(Name, Tags), decode(Tags, spread(Tag))) ]),
+  [ repo(cli, [go, rust]), repo(shell, []) ],
+  [],
+  [ final(repo_tag/2, [ repo_tag(cli, go), repo_tag(cli, rust) ]) ]).
+
 % ═══ aggregate heads (q9 reserved forms), bag multiplicity (q7) ═════════════
 
 % R8's fail-pre-fix fixture: two hits on ONE line count 2 under bag.

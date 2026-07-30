@@ -70,8 +70,14 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
 | `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
 | `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
-| `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |
 | `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
+| `{}/1` | `json` | `no_refs` | `value(json_object_shape)` | `live` |
+| `{}/0` | `json` | `no_refs` | `value(json_empty_object)` | `live` |
+| `spread/1` | `json` | `no_refs` | `value(json_array_spread)` | `live` |
+| `$/1` | `json` | `no_refs` | `value(json_hole)` | `live` |
+| `**/0` | `json` | `no_refs` | `value(json_descent)` | `live` |
+| `tagged_brace/1` | `json` | `no_refs` | `value(refuse(tagged_brace_reserved))` | `reserved` |
 | `true/0` | `guard` | `no_refs` | `word(lower)` | `live` |
 | `:=/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
 | `is/2` | `bind` | `no_refs` | `infix(lower)` | `live` |
@@ -85,6 +91,7 @@ Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 | `sum/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `min/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `max/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
+| `avg/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `json_array/1` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `json_object/2` | `aggregate` | `no_refs` | `head(refuse(aggregate))` | `refused` |
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
@@ -122,6 +129,8 @@ sibling throw shapes -- see `scripts/bop_check.pl`'s own header), 1 broken
 | `bop check` | `<file.dl6>` | validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error). |
 | `bop load` | `<file.dl6> [--port <port>]` | POST a compiled program to an already-running bop serve; exit 1 if nothing is listening. |
 | `bop q` | `<rel> [--port <port>] [--json]` | read one rel's current rows from a running bop serve. |
+| `bop stats` | `[--port <port>]` | read process and SQLite storage statistics from a running bop serve. |
+| `bop ticks` | `[--port <port>]` | stream served tick events from a running bop serve until interrupted. |
 <!-- END GENERATED cli_command/3 TABLE -->
 
 ### Context status

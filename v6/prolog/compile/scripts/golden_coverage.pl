@@ -48,6 +48,14 @@ expected_absent(json_each/2,    'registry status `refused`').
 expected_absent(json_array/1,   'registry status `refused`').
 expected_absent(json_object/2,  'registry status `refused`').
 expected_absent(sg_pattern/3,   'registry status `refused`').
+% The json value/pattern axis. LIVE, graded, and deliberately absent HERE:
+% see the golden's own header for the measurement. Not a status claim, so
+% status_agrees/3 takes the last branch.
+expected_absent(spread/1,       'json arrival seam not wired on the golden path').
+expected_absent('$'/1,          'json arrival seam not wired on the golden path').
+expected_absent('**'/0,         'json arrival seam not wired on the golden path').
+expected_absent('{}'/0,         'json arrival seam not wired on the golden path').
+expected_absent(tagged_brace/1, 'reserved').
 expected_absent(set/0,          'removed word').
 expected_absent(zip/2,          'reserved').
 expected_absent(subscribe/1,    'reserved lifecycle wrappers').

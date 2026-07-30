@@ -338,7 +338,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
@@ -498,6 +498,13 @@
   },
   {
     "name": "json_empty_object_pattern_matches_any_object",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "list_column_fans_out_through_spread",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

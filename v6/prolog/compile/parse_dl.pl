@@ -420,6 +420,15 @@ typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
 typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
 typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
+% ruling list_spelling = list_of_type. The ONE parametric type, and its
+% argument is a bare type word, never a nested list: 0_type_plane.pl's
+% column_storage/3 refuses list(list(_)) and list(<struct>) by name, so the
+% grammar stays permissive and the refusal stays where the reason lives.
+typed_column_type(list(Element), S0, S) :-
+    word(`list`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
 typed_column_type(float, S0, S) :- word(`float`, S0, S), !.
 % STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
 % position names a referenced relation value, and the column stores a ref to

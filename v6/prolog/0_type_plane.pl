@@ -83,11 +83,56 @@ column_storage(_, text, text) :- !.
 % builds this project already runs (3.43.2 CLI rejects it, @libsql 3.45.1
 % accepts) so the stored bytes stay TEXT.
 column_storage(_, json, json) :- !.
+% ruling list_spelling = list_of_type ("list(text) seems easy enough").
+%
+% THE VERDICT THIS EXECUTES (json_syntax lab §3): json is the array CARRIER and
+% `list(T)` is a TYPED VIEW over it. Relational element storage is not a list,
+% it is a rel with an index column, declared as such. The lab graded three
+% options on five axes with a receipt per cell; the carrier wins content
+% identity (the canonical text IS the id, and it is already the log contract),
+% retraction (one column in one row, zero cascade), aggregate heads
+% (json_group_array is a native aggregate), the tick-log contract (storage IS
+% the contract, render is identity) and 0/1/many (`[]` is a value and is not
+% absence). Measured: one 1000-element list is 1 row as a carrier, 1001 as
+% indexed rows, 1000 as cons cells, and all three render byte-identically.
+%
+% T ranges over a CLOSED four-element set, so there is no type variable, no
+% unification and no instantiation -- that is what lets list(T) be the only
+% parametric type without dragging generics into the checker. The whole
+% measured delta is these four clauses: the storage row, the element guard, and
+% the two named refusals below.
+%
+% NAMED, not silently absent: SQLite can enforce ARRAY-NESS as a column CHECK
+% (json_valid(c) AND json_type(c) = 'array', verified) and CANNOT enforce the
+% ELEMENT type -- CHECK constraints prohibit subqueries and json_each is a
+% table function. Element typing is a checker/emitted-guard obligation. Today
+% the storage kind collapses to `json`, so neither guard is emitted; the
+% array-ness CHECK needs list(T) to survive as its own kind all the way to
+% lower.pl:column_def/3, which widens every place that matches on `json`.
+column_storage(Types, list(Element), json) :-
+    !,
+    (   list_element_type(Element)
+    ->  true
+    ;   declared_type_name(Types, Element)
+    ->  throw(unsupported_construct(list_of_relation_refs(Element)))
+    ;   throw(unsupported_construct(list_element_not_scalar(Element)))
+    ).
+
 column_storage(_, bool, bool) :- !.
 column_storage(_, float, float) :- !.
 column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.
 column_storage(_, Name, _) :-
     throw(unsupported_construct(column_type_unknown(Name))).
+
+% A list element is a SCALAR, and one of exactly four. A relation ref is
+% refused separately from any other non-scalar because the reason differs: ids
+% in a list would enter the tick log, breaking the print-values-never-ids
+% ruling, while a nested list is simply what the `json` type is for.
+list_element_type(int).
+list_element_type(text).
+list_element_type(bool).
+list_element_type(float).
+
 
 % The ref columns of one type, as Column-ChildType pairs.
 type_ref_columns(Types, Name, RefColumns) :-
