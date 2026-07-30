@@ -207,6 +207,15 @@ verification(ordered_pre,
                     formerly_refused_fixtures(13),
                     syntax_changes(0),
                     type_changes(0))).
+verification(scan_match_reconciliation,
+             passed(executable(10),
+                    plan_records(8),
+                    open_cards(4),
+                    selected_decisions(0),
+                    nested_match_rel_tables(4),
+                    nested_match_temp_tables(15),
+                    scan_rel_tables(2),
+                    scan_temp_tables(7))).
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
