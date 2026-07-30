@@ -42,6 +42,12 @@
             type_field_values/4,
             type_ref_columns/3,
             canonical_json_text/2,
+            % Exported for sweep.pl, which writes the schedule JSON with its
+            % own string writer and used to carry a THIRD copy of this
+            % predicate. Three copies is how one broken escape survived: the
+            % json_flex lab fixed two of them and the fixture stayed red
+            % because the schedule writer was still emitting `\u08`.
+            escape_json_codes/2,
             json_object_value/2,
             relation_columns_and_types/5,
             relation_value_shape/3,
@@ -603,14 +609,42 @@ json_string_text(Value, Text) :-
     atom_codes(Escaped, EscapedCodes),
     format(atom(Text), '"~w"', [Escaped]).
 
+% THE ESCAPE SET IS `JSON.stringify`'s, exactly, because the tsv2 door IS
+% JSON.stringify and the tick log is graded by BYTE DIFF: two spellings of the
+% same character are two different logs. ECMA-262 QuoteJSONString escapes
+% " \ \b \f \n \r \t by name and every remaining code below 0x20 as
+% \uXXXX, four LOWERCASE hex digits.
+%
+% What this replaced, and why nothing caught it (json_flex lab, 2026-07-30):
+% the hex arm was `format(atom(H), '\\u~`0t~16r~4|', [Code])`. `~4|` is a
+% COLUMN stop measured from the start of the atom and `\u` already occupies
+% two columns, so the escape came out with TWO hex digits -- code 12 rendered
+% `\u0c`, then the next source character was appended to it and the result
+% was `\u0cb`, which is not JSON at all. `\b`, `\f` and `\r` all went down
+% that arm. Zero fixtures in the 209-fixture corpus carried a control
+% character, so an oracle tick log that JSON.parse rejects passed every
+% byte-diff gate this project has. Fixture
+% json_string_control_escapes_are_valid_json is the fail-first receipt: the
+% sweep's own reader threw `Bad Unicode escape in JSON at position 45`.
 escape_json_codes([], []).
 escape_json_codes([Code | Rest], Out) :-
-    (   Code =:= 0'"  -> Escaped = [0'\\, 0'"]
-    ;   Code =:= 0'\\ -> Escaped = [0'\\, 0'\\]
-    ;   Code =:= 10   -> Escaped = [0'\\, 0'n]
-    ;   Code =:= 9    -> Escaped = [0'\\, 0't]
-    ;   Code < 32     -> format(atom(HexAtom), '\\u~`0t~16r~4|', [Code]), atom_codes(HexAtom, Escaped)
-    ;   Escaped = [Code]
-    ),
+    json_escaped_codes(Code, Escaped),
     escape_json_codes(Rest, RestOut),
     append(Escaped, RestOut, Out).
+
+json_escaped_codes(0'", [0'\\, 0'"]) :- !.
+json_escaped_codes(0'\\, [0'\\, 0'\\]) :- !.
+json_escaped_codes(8,  [0'\\, 0'b]) :- !.
+json_escaped_codes(12, [0'\\, 0'f]) :- !.
+json_escaped_codes(10, [0'\\, 0'n]) :- !.
+json_escaped_codes(13, [0'\\, 0'r]) :- !.
+json_escaped_codes(9,  [0'\\, 0't]) :- !.
+json_escaped_codes(Code, Escaped) :-
+    Code < 32, !,
+    % `~|` opens a column stop HERE (after the `\u` already written) and
+    % `~4+` closes it four columns later, so the zero fill is over the hex
+    % digits alone. `~4|` -- the absolute stop the broken version used --
+    % counts the `\u` inside its own budget and leaves two digits.
+    format(atom(HexAtom), '\\u~|~`0t~16r~4+', [Code]),
+    atom_codes(HexAtom, Escaped).
+json_escaped_codes(Code, [Code]).

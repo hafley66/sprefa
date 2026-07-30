@@ -110,12 +110,12 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    flag: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "enabled" FROM "flag"`, relColumns.flag!, relColumnTypes.flag!),
+    flag: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "flag"`, relColumns.flag!, relColumnTypes.flag!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  flag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "enabled" FROM "flag"`,
+  flag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "flag"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
@@ -145,7 +145,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "flag", kind: "set", tableName: "flag", deltaTableName: "__delta_flag", frontierTableName: "__frontier_flag", nextFrontierTableName: "__next_frontier_flag", columns: ["name", "enabled"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrivalDelSql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' THEN json_extract("name", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("name", '$.args')) || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"` },
+  { rel: "flag", kind: "set", tableName: "flag", deltaTableName: "__delta_flag", frontierTableName: "__frontier_flag", nextFrontierTableName: "__next_frontier_flag", columns: ["name", "enabled"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrivalDelSql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

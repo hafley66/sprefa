@@ -185,14 +185,36 @@ string_json(Value, Json) :-
     atom_codes(Escaped, EscapedCodes),
     format(atom(Json), '"~w"', [Escaped]).
 
+% THE ESCAPE SET IS `JSON.stringify`'s, exactly (ECMA-262 QuoteJSONString):
+% " \ \b \f \n \r \t by name, every other code below 0x20 as \uXXXX with four
+% LOWERCASE hex digits, everything else raw. The tsv2 door IS JSON.stringify
+% and the tick log is graded by BYTE DIFF, so two spellings of one character
+% are two different logs.
+%
+% This is a clause-for-clause mirror of 0_type_plane.pl:json_escaped_codes/2,
+% the same deliberate duplication json_value_json/2 already carries and for
+% the same reason (ticklog.pl is a SCRIPT, not a module). The header there
+% records what the previous version got wrong and how the json_flex lab
+% caught it; the short version is that `~4|` is an ABSOLUTE column stop that
+% counted the `\u` inside its own four-column budget and emitted TWO hex
+% digits, so `\f` came out as `\u0c` with the next character glued on. The
+% oracle's own tick log was not JSON, and no fixture carried a control
+% character to notice.
 escape_json_codes([], []).
 escape_json_codes([Code | Rest], Out) :-
-    ( Code =:= 0'"  -> Escaped = [0'\\, 0'"]
-    ; Code =:= 0'\\ -> Escaped = [0'\\, 0'\\]
-    ; Code =:= 10   -> Escaped = [0'\\, 0'n]
-    ; Code =:= 9    -> Escaped = [0'\\, 0't]
-    ; Code < 32     -> format(atom(HexAtom), '\\u~`0t~16r~4|', [Code]), atom_codes(HexAtom, Escaped)
-    ; Escaped = [Code]
-    ),
+    json_escaped_codes(Code, Escaped),
     escape_json_codes(Rest, RestOut),
     append(Escaped, RestOut, Out).
+
+json_escaped_codes(0'", [0'\\, 0'"]) :- !.
+json_escaped_codes(0'\\, [0'\\, 0'\\]) :- !.
+json_escaped_codes(8,  [0'\\, 0'b]) :- !.
+json_escaped_codes(12, [0'\\, 0'f]) :- !.
+json_escaped_codes(10, [0'\\, 0'n]) :- !.
+json_escaped_codes(13, [0'\\, 0'r]) :- !.
+json_escaped_codes(9,  [0'\\, 0't]) :- !.
+json_escaped_codes(Code, Escaped) :-
+    Code < 32, !,
+    format(atom(HexAtom), '\\u~|~`0t~16r~4+', [Code]),
+    atom_codes(HexAtom, Escaped).
+json_escaped_codes(Code, [Code]).

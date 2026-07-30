@@ -104,7 +104,7 @@ const relColumns: Record<string, readonly string[]> = {
 };
 
 const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
-  chart: ["text"],
+  chart: ["json"],
   image: ["text", "text"],
 };
 
@@ -124,13 +124,13 @@ type Snapshot = {
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     chart: selectRows(seam, `SELECT "body" FROM "chart"`, relColumns.chart!, relColumnTypes.chart!),
-    image: selectRows(seam, `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' THEN json_extract("repository", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("repository", '$.args')) || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "image"`, relColumns.image!, relColumnTypes.image!),
+    image: selectRows(seam, `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "image"`, relColumns.image!, relColumnTypes.image!),
   });
 }
 
 const finalSelect: Record<string, string> = {
   chart: `SELECT "body" FROM "chart"`,
-  image: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' THEN json_extract("repository", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("repository", '$.args')) || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag" FROM "image"`,
+  image: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "image"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
@@ -160,8 +160,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "chart", kind: "set", tableName: "chart", deltaTableName: "__delta_chart", frontierTableName: "__frontier_chart", nextFrontierTableName: "__next_frontier_chart", columns: ["body"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
-  { rel: "image", kind: "set", tableName: "image", deltaTableName: "__delta_image", frontierTableName: "__frontier_image", nextFrontierTableName: "__next_frontier_image", columns: ["repository", "tag"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' THEN json_extract("repository", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("repository", '$.args')) || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' THEN json_extract("tag", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("tag", '$.args')) || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"` },
+  { rel: "chart", kind: "set", tableName: "chart", deltaTableName: "__delta_chart", frontierTableName: "__frontier_chart", nextFrontierTableName: "__next_frontier_chart", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
+  { rel: "image", kind: "set", tableName: "image", deltaTableName: "__delta_image", frontierTableName: "__frontier_image", nextFrontierTableName: "__next_frontier_image", columns: ["repository", "tag"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -39,8 +39,15 @@ export type { QueryResult, SqliteDb, SqlStatement, TraceStatement };
 export type IRowValue = string | number | boolean;
 
 /** Storage type emitted for each public relation column. Relation references
- * still cross the boundary as their canonical text value. */
-export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref";
+ * still cross the boundary as their canonical text value.
+ *
+ * `json` and `text` are the SAME storage (TEXT, and `rowValueFromSql` hands
+ * both back untouched) and differ only at the tick-log encoder, which is the
+ * one place the difference is observable: a `json` column's value IS a json
+ * value at any top level, a `text` column's value is a string even when its
+ * bytes happen to parse. Before this member existed the encoder guessed by
+ * looking at the first character and got both cases wrong (json_flex lab). */
+export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json";
 
 /** One relation row, columns in the rel's declared order (relColumns). */
 export type IRow = readonly IRowValue[];
@@ -399,14 +406,19 @@ export interface ITickLogEmitter {
    *  ascending, only nonempty rels, rows sorted by their JSON text, no
    *  spaces, LF terminated by the caller (this returns the line WITHOUT a
    *  trailing newline). */
-  line(tick: number, deltas: ITickDeltas): ITickLogLine;
-  /** ONE column value as the log encodes it: an integer as a JSON number,
-   *  object/array text canonicalized as JSON (sorted keys, no whitespace),
-   *  anything else as a JSON string. Exported because the final-state grading
-   *  leg has to encode by the same rule as the per-tick leg -- it did not,
-   *  and a relation reference rendered as canonical JSON text was the
-   *  first value to make the two legs disagree. */
-  valueText(value: IRowValue): string;
+  line(tick: number, deltas: ITickDeltas, relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>): ITickLogLine;
+  /** ONE column value as the log encodes it: an integer as a JSON number, a
+   *  `json`-typed column as a json VALUE (any top level, canonicalized with
+   *  sorted keys and no whitespace), anything else as a JSON string.
+   *  Exported because the final-state grading leg has to encode by the same
+   *  rule as the per-tick leg -- it did not, and a relation reference
+   *  rendered as canonical JSON text was the first value to make the two
+   *  legs disagree.
+   *
+   *  `type` is the column's declared type. Omitting it means "not a json
+   *  column", which is what every non-json caller wants and what a `ref`
+   *  column (already canonical text, rendered as a string) wants too. */
+  valueText(value: IRowValue, type?: IRowColumnType): string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -105,7 +105,7 @@ const relColumns: Record<string, readonly string[]> = {
 
 const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   field: ["text", "text"],
-  raw_doc: ["text"],
+  raw_doc: ["json"],
 };
 
 const arrivalTargets: readonly string[] = ["raw_doc"];
@@ -123,13 +123,13 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    field: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "field"`, relColumns.field!, relColumnTypes.field!),
+    field: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "field"`, relColumns.field!, relColumnTypes.field!),
     raw_doc: selectRows(seam, `SELECT "body" FROM "raw_doc"`, relColumns.raw_doc!, relColumnTypes.raw_doc!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  field: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "field"`,
+  field: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "field"`,
   raw_doc: `SELECT "body" FROM "raw_doc"`,
 };
 
@@ -160,8 +160,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "field", kind: "set", tableName: "field", deltaTableName: "__delta_field", frontierTableName: "__frontier_field", nextFrontierTableName: "__next_frontier_field", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_field" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
-  { rel: "raw_doc", kind: "set", tableName: "raw_doc", deltaTableName: "__delta_raw_doc", frontierTableName: "__frontier_raw_doc", nextFrontierTableName: "__next_frontier_raw_doc", columns: ["body"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
+  { rel: "field", kind: "set", tableName: "field", deltaTableName: "__delta_field", frontierTableName: "__frontier_field", nextFrontierTableName: "__next_frontier_field", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_field" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "raw_doc", kind: "set", tableName: "raw_doc", deltaTableName: "__delta_raw_doc", frontierTableName: "__frontier_raw_doc", nextFrontierTableName: "__next_frontier_raw_doc", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

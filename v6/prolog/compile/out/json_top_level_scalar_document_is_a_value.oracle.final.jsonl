@@ -1,0 +1,1 @@
+{"final":{"echoed":[["negative",-7],["number",42],["object",{"a":1}],["text_scalar","\"quoted\""]],"label":[["looks_like_json","{\"a\":1}"],["looks_like_number","42"]],"labelled":[["looks_like_json","{\"a\":1}"],["looks_like_number","42"]],"payload":[["negative",-7],["number",42],["object",{"a":1}],["text_scalar","\"quoted\""]]}}

@@ -131,13 +131,13 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    hit: selectRows(seam, `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' THEN json_extract("owner", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("owner", '$.args')) || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "hit"`, relColumns.hit!, relColumnTypes.hit!),
+    hit: selectRows(seam, `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' AND json_type("owner", '$.fn') = 'text' AND json_type("owner", '$.args') = 'array' THEN json_extract("owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("owner", '$.args')), '') || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "hit"`, relColumns.hit!, relColumnTypes.hit!),
     span: selectRows(seam, `SELECT "start", "end" FROM "span"`, relColumns.span!, relColumnTypes.span!),
   });
 }
 
 const finalSelect: Record<string, string> = {
-  hit: `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' THEN json_extract("owner", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("owner", '$.args')) || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "hit"`,
+  hit: `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' AND json_type("owner", '$.fn') = 'text' AND json_type("owner", '$.args') = 'array' THEN json_extract("owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("owner", '$.args')), '') || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "hit"`,
   span: `SELECT "start", "end" FROM "span"`,
 };
 
@@ -169,7 +169,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "hit", kind: "set", tableName: "hit", deltaTableName: "__delta_hit", frontierTableName: "__frontier_hit", nextFrontierTableName: "__next_frontier_hit", columns: ["owner", "at"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "hit" ("owner", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "owner", "at"`, arrivalDelSql: `DELETE FROM "hit" WHERE ("owner", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "owner", "at"`, boundarySql: `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' THEN json_extract("owner", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("owner", '$.args')) || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "owner", "at", "_sign"` },
+  { rel: "hit", kind: "set", tableName: "hit", deltaTableName: "__delta_hit", frontierTableName: "__frontier_hit", nextFrontierTableName: "__next_frontier_hit", columns: ["owner", "at"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "hit" ("owner", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "owner", "at"`, arrivalDelSql: `DELETE FROM "hit" WHERE ("owner", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "owner", "at"`, boundarySql: `SELECT CASE WHEN json_valid("owner") AND json_type("owner") = 'object' AND json_type("owner", '$.fn') = 'text' AND json_type("owner", '$.args') = 'array' THEN json_extract("owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("owner", '$.args')), '') || ')' ELSE "owner" END AS "owner", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "owner", "at", "_sign"` },
   { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["start", "end"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrivalDelSql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundarySql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"` },
 ];
 

@@ -30,7 +30,7 @@
 :- use_module('../conformance/body', [ rel_ref/2 ]).
 :- use_module('../0_type_plane',
               [ type_definitions/2, type_canonical_json/4,
-                canonical_json_text/2 ]).
+                canonical_json_text/2, escape_json_codes/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -215,17 +215,13 @@ json_string(Value, Json) :-
     atom_codes(Escaped, EscapedCodes),
     format(atom(Json), '"~w"', [Escaped]).
 
-escape_json_codes([], []).
-escape_json_codes([Code | Rest], Out) :-
-    ( Code =:= 0'"  -> Escaped = [0'\\, 0'"]
-    ; Code =:= 0'\\ -> Escaped = [0'\\, 0'\\]
-    ; Code =:= 10   -> Escaped = [0'\\, 0'n]
-    ; Code =:= 9    -> Escaped = [0'\\, 0't]
-    ; Code < 32     -> format(atom(HexAtom), '\\u~`0t~16r~4|', [Code]), atom_codes(HexAtom, Escaped)
-    ; Escaped = [Code]
-    ),
-    escape_json_codes(Rest, RestOut),
-    append(Escaped, RestOut, Out).
+% escape_json_codes/2 is IMPORTED from 0_type_plane.pl, not written here. It
+% used to be a third private copy of the same clause set, and the copy is what
+% kept the json_flex lab's fail-first fixture red after both encoders were
+% repaired: the schedule this file writes still carried `"back\u08space"`,
+% which the sweep's own reader rejected as `Bad Unicode escape in JSON`. The
+% schedule is a graded artifact (sweep-run.ts replays exactly this text), so
+% it owes the same escape rule the tick log does.
 
 % ═══ manifest + console summary ═══════════════════════════════════════════
 

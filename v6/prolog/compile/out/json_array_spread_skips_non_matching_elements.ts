@@ -105,7 +105,7 @@ const relColumns: Record<string, readonly string[]> = {
 
 const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   numbered: ["int"],
-  resp: ["text"],
+  resp: ["json"],
 };
 
 const arrivalTargets: readonly string[] = ["resp"];
@@ -161,7 +161,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "numbered", kind: "set", tableName: "numbered", deltaTableName: "__delta_numbered", frontierTableName: "__frontier_numbered", nextFrontierTableName: "__next_frontier_numbered", columns: ["number"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numbered" WHERE "_sign" IN (-1, 1) GROUP BY "number", "_sign"` },
-  { rel: "resp", kind: "set", tableName: "resp", deltaTableName: "__delta_resp", frontierTableName: "__frontier_resp", nextFrontierTableName: "__next_frontier_resp", columns: ["body"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "resp" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "resp" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
+  { rel: "resp", kind: "set", tableName: "resp", deltaTableName: "__delta_resp", frontierTableName: "__frontier_resp", nextFrontierTableName: "__next_frontier_resp", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "resp" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "resp" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

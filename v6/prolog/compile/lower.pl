@@ -2792,11 +2792,30 @@ canonical_column_expr(Column, ref(TypeName), Expr) :-
 canonical_column_expr(Column, json, QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
+% THE GUARD TESTS FOR THE TAGGED TERM, not merely for an object. `json_valid`
+% plus `json_type = 'object'` is true of EVERY json object, including one a
+% program legitimately stores in a text column, and for those the THEN branch
+% computes `NULL || '(' || ... || ')'` -- which is NULL, in a column the
+% runtime's own IRowValue contract says is never null. Receipt (json_flex lab,
+% 2026-07-30): a text column holding `{"a":1}` reached ticklog.ts as `null` and
+% the run died with `Cannot read properties of null (reading '0')`.
+%
+% `$.fn` must be a text member and `$.args` an array member, which is exactly
+% what the writer at :459 emits and nothing else has to be. The `coalesce`
+% is the zero-argument case: `json_each` over `[]` returns no rows, so
+% `group_concat` answers NULL and the whole concatenation collapses the same
+% way -- the same defect one arity down, and the writer emits `json_array()`
+% for a nullary functor, so it was reachable.
+%
+% What stays ambiguous, and is a named card rather than a fix: a text value
+% that genuinely IS `{"fn":"x","args":[]}` still renders as `x()`. The tagged
+% encoding has no reserved marker, so shape is all this expression can read.
 canonical_column_expr(Column, text, Expr) :-
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
-           'CASE WHEN json_valid(~w) AND json_type(~w) = \'object\' THEN json_extract(~w, \'$.fn\') || \'(\' || (SELECT group_concat(value, \',\') FROM json_each(~w, \'$.args\')) || \')\' ELSE ~w END AS ~w',
-           [QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn]).
+           'CASE WHEN json_valid(~w) AND json_type(~w) = \'object\' AND json_type(~w, \'$.fn\') = \'text\' AND json_type(~w, \'$.args\') = \'array\' THEN json_extract(~w, \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each(~w, \'$.args\')), \'\') || \')\' ELSE ~w END AS ~w',
+           [QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn,
+            QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn]).
 
 canonical_column_expr(Column, Expr) :-
     canonical_column_expr(Column, text, Expr).
