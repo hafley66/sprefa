@@ -13,6 +13,7 @@
 pub use crate::types::{
     build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
-    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument, ScipError,
-    ScipIndex, ScipOccurrence, ScipRelationship, ScipSource, ScipSymbolInfo,
+    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDiagnostic,
+    ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence, ScipRelationship,
+    ScipSignature, ScipSource, ScipSymbolInfo,
 };

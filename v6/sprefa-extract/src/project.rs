@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use crate::lang::{source_for, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
+use crate::scip_rows::ScipRecords;
 use crate::seams::{
     build_def_index, BlobSource, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
 };
@@ -73,6 +74,9 @@ pub struct ResolveRequest<'a> {
     /// reader, and the resolve arms' SCIP leg needs one to join documents to
     /// content.
     pub project_root: Option<&'a Path>,
+    /// Which SCIP record kinds `scip_facts` produces. Full passthrough by
+    /// default; narrowing is the demand-side lever for its measured cost.
+    pub scip_records: ScipRecords,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -175,7 +179,11 @@ pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectErro
     };
     let blobs = FsBlobSource::new(root);
     let reader = blobs.reader();
-    Ok(crate::wire::flatten_scip(&index, &reader))
+    Ok(crate::scip_rows::flatten_scip_records(
+        &index,
+        &reader,
+        &request.scip_records,
+    ))
 }
 
 /// Serialize scip facts to sorted JSONL lines.

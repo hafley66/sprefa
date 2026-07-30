@@ -24,25 +24,18 @@
 //! encoding is UTF-8. `load` is shared — the wire is indexer-agnostic.
 //!
 //! The generated bindings are committed at `scip/scip_proto.rs` (from the
-//! vendored `proto/scip.proto`); they stay private — only the diet types in
+//! vendored `proto/scip.proto`); they stay private to `crate::scip_decode`,
+//! which owns the protobuf -> flat-types decode. Only the types in
 //! `crate::types` cross the seam.
 
 use std::path::{Path, PathBuf};
 
-use prost::Message;
-
+use crate::scip_decode::load_index;
 use crate::shape::Span;
 use crate::types::{
     OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipOccurrence,
-    ScipRelationship, ScipSource, ScipSymbolInfo,
+    ScipSource,
 };
-
-// doc(hidden): the generated rustdoc carries fenced symbol-grammar examples
-// from scip.proto that are not Rust doctests; hide the module so rustdoc
-// never tries to compile them.
-#[doc(hidden)]
-#[path = "scip/scip_proto.rs"]
-mod proto;
 
 /// scip-typescript 0.4.0 (the ledger ORACLE entry's version). `build` probes
 /// PATH first (v5's `dl index` convention), then falls back to the
@@ -209,14 +202,8 @@ impl ScipSource for ScipGo {
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
-        // The proto is language-agnostic; this is the same decode as
-        // ScipTypescript::load (the 7-line duplication is the audit's deferred
-        // dedup, not new machinery).
-        let bytes = std::fs::read(index_path)
-            .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
-        let index = proto::Index::decode(bytes.as_slice())
-            .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-        Ok(diet(&index))
+        // The proto is language-agnostic, so every indexer shares one decode.
+        load_index(index_path)
     }
 }
 
@@ -229,16 +216,6 @@ fn tail(stderr: &[u8]) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
-}
-
-/// The shared `load` body (one prost decode serves every indexer — the wire is
-/// indexer-agnostic by construction).
-fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
-    let bytes = std::fs::read(index_path)
-        .map_err(|e| ScipError::Parse(format!("read {}: {e}", index_path.display())))?;
-    let index = proto::Index::decode(bytes.as_slice())
-        .map_err(|e| ScipError::Parse(format!("protobuf decode: {e}")))?;
-    Ok(diet(&index))
 }
 
 /// A fresh uniquely-named temp dir (no tempfile dep): base + pid + nanos.
@@ -296,85 +273,6 @@ fn copy_sources(
         }
     }
     Ok(())
-}
-
-/// proto -> diet: keep symbol + range + role (+ display_name/kind/relationships
-/// on symbol infos, position_encoding on documents, the tool identity); drop
-/// docs, diagnostics, signatures, syntax kinds.
-fn diet(index: &proto::Index) -> ScipIndex {
-    let symbol = |si: &proto::SymbolInformation| ScipSymbolInfo {
-        symbol: si.symbol.clone(),
-        display_name: si.display_name.clone(),
-        kind: si.kind,
-        relationships: si
-            .relationships
-            .iter()
-            .map(|rel| ScipRelationship {
-                symbol: rel.symbol.clone(),
-                is_reference: rel.is_reference,
-                is_implementation: rel.is_implementation,
-                is_type_definition: rel.is_type_definition,
-                is_definition: rel.is_definition,
-            })
-            .collect(),
-    };
-    ScipIndex {
-        documents: index
-            .documents
-            .iter()
-            .map(|doc| ScipDocument {
-                relative_path: doc.relative_path.clone(),
-                position_encoding: match doc.position_encoding {
-                    1 => PositionEncoding::Utf8,
-                    2 => PositionEncoding::Utf16,
-                    3 => PositionEncoding::Utf32,
-                    _ => PositionEncoding::Unspecified,
-                },
-                occurrences: doc
-                    .occurrences
-                    .iter()
-                    .filter_map(|occ| {
-                        Some(ScipOccurrence {
-                            symbol: occ.symbol.clone(),
-                            range: occurrence_range(occ)?,
-                            roles: OccurrenceRole(occ.symbol_roles),
-                        })
-                    })
-                    .collect(),
-                symbols: doc.symbols.iter().map(symbol).collect(),
-            })
-            .collect(),
-        external_symbols: index.external_symbols.iter().map(symbol).collect(),
-        tool: index
-            .metadata
-            .as_ref()
-            .and_then(|m| m.tool_info.as_ref())
-            .map(|t| format!("{} {}", t.name, t.version))
-            .unwrap_or_default(),
-    }
-}
-
-/// scip.proto's occurrence range comes in two encodings: the typed oneof
-/// (`single_line_range` / `multi_line_range`, preferred when present) and the
-/// deprecated packed `repeated int32` (`[sl, sc, el, ec]`, or the 3-element
-/// short form `[sl, sc, ec]` with end_line == start_line). Normalize both to
-/// the quad `[start_line, start_col, end_line, end_col]`. Malformed packed
-/// lengths are dropped (v5 `parse_range` parity).
-#[allow(deprecated)] // the packed `range` fallback is the backward-compat law
-fn occurrence_range(occ: &proto::Occurrence) -> Option<[i32; 4]> {
-    match &occ.typed_range {
-        Some(proto::occurrence::TypedRange::SingleLineRange(r)) => {
-            Some([r.line, r.start_character, r.line, r.end_character])
-        }
-        Some(proto::occurrence::TypedRange::MultiLineRange(r)) => {
-            Some([r.start_line, r.start_character, r.end_line, r.end_character])
-        }
-        None => match occ.range.as_slice() {
-            [sl, sc, el, ec] => Some([*sl, *sc, *el, *ec]),
-            [sl, sc, ec] => Some([*sl, *sc, *sl, *ec]),
-            _ => None,
-        },
-    }
 }
 
 /// The line/col -> byte bridge. SCIP ranges are 0-based (line, col) with cols

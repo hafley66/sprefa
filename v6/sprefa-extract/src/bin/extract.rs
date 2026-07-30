@@ -20,7 +20,7 @@ use clap::Parser;
 use sprefa_extract::{
     dispatch, file_fact, flatten, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
     scip_file_edges_jsonl, source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest,
-    ScipMode, SCHEMA,
+    ScipMode, ScipRecords, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
@@ -28,7 +28,7 @@ mod help;
 
 use help::{
     BENCH_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
-    SCIP_BUILD_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
+    SCIP_BUILD_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
 };
 
 #[derive(Parser)]
@@ -87,7 +87,7 @@ struct Cli {
     )]
     scip_deps: bool,
 
-    /// Stream the raw SCIP index as facts: occurrences, symbols, relationships.
+    /// Stream the whole SCIP index as facts, every field the protobuf carries.
     #[arg(
         long,
         requires = "project_root",
@@ -95,6 +95,15 @@ struct Cli {
         long_help = SCIP_FACTS_LONG,
     )]
     scip_facts: bool,
+
+    /// Narrow --scip-facts to a comma-separated list of record kinds.
+    #[arg(
+        long = "scip-record",
+        value_name = "KINDS",
+        requires = "scip_facts",
+        long_help = SCIP_RECORD_LONG,
+    )]
+    scip_record: Option<String>,
 
     /// Prepend one `file` record: path, content digest, byte count, line count.
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
@@ -148,14 +157,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.scip_deps {
-        for line in scip_file_edges_jsonl(&scip_request(&cli))? {
+        for line in scip_file_edges_jsonl(&scip_request(&cli)?)? {
             println!("{line}");
         }
         return Ok(());
     }
 
     if cli.scip_facts {
-        for line in scip_facts_jsonl(&scip_request(&cli))? {
+        for line in scip_facts_jsonl(&scip_request(&cli)?)? {
             println!("{line}");
         }
         return Ok(());
@@ -196,8 +205,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// The SCIP-mode half of the CLI's flags, shared by `--resolve` and
 /// `--scip-facts`.
-fn scip_request(cli: &Cli) -> ResolveRequest<'_> {
-    ResolveRequest {
+fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
+    Ok(ResolveRequest {
         paths: &cli.paths,
         arms: ResolveArms::default(),
         scip: match (&cli.scip_index, cli.scip_build) {
@@ -206,7 +215,11 @@ fn scip_request(cli: &Cli) -> ResolveRequest<'_> {
             (None, false) => ScipMode::Off,
         },
         project_root: cli.project_root.as_deref(),
-    }
+        scip_records: match &cli.scip_record {
+            Some(spec) => ScipRecords::parse(spec)?,
+            None => ScipRecords::all(),
+        },
+    })
 }
 
 fn split_assignment<'a>(flag: &str, value: &'a str) -> Result<(&'a str, &'a str), String> {
@@ -299,7 +312,7 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     };
     let request = ResolveRequest {
         arms,
-        ..scip_request(cli)
+        ..scip_request(cli)?
     };
     for line in resolve_project_jsonl(&request)? {
         println!("{line}");

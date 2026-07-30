@@ -23,6 +23,8 @@ pub mod project;
 pub mod rows;
 pub mod schema;
 pub mod scip;
+pub mod scip_decode;
+pub mod scip_rows;
 pub mod seams;
 pub mod shape;
 pub mod source;
@@ -47,11 +49,13 @@ pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
 };
+pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
 pub use seams::{
     build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,
-    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDocument, ScipError,
-    ScipIndex, ScipOccurrence, ScipRelationship, ScipSource, ScipSymbolInfo,
+    Parser, PositionEncoding, Project, ProjectCx, ProjectDigest, Resolve, ScipDiagnostic,
+    ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence, ScipRelationship,
+    ScipSignature, ScipSource, ScipSymbolInfo,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};

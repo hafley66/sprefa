@@ -33,9 +33,16 @@ RECORD SHAPES
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
   record=file_edge  src_path=<string>  dst_path=<string>  symbols=<u32>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
-  record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>
-  record=scip_symbol  path=<string|null>  symbol=<string>  display_name=<string>  kind=<i32>
+  record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
+  record=scip_document  path=<string>  language=<string>  position_encoding=<i32>  text=<string|null>
+  record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>  import=<bool>  write_access=<bool>  read_access=<bool>  generated=<bool>  test=<bool>  forward_definition=<bool>  syntax_kind=<i32>  enclosing_start=<u32|null>  enclosing_end=<u32|null>
+  record=scip_occurrence_doc  path=<string>  start=<u32>  end=<u32>  pos=<u32>  text=<string>
+  record=scip_diagnostic  path=<string>  start=<u32>  end=<u32>  severity=<i32>  code=<string>  message=<string>  source=<string>  tags=[<i32>]
+  record=scip_symbol  path=<string|null>  symbol=<string>  display_name=<string>  kind=<i32>  enclosing_symbol=<string>
   record=scip_relationship  symbol=<string>  related_symbol=<string>  is_reference=<bool>  is_implementation=<bool>  is_type_definition=<bool>  is_definition=<bool>
+  record=scip_documentation  symbol=<string>  pos=<u32>  text=<string>
+  record=scip_signature  symbol=<string>  language=<string>  text=<string>
+  record=scip_signature_occurrence  symbol=<string>  ref_symbol=<string>  start=<u32>  end=<u32>  roles=<i32>
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
@@ -67,9 +74,17 @@ FIELDS
                line still counts, an empty file is 0.
   symbol       a SCIP symbol string; `local `-prefixed symbols are document-scoped.
   roles        the raw scip.proto SymbolRole bitfield, kept whole.
-  definition   roles & DEFINITION, hoisted out of the bitfield.
+  definition / import / write_access / read_access / generated / test /
+  forward_definition  the seven SymbolRole bits, one column each.
+  syntax_kind  raw scip.proto SyntaxKind ordinal (0 = unspecified).
+  enclosing_start/enclosing_end  the nearest enclosing AST node's byte span,
+               null when the indexer emitted none.
   display_name the symbol's name as scip records it.
+  enclosing_symbol  the owner of a local symbol; empty for global symbols.
   related_symbol  the other end of a scip.proto Relationship.
+  ref_symbol   a symbol referenced inside a signature's text; the start/end on
+               that record are offsets into the SIGNATURE TEXT, not a document.
+  severity/tags  raw scip.proto Severity and DiagnosticTag ordinals.
   src_path/dst_path  the two ends of a file dependency edge.
   symbols      how many distinct symbols cross one file edge.
 
@@ -93,16 +108,27 @@ PHASE-1 LIMITS (default mode)
   carry the referenced type's bare name.
 
 SCIP FACTS MODE (--scip-facts)
-  Streams a loaded SCIP index as raw rows: scip_occurrence, scip_symbol,
-  scip_relationship. Deliberately UNJOINED. A definition is an occurrence with
-  definition true, a reference is one without, a local is a `local `-prefixed
-  symbol, and an implements edge is a scip_relationship with is_implementation.
-  Those filters and joins belong above this binary.
+  Streams a loaded SCIP index as raw rows, EVERY field the protobuf serializes:
+  scip_metadata, scip_document, scip_occurrence, scip_occurrence_doc,
+  scip_diagnostic, scip_symbol, scip_relationship, scip_documentation,
+  scip_signature, scip_signature_occurrence. Deliberately UNJOINED. A definition
+  is an occurrence with definition true, a reference is one without, a local is
+  a `local `-prefixed symbol, and an implements edge is a scip_relationship with
+  is_implementation. Those filters and joins belong above this binary.
+
+  The one thing not passed through is the scip.proto Symbol / Package /
+  Descriptor message family, which is never serialized into an index: those
+  messages describe the grammar of the symbol STRING, which is emitted verbatim.
+
+  --scip-record KINDS narrows the stream. Full passthrough over v6/tsv2 (204
+  indexed documents) is 177,967 rows and 59.4MB, of which scip_occurrence alone
+  is 123,655 rows and 48.5MB.
 
 DEPENDENCY EDGES (--scip-deps)
   Folds a SCIP index into file_edge rows: v6's module graph, produced with no
-  module resolver in the crate at all. Graded against madge over 212 real
-  TypeScript files at recall 0.992 and precision 0.988.
+  module resolver in the crate at all. The indexer already resolved every
+  reference, so the graph falls out of the index. Graded against madge over
+  v6/tsv2: recall 0.992, precision 0.988.
 
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,

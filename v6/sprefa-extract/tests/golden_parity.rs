@@ -234,9 +234,16 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // Opt-in modes, never in `flatten`: `--scip-facts` projects a loaded
             // SCIP index and `--file-fact` the file identity row. Both are
             // pinned by 5_scip_facts_cli.rs.
+            FlatFact::ScipMetadataRow { .. } => {}
+            FlatFact::ScipDocumentRow { .. } => {}
             FlatFact::ScipOccurrenceRow { .. } => {}
+            FlatFact::ScipOccurrenceDocRow { .. } => {}
+            FlatFact::ScipDiagnosticRow { .. } => {}
             FlatFact::ScipSymbolRow { .. } => {}
             FlatFact::ScipRelationshipRow { .. } => {}
+            FlatFact::ScipDocumentationRow { .. } => {}
+            FlatFact::ScipSignatureRow { .. } => {}
+            FlatFact::ScipSignatureOccurrenceRow { .. } => {}
             FlatFact::FileRow { .. } => {}
             FlatFact::FileEdgeRow { .. } => {}
         }
@@ -853,7 +860,7 @@ fn call_resolve_scip_ratchet_ts() {
     }
     eprintln!(
         "[ts-total] scip ratchet ({}) over {} sites: name_resolve {} scip_override {} external-no-edge {} | missing-occurrence {} disagreements {} misses {} overbound {}",
-        scip_index.tool, total_sites, counts.name_resolve, counts.scip_override,
+        scip_index.tool(), total_sites, counts.name_resolve, counts.scip_override,
         counts.external_no_edge, counts.missing_occurrence, counts.disagreements,
         counts.misses, counts.overbound
     );
@@ -1135,7 +1142,7 @@ fn call_resolve_scip_ratchet_go() {
     }
     eprintln!(
         "[go-total] scip ratchet ({}) over {} sites: name_resolve {} scip_override {} external-no-edge {} | missing-occurrence {} disagreements {} misses {} overbound {}",
-        scip_index.tool, total_sites, counts.name_resolve, counts.scip_override,
+        scip_index.tool(), total_sites, counts.name_resolve, counts.scip_override,
         counts.external_no_edge, counts.missing_occurrence, counts.disagreements,
         counts.misses, counts.overbound
     );
@@ -1407,7 +1414,7 @@ fn call_resolve_scip_ratchet_rust() {
     }
     eprintln!(
         "[rust-total] scip ratchet ({}) over {} sites: name_resolve {} scip_override {} external-no-edge {} | missing-occurrence {} disagreements {} misses {} overbound {}",
-        scip_index.tool, total_sites, counts.name_resolve, counts.scip_override,
+        scip_index.tool(), total_sites, counts.name_resolve, counts.scip_override,
         counts.external_no_edge, counts.missing_occurrence, counts.disagreements,
         counts.misses, counts.overbound
     );
