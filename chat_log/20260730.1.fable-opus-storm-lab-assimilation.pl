@@ -107,6 +107,53 @@ bug(diag_rail_template_mismatch_suspect, coordinator_probe,
 bug(glob_root_level_zero_match, coordinator_probe,
     'watch glob **/*.ts matches NOTHING for repo-root-level files under git pathspec (files must sit in a subdir) -- known v5-globset-vs-git-pathspec divergence class, new bite: silent empty world, zero diagnostics; candidate for a load-time warning when a watch glob matches zero enumerated files').
 
+% ── COORDINATOR FINAL THOUGHTS (fable, wind-down) ────────────────────────────
+final_thought(review_gate_pipeline,
+    'the sol-implements/opus-falsifies/sol-fixes loop earned its cost in one pass: the ONLY affirmative claim in the clock landing (A6 proven) was the only wrong claim, and only sabotage found it (all-green batteries reproduced exactly). Make this the default shape for any lane whose deliverable includes a PROVEN row').
+final_thought(unit_maxing_confirmed,
+    'every bug this session was a COMPOSITION bug under all-green suites (depth-2 refs both-directions broken, two-door decl interplay, misnamed refusals at construct junctions). The corpus grades constructs alone; cross terms are ungraded. golden_flex_e2e + its registry coverage gate is the structural answer; treat single-construct fixture additions as insufficient evidence of health from now on').
+final_thought(harness_base_defect_recurring,
+    'the agent-worktree base staleness class bit FIVE times in one session (stale cut x4, mid-run reap x2, fallback-to-shared-tree x1). Coordinator-cut worktrees at the exact sha + explicit-path staging is the only shape that held. Never dispatch Agent isolation:worktree in this repo again without checking the cut base').
+final_thought(language_state,
+    'locked core is real and holding (value plane, host surface, single rel model, storage); the open design mass is concentrated in three places: json/{}-family (directives now set, cards coming), scan/match composition surface, span-spine 3 residual cards. The one standing violation is the match-arm token pair. The doors and the registry are strong enough now that coverage gates can be GENERATED from the registry -- use that everywhere').
+final_thought(dogfood_velocity,
+    'the default-export diag went directive-to-live-rows in under an hour with zero engine edits (ast-pattern host + 5-rule program + served HTTP). The language is genuinely usable for its own tooling now; the parity/spelunk lane tests whether it can also MAINTAIN itself').
+
+% ── WIND-DOWN 2026-07-30 (user out of tokens; agents left RUNNING) ─────
+session_pause('2026-07-30', fable_wind_down_agents_alive).
+pause_tip_note('branch codex/rel-ref-file-span-lab, tip = the comment-rails merge; run git log to find it; all landed work committed, ledger current').
+
+% in_flight(Lane, Where, GateOnLanding). -- DO NOT redispatch; they report on their own.
+in_flight(depth2_ref_fix, 'opus @ ../sprefa-lane-depth2 (lane/depth2-ref-fix)',
+          'verify fail-first fixtures went red first + EXPLAIN SEARCH receipts; re-run full battery; merge branch').
+in_flight(golden_e2e, 'opus @ ../sprefa-lane-golden (lane/golden-e2e)',
+          'verify registry-coverage gate catches a removed construct (red receipt); re-run golden at 0/1/many + served leg; merge; then wire recipe into green-all').
+in_flight(json_syntax_lab, 'opus @ ../sprefa-lane-jsonlang (lane/json-syntax-lab)',
+          'CARDS ONLY -- no production syntax may land from this lane; relay the exact spelling card list to the user for sign-off (no-unsighted-syntax law)').
+in_flight(openapi_codegen_lab, 'opus @ ../sprefa-lane-openapi (lane/openapi-codegen)',
+          'verify parity-gate red/green receipt + emitted openapi.json validates; cards to user; merge lab as design record').
+in_flight(v5_parity_spelunk, 'opus @ ../sprefa-lane-spelunk (lane/v5-parity-spelunk)',
+          'verify parity table reconciles the scan()-105/129 receipt; git-diags rail red+green receipts; merge').
+in_flight(flow_residue_partial, 'codex terra STOPPED, dirty tree @ ../sprefa-codex-flowres',
+          'blocked on serve-lifecycle race (golden lane owns the fix); after that, resume terra session or fold its reconstructed tables; findings doc in that tree').
+
+% next_coordinator(OrderedActions).
+next_coordinator([
+    read_each_lane_report_and_run_its_gate,
+    merge_by_sha_only_after_gate,
+    update_this_ledger_per_landing,
+    cleanup_merged_worktrees('codex-clockcheck, codex-comrails, codex-flowres after fold; lane/* trees after merge; stray .claude/worktrees/clock-checker-resume + branch (draft 3eb59512 superseded by merged clock work -- verify then delete)'),
+    rerun_crawl_bench_v6_leg_post_batching('grafana 40 f/s number is stale-pessimistic'),
+    present_user_cards
+]).
+
+% user_cards_open (consolidated, present on next contact):
+user_card(match_arm_tokens, 'ratify |-> |+> into rulings.pl vs revert 9cadb419 to arrow reuse -- the one standing syntax violation').
+user_card(json_spelling_cards, 'json-syntax lab will return exact spellings (json5 braces, holes, list types) -- sign-off before any parser edit').
+user_card(filespan_three, 'rev-family naming; line/col residency (in-language newline rows vs provider); work-revision identity').
+user_card(fold_blocked_labs, 'scan_surface composition cards; json_interop module policy; select_scan_cache + generic_scan choices').
+user_card(push_and_tag, 'main + v6.2.0 tag push remain user-gated; lab branch pushed to origin periodically by sol convention').
+
 % finding(Name, Severity, Text). -- appended as review proceeds.
 finding(match_arm_new_tokens_unruled, syntax_violation,
         'commit 9cadb419 minted |-> and |+> as NEW text-door tokens for guards-first match arms (prior match_arm reused <- / <+ head-first); rulings.pl byte-unchanged across the branch, only authority is an unattributed surface_ruling/2 in the agent-written completion-drive plan WHICH FORBIDS new spellings 8 lines earlier; term form unchanged, 23 .dl6 fixtures hard-migrated; USER CARD: ratify into rulings.pl vs revert to arrow reuse').
