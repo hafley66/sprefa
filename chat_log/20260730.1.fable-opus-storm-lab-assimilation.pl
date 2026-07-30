@@ -256,3 +256,23 @@ directive(surface_blockers_immediately,
           'user 2026-07-30: "please for godsake bring this up immediately next time we are going lightspeed". Standing coordinator duty: open design cards and FOLD-BLOCKED labs get surfaced at the TOP of a status report, not on request. A blocked lab is idle capital. Current biggest single unblock: scan_surface_composition (one user decision frees 3 labs: scan_surface_composition, scan_match_reconciliation, generic_scan_instantiation, and select_scan_cache rides the same axis)').
 finding(labs_not_assimilated, standing,
         '10 labs alive on disk against a lab protocol that says labs die on landing. 2 deliberately alive (json_syntax, openapi_codegen -- their cards would promote them). 8 are debt: rel_value_unification (12 files, BIGGEST, and it is the same territory as the users rel-as-value question -- pointed the running lab at it), ghcacher_tick_golden (7), rel_definition_hash, json_interop, scan_surface_composition, scan_match_reconciliation, generic_scan_instantiation, select_scan_cache').
+
+% ── DESIGN THREAD 2026-07-30 (user + coordinator, OPEN TENSION, not rulings) ──
+% design_tension(Name, Text). Nothing here is settled; two labs are grading it.
+:- discontiguous design_tension/2.
+design_tension(identity_vs_flattening_conflated,
+    'user: we over-indexed on unique keys. IDENTITY (which row wins) is answered by keys and normal forms and is solid. FLATTENING (how many inners run, what happens to losers) has NO spelling and is hardcoded to concat. distinctUntilChanged(byKey) is not switchMap; switchMap flattens every matching source event and tears down losers. Two axes, one mechanism').
+design_tension(effect_plane_deaf_to_retraction,
+    'measured by the rxoracle harness: HostRunner.liveDemand$ reads delta.add and NOTHING anywhere reads delta.del. There is no site at which a teardown could fire. Consequences measured: superseded inner runs to completion, its answer lands durably and is memoized, and concatMap makes the loser BLOCK its successor for the losers full duration. sprefa does not cancel, it memoizes').
+design_tension(nothing_has_a_stream_type,
+    'a rel is a TABLE, the tick is the ONLY time axis, deltas are derived per tick. A stream cannot be named, bound, passed or returned. Every rel HAS a delta stream; no rel IS one. Consequence: switchMap cannot be hosted as a construct whose result is a new stream, because there is no slot for a stream to land in; its result would have to be a new REL, which returns the question to tables').
+design_tension(two_doors_for_flattening,
+    'DOOR 1 the language expresses it: delta.del reaches the effect plane, an ordinal makes newest-wins ordinary data, switch becomes a rule (retract demand rows not at the latest ordinal). Cost: nothing new in the type system. |-> arms + finalize + keyed replace already carry most of it; the missing piece is mechanical. DOOR 2 host switchMap as a construct: needs a stream type or a rel-that-is-a-stream, which fights locked(single_rel_type_system). Lanes lane/teardown-flatten and lane/rel-as-stream are grading both').
+design_tension(scan_forces_a_state_model,
+    'user objection: scan sucks because it forces a state model. Measured in rxoracle scan_state_feedback: events +1 +1 +2 give rxjs 1,2,4 (every intermediate an event) and sprefa the correct total 5 with the intermediate 4 COMPUTED and CONSUMED and not an event anywhere. Datalog hands you STATE, not the sequence of states. Getting the sequence means making it a rel (log + ordinal), which is the honest lowering rather than a workaround').
+design_tension(tier_zero_test,
+    'the standard the user set for any new syntax: classify every wanted construct as (a) sugar over an existing lowering, (b) a new lowering of existing semantics, or (c) TIER 0, a genuinely new semantic no lowering over current constructs can express. Only (c) justifies syntax. Prove tier-0-ness, never assert it').
+design_tension(north_star_reading_order,
+    'user standing intent: the language should eventually read left to right, top down, point free, FRP/rxjs flavored. |-> and |+> were ratified 2026-07-30 for exactly this reason. A spelling only a compiler author can read is a wrong answer even when it lowers correctly').
+design_tension(no_dot_syntax_on_rels,
+    'measured: zero registry rows, zero SYNTAX.md mentions. Two accessors exist and do the same job -- the relation pattern (located(span(file(_, fpath(P)),_,_),_)) and the decode chain. A dot would be a THIRD spelling for the same access. Card, not a gap').
