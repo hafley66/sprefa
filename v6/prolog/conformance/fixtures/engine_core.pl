@@ -14,6 +14,31 @@ fixture(retention_count_prunes_oldest,
   [ [ +event(one) ], [ +event(two) ], [ +event(three) ] ],
   [ final(event/1, [ event(three), event(two) ]) ]).
 
+% Retention reports the reclamation. The prune is an ordinary minus delta at
+% the tick boundary, so the bound the program declared is graded rather than
+% inferred from the final state.
+%
+% FAIL-FIRST: red on both doors before the retention-minus change
+% (plans/2026-07-30-time-plane-unification-verdict.md recommendation 1). The
+% oracle's boundary_deltas/6 diffed stamps in one direction only (new stamps
+% became LogAdds, vanished stamps became nothing) and the emitter's
+% boundaryDelta suppressed a log rel's negative weight behind a
+% `kind === "set"` guard, so both doors dropped the prune symmetrically. The
+% pre-change reading was tick 3 = [ +event(three) ] with no minus, which is
+% the retention-grading gap this fixture closes.
+%
+% R7 is not weakened: the minus does not say the occurrence un-happened, it
+% says the STORAGE row was reclaimed under a bound the program declared.
+% Only keep(...) can emit it; retract_from_log/1 still throws.
+fixture(retention_prune_is_a_visible_minus,
+  prog([ kind(event/1, log), keep(event/1, count(2)) ],
+       []),
+  [],
+  [ [ +event(one) ], [ +event(two) ], [ +event(three) ] ],
+  [ deltas(event/1, [ [ +event(one) ],
+                      [ +event(two) ],
+                      [ -event(one), +event(three) ] ]) ]).
+
 % A Log rel without a keep clause is a load error (q10: REQUIRED).
 fixture(log_without_retention_rejected,
   prog([ kind(event/1, log) ], []),
