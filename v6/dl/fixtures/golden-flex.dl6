@@ -88,29 +88,29 @@
 #                                  through `:=` first does not help, because
 #                                  `:=` stores the unevaluated call.
 #
-#   norm/1  --  NEW LIVE DEFECT, NOT A REFUSAL. `expression(norm/1, text_scalar,
-#                                  ...)` is a LIVE registry row with ZERO
-#                                  conformance coverage (grep: no fixture
-#                                  mentions it), and the two engines DISAGREE:
+#   norm/1  --  WAS a live defect and is now GRADED HERE (display_key below).
+#                                  `expression(norm/1, text_scalar, ...)` shipped
+#                                  as a live registry row with a SQL rendering,
+#                                  no reference implementation, and zero
+#                                  conformance coverage, so the two engines
+#                                  disagreed:
 #                                    program  route_key(Raw, norm(Raw)) <- route(Raw).
 #                                    arrival  route("Hello World")
 #                                    oracle   route_key["Hello World","norm(Hello World)"]
 #                                    emitter  route_key["Hello World","helloworld"]
-#                                  The oracle stores the unevaluated term; the
-#                                  emitter lowers it to SQL and evaluates it.
-#                                  `norm` is therefore UNGRADEABLE and cannot
-#                                  appear in this program. scripts/golden-flex.sh
-#                                  runs that exact two-line probe as an INVERTED
-#                                  receipt: it asserts the divergence still
-#                                  exists, so whoever fixes the oracle side is
-#                                  told, by a red gate, to promote norm into
-#                                  this file.
+#                                  The oracle held the unevaluated term; the
+#                                  emitter lowered it to SQL and evaluated it.
+#                                  conformance/body.pl now evaluates the whole
+#                                  text_scalar FAMILY off the registry row, the
+#                                  inverted receipt that guarded this absence is
+#                                  gone from scripts/golden-flex.sh, and norm is
+#                                  graded on all four cardinalities like every
+#                                  other live row.
 #
 # ═══ DEFECTS THIS PROGRAM SURFACED (index; each is written up where it lives)
 #
-#   norm/1 diverges oracle vs emitter                 header above; the inverted
-#                                                     receipt is step 5 of
-#                                                     tsv2/scripts/golden-flex.sh
+#   norm/1 diverged oracle vs emitter  FIXED             header above; graded by
+#                                                     display_key below
 #   float/bool unspellable in sh + bind decls         header above
 #                                                     (parse_dl.pl
 #                                                     decl_b_column_type/5)
@@ -209,6 +209,13 @@ rel display(tree_id: int, note: text).
 display(TreeId, Note) <-
   next(monitored(TreeId, Species)),
   Note := concat(['tree ', TreeId, ' is ', Species, " (monitored)"]).
+
+# norm/1, the registered text scalar (V5 `sprf_norm`): ASCII letters and digits
+# retained, letters lowercased, everything else dropped. The input is the
+# concat above, which carries spaces and parentheses, so the dropping is
+# visible in the graded row and not only the lowercasing.
+rel display_key(tree_id: int, key: text).
+display_key(TreeId, norm(Note)) <- display(TreeId, Note).
 
 # `<`, `=<` and `>=`, the three remaining ordered comparisons, over the float
 # column -- so the float type is exercised by more than storage.
