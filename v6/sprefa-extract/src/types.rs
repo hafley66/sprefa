@@ -414,12 +414,21 @@ pub struct CallSite {
 /// 4b evolution path if TS's from-clause needs a separate source field —
 /// FLAGGED for human review. 4b-ii: `TsSource` collects these (see lang/ts.rs
 /// `module_specifiers`); the from-module field was NOT needed yet (nothing
-/// consumes specifiers before Resolve<CallF>), so it stays unadded.
+/// consumes specifiers before Resolve<CallF>), so it stayed unadded.
+///
+/// THE FROM-MODULE GAP IS CLOSED as of the diet-resolution lane: `module` is
+/// the source module text as written (`./x.ts`, `rxjs`, `node:fs`), and it is
+/// what `crate::deps` resolves to a file path. The gap was real, not stylistic
+/// — with a bound name and no module, a specifier row states that something
+/// entered scope and refuses to say from where, which makes the module graph
+/// inexpressible from phase-1 rows. `None` is for the languages that emit
+/// specifiers with the module already in `name` (go's path-only imports).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Specifier {
     pub span: Span,
     pub name: NameId,
     pub kind: SpecifierKind,
+    pub module: Option<NameId>,
 }
 
 /// How the name enters scope. The seed's `BindingKind` vocabulary
@@ -1423,6 +1432,9 @@ pub enum FlatFact {
         span: SpanOut,
         name: String,
         kind: String,
+        /// The source module as written, null when the language puts the
+        /// module in `name` (path-only forms).
+        module: Option<String>,
     },
     /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,
     /// content-keyed by `to_blob` (hex). The 4a wire ruling: ONE arm carries

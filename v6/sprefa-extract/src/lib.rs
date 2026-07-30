@@ -16,6 +16,7 @@
 //! `--bench`. Proves bin -> seams -> flat wire -> stdout end to end.
 #![allow(dead_code)]
 
+pub mod deps;
 pub mod dispatch;
 pub mod family;
 pub mod lang;
@@ -31,6 +32,7 @@ pub mod source;
 pub mod types;
 pub mod wire;
 
+pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
 pub use family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF, DfFAux,

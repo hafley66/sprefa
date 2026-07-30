@@ -914,8 +914,10 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                     import.source.span,
                     &import.source.value,
                     SpecifierKind::SideEffect,
+                    &import.source.value,
                 ),
                 Some(specs) => {
+                    let module = import.source.value.as_str();
                     for spec in specs {
                         match spec {
                             ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
@@ -925,6 +927,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     named.span,
                                     &named.local.name,
                                     SpecifierKind::Named,
+                                    module,
                                 )
                             }
                             ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
@@ -934,6 +937,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     default.span,
                                     &default.local.name,
                                     SpecifierKind::Default,
+                                    module,
                                 )
                             }
                             ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
@@ -943,6 +947,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     ns.span,
                                     &ns.local.name,
                                     SpecifierKind::Namespace,
+                                    module,
                                 )
                             }
                         }
@@ -952,10 +957,17 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
             ts::Statement::ExportNamedDeclaration(export) => {
                 // `export {a} from './m'` only; `export {a}` (no source) is a
                 // local export marker, not a module specifier.
-                if export.source.is_some() {
+                if let Some(source) = &export.source {
                     for spec in &export.specifiers {
                         let name = module_export_name(&spec.exported);
-                        push_specifier(sink, strings, spec.span, &name, SpecifierKind::Reexport);
+                        push_specifier(
+                            sink,
+                            strings,
+                            spec.span,
+                            &name,
+                            SpecifierKind::Reexport,
+                            &source.value,
+                        );
                     }
                 }
             }
@@ -969,6 +981,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                         exported.span(),
                         &name,
                         SpecifierKind::Reexport,
+                        &export.source.value,
                     );
                 }
                 // `export * from './m'`: path-only form — name = the module path.
@@ -978,6 +991,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                     export.source.span,
                     &export.source.value,
                     SpecifierKind::Reexport,
+                    &export.source.value,
                 ),
             },
             _ => {}
@@ -991,11 +1005,13 @@ fn push_specifier(
     span: oxc_span::Span,
     name: &str,
     kind: SpecifierKind,
+    module: &str,
 ) {
     sink.aux.specifiers.push(Specifier {
         span: to_span(span),
         name: strings.intern(name),
         kind,
+        module: Some(strings.intern(module)),
     });
 }
 

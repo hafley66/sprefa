@@ -156,6 +156,7 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             span: SpanOut::new(spec.span.start, spec.span.end()),
             name: strings.lookup(spec.name).to_string(),
             kind: spec.kind.as_str().to_string(),
+            module: spec.module.map(|id| strings.lookup(id).to_string()),
         });
     }
     out

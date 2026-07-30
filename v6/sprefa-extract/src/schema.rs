@@ -27,7 +27,7 @@ RECORD SHAPES
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
-  record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>
+  record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
@@ -72,6 +72,8 @@ FIELDS
   bytes        the file's length in bytes.
   lines        the file's line count as an editor shows it: an unterminated last
                line still counts, an empty file is 0.
+  module       a specifier's source module as written, null when the language
+               puts the module in `name` (path-only forms).
   symbol       a SCIP symbol string; `local `-prefixed symbols are document-scoped.
   roles        the raw scip.proto SymbolRole bitfield, kept whole.
   definition / import / write_access / read_access / generated / test /
@@ -124,11 +126,18 @@ SCIP FACTS MODE (--scip-facts)
   indexed documents) is 177,967 rows and 59.4MB, of which scip_occurrence alone
   is 123,655 rows and 48.5MB.
 
-DEPENDENCY EDGES (--scip-deps)
-  Folds a SCIP index into file_edge rows: v6's module graph, produced with no
-  module resolver in the crate at all. The indexer already resolved every
-  reference, so the graph falls out of the index. Graded against madge over
-  v6/tsv2: recall 0.992, precision 0.988.
+DEPENDENCY EDGES (--scip-deps and --deps)
+  Both fold to the SAME file_edge record, so the module graph is one relation
+  regardless of which resolver filled it.
+  --scip-deps folds a SCIP index: the indexer already resolved every reference,
+  so the graph falls out of the index with no module resolver in the crate.
+  Graded against madge over v6/tsv2: recall 0.992, precision 0.988.
+  --deps resolves import and export-from specifiers syntactically instead, with
+  no indexer subprocess. Best effort; graded against the same oracle on the same
+  corpus at recall 1.000 and precision 1.000, which measures agreement with
+  another syntactic scanner and NOT correctness: the 9 edges --scip-deps has and
+  madge lacks are inferred type references with no import statement, and no
+  syntactic resolver can see them.
 
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,

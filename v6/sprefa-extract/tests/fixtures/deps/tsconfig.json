@@ -1,0 +1,10 @@
+{
+  // A comment and a trailing comma, because real tsconfigs carry both and the
+  // diet resolver's reader has to survive them.
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["lib/*"],
+    },
+  },
+}

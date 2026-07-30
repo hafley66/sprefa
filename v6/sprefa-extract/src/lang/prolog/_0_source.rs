@@ -218,6 +218,9 @@ fn project_directive(
         span: span(source),
         name: strings.intern(text(source, src)),
         kind: SpecifierKind::SideEffect,
+        // A path-only form: prolog's use_module/consult argument IS the module,
+        // and it already sits in `name`. No second copy.
+        module: None,
     });
 }
 

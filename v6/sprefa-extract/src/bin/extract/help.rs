@@ -154,6 +154,23 @@ asked for.
 An unknown kind is an error, never a silent drop: a typo would otherwise print
 an empty stream that reads as 'this index has no such facts'.";
 
+pub const DEPS_LONG: &str = "\
+DIET module resolution: parse the supplied TypeScript files, read their import
+and export-from specifiers, and resolve each one to a file path syntactically.
+Emits the same file_edge rows as --scip-deps, so the module graph is one
+relation regardless of which resolver filled it, with symbols counting the
+distinct bound names crossing the edge.
+
+No indexer subprocess and no type checker. The supplied paths are BOTH the
+corpus and the resolution universe: a specifier resolving outside them yields no
+edge. Rules applied, in order: exact relative path; the NodeNext emitted-name
+rewrite (./x.js -> ./x.ts); extension inference; directory index files; then
+tsconfig paths and baseUrl. A bare specifier no tsconfig rule claims stops at
+the node_modules boundary, which is a stated stop and not a failure.
+
+BEST EFFORT, and allowed to lose to --scip-deps. tools/1_madge_oracle.sh diet
+is where the loss is measured.";
+
 pub const FILE_FACT_LONG: &str = "\
 Prepend one `file` record carrying the path, the content digest every resolved
 edge is keyed on, the byte count and the line count. Off by default so existing

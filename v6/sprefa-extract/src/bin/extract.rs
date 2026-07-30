@@ -18,16 +18,16 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    dispatch, file_fact, flatten, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
-    scip_file_edges_jsonl, source_for, AstPatternQuery, FamilyMask, ResolveArms, ResolveRequest,
-    ScipMode, ScipRecords, SCHEMA,
+    deps::diet_file_edges_jsonl, dispatch, file_fact, flatten, query_patterns,
+    resolve_project_jsonl, scip_facts_jsonl, scip_file_edges_jsonl, source_for, AstPatternQuery,
+    FamilyMask, ResolveArms, ResolveRequest, ScipMode, ScipRecords, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
 mod help;
 
 use help::{
-    BENCH_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
+    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
     SCIP_BUILD_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
 };
 
@@ -105,6 +105,15 @@ struct Cli {
     )]
     scip_record: Option<String>,
 
+    /// Stream file_edge rows resolved syntactically, with no SCIP index.
+    #[arg(
+        long,
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve", "scip_facts", "scip_deps", "file_fact"],
+        long_help = DEPS_LONG,
+    )]
+    deps: bool,
+
     /// Prepend one `file` record: path, content digest, byte count, line count.
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
     file_fact: bool,
@@ -153,6 +162,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.resolve {
         stream_resolve(&cli)?;
+        return Ok(());
+    }
+
+    if cli.deps {
+        for line in diet_file_edges_jsonl(&scip_request(&cli)?)? {
+            println!("{line}");
+        }
         return Ok(());
     }
 
