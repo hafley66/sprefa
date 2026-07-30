@@ -44,9 +44,11 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('0_body_walk', [body_wrapper_refs/4]).
+:- use_module('0_body_walk', [body_wrapper_refs/4, walk_body/3]).
 :- use_module('0_type_plane',
-              [ type_definitions/2, type_cycle_witness/2, declared_type_name/2 ]).
+              [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
+                type_definition/4, relation_columns_and_types/5,
+                relation_value_shape/3 ]).
 :- use_module('compile/registry', [surface_for_term/6]).
 
 :- op(1150, xfx, <-).
@@ -186,6 +188,40 @@ program_violation(column_type_unknown, prog(Decls, _), Name) :-
     \+ memberchk(Name, [int, text, json, bool, float]),
     \+ declared_type_name(Types, Name).
 
+% An argument sitting in a ref-typed column that is not a relation value of
+% that column's type. `span(file(Repo, At), Start, End)` is a relation value;
+% `span('src/a.rs', ...)`, `span(fpath(Name), ...)` and `span(file(Repo), ...)`
+% are three ways of not being one.
+%
+% This exists because the shape used to be caught only BY ACCIDENT. The emitter
+% compiled any compound argument into `json_extract(<column>, '$.fn') = ...`;
+% for a ref column that column holds an INTEGER endpoint, so the extract was
+% always NULL and the rule answered nothing. The pre-existing
+% join_column_type_mismatch refusal fired only when the phantom TEXT expression
+% happened to land against an INT column -- a coincidence of the OTHER
+% operand's typing. Against a text column, and `path` is text, nothing fired.
+% (plans/2026-07-30-file-span-spine-reconciled.md section 3.2.)
+%
+% The search descends through well-formed relation values, so a bad leaf under
+% a good parent is reported at the leaf, naming the leaf's own column.
+program_violation(relation_pattern_not_a_relation_value, prog(Decls, Rules),
+                  pattern(Ref, Column, TypeName, Value)) :-
+    type_definitions(Decls, Types),
+    Types \== [],
+    member(Rule, Rules),
+    rule_relation_atom(Rule, Atom),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    AtomRef = Name/Arity,
+    relation_columns_and_types(Decls, Types, AtomRef, Columns, ColumnTypes),
+    nth1(Position, ColumnTypes, DeclaredType),
+    declared_type_name(Types, DeclaredType),
+    nth1(Position, Columns, AtomColumn),
+    arg(Position, Atom, Argument),
+    relation_argument_violation(Types, AtomRef, AtomColumn, DeclaredType,
+                                Argument, pattern(Ref, Column, TypeName, Value)),
+    !.
+
 % ── the two classes only the oracle used to check ────────────────────────────
 
 % A Log relation with no keep/2 is unbounded history by accident rather than
@@ -209,3 +245,43 @@ program_violation(aggregate_in_edge_head, prog(_, Rules), Ref) :-
 declared_column_type_use(Decls, Name) :- member(col_type(_, _, Name), Decls).
 declared_column_type_use(Decls, Name) :-
     member(type_decl(_, Specs), Decls), member(col(_, Name), Specs).
+
+% ── helpers for the relation-pattern class ───────────────────────────────────
+
+% Head and every relation atom a body reaches, including the atom inside a
+% latest/pre/finalize wrapper and inside any depth of not/1. A registry
+% construct that is not one of those wrappers (decode/2, a comparison, `:=`)
+% carries no rel columns at all -- its arguments are patterns and expressions
+% -- so it is skipped rather than walked into.
+rule_relation_atom((Head <- _), Head).
+rule_relation_atom((Head <+ _), Head).
+rule_relation_atom((_ <- Body), Atom) :- body_relation_atom(Body, Atom).
+rule_relation_atom((_ <+ Body), Atom) :- body_relation_atom(Body, Atom).
+
+body_relation_atom(Body, Atom) :-
+    walk_body(Body, walk_policy(descend_not(true), splice_bare(true)), Events),
+    member(event(_, _, Surface, Term), Events),
+    (   Surface == plain_atom
+    ->  Atom = Term
+    ;   nonvar(Term),
+        functor(Term, Wrapper, 1),
+        memberchk(Wrapper, [latest, pre, finalize]),
+        arg(1, Term, Atom)
+    ).
+
+% One argument in a ref-typed column. A well-formed relation value is not a
+% violation by itself; the search continues INTO it, so the reported column is
+% the innermost one that actually holds the bad term.
+relation_argument_violation(Types, Ref, Column, TypeName, Value, Violation) :-
+    nonvar(Value),
+    (   relation_value_shape(Types, TypeName, Value)
+    ->  type_definition(Types, TypeName, Columns, ColumnTypes),
+        length(Columns, Arity),
+        nth1(Position, ColumnTypes, ChildType),
+        declared_type_name(Types, ChildType),
+        nth1(Position, Columns, ChildColumn),
+        arg(Position, Value, ChildValue),
+        relation_argument_violation(Types, TypeName/Arity, ChildColumn,
+                                    ChildType, ChildValue, Violation)
+    ;   Violation = pattern(Ref, Column, TypeName, Value)
+    ).

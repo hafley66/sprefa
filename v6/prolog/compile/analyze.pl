@@ -1092,7 +1092,13 @@ check_supported_subset_expanded(Program) :-
     shared_refusal(Program, [ key_position_out_of_range,
                               key_position_duplicate,
                               type_cycle,
-                              column_type_unknown ]),
+                              column_type_unknown,
+                              % Ahead of every rule-shape check, in the same
+                              % slot engine.pl:engine_check_order/1 gives it:
+                              % a ref column holding a non-relation term used
+                              % to compile into a json_extract of an INTEGER
+                              % endpoint, which is NULL and answers nothing.
+                              relation_pattern_not_a_relation_value ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1138,6 +1144,9 @@ shared_refusal(Program, Order) :-
     ).
 
 compiler_refusal(type_cycle,            Names, type_cycle(Names)).
+compiler_refusal(relation_pattern_not_a_relation_value,
+                 pattern(Ref, Column, TypeName, Value),
+                 relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(key_position_out_of_range, Payload, Payload).
 compiler_refusal(key_position_duplicate,    Payload, Payload).

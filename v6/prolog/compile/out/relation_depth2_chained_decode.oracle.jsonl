@@ -1,0 +1,1 @@
+{"tick":1,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"add":[["acme","src/a.rs",10,20]],"del":[]},"repo":{"add":[["acme"]],"del":[]},"span":{"add":[[{"at":{"name":"src/a.rs"},"repo":{"name":"acme"}},10,20]],"del":[]}}}

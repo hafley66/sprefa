@@ -1,0 +1,1 @@
+{"final":{"dfound":[["src/a.rs","def"]],"file":[[{"name":"acme"},{"name":"src/a.rs"}]],"fpath":[["src/a.rs"]],"located":[[{"end":20,"file":{"at":{"name":"src/a.rs"},"repo":{"name":"acme"}},"start":10},"def"]],"nfound":[["src/a.rs","def"]],"rawk":[["acme","src/a.rs",10,20,"def"]],"repo":[["acme"]],"span":[[{"at":{"name":"src/a.rs"},"repo":{"name":"acme"}},10,20]]}}

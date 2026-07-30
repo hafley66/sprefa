@@ -1,0 +1,1 @@
+{"final":{"file":[[{"name":"acme"},{"name":"src/a.rs"}]],"fpath":[["src/a.rs"]],"hit":[[10]],"raw":[["acme","src/a.rs",10,20]],"repo":[["acme"]],"span":[[{"at":{"name":"src/a.rs"},"repo":{"name":"acme"}},10,20]]}}

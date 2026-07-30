@@ -149,11 +149,13 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze).
-:- use_module(registry, [expression/5]).
+:- use_module(registry, [expression/5, body_surface_for_term/6]).
 :- use_module('../0_type_plane',
               [ type_definitions/2, type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
-                type_field_values/4, declared_type_name/2 ]).
+                type_field_values/4, declared_type_name/2,
+                relation_value_shape/3 ]).
+:- use_module('../0_body_walk', [walk_body/3]).
 :- use_module('../conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
@@ -938,6 +940,200 @@ dictionary_relplans(Types, Plans) :-
               length(Columns, Width), DictArity is Width + 1,
               maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds) ),
             Plans).
+
+% ═══ relation-value terms as dictionary joins ═══════════════════════════════
+%
+% The other dereference spelling. `decode/2` reads a value's fields by name;
+% a relation-shaped TERM reads (or builds) them positionally:
+%
+%   rel repo(name: text).  rel fpath(name: text).
+%   rel file(repo: repo, at: fpath).
+%   rel span(file: file, start: int, end: int).
+%
+%   span(file(repo(Name), fpath(Path)), Start, End) <- raw(Name, Path, Start, End).
+%   coord(Path, Start, End) <- span(file(_, fpath(Path)), Start, End).
+%
+% Both directions lower to the SAME thing decode/2 lowers to -- one
+% `__ref_<type>` atom per level -- and that is the whole content of the fix.
+% Only depth 1 worked before: bind_reference_target_identity/6 binds a whole
+% body atom to its alias's `__id`, so a head argument that IS a body atom
+% projects the endpoint, and nothing else did. A relation term nested one level
+% further fell through compile_pattern_arg/7's generic compound branch and
+% compiled to `json_extract(b1."repo", '$.fn') = 'repo'` against b1."repo",
+% which is the INTEGER endpoint the level above just wrote.
+% json_extract(<integer>, ...) is NULL, so the rule was permanently empty with
+% no refusal (plans/2026-07-30-file-span-spine-reconciled.md section 3.1).
+%
+% The rewrite, per rule:
+%
+%   span(V_file, Start, End) <-
+%     raw(Name, Path, Start, End),
+%     file(V_repo, V_at),                  % the target-membership atom, its
+%                                          % own arguments rewritten
+%     '__ref_repo'(V_repo, Name),          % children first, post-order
+%     '__ref_fpath'(V_at, Path),
+%     '__ref_file'(V_file, V_repo, V_at).  % the parent last
+%
+%   coord(Path, Start, End) <-
+%     span(V_file, Start, End),
+%     '__ref_fpath'(V_at, Path),
+%     '__ref_file'(V_file, _, V_at).
+%
+% Every join is `<parent>."<column>" = <child>."__id"` or a leaf equality
+% against a declared column, so every hop is an indexed SEARCH: __id is the
+% INTEGER PRIMARY KEY and the value columns carry the identity UNIQUE. Receipts
+% in v6/tsv2/tests/relationDepth.test.ts.
+%
+% Two details that are load-bearing rather than incidental:
+%
+%   MEMOIZED BY TERM IDENTITY within one rule, so the `repo(Name)` a head
+%   builds and the `repo(Name)` its target-membership atom carries resolve to
+%   ONE variable and ONE dictionary atom. Without it the two occurrences join
+%   the same table twice with nothing relating them.
+%
+%   POST-ORDER, children before the parent, matching type_topological_order/2
+%   and the intern order. SQLite reorders the FROM list itself, so this is
+%   about the emitted text reading in dependency order rather than about the
+%   plan.
+%
+% Positions the rewrite does not reach are NAMED REFUSALS, never silence:
+% relation_pattern_not_lowerable/1 below runs over the rewritten rule and
+% refuses anything left behind (a relation term under not/1, or inside a
+% splice construct). Those are compiler capability limits -- the reference
+% engine executes all of them -- so they live here and not in
+% 0_program_check.pl, per that file's own division of labour.
+
+% Edge rules do not get this rewrite. edge_statements_for_rule/3 compiles a
+% trigger occurrence against RelPlans alone -- the dictionary plans are level-
+% body-only by construction (Edge 2, see the comment at the call site) -- so
+% there is nowhere for the per-level join to go. A relation value in an edge
+% rule is therefore a named compiler refusal rather than the whole-atom
+% endpoint bind it used to get at depth 1, which agreed with nothing: the
+% oracle stores the canonical object and prints its JSON, and the depth-1 bind
+% printed prolog term text. The reference engine keeps executing all of these;
+% this is a capability limit, and the honest shape for one is a name.
+check_edge_rule_relation_values(Types, RelPlans, (Head <+ Body)) :-
+    !,
+    (   relation_pattern_residue(Types, RelPlans, Head, Body,
+                                 relation_pattern_not_lowerable(Ref, Column,
+                                                                TypeName, Value))
+    ->  throw(unsupported_construct(
+                  relation_value_in_edge_rule(Ref, Column, TypeName, Value)))
+    ;   true
+    ).
+check_edge_rule_relation_values(_, _, _).
+
+expand_relation_pattern_rules(Types, RelPlans, Rules0, Rules) :-
+    (   Types == []
+    ->  Rules = Rules0
+    ;   maplist(expand_relation_pattern_rule(Types, RelPlans), Rules0, Rules)
+    ).
+
+expand_relation_pattern_rule(Types, RelPlans, (Head0 <- Body0), (Head <- Body)) :- !,
+    conjunction_goals(Body0, Goals0),
+    rewrite_relation_atom(Types, RelPlans, Head0, Head, st([], []), State1),
+    rewrite_relation_goals(Types, RelPlans, Goals0, Goals, State1,
+                           st(_, DictionaryAtoms)),
+    append(Goals, DictionaryAtoms, AllGoals),
+    goals_conjunction(AllGoals, Body),
+    check_relation_patterns_lowered(Types, RelPlans, Head, Body).
+expand_relation_pattern_rule(_, _, Rule, Rule).
+
+rewrite_relation_goals(_, _, [], [], State, State).
+rewrite_relation_goals(Types, RelPlans, [Goal0 | Rest0], [Goal | Rest],
+                       State0, State) :-
+    (   nonvar(Goal0),
+        body_surface_for_term(Goal0, _, _, _, _, _)
+    ->  Goal = Goal0, State1 = State0         % registry construct: not an atom
+    ;   rewrite_relation_atom(Types, RelPlans, Goal0, Goal, State0, State1)
+    ),
+    rewrite_relation_goals(Types, RelPlans, Rest0, Rest, State1, State).
+
+% One atom's ARGUMENTS. The atom keeps its name and arity; only a ref-typed
+% column holding a relation term changes, and it changes to the variable that
+% column's dictionary atom binds.
+rewrite_relation_atom(Types, RelPlans, Atom0, Atom, State0, State) :-
+    (   compound(Atom0),
+        functor(Atom0, Name, Arity),
+        relplan_column_types(RelPlans, Name/Arity, ColumnTypes)
+    ->  Atom0 =.. [_ | Args0],
+        rewrite_relation_arguments(Types, ColumnTypes, Args0, Args,
+                                   State0, State),
+        Atom =.. [Name | Args]
+    ;   Atom = Atom0, State = State0
+    ).
+
+rewrite_relation_arguments(_, [], [], [], State, State) :- !.
+rewrite_relation_arguments(Types, [ColumnType | Types0], [Arg0 | Args0],
+                           [Arg | Args], State0, State) :-
+    !,
+    (   ColumnType = ref(TypeName),
+        relation_value_shape(Types, TypeName, Arg0)
+    ->  intern_relation_value(Types, TypeName, Arg0, Arg, State0, State1)
+    ;   Arg = Arg0, State1 = State0
+    ),
+    rewrite_relation_arguments(Types, Types0, Args0, Args, State1, State).
+% A column-type list shorter or longer than the argument list means the ref is
+% not the one the relplan describes; leave the remaining arguments alone
+% rather than guessing a position.
+rewrite_relation_arguments(_, _, Args, Args, State, State).
+
+% A relation term becomes the variable its dictionary atom binds. Children are
+% interned first, so the parent's atom already has its child endpoints in hand.
+intern_relation_value(Types, TypeName, Value, Endpoint,
+                      st(Memo0, Atoms0), st(Memo, Atoms)) :-
+    (   memoized_relation_value(Memo0, Value, Found)
+    ->  Endpoint = Found, Memo = Memo0, Atoms = Atoms0
+    ;   type_definition(Types, TypeName, _Columns, ColumnTypes),
+        maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds),
+        Value =.. [_ | Args0],
+        rewrite_relation_arguments(Types, StorageKinds, Args0, Args,
+                                   st(Memo0, Atoms0), st(Memo1, Atoms1)),
+        dictionary_table_name(TypeName, Table),
+        DictionaryAtom =.. [Table, Endpoint | Args],
+        Memo = [Value-Endpoint | Memo1],
+        append(Atoms1, [DictionaryAtom], Atoms)
+    ).
+
+% Variable IDENTITY, never unification: `=`/2 here would bind the rule's own
+% variables to each other. Walked with recursion for the same reason
+% decode_binding_type/5 is: findall/3 copies its template.
+memoized_relation_value([Term-Endpoint | Rest], Value, Found) :-
+    ( Term == Value -> Found = Endpoint ; memoized_relation_value(Rest, Value, Found) ).
+
+% Nothing relation-shaped may survive in a ref column after the rewrite. What
+% can survive is a position the rewrite deliberately does not enter: under
+% not/1, whose lowering is a NOT EXISTS subquery with no room for the extra
+% joins, or inside a splice construct, whose arguments are trigger occurrences
+% rather than level atoms. Named here rather than silently compiled, which is
+% exactly what the old json_extract fallthrough did.
+check_relation_patterns_lowered(Types, RelPlans, Head, Body) :-
+    (   relation_pattern_residue(Types, RelPlans, Head, Body, Residue)
+    ->  throw(unsupported_construct(Residue))
+    ;   true
+    ).
+
+relation_pattern_residue(Types, RelPlans, Head, Body,
+                         relation_pattern_not_lowerable(Ref, Column, TypeName, Value)) :-
+    walk_body((Head, Body),
+              walk_policy(descend_not(true), splice_bare(true)), Events),
+    member(event(_, _, Surface, Term), Events),
+    (   Surface == plain_atom
+    ->  Atom = Term
+    ;   nonvar(Term), functor(Term, Wrapper, 1),
+        memberchk(Wrapper, [latest, pre, finalize]),
+        arg(1, Term, Atom)
+    ),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    Ref = Name/Arity,
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    relplan_columns(RelPlans, Ref, Columns),
+    nth1(Position, ColumnTypes, ref(TypeName)),
+    nth1(Position, Columns, Column),
+    arg(Position, Atom, Value),
+    relation_value_shape(Types, TypeName, Value),
+    !.
 
 % Runs even when the program declares NO type. A rule with a decode goal and
 % no struct type must reach decode_source_not_struct, and skipping the pass on
@@ -2333,6 +2529,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % sampled conjunction with N trigger atoms produces N arms), so this
     % maplist collects a GROUP per rule and flattens, rather than assuming
     % one-to-one.
+    maplist(check_edge_rule_relation_values(LoweringTypes, RelPlans), EdgeRules),
     maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
     % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
@@ -2344,7 +2541,14 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % log can reach.
     dictionary_relplans(LoweringTypes, DictionaryRelPlans),
     append(DictionaryRelPlans, RelPlans, BodyRelPlans),
-    expand_decode_rules(LoweringTypes, BodyRelPlans, RuleOrder, DecodedRuleOrder),
+    % Relation TERMS become dictionary atoms before decode/2 does, so a
+    % variable this pass introduces is already a legal decode source when
+    % decode_binding_type/5 goes looking for one. The reverse order would make
+    % the two spellings non-composable for no reason.
+    expand_relation_pattern_rules(LoweringTypes, BodyRelPlans, RuleOrder,
+                                  PatternedRuleOrder),
+    expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
+                        DecodedRuleOrder),
     level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
