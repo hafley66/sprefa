@@ -1,0 +1,51 @@
+diff --git a/v6/prolog/conformance/engine.pl b/v6/prolog/conformance/engine.pl
+index ab8ea98b..f06a932e 100644
+--- a/v6/prolog/conformance/engine.pl
++++ b/v6/prolog/conformance/engine.pl
+@@ -449,6 +449,16 @@ boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
+             NewStamped0),
+     msort(NewStamped0, NewStamped),
+     findall(+Row, member(_-Row, NewStamped), LogAdds),
++    % TIME-PLANE LAB PROTOTYPE (revert before landing): the symmetric half of
++    % the stamp diff. A stamp present at tick start and absent at tick end was
++    % reclaimed by retention; report it as a minus so the prune stops being
++    % invisible (Q3/Q4 of the time-plane header).
++    findall(Stamp-Row,
++            ( member(lrow(Stamp, Row), Store0),
++              \+ memberchk(lrow(Stamp, Row), Store) ),
++            GoneStamped0),
++    msort(GoneStamped0, GoneStamped),
++    findall(-Row, member(_-Row, GoneStamped), LogRemovals),
+     findall(Delta,
+             ( set_diff_delta(PrevAll, NextAll, Delta),
+               Delta = -Row, delta_ref_is_set(Decls, Row) ),
+@@ -457,7 +467,7 @@ boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
+             ( set_diff_delta(PrevAll, NextAll, Delta),
+               Delta = +Row, delta_ref_is_set(Decls, Row) ),
+             SetAdds),
+-    append([SetRemovals, SetAdds, LogAdds], Deltas).
++    append([SetRemovals, LogRemovals, SetAdds, LogAdds], Deltas).
+ 
+ set_diff_delta(PrevAll, NextAll, Delta) :-
+     (   member(Row, PrevAll), \+ memberchk(Row, NextAll), Delta = -Row
+diff --git a/v6/tsv2/runtime/1_incremental.ts b/v6/tsv2/runtime/1_incremental.ts
+index cf886ea8..b5627411 100644
+--- a/v6/tsv2/runtime/1_incremental.ts
++++ b/v6/tsv2/runtime/1_incremental.ts
+@@ -588,9 +588,13 @@ function boundaryDelta(
+   const del: IRow[] = [];
+   for (const { row, weight } of weights.values()) {
+     for (let count = 0; count < weight; count += 1) add.push(row);
+-    if (relation.kind === "set") {
+-      for (let count = 0; count > weight; count -= 1) del.push(row);
+-    }
++    // TIME-PLANE LAB PROTOTYPE (revert before landing): the `kind === "set"`
++    // guard used to sit here, suppressing a log rel's negative weight at the
++    // boundary. A log rel's delta table only ever carries -1 from retention
++    // (appends are +1), so dropping the guard reports exactly the prune --
++    // the emitter twin of engine.pl's LogRemovals. Q3/Q4 of the time-plane
++    // header.
++    for (let count = 0; count > weight; count -= 1) del.push(row);
+   }
+   return { rel: relation.rel, add, del };
+ }
