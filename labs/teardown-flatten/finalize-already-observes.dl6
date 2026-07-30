@@ -1,0 +1,23 @@
+# finalize-already-observes.dl6 -- the receipt behind card 6a.
+#
+# `unsubscribe/1` is registry status `reserved` and rxoracle's
+# `unsubscribe_teardown` case exists to assert it stays refused. Card 1 makes
+# teardown a real runtime event for the first time, which raises the question of
+# whether the reserved word should become live to observe it.
+#
+# This program is the argument that it should not. It observes the supersession
+# with `finalize/1`, which is ALREADY LIVE, and derives the row a teardown arm
+# would derive -- without teardown existing at all. So a live `unsubscribe/1`
+# would be a second spelling for a live construct, distinguished only by whether
+# a subprocess was actually killed, and `effect_abort` rules that exact fact to
+# be best-effort and never semantics.
+#
+# There is no `sh` host here on purpose: the point is that the OBSERVATION needs
+# no effect plane, so it cannot be the thing that justifies a new word on it.
+
+rel route_change(session_id: text, route_id: text) log keep(all).
+rel open_route(session_id: text, route_id: text) key(1).
+rel abandoned(route_id: text) log keep(all).
+
+open_route(SessionId, RouteId) <+ route_change(SessionId, RouteId).
+abandoned(RouteId) <+ finalize(open_route(SessionId, RouteId)).
