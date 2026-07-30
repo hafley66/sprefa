@@ -19,6 +19,9 @@
 :- discontiguous directive/2.
 :- discontiguous user_card/2.
 :- discontiguous answered/2.
+:- discontiguous in_flight/3.
+:- discontiguous design_tension/2.
+:- discontiguous lab_folded/3.
 
 session(id, '20260730.1').
 session(date, '2026-07-30').
