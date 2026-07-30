@@ -44,8 +44,14 @@ rule is necessarily a refusal: a level body reads S, and S has no
 sign to bind.
 
 Log rels are the special case where state is the integral of the
-delta stream (no retraction => monotone); set rels are the general
-case where the delta stream is the derivative of state.
+occurrence stream; set rels are the general case where the delta
+stream is the derivative of state.
+
+The log integral is monotone in N and its STORED WINDOW is not, and
+those are two different objects. `keep(...)` bounds the window, so a
+log rel's stored rows can shrink even though no occurrence is ever
+withdrawn. Section 5.1 states the distinction, because collapsing the
+two is exactly the reading R7 refuses.
 
 ## 3. Grading: what tick a thing is on
 
@@ -99,6 +105,60 @@ fixtures:
 No semantic defect has yet been found WITHIN a plane; all five were
 cross-plane placements. That is the empirical case that this line is
 the language's spine.
+
+### 5.1 R7 restated: storage rows are not occurrences
+
+R7 is the theorem behind `retract_from_log`: an occurrence cannot
+un-happen. Retention now emits a minus delta for a pruned row
+(2026-07-30, plans/2026-07-30-time-plane-unification-verdict.md
+recommendation 1), so the theorem needs its two objects named apart.
+It is NOT weakened; the earlier one-sentence form was just ambiguous
+between them.
+
+| object | ring | what a minus would mean | who may emit one |
+|---|---|---|---|
+| the OCCURRENCE (the firing) | N | the firing did not happen; every rule that already fired on it must un-fire | **nobody, ever** |
+| the STORAGE ROW (the retained record) | Z, at the boundary | the record was reclaimed under a bound the program itself declared | `keep(...)` alone |
+
+Restated:
+
+> No world action and no program action removes an occurrence. Only
+> the declared retention bound removes a stored row, and it reports
+> that reclamation as an ordinary minus delta.
+
+Three properties make the minus safe to read as storage rather than
+occurrence:
+
+1. **It is engine-authored.** `+Row` / `-Row` into a log rel from the
+   world still throws `retract_from_log/1` (fixture
+   `log_retraction_rejected`). The only producer is
+   `apply_retention/3`.
+2. **It is causally late.** A row is pruned at tick END, after every
+   occurrence it minted has already fired. No rule's past is edited;
+   the reclamation is visible only to rules that ask about the future
+   of the record, which is what `finalize` over a log rel now means.
+3. **It is program-declared.** A `keep(all)` rel never emits one. The
+   minus exists only where the program wrote a bound, so it is a
+   consequence of the program's own text, not an engine liberty.
+
+The practical consequence is that `finalize(logrel(...))` stops being
+silently dead. It was the one lifecycle arm with no delta to bind
+(named by three arcs: stream-lab card 4, update-arm
+`SLOT-LOG-FINALIZE-REFUSAL`, consumption-arms assertion 17, all of
+which proposed a REFUSAL). The measurement went the other way: making
+the natural spelling work cost less than refusing it, and it reads as
+the (dS)- of the retained window, which is a real object in the table
+above.
+
+**Status: graded.** Retention deltas are now on the graded contract in
+both doors and both emitter modes, not inferred from final state:
+
+| gate | what pins it |
+|---|---|
+| `retention_prune_is_a_visible_minus` | fail-first fixture, the prune as a tick-3 minus |
+| `retention_count_prunes_oldest` | gained a `deltas/2` leg; `final/2` alone could not see a dropped prune, which is how the hole survived three arcs |
+| sweep, both modes | emitted incremental path (`boundaryDelta`) and naive referee (`buildDeltas`) both report it, byte-identical to the oracle |
+| `log_retraction_rejected` | R7 itself, unchanged and still refusing |
 
 ## 6. What the checker does (phase 5 spec)
 

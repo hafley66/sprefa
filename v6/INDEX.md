@@ -51,7 +51,7 @@
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 437 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 311 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
-| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 115 | TICK MODEL: the semiring/grading semantics behind the clock checker |
+| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -773,10 +773,11 @@
 1:# TICK MODEL: the semiring/grading semantics behind the clock checker
 10:## 1. Objects: three semirings
 26:## 2. The derivative reading (lifecycle = sign decomposition)
-50:## 3. Grading: what tick a thing is on
-68:## 4. Coercions between rings (the A2 analysis)
-84:## 5. Theorems already shipped (each = a ring error made a refusal)
-103:## 6. What the checker does (phase 5 spec)
+56:## 3. Grading: what tick a thing is on
+74:## 4. Coercions between rings (the A2 analysis)
+90:## 5. Theorems already shipped (each = a ring error made a refusal)
+109:### 5.1 R7 restated: storage rows are not occurrences
+163:## 6. What the checker does (phase 5 spec)
 ```
 
 ### prolog/conformance/FIXTURES.md
