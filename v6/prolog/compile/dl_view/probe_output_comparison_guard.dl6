@@ -2,4 +2,4 @@ rel input(path: text).
 rel accepted(path: text, score: int).
 sh score(path: text) -> (score: int) = `score {path}`.
 
-accepted(Path, Score) <- input(Path), ? score(Path, Score), Score > 10.
+accepted(Path, Score) <- input(Path), score(Path, Score), Score > 10.

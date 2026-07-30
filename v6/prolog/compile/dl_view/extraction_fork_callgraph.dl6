@@ -1,6 +1,6 @@
 sh sg(file_digest: text, query_digest: text) -> (caller: text, callee: text, start_byte: int, end_byte: int) = `sg {file_digest} $query_digest`.
 
-call_edge(File, Caller, Callee, Start, End) <- file(File, FileDigest), query_value(QueryDigest), ? sg(FileDigest, QueryDigest, Caller, Callee, Start, End).
-call_site(File, Caller, Callee) <- file(File, FileDigest), query_value(QueryDigest), ? sg(FileDigest, QueryDigest, Caller, Callee, _, _).
+call_edge(File, Caller, Callee, Start, End) <- file(File, FileDigest), query_value(QueryDigest), sg(FileDigest, QueryDigest, Caller, Callee, Start, End).
+call_site(File, Caller, Callee) <- file(File, FileDigest), query_value(QueryDigest), sg(FileDigest, QueryDigest, Caller, Callee, _, _).
 
 ? call_edge(File, Caller, Callee, Start, End).

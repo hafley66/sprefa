@@ -1,5 +1,5 @@
 sh span_scan(file_digest: text, query_digest: text) -> (line: int, text: text) = `span {file_digest} $query_digest`.
 
-span_line(File, Line, Text) <- file(File, FileDigest), query_value(QueryDigest), ? span_scan(FileDigest, QueryDigest, Line, Text).
+span_line(File, Line, Text) <- file(File, FileDigest), query_value(QueryDigest), span_scan(FileDigest, QueryDigest, Line, Text).
 
 ? span_line(File, Line, Text).

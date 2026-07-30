@@ -711,29 +711,42 @@ match_stmt(match(SourceAtom, Arms), Vars0, Vars, S0, S) :-
     ws0(S8, S9),
     lit_dcg(`.`, S9, S).
 
+% Match arms flow left to right on the .dl6 surface:
+%   [;] Guards |-> Head    [;] Guards |+> Head
+% The optional first semicolon is layout sugar. The retained term stays
+% (Head <- Guards)/(Head <+ Guards), so expansion and runtime semantics do
+% not acquire another arrow family.
 match_arm_list(Arms, Vars0, Vars, S0, S) :-
     ws0(S0, S00),
-    match_arm(First, Vars0, Vars1, S00, S1),
-    ws0(S1, S2),
-    ( lit_dcg(`;`, S2, S3)
-    -> ws0(S3, S4),
-       match_arm_list(Rest, Vars1, Vars, S4, S),
+    ( lit_dcg(`;`, S00, S01)
+    -> ws0(S01, SArm)
+    ; SArm = S00
+    ),
+    match_arm(First, Vars0, Vars1, SArm, S1),
+    match_arm_tail(First, Arms, Vars1, Vars, S1, S).
+
+match_arm_tail(First, Arms, Vars0, Vars, S0, S) :-
+    ws0(S0, S1),
+    ( lit_dcg(`;`, S1, S2)
+    -> ws0(S2, S3),
+       match_arm(Next, Vars0, Vars1, S3, S4),
+       match_arm_tail(Next, Rest, Vars1, Vars, S4, S),
        Arms = (First ; Rest)
     ; Arms = First,
-      Vars = Vars1,
-      S = S2
+      Vars = Vars0,
+      S = S1
     ).
 
 match_arm(Arm, Vars0, Vars, S0, S) :-
-    head_atom(Head, Vars0, Vars1, S0, S1),
+    body(Guards, Vars0, Vars1, S0, S1),
     ws0(S1, S2),
-    ( lit_dcg(`<-`, S2, S3)
+    ( lit_dcg(`|->`, S2, S3)
     -> Arrow = (<-)
-    ; lit_dcg(`<+`, S2, S3)
+    ; lit_dcg(`|+>`, S2, S3)
     -> Arrow = (<+)
     ),
     ws0(S3, S4),
-    body(Guards, Vars1, Vars, S4, S),
+    head_atom(Head, Vars1, Vars, S4, S),
     ( Arrow == (<-)
     -> Arm = (Head <- Guards)
     ; Arm = (Head <+ Guards)

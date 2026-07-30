@@ -1,5 +1,5 @@
-rel poll_due(endpoint) log keep(all).
-rel fetch_result(endpoint, col2) log keep(all).
+rel poll_due(endpoint: text) log keep(all).
+rel fetch_result(endpoint: text, col2: text) log keep(all).
 rel phase(endpoint, col2) key(1).
 rel cache(endpoint, tag, body) key(1).
 rel retries(endpoint, next) key(1).

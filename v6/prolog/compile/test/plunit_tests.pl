@@ -1102,15 +1102,43 @@ test(keyed_edge_head_remains_supported) :-
             ],
             [(current(Key, Value) <+ source(Key, Value))])).
 
-test(match_surface_round_trips_with_semicolon_arms) :-
+test(match_surface_round_trips_with_prefix_semicolon_and_left_to_right_arms) :-
     string_codes(
-        "match source(Key, Value) (\n    accepted(Key) <- Value >= 10\n  ; latest(Key, Value) <+ true\n).\n",
+        "match source(Key, Value) (\n  ; Value >= 10 |-> accepted(Key)\n  ; true |+> latest(Key, Value)\n).\n",
         Codes),
     parse_dl(Codes, Program, Bindings, []),
+    Program = prog(
+        [],
+        [match(
+            source(Key, Value),
+            ((accepted(Key) <- Value >= 10) ;
+             (latest(Key, Value) <+ true)))]),
     print_dl_program(Program, Bindings, Text),
+    assertion(
+        atom_string(
+            Text,
+            "match source(Key, Value) (\n  ; Value >= 10 |-> accepted(Key)\n  ; true |+> latest(Key, Value)\n).\n")),
     atom_codes(Text, PrintedCodes),
     parse_dl(PrintedCodes, RoundTripped, _, []),
     Program =@= RoundTripped.
+
+test(match_surface_allows_first_arm_without_prefix_semicolon) :-
+    string_codes(
+        "match source(Key, Value) (\n  Value >= 10 |-> accepted(Key)\n; true |+> latest(Key, Value)\n).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Text),
+    assertion(
+        atom_string(
+            Text,
+            "match source(Key, Value) (\n  ; Value >= 10 |-> accepted(Key)\n  ; true |+> latest(Key, Value)\n).\n")).
+
+test(match_surface_rejects_old_head_first_arm_spelling,
+     [throws(dl_parse_error(statement, _))]) :-
+    string_codes(
+        "match source(Key, Value) (\n  accepted(Key) <- Value >= 10\n).\n",
+        Codes),
+    parse_dl(Codes, _, _, _).
 
 test(sugar_and_hand_written_desugar_lower_to_identical_sql) :-
     lowered_for('1_match_block.pl', match_classify_response, SugaredLowered),

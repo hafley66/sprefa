@@ -335,7 +335,7 @@ rule_line(Bindings, match(SourceAtom, Arms), Text) :-
     match_arm_terms(Arms, ArmList),
     maplist(print_match_arm(Bindings), ArmList, ArmTexts),
     atomic_list_concat(ArmTexts, "\n  ; ", ArmsText),
-    format(atom(Text), "match ~w (\n    ~w\n).~n", [SourceText, ArmsText]).
+    format(atom(Text), "match ~w (\n  ; ~w\n).~n", [SourceText, ArmsText]).
 rule_line(Bindings, (Head <- Body), Line) :- !,
     print_term(Head, Bindings, 0, top, HeadText),
     print_body(Body, Bindings, BodyText),
@@ -360,11 +360,11 @@ print_match_arm(Bindings, (Head <- Guards), Text) :-
     !,
     print_term(Head, Bindings, 0, top, HeadText),
     print_body(Guards, Bindings, GuardsText),
-    format(atom(Text), "~w <- ~w", [HeadText, GuardsText]).
+    format(atom(Text), "~w |-> ~w", [GuardsText, HeadText]).
 print_match_arm(Bindings, (Head <+ Guards), Text) :-
     print_term(Head, Bindings, 0, top, HeadText),
     print_body(Guards, Bindings, GuardsText),
-    format(atom(Text), "~w <+ ~w", [HeadText, GuardsText]).
+    format(atom(Text), "~w |+> ~w", [GuardsText, HeadText]).
 
 % ═══ body : split the comma-conjunction, print each item, join with ", " ════
 

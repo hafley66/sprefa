@@ -1,10 +1,11 @@
-rel open_request(session_id, tab_id) log keep(all).
-rel close_request(session_id, tab_id) log keep(all).
+rel open_request(session_id: text, tab_id: text) log keep(all).
+rel close_request(session_id: text, tab_id: text) log keep(all).
 rel closed(session_id, tab_id) log keep(all).
 rel drained(session_id, ordinal) log keep(all).
 rel open_tab(session_id, tab_id) key(1).
 rel queue_next(session_id, next) key(1).
 rel queue_slot(session_id, next, tab_id) key(1, 2).
+rel tab_row(tab_id: text, body: text).
 
 open_tab(SessionId, TabId) <+ open_request(SessionId, TabId), not(live_tab(SessionId, _)).
 queue_next(SessionId, Next) <+ open_request(SessionId, TabId), latest(live_tab(SessionId, _)), pre(queue_next(SessionId, SoFar)), Next := SoFar + 1.

@@ -222,6 +222,13 @@ verification(reconciled_lab_receipts,
                     rel_definition_hash(11),
                     select_scan_cache(12),
                     selected_decisions(0))).
+verification(match_left_to_right_surface,
+             passed(plunit(167),
+                    g2_files(2),
+                    g2_findings(0),
+                    g1_pass(147),
+                    g1_total(164),
+                    known_removed_type_failures(17))).
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
