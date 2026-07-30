@@ -752,3 +752,98 @@ export interface IServeStats {
    *  serve/4_http.ts's `GET /stats` handler. */
   processMemory(): IProcessMemorySnapshot;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract-carrying functions that are NOT members of a namespace object.
+//
+// The law: an important function binds to an I-prefixed header interface,
+// because TypeScript cannot conformance-check a standalone `export function`
+// against anything and a bare one can drift from its documented signature in
+// silence. Review finding 7 listed eight such functions in this package with
+// zero header coverage between them.
+//
+// FOUR OF THE EIGHT CANNOT BECOME NAMESPACE MEMBERS at this sha: `multisetDiff`,
+// `selectRows`, `rowValueFromSql` and `stageOrderedFrontiers` are imported BY
+// NAME by emitted modules (137, 137, 137 and 11 of them respectively), and the
+// import names come from `v6/prolog/compile/emit_ts.pl`, prolog, owned by
+// another lane. Renaming them to `Something.method` is an emitter change and an
+// import-gate change.
+//
+// So the binding is done the other way round: the header declares the SIGNATURE
+// as an interface with a call signature, and each module annotates its export
+// against it. The exported name is unchanged, no call site moves, no emitted
+// import breaks -- and the compiler now checks the function against a contract
+// declared exactly once, which is the whole point of the law. `just typecheck`
+// runs in `just green` as of this arc, so the check is live rather than
+// notional.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Boundary add/del rows for one rel: the result of one multiset diff. A plain
+ *  data shape, declared here rather than in diff.ts so the header holds it
+ *  once (review finding 7 named its absence alongside the eight functions). */
+export interface IRowDiff {
+  readonly add: readonly IRow[];
+  readonly del: readonly IRow[];
+}
+
+/** The boundary-diff algorithm every emitted tick calls (`runtime/diff.ts`).
+ *  `prevRows`/`nextRows` are the FULL row lists (duplicates allowed) for one
+ *  rel, read before and after one tick's writes. */
+export interface IMultisetDiff {
+  (prevRows: readonly IRow[], nextRows: readonly IRow[]): IRowDiff;
+}
+
+/** One SQLite value coming back across the driver seam, converted by the
+ *  column's DECLARED type (`runtime/rows.ts`). Bool and float are the two that
+ *  refuse rather than coerce. */
+export interface IRowValueFromSql {
+  (type: IRowColumnType | undefined, value: unknown): IRowValue;
+}
+
+/** The read seam: run a SELECT and shape the result into `IRow[]` with columns
+ *  in the caller's declared order (`runtime/rows.ts`). */
+export interface ISelectRows {
+  (
+    seam: ISqlSeam,
+    sql: string,
+    columns: readonly string[],
+    columnTypes?: readonly IRowColumnType[],
+  ): Observable<IRow[]>;
+}
+
+/** Replace the carry-in frontiers used by emitted ordered-occurrence programs
+ *  with this tick's boundary-visible additions (`runtime/1_incremental.ts`).
+ *  Emits whether anything carries. Sits beside `IIncrementalRuntime` and is not
+ *  one of its members for the emitted-import reason stated above. */
+export interface IStageOrderedFrontiers {
+  (
+    seam: ISqlSeam,
+    relations: readonly IIncrementalRelationPlan[],
+    additions: readonly IRelDelta[],
+  ): Observable<boolean>;
+}
+
+/** Boot one served program: its DDL (restart-tolerant, "already exists" is the
+ *  one tolerated error), the witness table, then its own boot statements
+ *  (`serve/3_engine.ts`). */
+export interface IBootServedProgram {
+  (seam: ISqlSeam, program: IServedProgram): Observable<void>;
+}
+
+/** The witness cache's current rows, ordered, for the endurance receipt that
+ *  proves a cached witness did not refire (`serve/1_hosts.ts`). */
+export interface IWitnessRows {
+  (seam: ISqlSeam): Observable<readonly IRow[]>;
+}
+
+/** The directory a `watch` glob is rooted at: the glob's literal prefix
+ *  resolved against the configured root (`serve/2_binds.ts`). */
+export interface IWatchRootOf {
+  (root: string, glob: string): string;
+}
+
+/** The bind plans one executor owns, refusing any plan naming an executor that
+ *  does not exist (`serve/2_binds.ts`). */
+export interface IBindPlansFor {
+  (plans: readonly IBindPlan[], execution: string): readonly IBindPlan[];
+}

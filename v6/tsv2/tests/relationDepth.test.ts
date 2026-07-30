@@ -81,7 +81,13 @@ import { concatMap, firstValueFrom, map } from "rxjs";
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import type { IArrivalBatch, IBootStatement, IGenProgram, ISqlSeam } from "../runtime/types.ts";
+import type {
+  IArrivalBatch,
+  IBootStatement,
+  IGenProgram,
+  IIncrementalProgramPlan,
+  ISqlSeam,
+} from "../runtime/types.ts";
 
 import * as depth2 from "../gen_emitted/relation_depth2_construct_and_read.ts";
 import * as depth3 from "../gen_emitted/relation_depth3_construct_and_read.ts";
@@ -110,9 +116,16 @@ async function seamWithRows(
   return seam;
 }
 
-function insertSqlFor(plan: { readonly levels: readonly { readonly headRel: string; readonly insertSql: string }[] }, rel: string): string {
+/** Reads one emitted level's insert statement. Typed against the header
+ *  interface rather than a local structural shape: the local shape declared
+ *  `insertSql: string` where `IIncrementalLevelStatement.insertSql` is
+ *  `string | null` (null exactly when `aggregateSql` is present), and that one
+ *  disagreement was all four standing tsgo errors in this package. Every rel
+ *  named below is a plain level, so the null is a named assertion, not a cast. */
+function insertSqlFor(plan: IIncrementalProgramPlan, rel: string): string {
   const level = plan.levels.find((entry) => entry.headRel === rel);
   assert.ok(level, `no emitted level statement for ${rel}`);
+  assert.ok(level.insertSql !== null, `level '${rel}' is an aggregate: it has no insertSql`);
   return level.insertSql;
 }
 

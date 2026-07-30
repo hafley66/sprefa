@@ -102,12 +102,14 @@ import type {
   IArrivalRow,
   IBindFired,
   IBindPlan,
+  IBindPlansFor,
   IIntervalBindRunner,
   ILiveEngine,
   IRowValue,
   IRow,
   IWatchBindRunner,
   IWatchFired,
+  IWatchRootOf,
   IWatchSource,
 } from "../runtime/types.ts";
 import { ServeTrace } from "./0_trace.ts";
@@ -185,13 +187,13 @@ export class IntervalBindRunner implements IIntervalBindRunner {
  *  the only subtree the watcher has to open: `v6/tsv2/**\/*.ts` watches
  *  `v6/tsv2`, not the repo. A glob with magic in its first segment watches the
  *  root, which is honest and loud in the trace rather than a silent narrowing. */
-export function watchRootOf(root: string, glob: string): string {
+export const watchRootOf: IWatchRootOf = (root: string, glob: string): string => {
   const magic = glob.search(/[*?[\]{}]/);
   const literalPrefix = magic < 0 ? glob : glob.slice(0, magic);
   const lastSlash = literalPrefix.lastIndexOf("/");
   const relativeDirectory = lastSlash < 0 ? "" : literalPrefix.slice(0, lastSlash);
   return path.resolve(root, relativeDirectory);
-}
+};
 
 /**
  * node's own recursive watch, and the ONLY place a watcher library is named.
@@ -407,7 +409,10 @@ export class WatchBindRunner implements IWatchBindRunner {
 
 /** The executor split, by name, so an unknown one is refused rather than run as
  *  something else. `4_http.ts` asks this before constructing either runner. */
-export function bindPlansFor(plans: readonly IBindPlan[], execution: string): readonly IBindPlan[] {
+export const bindPlansFor: IBindPlansFor = (
+  plans: readonly IBindPlan[],
+  execution: string,
+): readonly IBindPlan[] => {
   const known = new Set(["live_interval", "live_watch"]);
   for (const plan of plans) {
     if (!known.has(plan.execution)) {
@@ -415,4 +420,4 @@ export function bindPlansFor(plans: readonly IBindPlan[], execution: string): re
     }
   }
   return plans.filter((plan) => plan.execution === execution);
-}
+};

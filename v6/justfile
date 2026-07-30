@@ -65,6 +65,16 @@ tsv2-test:
 import-gate:
 	cd {{v6}}/tsv2 && bash scripts/check-imports.sh
 
+# the TypeScript compiler over tsv2 (runtime, serve, cli, gen_emitted, tests).
+# `npm test` runs node --experimental-transform-types, which STRIPS types and
+# checks none of them, so before this recipe existed the package sat 4 errors
+# red with no gate noticing. Several standing laws in this repo (header
+# interfaces, one-declaration-per-name, no free contract-carrying exports)
+# are enforceable only by a compiler that actually runs.
+# (expect: no output, exit 0)
+typecheck:
+	cd {{v6}}/tsv2 && npx tsgo --noEmit -p tsconfig.json
+
 # ── TS apps ──
 
 # the v6 dl app suite (expect: 97 tests, 1 soak skip)
@@ -174,7 +184,7 @@ bench:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe golden-flex dl-test store-test
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
 green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate

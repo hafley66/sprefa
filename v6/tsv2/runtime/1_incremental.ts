@@ -12,6 +12,7 @@ import type {
   IRow,
   IRowValue,
   ISqlSeam,
+  IStageOrderedFrontiers,
   QueryResult,
   SqlStatement,
 } from "./types.ts";
@@ -144,11 +145,11 @@ function stageEvents(
  * with this tick's boundary-visible additions. Intermediate keyed fold rows
  * never reach this function: the emitter supplies only its start/end diff.
  */
-export function stageOrderedFrontiers(
+export const stageOrderedFrontiers: IStageOrderedFrontiers = (
   seam: ISqlSeam,
   relations: readonly IIncrementalRelationPlan[],
   additions: readonly IRelDelta[],
-): Observable<boolean> {
+): Observable<boolean> => {
   const eventsByRel = new Map<string, DeltaEvent[]>();
   let sequence = 0;
   for (const delta of additions) {
@@ -176,7 +177,7 @@ export function stageOrderedFrontiers(
   }
   if (statements.length === 0) return of(carryPending);
   return seam.runner.batch(seam.db, statements).pipe(map(() => carryPending));
-}
+};
 
 function keyedRowsSql(
   statement: IIncrementalEdgeStatement,
