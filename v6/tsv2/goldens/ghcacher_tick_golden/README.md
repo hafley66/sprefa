@@ -27,10 +27,10 @@ resp(repo, 2, 200, tag-v2, 18, cli/cli)
 cache_view(repo, tag-v2, 18, cli/cli)
 ```
 
-Run from the repository root:
+Run from the repository root, or as `just ghcacher-golden` from `v6/`:
 
 ```bash
-bash v6/prolog/labs/ghcacher_tick_golden/6_gate.sh
+bash v6/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
 ```
 
 Success is:

@@ -147,6 +147,16 @@ golden-flex:
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
 
+# stopping-point program #1 on the keyed clock/etag feedback shape: one hermetic
+# five-tick schedule replayed through BOTH the oracle and the emitted runtime,
+# byte-diffed three ways (expected vs oracle, expected vs emitted, oracle vs
+# emitted) on tick logs and final relations. No gh, no shell host, no wall clock,
+# no network. Tick 5 is the point: a late response for a departed witness
+# replaces its raw host row and produces no public delta
+# (expect: GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1, exit 0)
+ghcacher-golden:
+	bash {{v6}}/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
+
 # checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
 # regenerated + diffed against their .dl6 source; target/release/dl and
 # sprefa-extract's release binary refused if a source .rs/Cargo.toml is
@@ -167,4 +177,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags sweep staleness-gate
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate
