@@ -1,0 +1,374 @@
+{
+  "components": {
+    "schemas": {
+      "ArrivalBatch": {
+        "additionalProperties":false,
+        "description":"The POST /arrivals request body.",
+        "properties": {
+          "batch": {
+            "description":"ordered and duplicate-preserving (rulings q1); an absent batch is treated as empty.",
+            "items": {"$ref":"#/components/schemas/ArrivalRow"},
+            "type":"array"
+          }
+        },
+        "required": ["batch" ],
+        "type":"object"
+      },
+      "ArrivalRow": {
+        "additionalProperties":false,
+        "description":"One signed outside-arrival row for one tick.",
+        "properties": {
+          "rel": {
+            "description":"must be one of the program's arrivalTargets.",
+            "type":"string"
+          },
+          "row": {
+            "$ref":"#/components/schemas/Row",
+            "description":"exactly as wide as the rel's declared column list."
+          },
+          "sign": {
+            "description":"+row or -row; -row is never valid against a Log rel.",
+            "enum": ["add", "del" ],
+            "type":"string"
+          }
+        },
+        "required": ["rel", "sign", "row" ],
+        "type":"object"
+      },
+      "BindSummary": {
+        "additionalProperties":false,
+        "description":"One bind plan as the load response reports it.",
+        "properties": {
+          "literals": {
+            "description":"the bind decl's literal arguments.",
+            "items": {"$ref":"#/components/schemas/RowValue"},
+            "type":"array"
+          },
+          "name": {"description":"bind name.","type":"string"}
+        },
+        "required": ["name", "literals" ],
+        "type":"object"
+      },
+      "Error": {
+        "additionalProperties":false,
+        "description":"Every non-2xx body on this surface.",
+        "properties": {
+          "error": {"description":"human-readable failure text.","type":"string"}
+        },
+        "required": ["error" ],
+        "type":"object"
+      },
+      "ProcessMemory": {
+        "additionalProperties":false,
+        "description":"The one memory number this driver can give (@libsql exposes no sqlite3_status).",
+        "properties": {
+          "externalBytes": {
+            "description":"external (off-heap) allocations.",
+            "type":"integer"
+          },
+          "heapUsedBytes": {"description":"V8 heap in use.","type":"integer"},
+          "rssBytes": {"description":"resident set size.","type":"integer"}
+        },
+        "required": ["rssBytes", "heapUsedBytes", "externalBytes" ],
+        "type":"object"
+      },
+      "ProgramLoaded": {
+        "additionalProperties":false,
+        "description":"The 200 body of POST /program.",
+        "properties": {
+          "arrivalTargets": {
+            "description":"the rels POST /arrivals accepts.",
+            "items": {"type":"string"},
+            "type":"array"
+          },
+          "binds": {
+            "description":"declared binds and their literals.",
+            "items": {"$ref":"#/components/schemas/BindSummary"},
+            "type":"array"
+          },
+          "hosts": {
+            "description":"declared host names.",
+            "items": {"type":"string"},
+            "type":"array"
+          },
+          "loaded": {
+            "description":"always true; a failure is a 400.",
+            "type":"boolean"
+          },
+          "rels": {
+            "description":"every rel the program declares, sorted.",
+            "items": {"type":"string"},
+            "type":"array"
+          }
+        },
+        "required": ["loaded", "rels", "arrivalTargets", "hosts", "binds" ],
+        "type":"object"
+      },
+      "RelationRows": {
+        "additionalProperties":false,
+        "description":"The 200 body of GET /idb/{rel}.",
+        "properties": {
+          "rows": {
+            "description":"current rows, unsorted.",
+            "items": {"$ref":"#/components/schemas/Row"},
+            "type":"array"
+          }
+        },
+        "required": ["rows" ],
+        "type":"object"
+      },
+      "Row": {
+        "description":"One relation row, columns in the rel's declared order. Positional: no column names cross this boundary.",
+        "items": {"$ref":"#/components/schemas/RowValue"},
+        "type":"array"
+      },
+      "RowValue": {
+        "description":"One relation cell. runtime/types.ts IRowValue = string | number | boolean.",
+        "type": ["string", "number", "boolean" ]
+      },
+      "SqliteObjectBytes": {
+        "additionalProperties":false,
+        "description":"One sqlite_master object's page bytes.",
+        "properties": {
+          "bytes": {"description":"sum(pgsize) from dbstat.","type":"integer"},
+          "name": {"description":"table or index name.","type":"string"}
+        },
+        "required": ["name", "bytes" ],
+        "type":"object"
+      },
+      "SqliteStats": {
+        "additionalProperties":false,
+        "description":"PRAGMA page_count/page_size/freelist_count plus one grouped dbstat pass.",
+        "properties": {
+          "dbBytes": {"description":"pageCount * pageSize.","type":"integer"},
+          "dbstatAvailable": {
+            "description":"false when this SQLite build has no dbstat vtab; objectBytes is then empty, never a guess.",
+            "type":"boolean"
+          },
+          "freelistBytes": {"description":"freelistCount * pageSize.","type":"integer"},
+          "freelistCount": {"description":"PRAGMA freelist_count.","type":"integer"},
+          "objectBytes": {
+            "description":"per-object page bytes for the requested tables.",
+            "items": {"$ref":"#/components/schemas/SqliteObjectBytes"},
+            "type":"array"
+          },
+          "pageCount": {"description":"PRAGMA page_count.","type":"integer"},
+          "pageSize": {"description":"PRAGMA page_size.","type":"integer"}
+        },
+        "required": [
+          "pageCount",
+          "pageSize",
+          "freelistCount",
+          "dbBytes",
+          "freelistBytes",
+          "dbstatAvailable",
+          "objectBytes"
+        ],
+        "type":"object"
+      },
+      "StatsSnapshot": {
+        "additionalProperties":false,
+        "description":"The 200 body of GET /stats.",
+        "properties": {
+          "memory": {
+            "$ref":"#/components/schemas/ProcessMemory",
+            "description":"process.memoryUsage()."
+          },
+          "sqlite": {
+            "$ref":"#/components/schemas/SqliteStats",
+            "description":"PRAGMA + dbstat storage numbers."
+          }
+        },
+        "required": ["memory", "sqlite" ],
+        "type":"object"
+      },
+      "TickBatch": {
+        "additionalProperties":false,
+        "description":"The 200 body of POST /arrivals.",
+        "properties": {
+          "ticks": {
+            "description":"the ticks THAT batch caused.",
+            "items": {"$ref":"#/components/schemas/TickReport"},
+            "type":"array"
+          }
+        },
+        "required": ["ticks" ],
+        "type":"object"
+      },
+      "TickReport": {
+        "additionalProperties":false,
+        "description":"One tick as the served engine reports it.",
+        "properties": {
+          "line": {
+            "description":"the canonical tick-log line -- itself a JSON document, carried as text so a client diffs it byte-for-byte against the oracle's log (the item-9 cross-target log contract).",
+            "type":"string"
+          },
+          "tick": {"description":"tick number.","type":"integer"}
+        },
+        "required": ["tick", "line" ],
+        "type":"object"
+      }
+    }
+  },
+  "info": {
+    "description":"The served tsv2 datalog engine (v6/tsv2/serve). One program at a time; POST /program swaps it. Every response body is JSON except GET /ticks, which is an SSE stream of canonical tick-log lines.",
+    "title":"sprefa tsv2 served engine",
+    "version":"6.2.0"
+  },
+  "openapi":"3.1.0",
+  "paths": {
+    "/arrivals": {
+      "post": {
+        "operationId":"postArrivals",
+        "requestBody": {
+          "content": {
+            "application/json": {"schema": {"$ref":"#/components/schemas/ArrivalBatch"}}
+          },
+          "description":"one tick's ordered arrival list.",
+          "required":true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/TickBatch"}}
+            },
+            "description":"the settle tick plus any drain ticks the batch caused."
+          },
+          "400": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"batch names a rel that is not an arrival target, carries a bad sign, or a row of the wrong width."
+          },
+          "409": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"no program loaded."
+          },
+          "500": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"the request branch raised; the app keeps serving."
+          }
+        },
+        "summary":"submit signed EDB arrivals."
+      }
+    },
+    "/idb/{rel}": {
+      "get": {
+        "operationId":"readRelation",
+        "parameters": [
+          {
+            "description":"relation name; must be a rel the loaded program declares.",
+            "in":"path",
+            "name":"rel",
+            "required":true,
+            "schema": {"type":"string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/RelationRows"}}
+            },
+            "description":"the rel's current rows through the program's own decode SELECT."
+          },
+          "404": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"no program loaded."
+          },
+          "500": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"the read raised (for example, an unknown rel name)."
+          }
+        },
+        "summary":"read one relation snapshot."
+      }
+    },
+    "/program": {
+      "post": {
+        "operationId":"loadProgram",
+        "requestBody": {
+          "content": {"text/plain": {"schema": {"type":"string"}}},
+          "description":"the .dl6 program source.",
+          "required":true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/ProgramLoaded"}}
+            },
+            "description":"program compiled, booted, and running."
+          },
+          "400": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"compile failure or named refusal; the previously loaded program keeps running."
+          }
+        },
+        "summary":"compile and load a DL6 program."
+      }
+    },
+    "/stats": {
+      "get": {
+        "operationId":"readStats",
+        "parameters": [
+          {
+            "description":"comma-separated table names to scope the dbstat pass. Omitted or empty means PRAGMA-only.",
+            "in":"query",
+            "name":"tables",
+            "required":false,
+            "schema": {"type":"string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/StatsSnapshot"}}
+            },
+            "description":"process memory plus SQLite storage statistics for the running program's seam."
+          },
+          "404": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"no program loaded."
+          },
+          "500": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"the stats read raised."
+          }
+        },
+        "summary":"read process memory and SQLite storage statistics."
+      }
+    },
+    "/ticks": {
+      "get": {
+        "operationId":"streamTicks",
+        "responses": {
+          "200": {
+            "content": {"text/event-stream": {"schema": {"type":"string"}}},
+            "description":"one `data: <tick log line>` frame per tick until the client closes the socket."
+          },
+          "404": {
+            "content": {
+              "application/json": {"schema": {"$ref":"#/components/schemas/Error"}}
+            },
+            "description":"no program loaded."
+          }
+        },
+        "summary":"stream tick events as SSE."
+      }
+    }
+  },
+  "servers": [ {"description":"bop serve default port","url":"http://127.0.0.1:17500"} ]
+}
