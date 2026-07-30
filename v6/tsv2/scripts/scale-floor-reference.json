@@ -1,0 +1,14 @@
+{
+  "shape": "s2",
+  "rows": 10000,
+  "control_rows": 1000,
+  "statements_per_tick_set": [
+    37,
+    41
+  ],
+  "tick_count": 100,
+  "arrivals": 10000,
+  "final_rows": 10400,
+  "ms_per_1k_arrivals_reference": 14.845708300000002,
+  "note": "The statements-per-tick SET is an exact gate, and must be the same at rows and control_rows -- that equality across sizes is the delta-proportionality proof, not the set value itself. ticks, arrivals and final rows are exact. ms_per_1k_arrivals_reference is multiplied by SCALE_FLOOR_WALL_MULTIPLIER (default 3) before comparison; it is a floor against cratering, not a performance target."
+}

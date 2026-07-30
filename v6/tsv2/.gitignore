@@ -7,3 +7,10 @@ dist/
 # cannot go stale the way a checked-in gen module can (the recurring class the
 # staleness gate exists for). It is deliberately not tracked.
 gen_emitted/golden-flex.ts
+
+# scripts/7_scale-floor.sh APPENDS one line here on every run, pass or fail, so
+# the throughput curve accumulates on whatever machine runs the gate. Tracking
+# it would mean `just green-all` dirties the tree every single time, which is
+# the same reason the compile-speed gate never rewrites its own baseline. The
+# gated numbers live in scripts/scale-floor-reference.json, which IS tracked.
+goldens/scale-floor-history.jsonl

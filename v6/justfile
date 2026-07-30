@@ -184,6 +184,17 @@ ghcacher-golden:
 staleness-gate:
 	bash {{v6}}/tools/staleness-gate.sh
 
+# throughput floor at scale: s2 / 10k arrivals through the tsv2 emitter.
+# statements-per-tick set is gated EXACTLY and must be the same at 10k and 1k
+# (that equality across sizes is the delta-proportionality proof); ticks,
+# arrivals, final rows and incrementalSafe are exact; wall gets a deliberately
+# loose 3x floor because CI variance is real and a tight wall gate gets
+# loosened until it catches nothing. Every run appends to
+# goldens/scale-floor-history.jsonl so the curve exists over time.
+# (expect: SCALE_FLOOR s2 rows=10000 stmts/tick=[37,41] flat-vs-1000 ... OK)
+scale-floor:
+	cd {{v6}}/tsv2 && bash scripts/7_scale-floor.sh
+
 # ── benches ──
 
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
@@ -196,4 +207,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor
