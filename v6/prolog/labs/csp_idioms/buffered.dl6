@@ -1,0 +1,27 @@
+# idiom 1: buffered channel (the seed program, promoted to the lab baseline).
+#
+# Go equivalent (unexecuted, the external referent):
+#   ch := make(chan string, 3)
+#   go func() { for _, p := range payloads { ch <- p } }()
+#   for range drains { v := <-ch; use(v) }   // exactly one take per drain
+#   // capacity 3: the oldest element leaves the buffer when a 4th lands unread
+#
+rel produce(payload: text)                 log keep(all).
+rel drain(cause: text)                     log keep(all).
+rel pending(ordinal: int, payload: text)   log keep(all).
+rel cursor(name: text, at: int)            key(1).
+rel taken(ordinal: int)                    key(1).
+rel chan(ordinal: int, payload: text)      log keep(count(3)).
+
+cursor('q', 1)            <+ produce(_Payload), not(cursor('q', _At)).
+pending(1, Payload)       <+ produce(Payload), not(cursor('q', _At)).
+cursor('q', NextAt)       <+ produce(_Payload), pre(cursor('q', At)), NextAt := At + 1.
+pending(NextAt, Payload)  <+ produce(Payload), pre(cursor('q', At)), NextAt := At + 1.
+
+item(Ordinal, Payload)    <- pending(Ordinal, Payload).
+ready_min(min(Ordinal))   <- item(Ordinal, _Payload), not(taken(Ordinal)).
+
+taken(Ordinal)            <+ drain(_Cause), latest(ready_min(Ordinal)).
+chan(Ordinal, Payload)    <+ drain(_Cause), latest(ready_min(Ordinal)), latest(item(Ordinal, Payload)).
+
+backlog(count(Ordinal))   <- item(Ordinal, _Payload), not(taken(Ordinal)).

@@ -1,0 +1,11 @@
+[
+  [ {"rel":"produce","sign":"add","row":["a"]} ],
+  [ {"rel":"produce","sign":"add","row":["b"]}, {"rel":"produce","sign":"add","row":["c"]} ],
+  [ {"rel":"drain","sign":"add","row":["d1"]} ],
+  [ {"rel":"produce","sign":"add","row":["d"]}, {"rel":"produce","sign":"add","row":["e"]} ],
+  [ {"rel":"drain","sign":"add","row":["d2"]} ],
+  [ {"rel":"drain","sign":"add","row":["d3"]} ],
+  [ {"rel":"drain","sign":"add","row":["d4"]} ],
+  [ {"rel":"drain","sign":"add","row":["d5"]} ],
+  [ {"rel":"drain","sign":"add","row":["d6"]} ]
+]

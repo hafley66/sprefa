@@ -1,0 +1,4 @@
+rel subscribe(reader: text)        log keep(all).
+rel read_at(reader: text, at: int) key(1).
+
+read_at(Reader, 0) <+ subscribe(Reader).
