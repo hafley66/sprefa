@@ -72,6 +72,149 @@ test("sh host: a JSON object stream projects by NAME, and a record missing a dec
   }
 });
 
+/**
+ * A GRID host: N answers, each one line carrying exactly the declared column
+ * count as whitespace-separated fields. This is the shipped `enumerate_at`
+ * shape verbatim (`printf '%s %s\n' "$entry" "$oid"` per tracked path), reduced
+ * to a hermetic `seq` so the cardinality is the demand row.
+ */
+const GRID_HOST_DL6 = `
+rel want(count: text).
+rel listing(count: text, path: text, digest: text).
+
+sh files(count: text) -> (path: text, digest: text) =
+  \`seq 1 {count} | while IFS= read -r idx; do printf '%s %s\\n' "file$idx.txt" "oid$idx"; done\`.
+
+listing(count, path, digest) <- want(count), files(count, path, digest).
+`;
+
+/**
+ * D1: the line-per-column reading is a GUESS, and it used to win whenever the
+ * line count happened to equal the column count. `enumerate_at` declares two
+ * output columns, so a two-file answer -- and only a two-file answer -- was
+ * folded into ONE row whose `path` was the whole first line and whose `digest`
+ * was the whole second. Correct at one file, correct at three, silently wrong
+ * at two, on a shipped host feeding the flagship receipt.
+ *
+ * RED-FIRST RECEIPT (run at a4629623, before the parseWhitespace fix):
+ *
+ *   AssertionError [ERR_ASSERTION]: 2 files must be 2 rows, not one row of two
+ *   lines: [["2","file1.txt oid1","file2.txt oid2"]]
+ *     + actual - expected
+ *     + 1
+ *     - 2
+ *
+ * The mangled row is printed by the assertion itself: `path` held
+ * "file1.txt oid1", the entire first line, and `digest` held the second.
+ * Cardinalities 0, 1 and 3 were already green, which is the whole reason this
+ * shipped -- the receipt pins all four so a future heuristic cannot trade one
+ * for another.
+ *
+ * SABOTAGE RECEIPT (run after the fix, reverted): restoring the old
+ * `lines.length === outputs.length` precedence in `parseWhitespace` turns this
+ * red again at count=2 only, exactly as above.
+ *
+ * NOTE ON GRADING, stated rather than hidden: replay grading (`scheduleFromTicks`
+ * feeding the oracle the rows the server pushed) is BLIND to this defect by
+ * construction -- the mangled row is replayed faithfully and both engines then
+ * agree on it. The world-side decode is graded by the row assertions below and
+ * nowhere else.
+ */
+test("sh host: a grid answer is one row per line at every cardinality, 0 through 3", async () => {
+  const served = await startServed();
+  try {
+    const loaded = await postProgram(served.port, GRID_HOST_DL6);
+    assert.equal(loaded.statusCode, 200, loaded.body);
+
+    await postArrivals(served.port, [
+      { rel: "want", sign: "add", row: ["0"] },
+      { rel: "want", sign: "add", row: ["1"] },
+      { rel: "want", sign: "add", row: ["2"] },
+      { rel: "want", sign: "add", row: ["3"] },
+    ]);
+
+    // Every demand has been ANSWERED once its own `effect` event is out,
+    // including the zero-row one: waiting on `listing` alone could never
+    // observe the count=0 host at all (no rows is its correct answer, and the
+    // trace surface is where that answer is visible, by the design note in
+    // 1_hosts.ts `decodeObjectItems`).
+    const answers = (): readonly number[] =>
+      served.events.flatMap((event) => (event.kind === "effect" && event.done.host === "files" ? [event.done.responseRows] : []));
+    await waitUntil(() => answers().length >= 4, "all four sh host demands to be answered");
+    assert.deepEqual(
+      answers().slice().sort((left, right) => left - right),
+      [0, 1, 2, 3],
+      `the decoded row count per demand, straight off the trace: ${JSON.stringify(answers())}`,
+    );
+
+    const listing = JSON.parse((await request(served.port, "/idb/listing", "GET")).body) as {
+      rows: readonly (readonly string[])[];
+    };
+    const rowsFor = (count: string): readonly (readonly string[])[] =>
+      listing.rows.filter((row) => row[0] === count).slice().sort((left, right) => left[1]!.localeCompare(right[1]!));
+
+    assert.deepEqual(rowsFor("0"), [], "an empty answer is no rows");
+    assert.deepEqual(rowsFor("1"), [["1", "file1.txt", "oid1"]], "1 file must be 1 row");
+    assert.deepEqual(
+      rowsFor("2"),
+      [
+        ["2", "file1.txt", "oid1"],
+        ["2", "file2.txt", "oid2"],
+      ],
+      `2 files must be 2 rows, not one row of two lines: ${JSON.stringify(rowsFor("2"))}`,
+    );
+    assert.deepEqual(
+      rowsFor("3"),
+      [
+        ["3", "file1.txt", "oid1"],
+        ["3", "file2.txt", "oid2"],
+        ["3", "file3.txt", "oid3"],
+      ],
+      "3 files must be 3 rows",
+    );
+    assert.equal(listing.rows.length, 6, "0 + 1 + 2 + 3 files");
+  } finally {
+    await served.stop();
+  }
+});
+
+/**
+ * The other side of the same guess, and why the fix is a PRECEDENCE change and
+ * not a deletion: a host whose values carry internal whitespace prints one
+ * VALUE per line (ghcacher's `printf '%s\n%s\n%s'`), and splitting such a line
+ * into words shreds it. That reading survives; it just no longer outranks the
+ * grid reading when both are available.
+ */
+const LINE_PER_COLUMN_DL6 = `
+rel ask(tag: text).
+rel meta(tag: text, title: text, author: text).
+
+sh describe(tag: text) -> (title: text, author: text) =
+  \`printf '%s\\n%s\\n' 'the {tag} report' 'ada lovelace'\`.
+
+meta(tag, title, author) <- ask(tag), describe(tag, title, author).
+`;
+
+test("sh host: one value per line still wins when the lines are not a grid", async () => {
+  const served = await startServed();
+  try {
+    const loaded = await postProgram(served.port, LINE_PER_COLUMN_DL6);
+    assert.equal(loaded.statusCode, 200, loaded.body);
+    await postArrivals(served.port, [{ rel: "ask", sign: "add", row: ["annual"] }]);
+    await waitUntil(async () => {
+      const reply = await request(served.port, "/idb/meta", "GET");
+      return (JSON.parse(reply.body) as { rows: unknown[] }).rows.length > 0;
+    }, "the two-line answer to land in meta");
+
+    const meta = JSON.parse((await request(served.port, "/idb/meta", "GET")).body) as {
+      rows: readonly (readonly string[])[];
+    };
+    assert.deepEqual(meta.rows, [["annual", "the annual report", "ada lovelace"]]);
+  } finally {
+    await served.stop();
+  }
+});
+
 test("compiler-known extract host uses the registered process executor", async () => {
   const executor = HostExecutors.get("sprefa_extract");
   assert.ok(executor);

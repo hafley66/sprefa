@@ -259,20 +259,48 @@ function parseJsonItems(text: string): unknown[] | null {
   return items;
 }
 
-/** ONE row, one VALUE per line when the line count matches the output column
- *  count exactly (`printf '%s\n%s\n%s'`, ghcacher's own template shape): a
- *  field's own value routinely contains internal whitespace, so splitting such
- *  a line into words shreds it. Otherwise one row per line, columns split on
- *  whitespace. */
+/**
+ * Whitespace stdout has TWO readings and no marker to pick between them, so the
+ * order they are tried in is the whole semantics:
+ *
+ *   GRID       one row per line, N whitespace fields per line. `enumerate_at`'s
+ *              `printf '%s %s\n' "$entry" "$oid"` per tracked path.
+ *   PER-COLUMN one row total, one VALUE per line. ghcacher's
+ *              `printf '%s\n%s\n%s'`, where a value routinely carries internal
+ *              whitespace and word-splitting it shreds it.
+ *
+ * The GRID reading goes first, and only when it is UNAMBIGUOUS: every nonempty
+ * line splits into exactly the declared column count. Nothing about such a
+ * stdout has to be guessed -- the shape is already the answer.
+ *
+ * PER-COLUMN then takes the line-count match, which is what it always was, and
+ * that is the reading a value-with-spaces stream lands in (its lines do NOT
+ * split into N fields, which is precisely why word-splitting would shred them).
+ *
+ * The precedence used to be the other way round, and the cost was silent: a
+ * two-column grid host answering exactly TWO rows -- `enumerate_at` on a
+ * two-file glob, nothing more exotic -- had its two lines folded into one row
+ * whose first column was the entire first line. Right at one file, right at
+ * three, wrong at two. That is failure class 36's cross-contamination again,
+ * one layer up from the parse that caused it (bug host_grid_answer_folded).
+ *
+ * What is left ambiguous after this is narrow and stated: a per-column host
+ * whose every line happens to hold exactly N words reads as a grid. There is no
+ * information in the stdout that separates those two, and the class-36 rule
+ * (never guess a value from a neighbouring row's text) says take the reading
+ * that keeps each line's fields inside their own row.
+ */
 function parseWhitespace(host: string, text: string, outputs: readonly IHostColumnPlan[]): IRowValue[][] {
   const lines = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  const fieldsPerLine = lines.map((line) => line.split(/\s+/));
+  const isGrid = fieldsPerLine.every((fields) => fields.length === outputs.length);
+  if (isGrid) {
+    return fieldsPerLine.map((fields) => outputs.map((column, index) => coerce(host, column, fields[index] ?? "")));
+  }
   if (outputs.length > 1 && lines.length === outputs.length) {
     return [outputs.map((column, index) => coerce(host, column, lines[index] ?? ""))];
   }
-  return lines.map((line) => {
-    const parts = line.split(/\s+/);
-    return outputs.map((column, index) => coerce(host, column, parts[index] ?? ""));
-  });
+  return fieldsPerLine.map((fields) => outputs.map((column, index) => coerce(host, column, fields[index] ?? "")));
 }
 
 /**
