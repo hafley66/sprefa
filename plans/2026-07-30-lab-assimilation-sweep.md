@@ -272,8 +272,19 @@ keyed-clock/etag feedback shape, and nothing ran it. Its driver
 had already left the lab and the other half had not.
 
 **Executed here:** the directory moves to `v6/tsv2/goldens/ghcacher_tick_golden/`
-(paths inside `6_gate.sh` adjusted), and `just ghcacher-golden` joins
-`green-all`. Its README, which is a good one, moves with it.
+and `just ghcacher-golden` joins `green-all`. The move is same-depth, so
+`6_gate.sh` needed only the `LAB_DIR` -> `GOLDEN_DIR` rename; `4_oracle.pl` did
+need its two `ensure_loaded` paths fixed (`../../compile` ->
+`../../../prolog/compile`). Its README, which is a good one, moves with it.
+
+Receipts for the promotion, all taken at this base:
+
+| leg | result |
+|---|---|
+| direct run from the new home | `GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1`, exit 0 |
+| `just ghcacher-golden` | same, exit 0 |
+| **sabotage**: one byte of `2_expected.tick.jsonl`, tick 1 -> tick 9 | **exit 1** |
+| sabotage reverted | green again, exit 0 |
 
 ---
 
@@ -416,7 +427,23 @@ score is 10/1.
 
 ---
 
-## 9. What this sweep did not do
+## 9. Post-sweep battery
+
+Run on this lane after every deletion and the promotion, hermetic:
+
+| leg | result |
+|---|---|
+| `just conformance` | 193 PASS / 0 fail, exit 0 |
+| `just plunit` | 222/222, exit 0 (one pre-existing choicepoint warning) |
+| `just prolog-lint` | `PROLOG_LINT findings=1 baseline=1 OK`, exit 0 |
+| `just ghcacher-golden` | `GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1`, exit 0 |
+
+Nothing outside `labs/`, `v6/prolog/labs/`, `v6/tsv2/goldens/`, `v6/justfile`
+and this document was touched.
+
+---
+
+## 10. What this sweep did not do
 
 - Did not touch `json_syntax`, `json_interop`, `openapi_codegen`,
   `rel_as_stream`, or `labs/teardown-flatten`, per instruction.
