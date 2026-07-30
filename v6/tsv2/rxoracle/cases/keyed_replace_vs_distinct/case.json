@@ -1,0 +1,16 @@
+{
+  "expect": "modulo",
+  "summary": "keyed replace vs distinctUntilChanged: five readings on one key, two of them exact repeats of the value before them.",
+  "note": "the repeat-swallowing matches exactly; N3 for the del half sprefa emits on every real change",
+  "stepMs": 500,
+  "guardMs": 100,
+  "dropDel": true,
+  "steps": [
+    { "label": "reading 1", "batch": [{ "rel": "reading", "sign": "add", "row": ["s", "one"] }] },
+    { "label": "reading 1 again, identical", "batch": [{ "rel": "reading", "sign": "add", "row": ["s", "one"] }] },
+    { "label": "reading 2", "batch": [{ "rel": "reading", "sign": "add", "row": ["s", "two"] }] },
+    { "label": "reading 2 again, identical", "batch": [{ "rel": "reading", "sign": "add", "row": ["s", "two"] }] },
+    { "label": "back to reading 1", "batch": [{ "rel": "reading", "sign": "add", "row": ["s", "one"] }] },
+    { "label": "idle", "batch": [] }
+  ]
+}

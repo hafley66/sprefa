@@ -1,0 +1,19 @@
+# latest_sampling -- leg B.
+#
+# `latest(RelAtom)` in an EDGE body is the sampled read: the wrapped atom reads
+# the current base table and never becomes a trigger, which is exactly
+# withLatestFrom's asymmetry. `tick_event` is the trigger; `config` is sampled.
+#
+# The empty-source case is part of the test: a trigger arriving before `config`
+# has any row joins against nothing and derives nothing, which is also what
+# withLatestFrom does before its other source has emitted. Neither side has to
+# be told to behave that way; it falls out of a join against an empty relation
+# on one side and of withLatestFrom's own contract on the other.
+
+rel tick_event(event_id: text) log keep(all).
+rel config_change(slot: text, value: text) log keep(all).
+rel config(slot: text, value: text) key(1).
+rel sampled(event_id: text, value: text) log keep(all).
+
+config(Slot, Value) <+ config_change(Slot, Value).
+sampled(EventId, Value) <+ tick_event(EventId), latest(config(_Slot, Value)).

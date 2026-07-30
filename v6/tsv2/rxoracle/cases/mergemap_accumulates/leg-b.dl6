@@ -1,0 +1,13 @@
+# mergemap_accumulates -- leg B.
+#
+# `enriched` is a plain level rule joining each request against the lookup
+# table. A level rule over an accumulating source IS mergeMap's accumulation:
+# no request supersedes another, every derived row stays derived for as long as
+# its supports stay, and a third request over a key that was already used
+# produces its own rows without disturbing the first two.
+
+rel item(key: text, part: text).
+rel request(request_id: text, key: text).
+rel enriched(request_id: text, key: text, part: text).
+
+enriched(RequestId, Key, Part) <- request(RequestId, Key), item(Key, Part).

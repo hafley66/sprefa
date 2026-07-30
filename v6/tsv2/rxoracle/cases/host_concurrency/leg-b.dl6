@@ -1,0 +1,24 @@
+# host_concurrency -- leg B.
+#
+# Two jobs demanded in ONE arrival batch, each running the same shell host.
+# rxjs's mergeMap subscribes both inners immediately and they overlap; the
+# question is whether the served host runner does.
+#
+# It does not. serve/1_hosts.ts groups a tick's demand into invocations and
+# runs them under `concatMap`, so a generic `sh` declaration is a singleton
+# invocation and the second job's process does not start until the first one's
+# has exited. The spawn ledger below is the receipt: `start j1 / done j1 /
+# start j2 / done j2`, never interleaved.
+#
+# That is a defensible choice for shell effects (the file's own header says a
+# generic shell command may carry effects even when its text and inputs match)
+# and it is not what mergeMap means, so the two legs put the same rows in
+# different steps.
+
+rel job(job_id: text) log keep(all).
+rel result(job_id: text, payload: text).
+
+sh work(job_id: text) -> (payload: text) =
+  `printf 'start %s\n' "{job_id}" >> "$RXO_MARKS"; sleep "$RXO_NAP"; printf 'done %s\n' "{job_id}" >> "$RXO_MARKS"; printf '%s' "{job_id}-done"`.
+
+result(JobId, Payload) <- job(JobId), work(JobId, Payload).

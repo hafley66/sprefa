@@ -1,0 +1,23 @@
+{
+  "expect": "diverges",
+  "summary": "switchMap: a new route arrives while the previous route's fetch is still in flight, then the run routes BACK to the superseded route.",
+  "note": "rxjs cancels the loser and re-runs on re-subscribe; sprefa runs the loser to completion, caches its answer, and re-derives from cache",
+  "stepMs": 1000,
+  "guardMs": 250,
+  "dropDel": true,
+  "env": { "RXO_NAP": "1.95" },
+  "receipts": {
+    "marksLines": 4,
+    "marksExact": ["start r1", "done r1", "start r2", "done r2"],
+    "idbRows": { "__host_response_fetch_body": 2, "body": 1 }
+  },
+  "steps": [
+    { "label": "route s1 to r1, fetch starts", "batch": [{ "rel": "route_change", "sign": "add", "row": ["s1", "r1"] }] },
+    { "label": "route s1 to r2 while r1 is in flight", "batch": [{ "rel": "route_change", "sign": "add", "row": ["s1", "r2"] }] },
+    { "label": "idle: r1's answer arrives here, superseded", "batch": [] },
+    { "label": "route s1 BACK to r1", "batch": [{ "rel": "route_change", "sign": "add", "row": ["s1", "r1"] }] },
+    { "label": "idle: r2's answer arrives here, now superseded", "batch": [] },
+    { "label": "idle", "batch": [] },
+    { "label": "idle", "batch": [] }
+  ]
+}

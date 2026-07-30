@@ -1,0 +1,14 @@
+# same_tick_collapse -- leg B.
+#
+# The same keyed edge rule as keyed_replace_vs_distinct, driven differently:
+# three transitions for one entity arrive in ONE arrival batch, so they are one
+# tick. engine.pl processes occurrences one at a time and the head is written
+# three times, but the tick's boundary delta is the NET change, so the
+# intermediate phases are not events anywhere. That is the update-arm lab's U4
+# finding (same-tick v1 -> v2 -> v3 is one row, an honest endpoint pair), stated
+# here as a per-event diff against the operator that does not collapse.
+
+rel transition(entity: text, phase: text) log keep(all).
+rel phase(entity: text, phase: text) key(1).
+
+phase(Entity, Phase) <+ transition(Entity, Phase).

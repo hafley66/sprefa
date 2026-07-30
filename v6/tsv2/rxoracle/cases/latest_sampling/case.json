@@ -1,0 +1,16 @@
+{
+  "expect": "modulo",
+  "summary": "latest() in an edge body vs withLatestFrom: one trigger source, one sampled source, including a trigger that arrives before the sampled source has any value.",
+  "note": "N3 only, for the keyed config replace; the sampling itself matches event for event",
+  "stepMs": 500,
+  "guardMs": 100,
+  "dropDel": true,
+  "steps": [
+    { "label": "trigger before any config exists", "batch": [{ "rel": "tick_event", "sign": "add", "row": ["e0"] }] },
+    { "label": "config becomes v1", "batch": [{ "rel": "config_change", "sign": "add", "row": ["cfg", "v1"] }] },
+    { "label": "trigger samples v1", "batch": [{ "rel": "tick_event", "sign": "add", "row": ["e1"] }] },
+    { "label": "config becomes v2", "batch": [{ "rel": "config_change", "sign": "add", "row": ["cfg", "v2"] }] },
+    { "label": "trigger samples v2", "batch": [{ "rel": "tick_event", "sign": "add", "row": ["e2"] }] },
+    { "label": "idle", "batch": [] }
+  ]
+}

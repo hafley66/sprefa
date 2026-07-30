@@ -1,0 +1,21 @@
+{
+  "expect": "diverges",
+  "summary": "scan vs pre(): three single increments then TWO in one batch. The fold is correct on both legs; the intermediate value inside the batch is an event on one of them.",
+  "note": "the total reaches 5, so the intermediate 4 was computed and consumed; it is still not an event -- computed, used, unobservable",
+  "stepMs": 500,
+  "guardMs": 100,
+  "dropDel": true,
+  "steps": [
+    { "label": "increment 1", "batch": [{ "rel": "increment", "sign": "add", "row": ["clicks"] }] },
+    { "label": "increment 2", "batch": [{ "rel": "increment", "sign": "add", "row": ["clicks"] }] },
+    { "label": "increment 3", "batch": [{ "rel": "increment", "sign": "add", "row": ["clicks"] }] },
+    {
+      "label": "two increments in ONE batch",
+      "batch": [
+        { "rel": "increment", "sign": "add", "row": ["clicks"] },
+        { "rel": "increment", "sign": "add", "row": ["clicks"] }
+      ]
+    },
+    { "label": "idle", "batch": [] }
+  ]
+}
