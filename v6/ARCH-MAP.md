@@ -46,7 +46,11 @@ flowchart TD
     c_avgx2f1["avg/1"]
     c_countx2f1["count/1"]
     c_group_concatx2f1["group_concat/1<br/>refused"]
+    c_group_concatx2f2["group_concat/2"]
+    c_group_concatx2f3["group_concat/3"]
     c_json_arrayx2f1["json_array/1<br/>refused"]
+    c_json_group_arrayx2f1["json_group_array/1"]
+    c_json_group_arrayx2f2["json_group_array/2"]
     c_json_objectx2f2["json_object/2<br/>refused"]
     c_maxx2f1["max/1"]
     c_minx2f1["min/1"]
@@ -140,7 +144,7 @@ flowchart TD
 
 | axis | constructs | live | refused | reserved | all live |
 |---|---|---|---|---|---|
-| `aggregate` | 8 | 5 | 3 | 0 |  |
+| `aggregate` | 12 | 9 | 3 | 0 |  |
 | `bind` | 2 | 2 | 0 | 0 | yes |
 | `decl` | 5 | 4 | 1 | 0 |  |
 | `guard` | 9 | 8 | 1 | 0 |  |
@@ -190,7 +194,6 @@ flowchart LR
   t_kernel_sql_lowering["kernel_sql_lowering<br/>done"]
   t_key_edge_case_census["key_edge_case_census<br/>labbed"]
   t_mode_lab["mode_lab<br/>labbed"]
-  t_ordered_aggregate_arc["ordered_aggregate_arc<br/>unbuilt"]
   t_ordered_aggregate_lab["ordered_aggregate_lab<br/>labbed"]
   t_per_row_consumption["per_row_consumption<br/>unbuilt"]
   t_pre_occurrence_loop["pre_occurrence_loop<br/>done"]
@@ -246,7 +249,6 @@ flowchart LR
   t_kernel_sql_lowering --> t_demand_clocking
   t_kernel_sql_lowering --> t_register_lowering
   t_mode_lab --> t_scope_cover_check
-  t_ordered_aggregate_lab --> t_ordered_aggregate_arc
   t_pre_occurrence_loop --> t_higher_order_rel_scan
   t_pre_occurrence_loop --> t_scan_match_reconciliation
   t_purity_split --> t_island_partition
@@ -283,7 +285,6 @@ flowchart LR
   class t_higher_order_rel_scan blocked
   class t_island_partition blocked
   class t_key_edge_case_census blocked
-  class t_ordered_aggregate_arc blocked
   class t_pushdown_optimizer blocked
   class t_receipt_folding blocked
   class t_reference_construction_contexts blocked
@@ -305,14 +306,14 @@ flowchart LR
 | `active` | 6 |
 | `canonical_plan` | 2 |
 | `closed` | 4 |
-| `done` | 99 |
+| `done` | 100 |
 | `labbed` | 16 |
 | `labbing` | 4 |
 | `parked` | 1 |
 | `superseded` | 2 |
-| `unbuilt` | 40 |
+| `unbuilt` | 39 |
 
-**Ready** (open, every dependency done): 49 tasks. **Blocked**: 26 tasks.
+**Ready** (open, every dependency done): 49 tasks. **Blocked**: 25 tasks.
 
 <details><summary>the ready set</summary>
 

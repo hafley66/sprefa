@@ -26,7 +26,7 @@ conformance:
 roundtrip:
 	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
 
-# term door vs .dl6 text door, byte-identical emitted modules (expect: 165/165/0)
+# term door vs .dl6 text door, byte-identical emitted modules (expect: 182/182/0)
 text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
@@ -57,7 +57,7 @@ compile-speed:
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
-# (expect: RUN total=165 identical=163 wrong=0; slow, minutes)
+# (expect: RUN total=182 identical=180 wrong=0; slow, minutes)
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
