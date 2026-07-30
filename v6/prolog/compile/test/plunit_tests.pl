@@ -19,7 +19,8 @@
 :- use_module('../strat', [ stratum_groups/2 ]).
 :- use_module('../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
-                canonical_column_expr/2, level_support_sql/4 ]).
+                canonical_column_expr/2, level_support_sql/4,
+                json_capture_json_type/2 ]).
 :- use_module('../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
@@ -55,7 +56,7 @@
                 check_program/1 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
-:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
+:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1, json_capture_type/2 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('0_graph.test.pl').
@@ -2980,5 +2981,76 @@ test(non_identifier_key_prints_quoted) :-
     parsed_pattern('{\'$ref\': v}', Pattern),
     printed_pattern(Pattern, Text),
     Text == '{\'$ref\': _}'.
+
+% ── typed captures ───────────────────────────────────────────────────────────
+% `{stars: Stars: int}`. `:` is 600 xfy in SWI, so the TERM door reads the
+% suffix for free; these pin that the TEXT door reads and writes the same
+% term, and that the two runtime type tables cannot drift apart.
+
+test(typed_capture_parses_to_a_nested_colon) :-
+    parsed_pattern('{stars: s: int}', Pattern),
+    Pattern = '{}'(stars:(Hole:int)),
+    var(Hole).
+
+test(typed_capture_round_trips) :-
+    forall(member(Source, ['{stars: s: int}',
+                           '{repo: r: text, stars: s: int}',
+                           '{score: v: float}',
+                           '[... {n: i: int}]',
+                           '{outer: {inner: v: int}}']),
+           ( parsed_pattern(Source, Pattern),
+             printed_pattern(Pattern, Printed),
+             parsed_pattern(Printed, Reparsed),
+             ( Pattern =@= Reparsed
+             -> true
+             ; throw(round_trip_broken(Source, Printed, Pattern, Reparsed)) ) )).
+
+% The untyped spelling must not acquire a type by accident: the printer's
+% typed clause is guarded on `var(Hole), atom(Type)`, and a plain pair still
+% prints as a plain pair.
+test(untyped_pair_still_prints_untyped) :-
+    parsed_pattern('{stars: s}', Pattern),
+    printed_pattern(Pattern, Text),
+    Text == '{stars: _}'.
+
+% ONE type table, two implementations, and the reason the agreement is worth a
+% test rather than a comment: a type live on one door and refused on the other
+% is a program that runs on the oracle and refuses in the compiler (or, worse,
+% the other way round), which no byte-diff can catch because the compiled side
+% never produces a log to diff.
+live_capture_type(int).
+live_capture_type(float).
+live_capture_type(text).
+
+test(capture_types_agree_across_doors) :-
+    forall(live_capture_type(Type),
+           ( json_capture_json_type(Type, _),
+             % "does not throw", never "succeeds": a live type MAY fail on a
+             % value of the wrong kind (that failure IS the filter). Only the
+             % refusal arm distinguishes an unknown type name.
+             catch(( json_capture_type(Type, 0) -> true ; true ),
+                   Thrown, true),
+             ( var(Thrown) -> true
+             ; throw(oracle_refuses_live_capture_type(Type, Thrown)) ) )).
+
+test(unknown_capture_type_is_refused_by_the_compiler,
+     [throws(unsupported_construct(json_capture_type_unknown(bool)))]) :-
+    json_capture_json_type(bool, _).
+
+test(unknown_capture_type_is_refused_by_the_oracle,
+     [throws(json_capture_type_unknown(bool))]) :-
+    json_capture_type(bool, x).
+
+% The oracle's arms, one value per json1 answer the emitted guard tests for.
+test(oracle_capture_types_match_their_json_type_answer) :-
+    json_capture_type(int, 4),
+    \+ json_capture_type(int, four),
+    json_capture_type(text, four),
+    \+ json_capture_type(text, 4),
+    % json null's stand-in is the atom `none` (json_flex card C3); it is not
+    % a text value, so a `text` capture must not bind it.
+    \+ json_capture_type(text, none),
+    json_capture_type(float, 1.5),
+    \+ json_capture_type(float, 1).
 
 :- end_tests(json_grammar).

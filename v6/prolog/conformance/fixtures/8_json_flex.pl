@@ -268,3 +268,132 @@ fixture(json_spread_and_capture_and_descent_multiply,
   [],
   [ final(hit/3, [ hit(1, blue, 5), hit(1, red, 5),
                    hit(2, blue, 5), hit(2, red, 5) ]) ]).
+
+% ═══ TYPED CAPTURES ═════════════════════════════════════════════════════════
+%
+% `{stars: Stars: int}`. The colon is already this language's type marker on
+% the decl plane (ruling decl_column_spelling = colon_typed_ordered_columns);
+% these fixtures are that marker one level down, inside a json pattern.
+%
+% FAIL-FIRST, at this wave's base (3d993e1e). The flagship below is the
+% program a cold author wrote and the reason this lane exists. Without a
+% typed capture it does not compile at all:
+%
+%   star_event(Repo, Stars) <- event(Payload), decode(Payload, {repo: Repo, stars: Stars}).
+%   ...  |+> total(Repo, Next)
+%   -> unsupported_construct(edge_head_column_type_mismatch(total/2,2,text,int))
+%
+% lower.pl types an untyped hole `text` (json_extract carries no declared
+% column type and the clause says so), so star_event's second column took the
+% zero-witness default and the `int` head column refused the rule by name. The
+% SQL was never the problem: json1 hands back a real SQL INTEGER for a json
+% number. The type pass had no way to be told.
+
+% THE FLAGSHIP: a json event log folded into a keyed running total. Both arms
+% of the match block read the same capture, the second one arithmetically.
+fixture(json_typed_capture_folds_into_a_keyed_int_total,
+  prog([col_type(event/1, payload, json), kind(event/1, log), keep(event/1, all),
+        col_type(total/2, repo, text), col_type(total/2, sum, int),
+        keyed(total/2, [1])],
+       [ (star_event(Repo, Stars) <-
+            event(Payload),
+            decode(Payload, {repo: Repo: text, stars: Stars: int})),
+         match(star_event(Repo, Stars),
+           ( (total(Repo, Stars) <+ not(total(Repo, _Prev)))
+           ; (total(Repo, Next) <+ (pre(total(Repo, Prev)), Next := Prev + Stars))
+           )) ]),
+  [],
+  [ [ +event(obj([repo-cli, stars-4])) ],
+    [ +event(obj([repo-cli, stars-3])), +event(obj([repo-web, stars-10])) ],
+    [ +event(obj([repo-cli, stars-1])) ] ],
+  [ deltas(total/2,
+           [ [ +total(cli, 4) ],
+             [ -total(cli, 4), +total(cli, 7), +total(web, 10) ],
+             [ -total(cli, 7), +total(cli, 8) ],
+             [] ]),
+    final(total/2, [ total(cli, 8), total(web, 10) ]) ]).
+
+% THE GUARD IS NOT DECORATION. A declared type is ENFORCED, not assumed: the
+% document whose `stars` is the STRING "many" contributes no row on either
+% door, because the oracle checks integer/1 and the emitter emits
+% `json_type(b0."payload", '$."stars"') = 'integer'` ahead of the extract.
+%
+% Deleting the guard does not fail loudly, which is exactly why this fixture
+% exists. Measured against system sqlite3 3.43.2 over
+% '{"repo":"cli","stars":4}' and '{"repo":"web","stars":"many"}', the two
+% WHERE lists this compiler can emit, writing into `"stars" INTEGER NOT NULL`:
+%
+%   ... AND json_extract(b0."payload",'$."stars"') IS NOT NULL   (untyped)
+%     -> cli|4|integer   AND   web|many|TEXT
+%   ... AND json_type(b0."payload",'$."stars"') = 'integer'      (typed)
+%     -> cli|4|integer
+%
+% INTEGER affinity keeps a non-numeric string as TEXT, so the untyped form
+% writes text into an int column and the tick log prints "many" where the
+% oracle prints nothing. The TEXT-collapse class again.
+%
+% It is also the answer to "why not just declare the intermediate rel". A
+% declared `rel star_event(repo: text, stars: int)` DOES compile the flagship
+% -- the head decl types the column and edge_head_column_type_mismatch stops
+% firing -- but it emits the UNTYPED where list above, because the capture
+% itself is still untyped. It buys the type and not the guard.
+fixture(json_typed_capture_filters_a_wrong_typed_value,
+  prog([col_type(event/1, payload, json), kind(event/1, log), keep(event/1, all),
+        col_type(counted/2, repo, text), col_type(counted/2, stars, int)],
+       [ (counted(Repo, Stars) <-
+            event(Payload),
+            decode(Payload, {repo: Repo: text, stars: Stars: int})) ]),
+  [],
+  [ [ +event(obj([repo-cli, stars-4])),
+      +event(obj([repo-web, stars-many])),
+      +event(obj([repo- 7, stars-1])) ] ],
+  [ final(counted/2, [ counted(cli, 4) ]),
+    ticks(1) ]).
+
+% An UNTYPED capture is untouched by this wave: it still binds whatever sits
+% at the key and still types `text`. The pair with the fixture above is the
+% whole no-silent-widening argument -- the author says `int`, or the author
+% gets exactly what was always there.
+%
+% TEXT values only, and the omission is a MEASURED finding rather than
+% timidity: a json NUMBER read through an UNTYPED capture diverges today. The
+% oracle binds the integer 4 and prints `4`; the emitter types the capture
+% `text`, so the head column resolves to text and the log prints `"4"`. Ran
+% as a fixture with `+event(obj([stars-4]))` in the batch:
+%
+%   actual  "seen":{"add":[["4"],["many"]]}
+%   oracle  "seen":{"add":[["many"],[4]]}
+%
+% PRE-EXISTING and reachable without any of this lane's work -- json_arm.pl's
+% own numeric fixtures avoid it by DECLARING the head column `int`, which is
+% the shipped answer for a level head. Closing it means giving an untyped
+% capture a type, which is the widening the typed capture exists instead of.
+% Named here, not fixed here.
+fixture(json_untyped_capture_binds_without_a_type,
+  prog([col_type(event/1, payload, json), kind(event/1, log), keep(event/1, all),
+        col_type(seen/1, value, text)],
+       [ (seen(Value) <- event(Payload), decode(Payload, {stars: Value})) ]),
+  [],
+  [ [ +event(obj([stars-many])), +event(obj([stars-lots])) ] ],
+  [ final(seen/1, [ seen(lots), seen(many) ]),
+    ticks(1) ]).
+
+% A capture type this plane does not define is a NAMED REFUSAL, never a
+% pattern that quietly matches nothing. `bool` is on the refused side on
+% purpose: a json boolean has no settled storage here (json_flex card C4
+% measured a top-level `true` DOCUMENT degrading to the integer 1 through the
+% real emitted arrival statement), so accepting it would guess at an open
+% card.
+fixture(json_capture_type_bool_is_refused,
+  prog([col_type(event/1, payload, json)],
+       [ (flagged(Value) <- event(Payload), decode(Payload, {ok: Value: bool})) ]),
+  [ event(obj([ok-bool_lit(true)])) ],
+  [],
+  [ throws(json_capture_type_unknown(bool)) ]).
+
+fixture(json_capture_type_typo_is_refused,
+  prog([col_type(event/1, payload, json)],
+       [ (counted(Value) <- event(Payload), decode(Payload, {n: Value: itn})) ]),
+  [ event(obj([n-4])) ],
+  [],
+  [ throws(json_capture_type_unknown(itn)) ]).

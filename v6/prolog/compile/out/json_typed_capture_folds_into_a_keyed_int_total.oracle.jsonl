@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"event":{"add":[[{"repo":"cli","stars":4}]],"del":[]},"star_event":{"add":[["cli",4]],"del":[]},"total":{"add":[["cli",4]],"del":[]}}}
+{"tick":2,"deltas":{"event":{"add":[[{"repo":"cli","stars":3}],[{"repo":"web","stars":10}]],"del":[]},"star_event":{"add":[["cli",3],["web",10]],"del":[]},"total":{"add":[["cli",7],["web",10]],"del":[["cli",4]]}}}
+{"tick":3,"deltas":{"event":{"add":[[{"repo":"cli","stars":1}]],"del":[]},"star_event":{"add":[["cli",1]],"del":[]},"total":{"add":[["cli",8]],"del":[["cli",7]]}}}
+{"tick":4,"deltas":{}}

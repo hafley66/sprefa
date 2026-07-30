@@ -520,6 +520,14 @@ print_braces((Pair, Rest), Bindings, Text) :- !,
 print_braces(Pair, Bindings, Text) :-
     print_brace_pair(Pair, Bindings, Text).
 
+% A TYPED CAPTURE `{stars: Stars: int}` prints its type back, and the clause
+% has to come first: the value of such a pair is itself a `:`/2 term, which
+% print_term/5 would otherwise render through its generic compound arm.
+print_brace_pair(Key:(Hole:Type), Bindings, Text) :-
+    var(Hole), atom(Type), !,
+    print_brace_key(Key, Bindings, KeyText),
+    print_term(Hole, Bindings, 0, top, HoleText),
+    format(atom(Text), "~w: ~w: ~w", [KeyText, HoleText, Type]).
 print_brace_pair(Key:Value, Bindings, Text) :-
     print_brace_key(Key, Bindings, KeyText),
     print_term(Value, Bindings, 0, top, ValueText),

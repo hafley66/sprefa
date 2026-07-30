@@ -1,0 +1,3 @@
+rel event(payload: json).
+
+counted(Value) <- event(Payload), decode(Payload, {n: Value: itn}).

@@ -618,8 +618,63 @@ body_type_environment(RefColumns, Current, Body, Environment) :-
     body_ref_uses(Body, Uses),
     include(use_is_positive, Uses, PositiveUses),
     foldl(atom_use_bindings(RefColumns, Current), PositiveUses, [], AtomEnvironment),
+    conjunction_goals(Body, AllGoals),
+    foldl(json_capture_bindings, AllGoals, AtomEnvironment, CaptureEnvironment),
     body_guard_goals(Body, GuardGoals),
-    foldl(bind_goal_binding, GuardGoals, AtomEnvironment, Environment).
+    foldl(bind_goal_binding, GuardGoals, CaptureEnvironment, Environment).
+
+% A TYPED JSON CAPTURE `decode(Payload, {stars: Stars: int})` is the third
+% way a body binds a variable, beside a positive atom and a `:=`. Without
+% this fold the capture reaches the head with no type at all: lower.pl types
+% an untyped hole `text` (json_extract carries no declared column type), so
+% the head column took C2's zero-witness default and an `int` target refused
+% the rule by name (edge_head_column_type_mismatch(total/2,2,text,int), the
+% fail-first receipt).
+%
+% Placed BETWEEN the atom fold and the bind fold on purpose. A capture is
+% bound by the decode goal, which precedes any bind that reads it, and
+% bind_goal_binding/3 only adds a variable it has not already seen -- so a
+% `Next := Prev + Stars` downstream reads Stars at its declared type instead
+% of inventing one. UNTYPED captures are deliberately not folded here: they
+% keep the `text` reading lower.pl gives them, so nothing that compiles today
+% moves.
+json_capture_bindings(Goal, Environment0, Environment) :-
+    (   nonvar(Goal), Goal = decode(_, Pattern)
+    ->  json_pattern_capture_fold(Pattern, Environment0, Environment)
+    ;   Environment = Environment0
+    ).
+
+% A DIRECT FOLD, never findall/3 over the captures: findall COPIES its
+% template, and the whole content of this walk is variable IDENTITY -- a
+% copied Hole would be entered into the environment under a variable no head
+% argument can ever be `==` to, so every capture would silently contribute
+% nothing. (The prolog-org refactor journal records the same bite twice, both
+% times with a failure message far from the cause.)
+json_pattern_capture_fold(Pattern, Environment0, Environment) :-
+    nonvar(Pattern), Pattern = (Hole : Type), var(Hole), atom(Type), !,
+    (   environment_lookup(Environment0, Hole, _)
+    ->  Environment = Environment0
+    ;   Environment = [Hole-Type | Environment0]
+    ).
+json_pattern_capture_fold(Pattern, Environment0, Environment) :-
+    nonvar(Pattern), Pattern = '{}'(Fields), !,
+    brace_fields_capture_fold(Fields, Environment0, Environment).
+json_pattern_capture_fold(Pattern, Environment0, Environment) :-
+    nonvar(Pattern), Pattern = spread(Sub), !,
+    json_pattern_capture_fold(Sub, Environment0, Environment).
+json_pattern_capture_fold(Pattern, Environment0, Environment) :-
+    is_list(Pattern), !,
+    foldl(json_pattern_capture_fold, Pattern, Environment0, Environment).
+json_pattern_capture_fold(_, Environment, Environment).
+
+brace_fields_capture_fold(Fields, Environment0, Environment) :-
+    nonvar(Fields), Fields = (Left, Right), !,
+    brace_fields_capture_fold(Left, Environment0, Environment1),
+    brace_fields_capture_fold(Right, Environment1, Environment).
+brace_fields_capture_fold(Fields, Environment0, Environment) :-
+    nonvar(Fields), Fields = (_Key : Sub), !,
+    json_pattern_capture_fold(Sub, Environment0, Environment).
+brace_fields_capture_fold(_, Environment, Environment).
 
 use_is_positive(use(_, _, pos, _)).
 
