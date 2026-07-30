@@ -310,6 +310,17 @@ decision(float_precision, sqlite_real_finite_binary64_exact_shortest_roundtrip).
 decision(clock_checker_scope, label_ring_sign_grade_then_infer_clocks).
 task(scan_surface_composition_lab, queued,
      'lab a nestable scan form composed with match, multiple keyed demand instances, shared reducer definitions, multiple subscribers, cancellation, initialization, and exact lowering to ordinary rels/pre/edge rules; no production syntax decision').
+verification(scan_surface_composition_lab,
+             passed(executable(10),
+                    plan(10),
+                    surface_cards(3),
+                    selected_cards(0),
+                    rules(10),
+                    edge_statements(7),
+                    level_groups(3),
+                    persistent_tables(9),
+                    temp_tables(32),
+                    pre_tables(1))).
 extractor_addition(ast_pattern_query,
                    'typed Rust AstPatternQuery and flat AstCaptureFact rows; CLI pattern/selector/capture inputs; no TypeScript parsing or DL type/syntax addition').
 host_overuse(grafana_v6_crawl,
