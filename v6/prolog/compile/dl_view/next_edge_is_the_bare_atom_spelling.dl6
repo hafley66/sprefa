@@ -1,0 +1,4 @@
+rel seen(value) key(1).
+rel source(value: int).
+
+seen(Value) <+ next(source(Value)).

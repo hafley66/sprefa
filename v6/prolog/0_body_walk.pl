@@ -81,7 +81,8 @@
             body_wrapper_refs/4,
             relation_atom_wrapper/1,
             event_relation_atom/2,
-            body_relation_atoms/4
+            body_relation_atoms/4,
+            body_reserved_word/4
           ]).
 
 :- use_module(library(lists)).
@@ -207,6 +208,28 @@ body_relation_atoms(Body, Policy, Polarity, Atom) :-
     member(Event, Events),
     Event = event(_, Polarity, _, _),
     event_relation_atom(Event, Atom).
+
+% Every RESERVED registry word one body reaches, in source order, with the
+% lowering role that says which refusal family it belongs to. `reserved` is
+% the status for a word the language has CLAIMED and given no meaning; both
+% doors refuse on it, and neither may execute it.
+%
+% Shared because it had exactly the drift shape rank R1 exists to stop: the
+% compiler walked for these words and the reference engine did not walk at
+% all, so five claimed words compiled to a named refusal and ran as silently
+% empty relations. 0_program_check.pl's reserved_body_word trigger and
+% analyze.pl's reserved_construct_in_body/2 are both this predicate now; the
+% latter is what the body_walk_characterization golden pins, so the two
+% cannot drift apart again without that test going red.
+%
+% The POLICY stays the caller's, and the two callers pass the same one. It is
+% an argument rather than a constant because the narrowness (not/1 opaque,
+% splices unwalked) is a stated boundary of those callers, not of this
+% projection.
+body_reserved_word(Body, Policy, Functor/Arity, LowerRole) :-
+    walk_body(Body, Policy, Events),
+    member(event(_, _, surface(Functor/Arity, _, _, LowerRole, reserved), _),
+           Events).
 
 % Every reference carried by one wrapper family, in source order: the argument
 % of each latest/1, pre/1 or finalize/1 the walk reached. This is the shared

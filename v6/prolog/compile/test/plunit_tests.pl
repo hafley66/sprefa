@@ -27,7 +27,12 @@
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
-:- use_module('../registry', [ surface/5, expression/5, host_execution/3 ]).
+:- use_module('../registry',
+              [ surface/5, expression/5, host_execution/3,
+                % The reserved-body-word sweep reads which rows are BODY
+                % syntax off the same projection the walk reads it off,
+                % rather than restating the three lowering shapes.
+                body_surface_for_term/6 ]).
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2 ]).
 :- use_module('../emit_ts',
@@ -1742,10 +1747,18 @@ walk_golden(not_mixed,
     host_body_goals-[not((not(a(1)),b(2)))]
   ]).
 
+% trigger_items USED to be [] on this case and on combine3 and mixed below,
+% while body_ref_uses on the same bodies already called the spliced atoms
+% `pos,trigger`. The golden was recording a disagreement between two
+% projections of one body: the analyzer saw triggers, the engine saw none, so
+% `out(X) <+ next(a(X))` was a rule with no trigger item at all -- statically
+% dead, no refusal, while the compiler emitted the same arrival statement it
+% emits for a bare atom. engine.pl:trigger_items/2 splices now and the two
+% projections agree; see that predicate's header for the measured receipt.
 walk_golden(next_wrapper,
   [ body_ref_uses-[use(a/1,[1],pos,trigger)],
     conjunction_goals-[a(1)],
-    trigger_items-[],
+    trigger_items-[arrival(a(1))],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
@@ -1761,7 +1774,7 @@ walk_golden(next_wrapper,
 walk_golden(combine3,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],pos,trigger),use(c/1,[3],pos,trigger)],
     conjunction_goals-[a(1),b(2),c(3)],
-    trigger_items-[],
+    trigger_items-[arrival(a(1)),arrival(b(2)),arrival(c(3))],
     engine_finalize_refs-[],
     engine_latest_refs-[],
     engine_pre_refs-[],
@@ -1908,7 +1921,7 @@ walk_golden(true_word,
 walk_golden(mixed,
   [ body_ref_uses-[use(a/1,[1],pos,trigger),use(b/1,[2],neg,trigger),use(c/1,[3],neg,sampled),use(d/1,[4],pos,trigger),use(e/1,[5],pos,trigger),use(f/1,[6],pos,trigger),use(g/1,[10],pos,trigger),use(h/1,[11],pos,sampled)],
     conjunction_goals-[a(1),not((b(2),latest(c(3)))),d(4),e(5),f(6),zz:=7,8<9,finalize(g(10)),pre(h(11))],
-    trigger_items-[arrival(a(1)),departure(g(10))],
+    trigger_items-[arrival(a(1)),arrival(d(4)),arrival(e(5)),arrival(f(6)),departure(g(10))],
     engine_finalize_refs-[g/1],
     engine_latest_refs-[c/1],
     engine_pre_refs-[h/1],
@@ -2133,6 +2146,66 @@ test(keep_on_non_log_rel_both_doors) :-
     door_verdict(compiler, Prog, CompilerVerdict),
     OracleVerdict == keep_on_non_log_rel(state/1),
     CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
+
+% RESERVED body words. The compiler refused these before the trigger became
+% shared and the ORACLE had no clause for any of them, so the same program was
+% a named error at one door and zero silent rows at the other:
+%
+%   oracle   `out(X, Y) <- zip(a(X), b(Y))`  ->  rows=[]
+%   compiler same program                    ->  unsupported_construct(zip)
+%
+% Two payload shapes are pinned per door, because the compiler splits the four
+% lifecycle wrappers out on their shared refuse(lifecycle) lowering role and
+% the oracle, which has no lowering, does not. Both compiler terms are exactly
+% what its own local scan produced before the move, which is the property that
+% makes this a consolidation and not a rename.
+test(reserved_word_refusal_payloads) :-
+    ZipProg = prog([], [ (pair(Left, Right) <- zip(src_a(Left), src_b(Right))) ]),
+    door_verdict(oracle, ZipProg, ZipOracle),
+    door_verdict(compiler, ZipProg, ZipCompiler),
+    ZipOracle == reserved_body_word(zip/2),
+    ZipCompiler == unsupported_construct(zip),
+    LifecycleProg = prog([], [ (out(Item) <- subscribe(src(Item))) ]),
+    door_verdict(oracle, LifecycleProg, LifecycleOracle),
+    door_verdict(compiler, LifecycleProg, LifecycleCompiler),
+    LifecycleOracle == reserved_body_word(subscribe/1),
+    LifecycleCompiler == unsupported_construct(lifecycle_arm(subscribe)).
+
+% Every reserved BODY row refuses at both doors, read off the registry rather
+% than listed here: a sixth reserved word must not be able to ship with the
+% oracle silently treating it as a relation. The value-plane reserved rows
+% (tagged_brace/1) carry no body lowering role and are excluded by the same
+% registry projection the walk uses.
+test(every_reserved_body_word_refuses_at_both_doors) :-
+    findall(Functor/Arity,
+            ( surface(Functor/Arity, _, _, _, reserved),
+              integer(Arity),
+              functor(Probe, Functor, Arity),
+              body_surface_for_term(Probe, _, _, _, _, _) ),
+            Reserved),
+    Reserved \== [],
+    forall(member(Functor/Arity, Reserved),
+           ( functor(Goal, Functor, Arity),
+             reserved_probe_body(Goal, Body),
+             Prog = prog([], [ (out(_) <- Body) ]),
+             door_verdict(oracle, Prog, OracleVerdict),
+             door_verdict(compiler, Prog, CompilerVerdict),
+             OracleVerdict == reserved_body_word(Functor/Arity),
+             CompilerVerdict = unsupported_construct(_) )).
+
+% Fills every argument of the probe goal with a distinct relation atom, which
+% is the shape each reserved wrapper takes; the refusal fires on the FUNCTOR,
+% so the arguments only have to be well formed.
+reserved_probe_body(Goal, Goal) :-
+    Goal =.. [_ | Args],
+    reserved_probe_args(Args, 1).
+
+reserved_probe_args([], _).
+reserved_probe_args([Arg | Rest], Index) :-
+    atom_concat(reserved_probe_src_, Index, Name),
+    Arg =.. [Name, _],
+    Next is Index + 1,
+    reserved_probe_args(Rest, Next).
 
 test(latest_in_level_rule_both_doors) :-
     Prog = prog([], [ (out(Item) <- (src(Item), latest(cfg(Item)))) ]),

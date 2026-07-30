@@ -1116,8 +1116,26 @@ rel_atom_default_args(Atom, Default, Vars0, Vars, S0, S) :-
 surface_arity_matches(variadic, _).
 surface_arity_matches(Arity, Args) :- integer(Arity), length(Args, Arity).
 
-build_surface_item(_, splice_bare, live, Args, Item) :- !,
-    combine_body(Args, Item).
+% Every surface item keeps its own functor, splice rows included.
+%
+% Splice rows used to be desugared into a plain conjunction RIGHT HERE, which
+% erased the spelling the author wrote:
+%
+%   printed    out(Left, Right) <- combine(a(Left), b(Right)).
+%   reparsed   prog([], [(out(_A, _B) <- a(_A), b(_B))])
+%   printed    out(Value) <- next(a(Value)).
+%   reparsed   prog([], [(out(_A) <- a(_A))])
+%
+% Two things were wrong with that, and only the second is about round-tripping.
+% The text door and the TERM door handed the two back ends different terms for
+% the same source, and the term door's copy was the one nothing could execute
+% (body.pl:solve/2 had no splice clause, engine.pl:trigger_items/2 did not
+% splice), so `combine` answered rows through one door and silence through the
+% other. Both doors carry the term now and both splice it, so the desugar has
+% nothing left to buy and the printed program reparses to itself.
+%
+% combine_body/2 stays: the statement reader still folds a parsed goal LIST
+% into a conjunction, which is a different job.
 build_surface_item(Name, _, _, Args, Item) :-
     Item =.. [Name | Args].
 
