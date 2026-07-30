@@ -26,7 +26,9 @@ use std::path::{Path, PathBuf};
 use crate::lang::{source_for, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
-use crate::seams::{build_def_index, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest};
+use crate::seams::{
+    build_def_index, BlobSource, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
+};
 use crate::shape::{BlobHash, Span};
 use crate::source::{ExtractOutput, FamilyMask, Resolve, Source};
 use crate::types::{CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF};
@@ -123,10 +125,8 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     // The reader is what makes a SCIP index usable: `join_documents` maps every
     // project-relative document path to its bytes, and the arms find their own
     // document by content hash off that join.
-    let root = request.project_root.map(Path::to_path_buf);
-    let reader = move |relative: &str| -> Option<Vec<u8>> {
-        std::fs::read(root.as_ref()?.join(relative)).ok()
-    };
+    let blobs = request.project_root.map(FsBlobSource::new);
+    let reader = move |relative: &str| -> Option<Vec<u8>> { blobs.as_ref()?.blob(relative) };
     let cx = ProjectCx {
         files: &files,
         manifests: &manifests,
@@ -173,9 +173,8 @@ pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectErro
             "scip facts need --scip-index or --scip-build".to_string(),
         ));
     };
-    let root = root.to_path_buf();
-    let reader =
-        move |relative: &str| -> Option<Vec<u8>> { std::fs::read(root.join(relative)).ok() };
+    let blobs = FsBlobSource::new(root);
+    let reader = blobs.reader();
     Ok(crate::wire::flatten_scip(&index, &reader))
 }
 
@@ -368,4 +367,43 @@ fn node_name<F: crate::family::Family>(
         .find(|node| node.span == span)
         .and_then(|node| node.name)
         .map(|name| output.strings.lookup(name).to_string())
+}
+
+/// The filesystem `BlobSource`: project-relative path in, bytes out, rooted at
+/// one directory.
+///
+/// `BlobSource` shipped as a trait with no implementation anywhere in the crate,
+/// which is why every caller that needed a rev-correct reader wrote the same
+/// closure by hand (this module did it twice before this type existed, and
+/// golden_parity still does it per test). Naming it once makes the root explicit
+/// and gives the phase-2 cache something to own later.
+///
+/// SOURCE-AGNOSTIC BY DESIGN, per the trait's own contract: this is the plain
+/// directory implementation. A git worktree or an object-store implementation is
+/// another type behind the same trait, and nothing above the trait changes.
+///
+/// A path that does not resolve, or cannot be read, is `None`. That is the
+/// honest answer for a document the corpus does not contain, which is exactly
+/// how `join_documents` tells a corpus file from an external one.
+pub struct FsBlobSource {
+    root: PathBuf,
+}
+
+impl FsBlobSource {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
+    }
+
+    /// The `ProjectCx.reader` shape: a borrowed closure over this source.
+    /// `ProjectCx` takes a bare `Fn` rather than a `&dyn BlobSource`, so this is
+    /// the adapter between the two.
+    pub fn reader(&self) -> impl Fn(&str) -> Option<Vec<u8>> + '_ {
+        |relative: &str| self.blob(relative)
+    }
+}
+
+impl BlobSource for FsBlobSource {
+    fn blob(&self, path: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.root.join(path)).ok()
+    }
 }

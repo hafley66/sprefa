@@ -77,8 +77,11 @@ LANGUAGE COVERAGE (first-match, by extension)
   go                               full     families: cst, type, call, df (no const facet)
   kt/kts                           full     families: cst, type, call, df (no const facet)
   pl/pro/prolog/datalog/horn       full     families: cst, type, call, df
-  python/c/... (any ast-grep grammar)        cst only
+  html/yaml/json/css               cst only (ast-grep grammar, no native front-end)
+  python/java/c/cpp/cs/rb/php/sh/lua/scala/swift/ex/hs   cst only, same route
   any other extension              no output, exit 0 (not an error)
+
+  NOT COVERED, and each costs a new grammar dependency: md, toml, xml.
 
   Selecting a family a language does not emit makes that family simply absent.
   An unrecognized language produces zero lines and exits 0.
