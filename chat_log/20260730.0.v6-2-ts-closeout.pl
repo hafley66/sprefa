@@ -235,6 +235,13 @@ verification(match_left_to_right_surface,
                     g1_pass(147),
                     g1_total(164),
                     known_removed_type_failures(17))).
+verification(extraction_host_batching_lab,
+             passed(receipts(9),
+                    callgraph(current(2), batched(1)),
+                    diagnostics(current(2), batched(1)),
+                    flow(current_per_path(7), batched_per_path(1)),
+                    syntax_changes(0),
+                    type_models_added(0))).
 host_overuse(grafana_v6_crawl,
              'green correctness gate exposes 40.26 files per second under the per-witness extraction subprocess boundary; batching or the V7 direct Rust link remains required').
 
