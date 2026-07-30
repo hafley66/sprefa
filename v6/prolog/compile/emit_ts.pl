@@ -61,11 +61,35 @@
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
 
+% A JS TEMPLATE LITERAL processes THREE things, and this used to escape two.
+% The backtick and `${` were handled; the BACKSLASH was not, so any backslash
+% in the SQL text -- a string constant carrying a regex, `\d` or `\.` -- was
+% consumed by JavaScript's own escape processing before sqlite ever saw the
+% statement. The emitted file read `'digit \d here'` and the running program
+% compared against `'digit d here'`, silently. Escaping `${` while not
+% escaping `\` is what made that a PARTIAL escape rather than a decision.
+%
+% The backslash clause goes FIRST, or it would double the backslashes this
+% predicate itself introduces for the other two.
 js_template(SqlText, JsLiteral) :-
-    atom_string(SqlText, SqlString0),
-    re_replace("`"/g, "\\`", SqlString0, SqlString1),
-    re_replace("\\$\\{"/g, "\\${", SqlString1, SqlString2),
-    format(atom(JsLiteral), '`~w`', [SqlString2]).
+    atom_string(SqlText, SqlString),
+    string_codes(SqlString, Codes),
+    js_template_codes(Codes, Escaped),
+    atom_codes(Body, Escaped),
+    format(atom(JsLiteral), '`~w`', [Body]).
+
+js_template_codes([], []).
+js_template_codes([0'\\ | Rest], [0'\\, 0'\\ | More]) :-
+    !,
+    js_template_codes(Rest, More).
+js_template_codes([0'` | Rest], [0'\\, 0'` | More]) :-
+    !,
+    js_template_codes(Rest, More).
+js_template_codes([0'$, 0'{ | Rest], [0'\\, 0'$, 0'{ | More]) :-
+    !,
+    js_template_codes(Rest, More).
+js_template_codes([Code | Rest], [Code | More]) :-
+    js_template_codes(Rest, More).
 
 js_string(Value, JsLiteral) :-
     ( atom(Value) -> atom_codes(Value, Codes) ; string_codes(Value, Codes) ),
@@ -784,7 +808,12 @@ incremental_level_statement_entry_line(RelPlans,
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadName]),
     js_template(SelectSql, SelectTemplate),
-    atomic_list_concat([DeleteSql | InsertSqls], ';\\n', RecomputeSql),
+    % A REAL newline, not the two-character sequence `\n`. These three joins
+    % used to emit backslash-n and rely on the JS template literal to turn it
+    % into a newline -- which is the same conflation js_template/2 above stopped
+    % making. A template literal carries a raw newline fine, and the emitted
+    % statement text is now the text sqlite receives, byte for byte.
+    atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
     support_sql_text(SupportSql, SupportText),
     aggregate_sql_text(AggregateSql, AggregateText),
@@ -1083,7 +1112,8 @@ ordered_pre_lines(false, _, _, _, []) :- !.
 ordered_pre_lines(true, RelPlans, PreRefs, _EdgeStatements, Lines) :-
     maplist(pre_snapshot_statement(RelPlans), PreRefs, SnapshotGroups),
     append(SnapshotGroups, SnapshotStatements),
-    atomic_list_concat(SnapshotStatements, ';\\n', SnapshotSql),
+    % Real newline; see the note at the recompute join.
+    atomic_list_concat(SnapshotStatements, ';\n', SnapshotSql),
     js_template(SnapshotSql, SnapshotTemplate),
     format(atom(SnapshotReturn),
            '  return seam.runner.executeMultiple(seam.db, ~w);',
@@ -1384,7 +1414,8 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
     % to the identical [Delete, Insert] sequence as before for the common
     % single-clause case.
     findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
-    atomic_list_concat(Sqls, ';\\n', JoinedSql),
+    % Real newline; see the note at the recompute join.
+    atomic_list_concat(Sqls, ';\n', JoinedSql),
     js_template(JoinedSql, SqlTemplate),
     format(atom(SqlLine), '  const sql = ~w;', [SqlTemplate]),
     Lines =

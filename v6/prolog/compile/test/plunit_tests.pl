@@ -25,6 +25,7 @@
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
+:- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry', [ surface/5, expression/5, host_execution/3 ]).
 :- use_module('../../1_host_expand',
@@ -1186,6 +1187,53 @@ test(selected_surface_round_trips) :-
     parse_dl(PrintedCodes, Reparsed, _, []),
     Program =@= Reparsed.
 
+% D8. `sh` and `bind` column types ran through decl_b_column_type/5, which
+% knew int|text|json and nothing else: a `float` or `bool` column silently
+% degraded to the untyped `none` and reported
+% unsupported_surface(column_type_wrapper(Name, Column, none)). `rel` decls
+% have accepted the full vocabulary since the type pass, and host OUTPUT
+% columns already ran through typed_column_type/3, so the gap was host INPUTS
+% and bind columns only -- one declaration surface answering three different
+% type vocabularies.
+%
+% RED RECEIPT, run at a4629623 over
+%   sh weigh(kilos: float, ok: bool) -> (note: text) = `...`.
+%   bind reading(kilos: float, ok: bool, at: patch).
+%
+%   FINDINGS: [unsupported_surface(column_type_wrapper(weigh,kilos,none)),
+%              unsupported_surface(column_type_wrapper(weigh,ok,none))]
+%   DECL: sh_decl(weigh,[col(kilos,none),col(ok,none)],[col(note,text)],...)
+%   FINDINGS: [unsupported_surface(column_type_wrapper(reading,kilos,none)),
+%              unsupported_surface(column_type_wrapper(reading,ok,none)),
+%              unsupported_surface(column_type_wrapper(reading,at,none))]
+%   DECL: bind_decl(reading,[col(kilos,none),col(ok,none),col(at,none)])
+%
+% PREMISE CORRECTED while writing this: struct type names did NOT work there
+% either. `at: patch` degraded the same way -- only host OUTPUTS resolved a
+% struct name. The three surfaces now read one vocabulary.
+test(host_input_and_bind_columns_read_the_full_type_vocabulary) :-
+    string_codes(
+      "sh weigh(kilos: float, ok: bool) -> (note: text) = `run {kilos} {ok}`.\nbind reading(kilos: float, ok: bool, at: patch).\n",
+      Codes),
+    parse_dl(Codes, Program, _, []),
+    arg(1, Program, Decls),
+    memberchk(sh_decl(weigh, [col(kilos, float), col(ok, bool)],
+                      [col(note, text)], _), Decls),
+    memberchk(bind_decl(reading,
+                        [col(kilos, float), col(ok, bool), col(at, patch)]),
+              Decls).
+
+% The wrapper refusal the widened clause must NOT swallow: `Key(...)` and its
+% two siblings are dead spellings, and they stay named rather than becoming a
+% parse error or a struct type called Key.
+test(host_input_column_wrapper_is_still_a_named_refusal) :-
+    string_codes(
+      "sh weigh(path: Key(text)) -> (note: text) = `run {path}`.\n",
+      Codes),
+    parse_dl(Codes, _, _, Findings),
+    memberchk(unsupported_surface(column_type_wrapper(weigh, path, 'Key')),
+              Findings).
+
 test(rhs_probe_marker_is_rejected,
      [throws(dl_parse_error(statement, _))]) :-
     string_codes(
@@ -1484,6 +1532,60 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     once(sub_atom(Text, _, _, _,
                   'CREATE TABLE "__host_response_tree_sitter"')),
     !.
+
+% ── D2: the backslash escape rule, both doors ───────────────────────────────
+%
+% quoted_chars/4 ended in a catch-all that DROPPED the backslash of any
+% unrecognized escape, so `\d` parsed as `d`: a regex written in a .dl6 string
+% silently became a different regex. The emitter deleted it a second time, in
+% emit_ts.pl:js_template/2 (that half is graded by
+% conformance/fixtures/5_compiler_quality.pl:
+% backslash_in_string_literal_survives_both_doors).
+%
+% THE RULE: \n \t \r are real escapes, \\ is one backslash, the string's own
+% quote is itself, and every OTHER \X is two characters, the backslash and X.
+%
+% RED RECEIPT (catch-all restored, run and reverted): the first assertion
+% fails with the parsed atom holding `digit d here` -- 12 characters where the
+% source wrote 13, and no finding, no error, no diagnostic anywhere. Verbatim:
+%
+%   test hosts_wiring:backslash_escapes_follow_the_stated_rule: assertion
+%   at line 1557 failed
+%   Assertion: [100,105,103,105,116,32,100,32,104,101,114,101]
+%           == [100,105,103,105,116,32,92,100,32,104,101,114,101]
+%
+% (92 is the backslash the source wrote and the parser dropped.) The
+% print-and-reparse test below stays GREEN through that sabotage, which is
+% exactly why round-trip could never have caught this.
+test(backslash_escapes_follow_the_stated_rule) :-
+    string_codes("rel hit(pattern: text).\nhit('digit \\d here') <- seed(_).\n", Codes),
+    parse_dl(Codes, Program, _, []),
+    arg(2, Program, Rules),
+    memberchk((hit(Kept) <- _), Rules),
+    atom_codes(Kept, KeptCodes),
+    atom_codes('digit \\d here', WantCodes),
+    assertion(KeptCodes == WantCodes),
+
+    % \\ is one backslash and \n is a real newline, in the same string.
+    string_codes("rel hit(pattern: text).\nhit('one\\\\two\\nthree') <- seed(_).\n", TwoCodes),
+    parse_dl(TwoCodes, TwoProgram, _, []),
+    arg(2, TwoProgram, TwoRules),
+    memberchk((hit(Mixed) <- _), TwoRules),
+    atom_codes(Mixed, MixedCodes),
+    atom_codes('one\\two\nthree', MixedWant),
+    assertion(MixedCodes == MixedWant).
+
+% Round trip: a printed .dl6 view of a backslash-carrying string must reparse
+% to the same value. print_dl.pl doubles the backslash, so this is the clause
+% pair \\ -> one backslash meeting the printer, and it is the reason the
+% corpus round-trip alone could never have caught the rule above.
+test(backslash_survives_print_and_reparse) :-
+    string_codes("rel hit(pattern: text).\nhit('digit \\d here') <- seed(_).\n", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, Reparsed, _, []),
+    Program =@= Reparsed.
 
 :- end_tests(hosts_wiring).
 
@@ -1892,6 +1994,33 @@ departure_ref_case([ (a(Item) <+ finalize(one(Item))),
                      (c(Item) <+ plain(Item)) ]).
 % A negated finalize is opaque to the walk on both sides.
 departure_ref_case([ (out(Item) <+ src(Item), not(finalize(gone(Item)))) ]).
+
+% ── B11: one wrapper family, checked against the registry ───────────────────
+%
+% The list "which wrappers carry a relation ATOM" was written out three times
+% (0_program_check.pl, compile/lower.pl, 0_relation_pattern.pl) with three
+% different traversal policies around it -- burr B11 of
+% plans/2026-07-30-relpattern-adversarial-review.md. It is stated once now, in
+% 0_body_walk.pl, and this test is what keeps that statement honest without
+% deriving it: the family must be exactly the registry rows whose LowerRole is
+% wrapper(rel_atom, _), minus the SPLICE families (next/1's argument is walked
+% in as its own event, so counting the wrapper too would count that atom twice)
+% and minus the reserved rows (refused long before anything asks them for a
+% relation atom).
+%
+% A new wrapper(rel_atom, _) row that is neither spliced nor reserved therefore
+% fails HERE, by name, instead of being silently absent from one of the three
+% former copies.
+test(relation_atom_wrapper_family_matches_the_registry) :-
+    findall(Functor,
+            ( surface(Functor/1, _, AnalyzeRole, wrapper(rel_atom, _), Status),
+              AnalyzeRole \== splice_bare,
+              Status \== reserved ),
+            Rows),
+    sort(Rows, FromRegistry),
+    findall(Wrapper, relation_atom_wrapper(Wrapper), Stated0),
+    sort(Stated0, Stated),
+    assertion(Stated == FromRegistry).
 
 :- end_tests(body_walk_characterization).
 
@@ -2538,12 +2667,23 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 % ═══════════════════════════════════════════════════════════════════════════
 %
 % The conformance corpus grades the ROWS (fixtures/6_relation_depth.pl) and
-% tsv2/tests/relationDepth.test.ts grades the query PLAN. What is left for a
-% unit test is the two compiler-only refusals: positions the dictionary
-% rewrite deliberately does not enter. Neither has a fixture, because neither
-% is a language refusal -- the reference engine executes both happily -- and a
-% conformance fixture would assert the oracle's answer while saying nothing
-% about the compiler's.
+% tsv2/tests/relationDepth.test.ts grades the query PLAN.
+%
+% THE TWO REFUSALS BELOW ARE NO LONGER COMPILER-ONLY. This comment used to say
+% that a conformance fixture would assert the oracle's answer while saying
+% nothing about the compiler's, and it was right about the fixture and wrong
+% about the situation: the reference engine RAN both programs, so the two doors
+% answered differently and nothing in the corpus noticed (burrs B3/B4/B9 of
+% plans/2026-07-30-relpattern-adversarial-review.md). Both are shared refusals
+% now -- relation_value_under_negation and relation_value_in_edge_rule in
+% 0_program_check.pl, which states why refusing beat lowering -- and both have
+% graded fixtures.
+%
+% What is left HERE is the lowering-side residue guard, which is the backstop
+% for anything entering lower_program/2 directly, as these units do with a
+% hand-built plan. It keeps its own names on purpose: reaching it means the
+% shared gate was bypassed, and the diagnostic should say which layer caught
+% the program.
 
 :- begin_tests(relation_depth_lowering).
 
@@ -2610,5 +2750,45 @@ test(depth_two_level_construction_lowers_to_one_join_per_level) :-
     forall(member(View, ['"__ref_repo"', '"__ref_fpath"', '"__ref_file"']),
            sub_atom(Sql, _, _, _, View)),
     \+ sub_atom(Sql, _, _, _, 'json_extract(b').
+
+% ── the level the body already joins ────────────────────────────────────────
+%
+% D5. A head value that IS a body atom needs no dictionary join at all: the
+% endpoint is that atom's own `__id`. The depth-N rewrite interned it anyway,
+% and the emitted statement became the target table joined to a TEMP VIEW over
+% itself on every value column, once in the full arm and again in the delta arm.
+%
+% RED RECEIPT, run at a4629623 (labs/rel_value_unification/11_ref_necessity.pl,
+% whose two checks are this receipt's origin):
+%
+%   fail  target_scan_captures_dense_identity_without_ref
+%   fail  incremental_target_frontier_rejoins_dense_identity_without_json
+%
+% with the full arm reading
+%
+%   SELECT b1."__id" FROM "user" b0, "__ref_user" b1
+%   WHERE b1."id" = b0."id" AND b1."name" = b0."name"
+%
+% Both arms are pinned here because they are built by different code paths and
+% only the incremental one is the hot path.
+% Built through the TEXT DOOR rather than by hand: the elision depends on the
+% target-membership atom 0_relation_edge_expand.pl adds, and a hand-built
+% plan/6 skips the expansion that puts it there.
+depth_one_identity_program(Plan) :-
+    Text = "rel user(id: int, name: text) key(1).\nrel selected(choice: user).\nselected(user(Id, Name)) <- user(Id, Name).\n",
+    string_codes(Text, Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(fixture(depth_one_identity, Program, [], [], [])-Bindings, Plan).
+
+test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
+    depth_one_identity_program(Plan),
+    lower_program(Plan, Lowered),
+    arg(5, Lowered, LevelStatements),
+    memberchk(levelstmt(selected/1, _, InsertSqls, DeltaSql, _, _), LevelStatements),
+    atomic_list_concat(InsertSqls, ' ', Sql),
+    once(sub_atom(Sql, _, _, _, 'SELECT b0."__id" FROM "user" b0')),
+    \+ sub_atom(Sql, _, _, _, '__ref_user'),
+    once(sub_atom(DeltaSql, _, _, _, 'FROM "__frontier_user" d0, "user" r0')),
+    \+ sub_atom(DeltaSql, _, _, _, '__ref_user').
 
 :- end_tests(relation_depth_lowering).

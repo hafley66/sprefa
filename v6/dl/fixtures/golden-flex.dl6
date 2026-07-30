@@ -59,19 +59,25 @@
 #   NESTED BRACES                  same refusal, one level deeper, so a two-hop
 #                                  struct value can never be assembled in-language
 #                                  at all -- it only ever arrives whole.
-#   float / bool IN sh AND bind    MEASURED writing this file, NEW: `rel` decls
-#                                  accept int|text|json|bool|float plus struct
-#                                  names (parse_dl.pl typed_column_type/3) but
-#                                  `sh` and `bind` decls run through
-#                                  decl_b_column_type/5, which knows only
-#                                  int|text|json. A `float` or `bool` column
-#                                  there silently degrades to the untyped `none`
-#                                  and reports unsupported_surface(
-#                                  column_type_wrapper(Name, Column, none)).
-#                                  Struct type names DO work there. The two
-#                                  declaration doors disagree on the type
-#                                  vocabulary; the host below therefore carries
-#                                  INT grams, not float kilos.
+#   float / bool IN sh AND bind    THE DECL SURFACE IS FIXED, the layer under it
+#                                  is not. decl_b_column_type/5 knew only
+#                                  int|text|json and degraded everything else to
+#                                  the untyped `none`; it now reads
+#                                  typed_column_type/3, the same vocabulary
+#                                  `rel` decls and host OUTPUT columns read, so
+#                                  float, bool and struct names all SPELL. What
+#                                  is still refused is one layer down and was
+#                                  found by trying it here: a float or bool host
+#                                  INPUT reaches the witness-digest concat as a
+#                                  typed value and is refused
+#                                  concat_non_display_piece(concat([...,kilos,
+#                                  ":",float,"=",_]), _). MEASURED both ways:
+#                                  `kilos: float` and `healthy: bool` as a third
+#                                  `weigh` input both produce exactly that, and
+#                                  the same shape with `lane: int` gets past it.
+#                                  So the host below still carries INT grams --
+#                                  now for a reason one layer deeper, and a
+#                                  named one.
 #   BARE TOP-LEVEL FACT            `quarantined('weed').` at top level lowers to
 #                                  a level rule over a minted literal seed and is
 #                                  refused level_rule_no_positive_body. Every
@@ -88,32 +94,33 @@
 #                                  through `:=` first does not help, because
 #                                  `:=` stores the unevaluated call.
 #
-#   norm/1  --  NEW LIVE DEFECT, NOT A REFUSAL. `expression(norm/1, text_scalar,
-#                                  ...)` is a LIVE registry row with ZERO
-#                                  conformance coverage (grep: no fixture
-#                                  mentions it), and the two engines DISAGREE:
+#   norm/1  --  WAS a live defect and is now GRADED HERE (display_key below).
+#                                  `expression(norm/1, text_scalar, ...)` shipped
+#                                  as a live registry row with a SQL rendering,
+#                                  no reference implementation, and zero
+#                                  conformance coverage, so the two engines
+#                                  disagreed:
 #                                    program  route_key(Raw, norm(Raw)) <- route(Raw).
 #                                    arrival  route("Hello World")
 #                                    oracle   route_key["Hello World","norm(Hello World)"]
 #                                    emitter  route_key["Hello World","helloworld"]
-#                                  The oracle stores the unevaluated term; the
-#                                  emitter lowers it to SQL and evaluates it.
-#                                  `norm` is therefore UNGRADEABLE and cannot
-#                                  appear in this program. scripts/golden-flex.sh
-#                                  runs that exact two-line probe as an INVERTED
-#                                  receipt: it asserts the divergence still
-#                                  exists, so whoever fixes the oracle side is
-#                                  told, by a red gate, to promote norm into
-#                                  this file.
+#                                  The oracle held the unevaluated term; the
+#                                  emitter lowered it to SQL and evaluated it.
+#                                  conformance/body.pl now evaluates the whole
+#                                  text_scalar FAMILY off the registry row, the
+#                                  inverted receipt that guarded this absence is
+#                                  gone from scripts/golden-flex.sh, and norm is
+#                                  graded on all four cardinalities like every
+#                                  other live row.
 #
 # ═══ DEFECTS THIS PROGRAM SURFACED (index; each is written up where it lives)
 #
-#   norm/1 diverges oracle vs emitter                 header above; the inverted
-#                                                     receipt is step 5 of
-#                                                     tsv2/scripts/golden-flex.sh
-#   float/bool unspellable in sh + bind decls         header above
-#                                                     (parse_dl.pl
-#                                                     decl_b_column_type/5)
+#   norm/1 diverged oracle vs emitter  FIXED             header above; graded by
+#                                                     display_key below
+#   float/bool unspellable in sh + bind decls  FIXED   header above; the
+#                                                     REMAINING half is the
+#                                                     witness-digest concat
+#                                                     (concat_non_display_piece)
 #   JSON schedule cannot carry an object value        compile/scripts/
 #                                                     golden_oracle.pl header;
 #                                                     dl6_oracle.pl's own
@@ -209,6 +216,13 @@ rel display(tree_id: int, note: text).
 display(TreeId, Note) <-
   next(monitored(TreeId, Species)),
   Note := concat(['tree ', TreeId, ' is ', Species, " (monitored)"]).
+
+# norm/1, the registered text scalar (V5 `sprf_norm`): ASCII letters and digits
+# retained, letters lowercased, everything else dropped. The input is the
+# concat above, which carries spaces and parentheses, so the dropping is
+# visible in the graded row and not only the lowercasing.
+rel display_key(tree_id: int, key: text).
+display_key(TreeId, norm(Note)) <- display(TreeId, Note).
 
 # `<`, `=<` and `>=`, the three remaining ordered comparisons, over the float
 # column -- so the float type is exercised by more than storage.

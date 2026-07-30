@@ -16,14 +16,7 @@
 #                   to the oracle (stated separately because a shared wrong
 #                   answer on both emitter paths would otherwise read as one
 #                   failure instead of two).
-#   5  NORM PROBE   an INVERTED receipt: `norm/1` is a live registry row whose
-#                   two engines DISAGREE (oracle stores the unevaluated term,
-#                   the emitter evaluates it in SQL) and which no conformance
-#                   fixture covers. This asserts the divergence STILL EXISTS, so
-#                   whoever fixes it is told by a red gate to promote norm into
-#                   the golden. It is not a workaround; it is a tripwire on a
-#                   defect the golden had to route around.
-#   6  E2E          the served HTTP engine: POST /program, POST /arrivals,
+#   5  E2E          the served HTTP engine: POST /program, POST /arrivals,
 #                   GET /idb, live subprocess host, tick log diffed against the
 #                   oracle replayed on the run's own consumed schedule
 #                   (tests/goldenFlexServed.test.ts).
@@ -104,32 +97,7 @@ for leg in zero one many perturbed; do
   say "PASS  $leg: oracle == incremental == naive (tick log + final state), ${rows} final row groups"
 done
 
-# ── 5. the norm/1 inverted receipt ──────────────────────────────────────────
-cat >"$WORK/norm.dl6" <<'DL6'
-rel route(raw: text).
-rel route_key(raw: text, key: text).
-route_key(Raw, norm(Raw)) <- route(Raw).
-DL6
-printf '%s\n' '[[{"rel":"route","sign":"add","row":["Hello World"]}]]' >"$WORK/norm.json"
-( cd "$COMPILE/scripts" && swipl -q -l golden_oracle.pl -g "oracle_ticklog('$WORK/norm.dl6','$WORK/norm.json')" -g halt ) \
-  >"$WORK/norm.oracle" 2>/dev/null || fail "norm probe: oracle leg failed"
-bash "$COMPILE/scripts/compile_dl6.sh" "$WORK/norm.dl6" "$TSV2/gen_emitted/golden_norm_probe.ts" >/dev/null 2>&1 \
-  || fail "norm probe: compile failed"
-( cd "$TSV2" && "${NODE_RUN[@]}" scripts/golden-run.ts golden_norm_probe "$WORK/norm.json" ) \
-  >"$WORK/norm.emitter" 2>/dev/null || fail "norm probe: emitter leg failed"
-rm -f "$TSV2/gen_emitted/golden_norm_probe.ts"
-
-if diff -q "$WORK/norm.oracle" "$WORK/norm.emitter" >/dev/null; then
-  say "FAIL  norm/1 NO LONGER DIVERGES -- the defect this golden routed around is fixed."
-  say "      Promote norm/1 out of golden_coverage.pl's expected_absent/2, put it back"
-  say "      in golden-flex.dl6, and delete this receipt."
-  exit 1
-fi
-say "PASS  norm/1 inverted receipt: the two engines still disagree (defect intact, golden correctly routes around it)"
-say "      oracle:  $(cat "$WORK/norm.oracle")"
-say "      emitter: $(cat "$WORK/norm.emitter")"
-
-# ── 6. the served e2e leg ───────────────────────────────────────────────────
+# ── 5. the served e2e leg ───────────────────────────────────────────────────
 (cd "$TSV2" && "${NODE_RUN[@]}" --test tests/goldenFlexServed.test.ts >"$WORK/e2e.out" 2>&1) \
   || { tail -30 "$WORK/e2e.out"; fail "served e2e leg"; }
 say "PASS  served e2e: live host + http boundary, tick log == oracle on the served schedule"

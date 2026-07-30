@@ -167,11 +167,13 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "tallied", headDeltaTableName: "__delta_tallied", headColumns: ["line", "column", "total"], insertSql: null, selectSql: `SELECT "line", "column", "total" FROM "tallied"`, recomputeSql: `DELETE FROM "tallied";\nINSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_tallied"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_source" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_tallied") RETURNING "line", "column", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`] } },
+  { headRel: "tallied", headDeltaTableName: "__delta_tallied", headColumns: ["line", "column", "total"], insertSql: null, selectSql: `SELECT "line", "column", "total" FROM "tallied"`, recomputeSql: `DELETE FROM "tallied";
+INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_tallied"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_source" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_tallied") RETURNING "line", "column", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`] } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "tallied";\nINSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`;
+  const sql = `DELETE FROM "tallied";
+INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 

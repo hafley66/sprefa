@@ -465,3 +465,146 @@ fixture(relation_pattern_target_arity_rejected,
   [],
   [ throws(relation_pattern_not_a_relation_value(
              span/3, file, file, file(repo(acme)))) ]).
+
+% ═══ the guard the guard did not cover ══════════════════════════════════════
+%
+% D3 / burr B1 of plans/2026-07-30-relpattern-adversarial-review.md. The three
+% refusals above all use CONCRETE arguments, and relation_argument_violation/6
+% opens with nonvar(Value), so a VARIABLE carrying a text leaf into a ref
+% column passed both doors. The emitter then wrote that text straight into a
+% column its own DDL declares INTEGER NOT NULL and puts in the primary key:
+%
+%   INSERT OR IGNORE INTO "span" ("file", "start", "end")
+%   SELECT DISTINCT d0."file", d0."start", d0."end" FROM "__frontier_raw3" d0
+%
+% sqlite stores text in an integer-affinity column, so nothing complained; the
+% boundary render then read that text as a dictionary id. Silent wrong answer
+% on both doors, in agreement, which is the worst shape a disagreement can
+% take.
+%
+% RED RECEIPTS, both doors, taken with the fixtures in place and
+% relation_column_type_conflict not yet written.
+%
+% ORACLE (cd v6/prolog/conformance && swipl -q -l go.pl -g go -g halt), 186
+% pass / 2 fail; a throws/1 fixture that does not throw prints its name alone:
+%
+%   PASS  relation_pattern_target_arity_rejected
+%   fail  relation_ref_column_fed_by_text_variable_rejected
+%
+% COMPILER (swipl -q -l compile/compile.pl -g compile_fixture(...)) accepted
+% the same program and wrote the module:
+%
+%   wrote /tmp/d3out.ts
+%   COMPILED CLEAN
+%
+% with the ref column fed straight from the text one, exactly as the review
+% recorded it:
+%
+%   INSERT OR IGNORE INTO "span" ("file", "start", "end")
+%   SELECT DISTINCT d0."file", d0."start", d0."end" FROM "__frontier_raw3" d0
+%
+% A variable is not refused for BEING a variable: the same variable at two ref
+% columns of the same type is ordinary flow, which is what
+% relation_ref_column_fed_by_ref_variable_accepted below holds down.
+fixture(relation_ref_column_fed_by_text_variable_rejected,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         col_type(raw3/3, file, text),
+         col_type(raw3/3, start, int), col_type(raw3/3, end, int) ],
+       [ (span(File, Start, End) <- raw3(File, Start, End)) ]),
+  [],
+  [],
+  [ throws(relation_column_type_conflict(span/3, file, file, raw3/3, file, text)) ]).
+
+% The negative leg: a variable flowing between two columns of the SAME
+% declared relation type is the ordinary way a value moves, and the new
+% refusal must not touch it.
+fixture(relation_ref_column_fed_by_ref_variable_accepted,
+  prog([ type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         col_type(loc/2, at, fpath), col_type(loc/2, line, int),
+         col_type(seen/1, at, fpath),
+         col_type(raw/2, path, text), col_type(raw/2, line, int) ],
+       [ (fpath(PathName) <- raw(PathName, _)),
+         (loc(fpath(PathName2), Line) <- raw(PathName2, Line)),
+         (seen(At) <- loc(At, _)) ]),
+  [],
+  [ [ +raw('src/a.rs', 10) ] ],
+  [ final(seen/1, [ seen(obj([name-'src/a.rs'])) ]),
+    ticks(1) ]).
+
+% ═══ the two shapes that used to be a door DISAGREEMENT ═════════════════════
+%
+% Burrs B3, B4 and B9 of plans/2026-07-30-relpattern-adversarial-review.md.
+% The compiler refused a relation value under not/1 and in an edge rule; THIS
+% ENGINE RAN BOTH. Neither shape appeared in any graded fixture, so nothing in
+% the corpus put the two answers side by side and the review had to run them by
+% hand to discover they differed:
+%
+%   oracle:   seen(10)
+%   compiler: relation_pattern_not_lowerable(span/3,file,file,...)
+%
+%   oracle:   span(obj(...),10,20) present
+%   compiler: relation_value_in_edge_rule(...)
+%
+% RED RECEIPT for the two fixtures below, taken with the fixtures in place and
+% relation_value_under_negation / relation_value_in_edge_rule not yet shared:
+%
+%   fail  relation_value_under_negation_rejected
+%   fail  relation_value_in_edge_rule_rejected
+%
+% (a throws/1 fixture that does not throw prints its name alone; both programs
+% ran here and produced rows.)
+%
+% The decision to refuse rather than lower is written out in
+% 0_program_check.pl at the two triggers. In short: a value under not/1 needs
+% its dictionary joins scoped INSIDE the NOT EXISTS, and hoisting them, which
+% is where the rewrite puts them today, inverts the answer; an edge rule has no
+% dictionary-join seam at all. Both are new execution shape, and a shape the
+% two engines answer differently is worse than a shape neither accepts. When
+% the capability lands, these two fixtures flip from throws/1 to rows.
+
+fixture(relation_value_under_negation_rejected,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int),
+         col_type(seen/1, start, int) ],
+       [ (seen(Start) <-
+            raw(_, _, Start, _),
+            not(span(file(repo(acme), fpath('missing.rs')), Start, _))) ]),
+  [],
+  [],
+  [ throws(relation_value_under_negation(
+             span/3, file, file, file(repo(acme), fpath('missing.rs')))) ]).
+
+fixture(relation_value_in_edge_rule_rejected,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         kind(span/3, log), keep(span/3, all),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int) ],
+       [ (span(file(repo(acme), fpath('src/a.rs')), 10, 20) <+
+            raw(_, _, _, _)) ]),
+  [],
+  [],
+  [ throws(relation_value_in_edge_rule(
+             span/3, file, file, file(repo(acme), fpath('src/a.rs')))) ]).

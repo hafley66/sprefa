@@ -54,9 +54,6 @@ expected_absent(subscribe/1,    'reserved lifecycle wrappers').
 expected_absent(unsubscribe/1,  'reserved lifecycle wrappers').
 expected_absent(complete/1,     'reserved lifecycle wrappers').
 expected_absent(error/1,        'reserved lifecycle wrappers').
-% The one LIVE row that is absent for a defect rather than a refusal. Its reason
-% is spelled in full in the golden's header, including both engines' answers.
-expected_absent(norm/1,         'NEW LIVE DEFECT').
 
 % Registry rows whose presence is checked against the SOURCE TEXT because the
 % parser splices them away (`splice_bare` in registry.pl).

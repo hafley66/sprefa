@@ -54,6 +54,7 @@
               [ type_definitions/2, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_object/4 ]).
 :- use_module('compile/registry', [body_surface_for_term/6]).
+:- use_module('0_body_walk', [relation_atom_wrapper/1]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -97,10 +98,15 @@ expand_surface_goal(Decls, Types, splice_bare, Goal0, Goal) :- !,
     Goal0 =.. [Functor | Args0],
     maplist(expand_goal(Decls, Types), Args0, Args),
     Goal =.. [Functor | Args].
+% Rank B11: the wrapper family is stated ONCE, in 0_body_walk.pl, and read
+% here. This module keeps its own recursion for the reason that file's header
+% already records for the other rewrites -- walk_body/3 observes a body and
+% cannot rebuild one -- but it no longer keeps its own copy of WHICH wrappers
+% carry a relation atom, which is the part that drifted.
 expand_surface_goal(Decls, Types, _, Goal0, Goal) :-
     (   compound(Goal0),
         functor(Goal0, Wrapper, 1),
-        memberchk(Wrapper, [latest, pre, finalize])
+        relation_atom_wrapper(Wrapper)
     ->  arg(1, Goal0, Inner0),
         expand_atom(Decls, Types, Inner0, Inner),
         Goal =.. [Wrapper, Inner]

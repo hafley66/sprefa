@@ -294,16 +294,32 @@ string_lit(Str, S0, S) :-
 quoted_chars(Quote, [Quote, Quote | Rest], [Quote | More], S) :- !,
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [Quote | Rest], [], Rest) :- !.
-quoted_chars(Quote, [0'\\, Esc | Rest], [Code | More], S) :- !,
-    escape_code(Esc, Code),
+quoted_chars(Quote, [0'\\, Esc | Rest], Codes, S) :- !,
+    escape_codes(Quote, Esc, Codes, More),
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [C | Rest], [C | More], S) :-
     quoted_chars(Quote, Rest, More, S).
 
-escape_code(0'n, 0'\n) :- !.
-escape_code(0't, 0'\t) :- !.
-escape_code(0'r, 0'\r) :- !.
-escape_code(C, C).
+% THE ESCAPE RULE, and the other half of it lives in emit_ts.pl:js_template/2.
+%
+%   \n \t \r   the three real escapes
+%   \\         one backslash
+%   \' \"      the string's own quote character
+%   \X         TWO characters: the backslash and X, unchanged
+%
+% The last line is the whole decision. This used to end in a catch-all
+% `escape_code(C, C)` that DROPPED the backslash, so `\d` parsed as `d` and a
+% regex written in a .dl6 string became a different regex with no error --
+% which is why every regex in this repo's .dl6 files is backslash-free. The
+% strings this language carries are regexes and shell fragments, where `\d`
+% and `\.` are the common case, and there is no reading of `\d` under which
+% `d` is what the author meant.
+escape_codes(_, 0'n,  [0'\n  | More], More) :- !.
+escape_codes(_, 0't,  [0'\t  | More], More) :- !.
+escape_codes(_, 0'r,  [0'\r  | More], More) :- !.
+escape_codes(_, 0'\\, [0'\\  | More], More) :- !.
+escape_codes(Quote, Quote, [Quote | More], More) :- !.
+escape_codes(_, Other, [0'\\, Other | More], More).
 
 % ═══ variables (Name-Var accumulator threaded explicitly through every
 % grammar predicate that can introduce or reference one) ════════════════════
@@ -550,12 +566,26 @@ decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
     ws0(S4, S5), decl_b_column_type(RelName, ColName, Type, S5, S6), ws0(S6, S7),
     ( lit_dcg(`,`, S7, S8) -> decl_b_columns(RelName, Rest, S8, S) ; Rest = [], S = S7 ).
 
-decl_b_column_type(_, _, int, S0, S) :- word(`int`, S0, S), !.
-decl_b_column_type(_, _, text, S0, S) :- word(`text`, S0, S), !.
-decl_b_column_type(_, _, json, S0, S) :- word(`json`, S0, S), !.
+% ONE type vocabulary, read through typed_column_type/3 -- where `rel` decls
+% already read it, and where host OUTPUT columns already read it
+% (host_output_column_type/5 below is this exact two-clause shape). These
+% clauses used to spell int|text|json by hand, so `float`, `bool` and a
+% declared struct name all fell through to the wrapper clause, degraded to the
+% untyped `none`, and reported unsupported_surface(column_type_wrapper(...)).
+% Host INPUTS and bind columns were the last surfaces answering a narrower
+% vocabulary than the `rel` decl sitting beside them.
+%
+% ORDER IS THE SEMANTICS. The wrapper forms go first: typed_column_type/3's
+% last clause takes any bare identifier as a struct type name, and `Key` in
+% `Key(text)` is a bare identifier, so reading types first would leave the
+% `(text)` unconsumed and turn a named refusal into a parse error.
 decl_b_column_type(RelName, ColName, none, S0, S) :-
     coltype(Wrapper, S0, S),
+    Wrapper \== none,
+    !,
     record_finding(unsupported_surface(column_type_wrapper(RelName, ColName, Wrapper))).
+decl_b_column_type(_, _, Type, S0, S) :-
+    typed_column_type(Type, S0, S).
 
 coltype(Wrapper, S0, S) :-
     ( word(`Key`, S0, S1) -> Wrapper = 'Key'

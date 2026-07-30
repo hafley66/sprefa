@@ -1,0 +1,8 @@
+rel fpath(name: text).
+rel loc(at: fpath, line: int).
+rel seen(at: fpath).
+rel raw(path: text, line: int).
+
+fpath(PathName) <- raw(PathName, _).
+loc(fpath(PathName2), Line) <- raw(PathName2, Line).
+seen(At) <- loc(At, _).

@@ -1093,12 +1093,30 @@ check_supported_subset_expanded(Program) :-
                               key_position_duplicate,
                               type_cycle,
                               column_type_unknown,
+                              % Same slot engine.pl gives it: a higher-order
+                              % goal is not a relation atom, so no later class
+                              % has a meaningful question about it.
+                              dynamic_relation_name,
                               % Ahead of every rule-shape check, in the same
                               % slot engine.pl:engine_check_order/1 gives it:
                               % a ref column holding a non-relation term used
                               % to compile into a json_extract of an INTEGER
                               % endpoint, which is NULL and answers nothing.
-                              relation_pattern_not_a_relation_value ]),
+                              relation_pattern_not_a_relation_value,
+                              % The same law where the value is a VARIABLE, in
+                              % the same slot engine.pl gives it. Without this
+                              % the emitter INSERTs a text leaf into its own
+                              % `INTEGER NOT NULL` ref column and sqlite keeps
+                              % it.
+                              relation_column_type_conflict,
+                              % Burrs B3/B4, in the same slot engine.pl gives
+                              % them: shapes this compiler refused at LOWERING
+                              % while the reference engine ran them. Shared now,
+                              % so the refusal is a fact of the language and not
+                              % of one back end. lower.pl keeps its residue
+                              % guards as the backstop for direct entry.
+                              relation_value_under_negation,
+                              relation_value_in_edge_rule ]),
     forall(( member(Rule, Rules), rule_reserved_construct(Rule, Construct) ),
            throw(unsupported_construct(Construct))),
     shared_refusal(Program, [ log_on_level_headed_rel,
@@ -1147,6 +1165,17 @@ compiler_refusal(type_cycle,            Names, type_cycle(Names)).
 compiler_refusal(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
+compiler_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+compiler_refusal(relation_value_under_negation,
+                 pattern(Ref, Column, TypeName, Value),
+                 relation_value_under_negation(Ref, Column, TypeName, Value)).
+compiler_refusal(relation_value_in_edge_rule,
+                 pattern(Ref, Column, TypeName, Value),
+                 relation_value_in_edge_rule(Ref, Column, TypeName, Value)).
+compiler_refusal(relation_column_type_conflict,
+                 conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
+                 relation_column_type_conflict(Ref, Column, TypeName,
+                                               OtherRef, OtherColumn, OtherType)).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(key_position_out_of_range, Payload, Payload).
 compiler_refusal(key_position_duplicate,    Payload, Payload).

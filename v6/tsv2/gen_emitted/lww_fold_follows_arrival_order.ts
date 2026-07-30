@@ -212,7 +212,8 @@ function resolveLatest_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArri
 }
 
 function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_latest";\nINSERT INTO "__pre_latest" ("key", "value") SELECT "key", "value" FROM "latest"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_latest";
+INSERT INTO "__pre_latest" ("key", "value") SELECT "key", "value" FROM "latest"`);
 }
 
 interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }

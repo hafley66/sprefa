@@ -11,7 +11,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module('../0_body_walk', [walk_body/3]).
-:- use_module('../compile/registry', [expression/5]).
+:- use_module('../compile/registry', [expression/5, expression_for_term/5]).
 
 :- op(700, xfx, :=).
 
@@ -39,9 +39,44 @@ eval_expr(Left / Right, Out)   :- !,
     ; Out is LeftV / RightV
     ).
 eval_expr(Left mod Right, Out) :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV mod RightV.
+% TEXT SCALARS, read off the same registry row the emitter lowers from
+% (registry.pl expression/5, family text_scalar). That row shipped with a SQL
+% rendering and no reference implementation at all, so `norm(Raw)` in a head
+% left this engine holding the unevaluated term: the oracle printed
+% "norm(Hello World)" where the emitter computed "helloworld". A live registry
+% row whose two doors answer different things is the divergence this clause
+% closes, and dispatching on the FAMILY rather than on norm/1 by name is what
+% stops the next text scalar from repeating it.
+eval_expr(Term, Out) :-
+    nonvar(Term),
+    expression_for_term(Term, text_scalar, _, Rendering, _),
+    !,
+    arg(1, Term, Argument),
+    eval_expr(Argument, Value),
+    text_scalar_value(Rendering, Value, Out).
 eval_expr(Braces, Canon) :- Braces = {}(_), !, json_canon(Braces, Canon).
 eval_expr([Head | Tail], Canon) :- !, json_canon([Head | Tail], Canon).
 eval_expr(Value, Value).
+
+% V5 `sprf_norm`, and the exact set the emitted SQL keeps: ASCII digits,
+% ASCII letters, everything else dropped, letters lowercased. The SQL walks
+% the string one character at a time and filters on
+% `unicode("c") BETWEEN 48 AND 57 / 65 AND 90 / 97 AND 122`, so the character
+% classes here are those three ranges written out, not a locale-aware
+% code_type/2 that would answer differently for a non-ASCII letter.
+text_scalar_value(ascii_alnum_lower, Value, Out) :-
+    ( atomic(Value) -> true ; throw(non_display_in_concat(Value)) ),
+    atom_codes(Value, Codes),
+    include(ascii_alnum_code, Codes, Kept),
+    maplist(ascii_lower_code, Kept, Lowered),
+    atom_codes(Out, Lowered).
+
+ascii_alnum_code(Code) :- between(0'0, 0'9, Code), !.
+ascii_alnum_code(Code) :- between(0'A, 0'Z, Code), !.
+ascii_alnum_code(Code) :- between(0'a, 0'z, Code).
+
+ascii_lower_code(Code, Lower) :-
+    ( between(0'A, 0'Z, Code) -> Lower is Code + 32 ; Lower = Code ).
 
 eval_int2(Left, Right, LeftV, RightV) :-
     eval_expr(Left, LeftV), eval_expr(Right, RightV),

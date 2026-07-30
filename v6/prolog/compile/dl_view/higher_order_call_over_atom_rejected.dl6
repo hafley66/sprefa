@@ -1,0 +1,4 @@
+rel src(name: text, value: int).
+rel out(name: text, value: int).
+
+out(Name, Value) <- call(src(Name, Value)).
