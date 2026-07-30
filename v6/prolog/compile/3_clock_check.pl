@@ -24,6 +24,7 @@
 :- use_module(registry, [ body_surface_for_term/6, clock_role/4 ]).
 :- use_module('../0_program_check', [relation_kind/3]).
 :- use_module('../conformance/body', [rel_ref/2]).
+:- use_module('../0_graph', [ graph_from_edges/3, graph_cyclic_components/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -204,40 +205,34 @@ clock_path(Origin, Target, Dependencies, Visited, Offset0, Offset,
 % SCC classification is queryable separately from backend capability.
 % A zero-grade positive B cycle is constructive. A delayed recurrence is
 % productive when every simple cycle has a positive total grade.
+%
+% The component set comes from 0_graph.pl. It used to come from an all-pairs
+% mutual-reachability search over a private graph_reachable/4 that enumerated
+% simple paths with a Visited list, which is what cost the plan phase 255 s on
+% a 42-node graph (plans/2026-07-30-prolog-compile-profiling.md). Solution
+% order is unchanged: graph_cyclic_components/2 returns sorted components
+% sorted, so components still arrive ordered by their smallest member, which
+% is the order the old `Node == First` guard produced.
 clock_scc(Program, Component, Class) :-
     clock_dependencies(Program, Dependencies),
-    program_nodes(Program, Dependencies, Nodes),
-    member(Node, Nodes),
-    findall(Peer,
-            ( member(Peer, Nodes),
-              graph_reachable(Node, Peer, Dependencies),
-              graph_reachable(Peer, Node, Dependencies) ),
-            Component0),
-    sort(Component0, Component),
-    Component \== [],
-    component_has_cycle(Component, Dependencies),
-    Component = [First | _],
-    Node == First,
+    clock_components(Program, Dependencies, Components),
+    member(Component, Components),
     classify_component(Component, Dependencies, DerivedClass),
     Class = DerivedClass.
 
-graph_reachable(From, To, Dependencies) :-
-    graph_reachable(From, To, Dependencies, [From]).
-
-graph_reachable(From, To, Dependencies, _) :-
-    member(Dependency, Dependencies),
-    causal_dependency(Dependency, From, To, _).
-graph_reachable(From, To, Dependencies, Visited) :-
-    member(Dependency, Dependencies),
-    causal_dependency(Dependency, From, Next, _),
-    \+ memberchk(Next, Visited),
-    graph_reachable(Next, To, Dependencies, [Next | Visited]).
-
-component_has_cycle([Only], Dependencies) :-
-    !,
-    member(Dependency, Dependencies),
-    causal_dependency(Dependency, Only, Only, _).
-component_has_cycle([_, _ | _], _).
+% The causal graph: program_nodes/3 supplies the vertices, so a ref that
+% takes part in no causal dependency is still a vertex and still falls out as
+% an acyclic singleton, exactly as the old `Component \== []` guard dropped
+% it. graph_cyclic_components/2 keeps only components carrying an internal
+% edge, which is what component_has_cycle/2 used to decide.
+clock_components(Program, Dependencies, Components) :-
+    program_nodes(Program, Dependencies, Nodes),
+    findall(From-To,
+            ( member(Dependency, Dependencies),
+              causal_dependency(Dependency, From, To, _) ),
+            Edges),
+    graph_from_edges(Nodes, Edges, Graph),
+    graph_cyclic_components(Graph, Components).
 
 classify_component(Component, Dependencies, constructive_b) :-
     component_edges(Component, Dependencies, Edges),
@@ -305,8 +300,20 @@ clock_violation(Program, cross_plane(latest_in_level_rule(Ref))) :-
     conjunction_goals(Body, Goals),
     member(latest(Atom), Goals),
     relation_atom(Atom, Ref).
+% The dependency set, the node set and the delayed-recurrence node set are all
+% functions of Program alone, so they are computed ONCE here rather than per
+% clock path. recurrence_free_clock/6 enumerates every simple path from every
+% origin, and it used to call clock_scc/3 inside its own negation, which meant
+% a full component search per path. That product was the plan phase's cost:
+% 58 chain rules times a whole component search each.
 clock_violation(Program, clock_path_conflict(Origin, Ref, Left, Right)) :-
-    setof(Offset, recurrence_free_clock(Program, Ref, Origin, Offset), Offsets),
+    clock_dependencies(Program, Dependencies),
+    program_nodes(Program, Dependencies, Nodes),
+    delayed_recurrence_nodes(Program, Dependencies, DelayedNodes),
+    setof(Offset,
+          recurrence_free_clock(Nodes, Dependencies, DelayedNodes, Ref, Origin,
+                                Offset),
+          Offsets),
     select(Left, Offsets, Rest),
     member(Right, Rest),
     Left < Right,
@@ -340,14 +347,25 @@ clock_boundary(Program,
 clock_refusal_reason(clock_path_conflict(_, _, _, _)).
 clock_refusal_reason(unconstructive_clock_cycle(_, _)).
 
-recurrence_free_clock(Program, Ref, Origin, Offset) :-
-    clock_dependencies(Program, Dependencies),
-    program_nodes(Program, Dependencies, Nodes),
+% The union of every productive_delayed component's members. classify_component
+% is called with the class UNBOUND and compared afterwards, matching what
+% clock_scc/3 does: its first clause tries constructive_b on its own body, so
+% binding the class up front would skip that clause's guard.
+delayed_recurrence_nodes(Program, Dependencies, DelayedNodes) :-
+    clock_components(Program, Dependencies, Components),
+    findall(Node,
+            ( member(Component, Components),
+              classify_component(Component, Dependencies, Class),
+              Class == productive_delayed,
+              member(Node, Component) ),
+            Nodes0),
+    sort(Nodes0, DelayedNodes).
+
+recurrence_free_clock(Nodes, Dependencies, DelayedNodes, Ref, Origin, Offset) :-
     clock_origin(Nodes, Dependencies, Origin),
     clock_path(Origin, Ref, Dependencies, [Origin], 0, Offset, Path),
-    \+ ( clock_scc(Program, Component, productive_delayed),
-         member(Node, Path),
-         memberchk(Node, Component) ).
+    \+ ( member(Node, Path),
+         memberchk(Node, DelayedNodes) ).
 
 check_clock_program(Program) :-
     ( clock_violation(Program, Violation)

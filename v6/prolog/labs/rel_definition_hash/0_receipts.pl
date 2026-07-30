@@ -15,6 +15,8 @@
 :- use_module('../../compile/registry',
               [body_surface_for_term/6]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
+:- use_module('../../0_graph',
+              [graph_from_edges/3, graph_components/2, graph_component_of/3]).
 :- use_module(library(crypto), [crypto_data_hash/3]).
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -293,26 +295,25 @@ relation_dependencies(Model, Ref, Dependencies) :-
 
 member_of(List, Item) :- memberchk(Item, List).
 
-reachable(_, Ref, Ref).
-reachable(Model, From, To) :-
-    reachable(Model, From, To, [From]).
-
-reachable(Model, From, To, Seen) :-
-    relation_dependencies(Model, From, Dependencies),
-    member(Next, Dependencies),
-    ( Next == To
-    ; \+ memberchk(Next, Seen),
-      reachable(Model, Next, To, [Next | Seen])
-    ).
+% This lab used to carry its own copy of the all-pairs mutual-reachability
+% search that cost the compiler's plan phase 255 s (the copy in
+% compile/3_clock_check.pl). Both now read 0_graph.pl. The semantics kept:
+% the old reachable/3's first clause was reflexive, so every ref landed in an
+% SCC even with no cycle, which is graph_components/2's partition rather than
+% graph_cyclic_components/2's cyclic-only subset.
+model_graph(Model, Graph) :-
+    model_refs(Model, Refs),
+    findall(Ref-Dependency,
+            ( member(Ref, Refs),
+              relation_dependencies(Model, Ref, Dependencies),
+              member(Dependency, Dependencies) ),
+            Edges),
+    graph_from_edges(Refs, Edges, Graph).
 
 relation_scc(Model, Ref, Scc) :-
-    model_refs(Model, Refs),
-    include(mutually_reachable(Model, Ref), Refs, Members),
-    sort(Members, Scc).
-
-mutually_reachable(Model, Ref, Candidate) :-
-    reachable(Model, Ref, Candidate),
-    reachable(Model, Candidate, Ref).
+    model_graph(Model, Graph),
+    graph_components(Graph, Components),
+    graph_component_of(Components, Ref, Scc).
 
 closure_hash(Model, Ref, Hash) :-
     relation_scc(Model, Ref, Scc),

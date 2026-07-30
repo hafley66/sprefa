@@ -58,6 +58,7 @@
 :- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- ensure_loaded('3_clock_check.test.pl').
+:- ensure_loaded('0_graph.test.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
