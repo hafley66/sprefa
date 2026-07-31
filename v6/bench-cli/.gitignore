@@ -1,0 +1,7 @@
+# Compiled program modules, generated schedules, per-run logs and perf JSON.
+# Everything here is run output; STANDINGS.md and standings.csv are the
+# committed record.
+out/
+
+# Resolved via ../tsv2/node_modules; the symlink is environment, not source.
+node_modules

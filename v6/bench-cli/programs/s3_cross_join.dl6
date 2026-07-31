@@ -1,0 +1,13 @@
+# s3 — cross join (the memory-wall case). Transcribed to .dl6 text from
+# v6/sprefa-store/bench/scale-gen.pl fixture_term(s3, ...).
+#
+# Quadratic by construction: N left rows and N right rows derive N^2 combined
+# rows. SCALE.md records tsv2 DNF at every s3 size under the 512 MB Node heap
+# ceiling while v1 completed s3/1k. Carried here as a WALL case, not a timing
+# case — see CONTRACT.md section 6.
+
+rel left_value(value: text).
+rel right_value(value: text).
+rel combined(left_side: text, right_side: text).
+
+combined(Left, Right) <- left_value(Left), right_value(Right).

@@ -1,0 +1,11 @@
+# s1 — keyed replace. Transcribed to .dl6 text from
+# v6/sprefa-store/bench/scale-gen.pl fixture_term(s1, ...), which builds the
+# same program as a fixture TERM. Text here so both engines read one file.
+#
+# 100 keys, one arrival per key per tick, each replacing that key's head row.
+# The head rel never grows past 100 rows; the log grows without bound.
+
+rel change(key: text, value: text) log keep(all).
+rel head(key: text, value: text) key(1).
+
+head(Key, Value) <+ change(Key, Value).

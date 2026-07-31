@@ -1,0 +1,18 @@
+# s2 — two-hop join. Transcribed to .dl6 text from
+# v6/sprefa-store/bench/scale-gen.pl fixture_term(s2, ...).
+#
+# DEVIATION FROM THE FIXTURE, stated because it changes the tick log: the
+# fixture seeds 100 b_link + 100 a_link rows as `Initial` (boot, before tick
+# 1). The text door refuses bare top-level facts (level_rule_no_positive_body),
+# so this lane's schedule delivers those 200 rows as TICK 1 arrivals instead.
+# Both engines are fed the identical schedule, so the grading is unaffected;
+# the tick log simply carries a seeding tick the fixture's log does not.
+
+rel c(key: text, payload: text).
+rel b_link(key: text, mid: text).
+rel a_link(mid: text, value: text).
+rel b(key: text, mid: text).
+rel a(key: text, value: text).
+
+b(BKey, BMid) <- c(BKey, BPayload), b_link(BKey, BMid).
+a(AKey, AValue) <- b(AKey, AMid), a_link(AMid, AValue).
