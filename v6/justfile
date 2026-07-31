@@ -61,6 +61,9 @@ compile-speed:
 # (expect: RUN total=191 identical=190 wrong=0 emitted_crash=0 rejection=1;
 #  exits 1 if emitted_crash is non-zero -- an emitted module that died on a
 #  schedule the oracle completed; slow, minutes)
+# Tail stage 4 prints MANIFEST_REASON_DIFF: refusal reasons vs git HEAD, the one
+# gate here that is not a bucket count (expect: restated=0 on a no-op re-run).
+# Informational; MANIFEST_DIFF_STRICT=1 makes a restatement fail the recipe.
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 

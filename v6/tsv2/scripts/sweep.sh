@@ -13,6 +13,11 @@
 #      its "../runtime/..." relative imports resolve inside this package),
 #      then runs scripts/sweep.ts, which replays each schedule against the
 #      emitted module and diffs the tick log against the oracle log.
+#   4. scripts/manifest-reason-diff.ts: diffs the freshly written manifest's
+#      refusal REASONS against git HEAD's copy. Stages 1-3 are all bucket/count
+#      gates, so a fixture that stays `unsupported` while changing WHICH refusal
+#      it hits moves no number any of them read. Informational (exit 0) unless
+#      MANIFEST_DIFF_STRICT=1.
 #
 # Run from v6/tsv2/ (or anywhere; this script cds to its own directory
 # first): scripts/sweep.sh
@@ -50,3 +55,13 @@ while IFS= read -r name; do
 done <<< "$compiled_names"
 
 node --experimental-transform-types scripts/sweep.ts
+
+echo ""
+echo "=== stage 4: refusal-reason diff vs HEAD (informational) ==="
+# Stage 1 just rewrote the manifest. Every gate above this line reads BUCKETS;
+# this reads REASONS, so a fixture that stays `unsupported` while switching
+# WHICH refusal it hits stops being invisible. Informational by default (exit 0
+# even on movement) so regen-with-intent stays one command; set
+# MANIFEST_DIFF_STRICT=1 to make an unexplained restatement fail the run.
+MANIFEST_DIFF_STRICT="${MANIFEST_DIFF_STRICT:-0}" \
+  node --experimental-transform-types scripts/manifest-reason-diff.ts
