@@ -505,3 +505,18 @@ ruling(json_null_token, reserved_ground_compound_never_atom, user,
        'user 2026-07-30: "do not use None lmfao use something else i guess, what about ()" -- () explained atom-cursed, compound accepted by delegation').
 ruling(json_dup_key_fate, refuse_both_doors, user,
        'user 2026-07-30: "emitter throws if oracle throws i gues[s]" -- oracle already throws json_dup_key; emitter gains the matching refusal/guard instead of silent last-wins').
+
+% 2026-07-30. Naming tiebreak, user word after the ordered-aggregate landing
+% ("k when in doubt can we just stick to ansi or any form of a sql or sql
+% standard? preferably sqlite lmfao"). Amends the vocabulary law's word pool
+% (rxjs / prolog / SQL) with a PRIORITY: when candidates tie, when doubt
+% exists, or when a construct's semantics live at the storage plane, take the
+% SQL spelling, and specifically SQLITE's own spelling over ANSI where they
+% differ (json_group_array not array_agg, group_concat not string_agg/listagg).
+% The landed aggregate surface already complies (count/sum/min/max/avg/
+% json_group_array/group_concat are all literal sqlite words). Does NOT by
+% itself order a rename wave of the known non-SQL words (pre, keep, combine,
+% finalize, now, latest -- review B8's list); those renames get their own
+% user-worded arc, this ruling only fixes which way ties break when it comes.
+ruling(vocabulary_tiebreak, sqlite_first_then_sql_standard, user,
+       'user 2026-07-30: sqlite spelling wins on doubt; ansi/sql standard next; rx/prolog words only where the concept has no storage-plane spelling').
