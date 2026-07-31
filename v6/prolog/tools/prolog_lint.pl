@@ -201,6 +201,13 @@ report_check(Cluster, check(redefined(Type, Module, Indicator))) :-
     finding(redefined, Cluster-Type-Module-Indicator).
 % The reported term is a callable with fresh variables, whose numbering moves
 % between runs; only its indicator is stable enough for a baseline.
+% list_void_declarations/0 has no module_class option, so system libraries
+% loaded by the entry files surface here; filter to user/test modules to match
+% the other checks' scope.
+report_check(_Cluster, check(void_declaration(Module:_, _))) :-
+    module_property(Module, class(Class)),
+    memberchk(Class, [system, library]),
+    !.
 report_check(Cluster, check(void_declaration(Callable, Declaration))) :-
     !,
     indicator(Callable, Indicator),

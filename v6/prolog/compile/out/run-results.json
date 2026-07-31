@@ -688,7 +688,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "rejection",
-    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
+    "detail": "retract from log rel 'event'",
     "finalBucket": "no_oracle_final",
     "finalDetail": "oracle threw on this schedule too; no final state to diff"
   },
