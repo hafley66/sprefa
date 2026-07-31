@@ -150,12 +150,18 @@ function main(): void {
     process.exitCode = 2;
     return;
   }
+  // A FILTERED run must not overwrite the committed standings: `BENCH_CASES=x
+  // just bench-cli` otherwise replaces a 14-case table with a 1-case one, and
+  // the loss is silent because both files are valid. Caught by doing exactly
+  // that while verifying the recipe. Partial runs land in out/ instead.
+  const partial = (process.env["BENCH_CASES"] ?? "").length > 0;
+  const outDir = partial ? join(HERE, "out") : HERE;
   const records = readFileSync(path, "utf8")
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as IRecord);
 
-  writeFileSync(join(HERE, "standings.csv"), toCsv(records));
+  writeFileSync(join(outDir, "standings.csv"), toCsv(records));
 
   const timer = records[0]?.external_timer ?? "unknown";
   const runs = records[0]?.runs ?? 0;
@@ -208,11 +214,14 @@ Per CONTRACT.md section 2.4 no \`N/A\` ships bare.
 ${reasons(records)}
 `;
 
-  writeFileSync(join(HERE, "STANDINGS.md"), doc);
+  writeFileSync(join(outDir, "STANDINGS.md"), doc);
   process.stdout.write(
     `BENCH-CLI timed=${timed} disqualified=${disqualified} hash-agreement=${broken.length === 0 ? "OK" : "BROKEN"}\n`,
   );
-  process.stdout.write(`wrote ${join(HERE, "standings.csv")} and ${join(HERE, "STANDINGS.md")}\n`);
+  process.stdout.write(
+    `wrote ${join(outDir, "standings.csv")} and ${join(outDir, "STANDINGS.md")}` +
+      `${partial ? " (PARTIAL run: BENCH_CASES was set, so the committed standings were left alone)" : ""}\n`,
+  );
   if (broken.length > 0) process.exitCode = 1;
 }
 

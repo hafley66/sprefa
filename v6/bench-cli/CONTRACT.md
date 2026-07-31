@@ -408,3 +408,45 @@ Recorded here rather than silently skipped.
 - **gnuplot charts** — `bench/chart.sh` exists and works for the scale-sweep
   shape. This table is small enough to read as markdown; wiring charts is
   cheap later.
+- **oracle-side `wall_ms`** — measured by `adapters/oracle.sh` around the whole
+  swipl process, so it carries the ~10-20 ms startup floor while tsv2's number
+  excludes node's. Making the two spans comparable means adding a timing goal
+  inside `dl6_oracle.pl`, a file this lane is fenced out of. **Priced: one
+  `statistics/2` pair around `print_ticklog/3` plus a perf-JSON write, small,
+  but it is compiler-side surface and wants its own review.**
+
+## 7. THE PHASE-0 FINDING: the referee has a scale ceiling
+
+The result phase 1 most needs, and it is about the ORACLE rather than tsv2.
+
+The tick-log byte-diff is what makes this contract honest, and **the reference
+engine that produces the left-hand side of that diff does not reach 10k rows.**
+Measured:
+
+| cell | oracle | tsv2 | verdict |
+|---|---:|---:|---|
+| s1/1k | 1325 ms | 33.1 ms | identical |
+| s2/1k | 2230 ms | 24.0 ms | identical |
+| s1/10k | > 180 s (173.58 s killed, then still running past 183 s) | — | `no_reference` |
+| s2/10k | walls | — | `no_reference` |
+| s3/1k | walls | — | `no_reference` |
+
+The two engines are already ~40-90x apart at 1k, and the gap grows in the
+direction that removes the referee. PERF-REPORT competes at 960k. So a rust
+engine cannot be graded at competition scale by this method as it stands.
+
+Two ways out, neither taken here because both are design decisions rather than
+harness work:
+
+1. **A reference that scales.** The oracle is `engine.pl` interpreting the
+   program; it is the spec, and its speed was never the point.
+2. **A cheaper invariant at scale.** The full per-tick log is the strongest
+   check and the most expensive. The sweep already computes a FINAL-STATE line
+   (`oracle_final/2`, `<name>.oracle.final.jsonl`); a final-state hash would
+   grade s1/10k for a fraction of the cost, at the price of not catching a
+   divergence that cancels out by the last tick. Tiered grading — full tick
+   log where the oracle reaches, final-state hash beyond — is the obvious
+   shape, and it is a ruling, not a refactor.
+
+Recorded rather than worked around: a bench that quietly stopped grading at
+scale would be exactly the v1 asymmetry wearing a different hat.
