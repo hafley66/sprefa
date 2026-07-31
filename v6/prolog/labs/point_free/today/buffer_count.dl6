@@ -1,0 +1,20 @@
+# corpus 4 -- BUFFERED BATCH (rx bufferCount(3)), today's spelling.
+#
+# rx: arrival$.pipe(bufferCount(3))
+#
+# dl6 has no buffer operator and does not need one: number the arrivals, then
+# a level rule groups by ordinal / 3. The numbering is the four-rule cursor
+# template the csp census found 52 times in 94 rules.
+rel arrival(payload: text).
+rel seq_numbered_1(partition: text, at: int) key(1).
+rel numbered(ordinal: int, payload: text) log keep(all).
+rel batch(bucket: int, payload: text).
+
+seq_numbered_1('q', 1) <+ arrival(_Payload), not(seq_numbered_1('q', _At)).
+seq_numbered_1('q', Advanced) <+ arrival(_Payload), pre(seq_numbered_1('q', At)),
+                                 Advanced := At + 1.
+numbered(1, Payload) <+ arrival(Payload), not(seq_numbered_1('q', _At)).
+numbered(Advanced, Payload) <+ arrival(Payload), pre(seq_numbered_1('q', At)),
+                               Advanced := At + 1.
+
+batch(Bucket, Payload) <- numbered(Ordinal, Payload), Bucket := (Ordinal - 1) / 3.

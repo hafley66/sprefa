@@ -1,0 +1,8 @@
+# M1 probe: the running-total fold as written TODAY, `pre` step arm.
+rel tick_event(counter: text, delta: int).
+rel total(counter: text, amount: int) key(1).
+
+total(Counter, Amount) <+ tick_event(Counter, Delta), not(total(Counter, _Prev)),
+                          Amount := 0 + Delta.
+total(Counter, Amount) <+ tick_event(Counter, Delta), pre(total(Counter, Prev)),
+                          Amount := Prev + Delta.
