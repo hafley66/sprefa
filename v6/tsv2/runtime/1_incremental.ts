@@ -725,19 +725,19 @@ export const IncrementalRuntime: IIncrementalRuntime = {
               [{ tableName: (plan) => plan.frontierTableName, phase: 1 }],
             );
           }
-          const changedRows = new Set(
-            resultRows(result, relation.columns).map((row) => JSON.stringify(row)),
-          );
+          const changedRows = resultRows(result, relation.columns);
           const stagedRows = new Set<string>();
-          for (const entry of entries) {
-            const row = JSON.stringify(entry.row);
-            if (!changedRows.has(row) || stagedRows.has(row)) continue;
+          for (const [index, entry] of entries.entries()) {
+            const storedRow = changedRows[index];
+            if (storedRow === undefined) continue;
+            const row = JSON.stringify(storedRow);
+            if (stagedRows.has(row)) continue;
             stagedRows.add(row);
             events.push({
               rel: relation.rel,
               sign,
               sequence: entry.sequence,
-              row: entry.row,
+              row: storedRow,
             });
           }
           return stageEvents(

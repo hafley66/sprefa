@@ -525,6 +525,20 @@
     "finalDetail": ""
   },
   {
+    "name": "arrival_affinity_rewrite_keeps_delta",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "arrival_dup_batch_partial_ignore",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "combine_level_is_the_conjunction_spelling",
     "bucket": "identical",
     "detail": "",
@@ -611,7 +625,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
