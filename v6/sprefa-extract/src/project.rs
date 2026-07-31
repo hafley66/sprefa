@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use crate::lang::{source_for, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
+use crate::scip_ensure::IndexBudget;
 use crate::scip_rows::ScipRecords;
 use crate::seams::{
     build_def_index, BlobSource, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
@@ -231,6 +232,136 @@ pub fn scip_file_edges_jsonl(request: &ResolveRequest) -> Result<Vec<String>, Pr
 /// prints and the goldens pin.
 pub fn resolve_project_jsonl(request: &ResolveRequest) -> Result<Vec<String>, ProjectError> {
     Ok(sorted_lines(resolve_project(request)?))
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE TWO NAMED FAMILIES
+// ════════════════════════════════════════════════════════════════════════════
+
+/// One `--family scip` request: a root, where its index cache lives, and the
+/// budget one indexer run may spend.
+pub struct ScipFamilyRequest<'a> {
+    /// The project root. Its marker files pick the indexer, and every document
+    /// path in the answer is relative to it.
+    pub root: &'a Path,
+    /// Where a built index is placed and found again. `None` is v5's
+    /// `<root>/.dl/.state`; a caller states its own so a test never writes into
+    /// a committed fixture.
+    pub cache_dir: Option<&'a Path>,
+    /// The per-indexer wall budget (the timeout-gun law).
+    pub budget: IndexBudget,
+    /// The repo id for a document with no ancestor `.git`, in the `repo`
+    /// column. Defaults to the root's basename.
+    pub slug: Option<&'a str>,
+}
+
+/// The `scip` FAMILY: REAL SCIP INDEX DATA.
+///
+/// Ensure the root has a loadable index (v5's contract: an existing index wins,
+/// otherwise the detected and installed indexer runs once under the budget),
+/// then project it to v5's `scip_*` relation shapes.
+///
+/// This is the family whose rows are compiler-resolved. Every fact in the
+/// answer came out of a real type checker's own index, which is exactly what
+/// `diet_scip` cannot do and why the two carry different names.
+///
+/// A root that cannot be indexed yields NAMED SKIP rows rather than an error or
+/// an empty stream, because a missing toolchain must skip a repo without
+/// killing its caller (v5's law) and an empty stream reads as "this project has
+/// no symbols", which is a worse lie than a failure.
+pub fn scip_family(request: &ScipFamilyRequest) -> Result<Vec<FlatFact>, ProjectError> {
+    let cache = match request.cache_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => crate::scip_ensure::default_cache_dir(request.root),
+    };
+    let report = crate::scip_ensure::ensure_index(request.root, &cache, request.budget);
+    let mut facts: Vec<FlatFact> = report
+        .skips
+        .iter()
+        .map(|skip| FlatFact::ScipSkipRow {
+            lang: skip.lang.to_string(),
+            bin: skip.bin.to_string(),
+            reason: skip.reason.slug().to_string(),
+            detail: skip.reason.detail(),
+        })
+        .collect();
+    let Some(index_path) = report.index.as_ref() else {
+        return Ok(facts);
+    };
+    // The decode is indexer-agnostic (one prost decode serves every indexer),
+    // so any roster entry loads any index, including a merged multi-language one.
+    let index = ScipTypescript
+        .load(index_path)
+        .map_err(ProjectError::Scip)?;
+    let slug = match request.slug {
+        Some(slug) => slug.to_string(),
+        None => request
+            .root
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default(),
+    };
+    facts.push(FlatFact::ScipIndexRow {
+        reused: report.reused,
+        tool_name: index.metadata.tool_name.clone(),
+        tool_version: index.metadata.tool_version.clone(),
+        documents: index.documents.len() as u32,
+    });
+    facts.extend(crate::scip_v5_rels::v5_rel_rows(
+        &index,
+        request.root,
+        &slug,
+    ));
+    Ok(facts)
+}
+
+/// Where `scip_family` put or found the index, for the human line the CLI
+/// prints to stderr. Runs the same ensure with the same budget, so a caller
+/// that wants both the rows and the path calls `scip_family` and this in the
+/// same process: the second call takes the reuse branch by construction.
+pub fn scip_index_location(request: &ScipFamilyRequest) -> Option<PathBuf> {
+    let cache = match request.cache_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => crate::scip_ensure::default_cache_dir(request.root),
+    };
+    crate::scip_ensure::index_path(request.root, &cache)
+}
+
+/// Serialize the `scip` family to sorted JSONL lines.
+pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(scip_family(request)?))
+}
+
+/// The `diet_scip` FAMILY: the tree-sitter parse plus heuristic resolution,
+/// under an honest label.
+///
+/// DIET MEANS PARSE TECHNIQUE AND HEURISTICS, NEVER ACTUAL SCIP DATA. Nothing
+/// in this answer came from a SCIP index or a type checker. The rows are the
+/// crate's own front-ends' output resolved by name match across the supplied
+/// file set, which is fast, needs no toolchain, and is WRONG wherever a name is
+/// ambiguous corpus-wide: two files defining `helper` make every unqualified
+/// call to `helper` unresolvable here, and a real index resolves it through the
+/// import. That difference is the whole reason these are two names.
+///
+/// Both arms run. `--resolve` remains the pre-existing spelling of the same
+/// pass and is byte-unchanged, including its narrower `call`-only default; this
+/// family is the labelled entry, not a replacement.
+pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
+    resolve_project(&ResolveRequest {
+        paths,
+        arms: ResolveArms {
+            call: true,
+            types: true,
+        },
+        scip: ScipMode::Off,
+        project_root: None,
+        scip_records: ScipRecords::all(),
+    })
+}
+
+/// Serialize the `diet_scip` family to sorted JSONL lines.
+pub fn diet_scip_jsonl(paths: &[PathBuf]) -> Result<Vec<String>, ProjectError> {
+    Ok(sorted_lines(diet_scip(paths)?))
 }
 
 pub(crate) fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {

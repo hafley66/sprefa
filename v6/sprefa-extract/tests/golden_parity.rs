@@ -246,6 +246,23 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             FlatFact::ScipSignatureOccurrenceRow { .. } => {}
             FlatFact::FileRow { .. } => {}
             FlatFact::FileEdgeRow { .. } => {}
+            // The `--family scip` rows: v5's own scip_* relation shapes,
+            // projected from a real indexer's index. `flatten` never produces
+            // them either (they come out of `project::scip_family`), and they
+            // have no v5 EXTRACTOR facet to be at parity with — v5 produces the
+            // identical relations from the identical indexer, so grading them
+            // here would compare an index to itself. 8_scip_families_cli.rs
+            // pins their shapes against the real indexers instead.
+            FlatFact::ScipDefRow { .. } => {}
+            FlatFact::ScipNameRow { .. } => {}
+            FlatFact::ScipRefRow { .. } => {}
+            FlatFact::ScipEdgeRow { .. } => {}
+            FlatFact::ScipFnEdgeRow { .. } => {}
+            FlatFact::ScipCalleeTypeRow { .. } => {}
+            FlatFact::ScipLocalRow { .. } => {}
+            FlatFact::ScipImplRow { .. } => {}
+            FlatFact::ScipIndexRow { .. } => {}
+            FlatFact::ScipSkipRow { .. } => {}
         }
     }
     set

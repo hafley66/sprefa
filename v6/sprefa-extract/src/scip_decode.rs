@@ -31,6 +31,42 @@ pub fn load_index(index_path: &Path) -> Result<ScipIndex, ScipError> {
     Ok(diet(&index))
 }
 
+/// Merge several per-language SCIP indexes into one on disk (v5
+/// `scip_import::merge_files`, re-runtimed onto prost).
+///
+/// SCIP is document-keyed, so a union is exactly concatenating `documents` and
+/// `external_symbols`: each indexer already namespaces its symbols by tool and
+/// package, so there is no key collision across languages. `metadata` is
+/// carried from the first input, which is the honest answer for a merged index
+/// (there is no single tool that produced it, and inventing one would put a lie
+/// in the `scip_metadata` row).
+///
+/// Lives HERE rather than beside the other merge-shaped code because the prost
+/// bindings are private to this module, and keeping them private is what stops
+/// the generated types leaking into the rest of the crate.
+pub fn merge_indexes(inputs: &[std::path::PathBuf], out: &Path) -> Result<usize, ScipError> {
+    let mut merged: Option<proto::Index> = None;
+    let mut documents = 0usize;
+    for path in inputs {
+        let bytes = std::fs::read(path)
+            .map_err(|e| ScipError::Parse(format!("read {}: {e}", path.display())))?;
+        let index = proto::Index::decode(bytes.as_slice())
+            .map_err(|e| ScipError::Parse(format!("protobuf decode {}: {e}", path.display())))?;
+        documents += index.documents.len();
+        match &mut merged {
+            None => merged = Some(index),
+            Some(into) => {
+                into.documents.extend(index.documents);
+                into.external_symbols.extend(index.external_symbols);
+            }
+        }
+    }
+    let merged = merged.unwrap_or_default();
+    std::fs::write(out, merged.encode_to_vec())
+        .map_err(|e| ScipError::Parse(format!("write {}: {e}", out.display())))?;
+    Ok(documents)
+}
+
 /// proto -> diet. NO LONGER A DIET IN THE ORIGINAL SENSE: every field the
 /// protobuf carries crosses into these types (scip-passthrough lane). The
 /// name stays because the target types are still v6's own flat structs, not

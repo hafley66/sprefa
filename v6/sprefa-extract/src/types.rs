@@ -1476,6 +1476,106 @@ pub enum FlatFact {
         target_name: Option<String>,
         kind: String,
     },
+    // ── the `scip` family: v5's scip_* relation shapes ──────────────────────
+    //
+    // These eight rows ARE v5's `scip_*` relations (repo-root src/rels/scip.rs
+    // decls), projected here rather than left as joins over the passthrough
+    // rows. The passthrough rows above and these are two answers to different
+    // questions and both ship: `--scip-facts` is every field the protobuf
+    // carries, unjoined; `--family scip` is the v5 relation vocabulary a
+    // program already knows how to read.
+    //
+    // v5's `scip_occurrence` and `scip_binding` are NOT among them, and the
+    // reason is a wire collision, not a gap in the port: `scip_occurrence` is
+    // ALREADY a record tag on this wire (the byte-span passthrough row above),
+    // with different fields. Two shapes under one tag is the silent-drift
+    // hazard every golden here exists to stop. Both v5 rows are one consumer
+    // join off `--scip-facts --scip-record scip_occurrence`, which carries the
+    // spans and every role bit; `scip_binding` additionally needs the source
+    // slice at those spans, which the consumer holds and this crate would have
+    // to re-read.
+    /// v5 `scip_def(symbol, file, repo)`: a symbol's defining document.
+    #[serde(rename = "scip_def")]
+    ScipDefRow {
+        symbol: String,
+        file: String,
+        repo: String,
+    },
+    /// v5 `scip_name(symbol, name)`: the trailing identifier run of a moniker.
+    /// Computed here because it needs the moniker grammar's `[`/`]`/`#`
+    /// separators, which a single-separator string split cannot all honor.
+    #[serde(rename = "scip_name")]
+    ScipNameRow { symbol: String, name: String },
+    /// v5 `scip_ref(file, symbol, def_file, repo)`: a non-definition occurrence
+    /// of a symbol this index also defines.
+    #[serde(rename = "scip_ref")]
+    ScipRefRow {
+        file: String,
+        symbol: String,
+        def_file: String,
+        repo: String,
+    },
+    /// v5 `scip_edge(src, dst, repo)`: file-to-file dependency, one row per
+    /// distinct pair. The same graph `--scip-deps` folds, in v5's column names.
+    #[serde(rename = "scip_edge")]
+    ScipEdgeRow {
+        src: String,
+        dst: String,
+        repo: String,
+    },
+    /// v5 `scip_fn_edge(caller, callee)`: the function-level call graph, the
+    /// caller being the innermost enclosing callable definition.
+    #[serde(rename = "scip_fn_edge")]
+    ScipFnEdgeRow { caller: String, callee: String },
+    /// v5 `scip_callee_type(sym, type)`: the receiver type parsed out of a
+    /// method moniker's `impl#[T]` / `for#[T]` segment.
+    #[serde(rename = "scip_callee_type")]
+    ScipCalleeTypeRow {
+        sym: String,
+        #[serde(rename = "type")]
+        receiver_type: String,
+    },
+    /// v5 `scip_local(fn, name)`: a local binding or parameter attributed to
+    /// its enclosing callable.
+    #[serde(rename = "scip_local")]
+    ScipLocalRow {
+        #[serde(rename = "fn")]
+        enclosing_fn: String,
+        name: String,
+    },
+    /// v5 `scip_impl(impl, iface)`: the implements / overrides edge, from a
+    /// SymbolInformation relationship with `is_implementation`.
+    #[serde(rename = "scip_impl")]
+    ScipImplRow {
+        #[serde(rename = "impl")]
+        implementor: String,
+        iface: String,
+    },
+    /// The `scip` family's index header: which tool answered, and whether an
+    /// index already on disk was reused or one was built. Self-diagnosis on the
+    /// wire, so a caller never has to ask why a stream is the size it is.
+    /// The index PATH is deliberately absent: it is machine-dependent and would
+    /// pin a checkout location into every golden. It goes to stderr instead.
+    #[serde(rename = "scip_index")]
+    ScipIndexRow {
+        reused: bool,
+        tool_name: String,
+        tool_version: String,
+        documents: u32,
+    },
+    /// A NAMED SKIP: one detected indexer produced no index, and why. This is a
+    /// row rather than an exit code on purpose. A root with no toolchain must
+    /// not kill its caller (v5's law: a missing indexer skips the repo, it never
+    /// fails the tick), and it must not produce a silently empty stream either,
+    /// which reads as "this project has no symbols". `reason` is the stable
+    /// slug to match on, `detail` the human half.
+    #[serde(rename = "scip_skip")]
+    ScipSkipRow {
+        lang: String,
+        bin: String,
+        reason: String,
+        detail: String,
+    },
     /// One SCIP occurrence: a symbol mentioned at a byte span in one document.
     /// RAW index fact, deliberately unjoined. v5's `scip_def` is this row with
     /// `definition` true, `scip_ref` is it with `definition` false, and

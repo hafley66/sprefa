@@ -18,9 +18,10 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    deps::diet_file_edges_jsonl, dispatch, file_fact, flatten, query_patterns,
-    resolve_project_jsonl, scip_facts_jsonl, scip_file_edges_jsonl, source_for, AstPatternQuery,
-    FamilyMask, ResolveArms, ResolveRequest, ScipMode, ScipRecords, SCHEMA,
+    deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten, query_patterns,
+    resolve_project_jsonl, scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
+    scip_index_location, source_for, AstPatternQuery, FamilyMask, IndexBudget, ResolveArms,
+    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
@@ -28,7 +29,8 @@ mod help;
 
 use help::{
     BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
-    SCIP_BUILD_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG,
+    SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
+    SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
 };
 
 #[derive(Parser)]
@@ -147,9 +149,100 @@ struct Cli {
     )]
     ast_capture: Vec<String>,
 
+    /// Where `--family scip` places and finds its index cache.
+    #[arg(long, value_name = "DIR", long_help = SCIP_CACHE_LONG)]
+    scip_cache: Option<PathBuf>,
+
+    /// Wall budget in seconds for ONE indexer run under `--family scip`.
+    #[arg(long, value_name = "SECS", long_help = SCIP_TIMEOUT_LONG)]
+    scip_timeout: Option<u64>,
+
     /// Print the JSONL output contract to stdout and exit (no extraction).
     #[arg(long)]
     schema: bool,
+}
+
+/// The two `--family` names that select a whole-project MODE rather than a
+/// member of the per-file extraction mask. Split out here so the mask parser
+/// below stays exactly what it was for `cst,type,call,df`.
+enum FamilyMode {
+    /// Real SCIP index data over one root.
+    Scip,
+    /// The tree-sitter + heuristic resolve pass over the supplied paths.
+    DietScip,
+}
+
+/// Which mode `--family` names, if any. Mixing a mode with a mask name is an
+/// ERROR rather than a silent pick: `--family cst,scip` has no honest reading
+/// (one is a per-file mask over one file, the other a whole-project index run),
+/// and guessing one would produce a stream the caller did not ask for.
+fn family_mode(families: Option<&[String]>) -> Result<Option<FamilyMode>, String> {
+    let Some(families) = families else {
+        return Ok(None);
+    };
+    let named: Vec<&str> = families.iter().map(|name| name.trim()).collect();
+    let mode = named.iter().find_map(|name| match *name {
+        "scip" => Some(FamilyMode::Scip),
+        "diet_scip" => Some(FamilyMode::DietScip),
+        _ => None,
+    });
+    let Some(mode) = mode else {
+        return Ok(None);
+    };
+    let mode_names: Vec<&str> = named
+        .iter()
+        .copied()
+        .filter(|name| matches!(*name, "scip" | "diet_scip"))
+        .collect();
+    if mode_names.len() > 1 {
+        return Err(format!(
+            "--family named both {} and {}; scip and diet_scip are different \
+             answers to the same question and one invocation gives one of them",
+            mode_names[0], mode_names[1]
+        ));
+    }
+    let extras: Vec<&str> = named
+        .iter()
+        .copied()
+        .filter(|name| !matches!(*name, "scip" | "diet_scip"))
+        .collect();
+    if !extras.is_empty() {
+        return Err(format!(
+            "--family {} is a whole-project mode and cannot combine with {:?}, \
+             which select the per-file extraction mask",
+            mode_names[0], extras
+        ));
+    }
+    Ok(Some(mode))
+}
+
+/// `--family scip ROOT`: ensure the root's SCIP index (existing wins, else the
+/// detected indexer runs under the budget) and stream v5's `scip_*` relation
+/// shapes. Named skips ride the stream as `scip_skip` rows; the index location
+/// is a stderr line because it is machine-dependent and would pin a checkout
+/// path into any golden that captured stdout.
+fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
+    if cli.paths.len() != 1 {
+        return Err("--family scip takes exactly one ROOT directory".into());
+    }
+    let request = ScipFamilyRequest {
+        root: &cli.paths[0],
+        cache_dir: cli.scip_cache.as_deref(),
+        budget: match cli.scip_timeout {
+            Some(secs) if secs > 0 => IndexBudget { secs },
+            Some(_) => return Err("--scip-timeout must be a positive number of seconds".into()),
+            None => IndexBudget::from_env(),
+        },
+        slug: None,
+    };
+    for line in scip_family_jsonl(&request)? {
+        println!("{line}");
+    }
+    if let Some(path) = scip_index_location(&request) {
+        // @eprintln-ok: CLI-UX location line, deliberately off the fact stream.
+        eprintln!("extract: scip index {}", path.display());
+    }
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -158,6 +251,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if cli.schema {
         print_schema();
         return Ok(());
+    }
+
+    // The two named families are whole-project modes, so they are dispatched
+    // before every per-file path below.
+    match family_mode(cli.family.as_deref())? {
+        Some(FamilyMode::Scip) => {
+            stream_scip_family(&cli)?;
+            return Ok(());
+        }
+        Some(FamilyMode::DietScip) => {
+            for line in diet_scip_jsonl(&cli.paths)? {
+                println!("{line}");
+            }
+            return Ok(());
+        }
+        None => {}
     }
 
     if cli.resolve {

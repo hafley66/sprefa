@@ -1,0 +1,75 @@
+# scip-families.dl6 -- BOTH EXTRACTOR FAMILIES AS ORDINARY HOSTS.
+#
+# One demand row per family, each landing EDB arrivals through the served
+# engine. Nothing here is a construct this arc invented: two `sh` declarations,
+# two demand rels, four level rules. The extraction-fork verdict said the
+# extraction planes take the HOST shape and feed rules as ordinary deltas, and
+# this is that sentence as a program.
+#
+# THE PROGRAM ALSO CARRIES THE DISCRIMINATION. Its corpus is the alpha/beta/
+# gamma trio: alpha and beta each export a function called `helper`, and gamma
+# imports alpha's and calls it. Read the three rels the program derives:
+#
+#   scip_def    both helpers, because both ARE defined
+#   scip_ref    gamma referencing ALPHA's helper, because the compiler resolved
+#               the import
+#   diet_edge   EMPTY across those files, because two corpus definitions share
+#               the name and a name match has no basis to choose
+#
+# That is the whole reason the two families carry different names, expressed in
+# rows rather than in prose.
+#
+# Its rx lowering, per the "every snippet carries its lowering" law. Both hosts
+# are the shipped demand shape (RX-H2), identical but for the command:
+#
+#   demand$.pipe(
+#     groupBy(row => row.witnessDigest),          // content-addressed identity
+#     mergeMap(g => g.pipe(take(1), mergeMap(runFamily))),
+#     mergeMap(commitEdbArrival))
+#
+#   scipDef$ = arrivals$.pipe(filter(r => r.record === 'scip_def'),
+#                             map(({ symbol, file }) => ({ symbol, file })))
+#
+# The `record` filter is a plain `filter`, which is exactly what the level rules
+# below spell as a comparison.
+
+# ── the two hosts ────────────────────────────────────────────────────────────
+# `$DL_EXTRACT_BIN` and `$SCIP_CACHE` are ENVIRONMENT references expanded by the
+# child's own shell, so this program text names no absolute path, no build
+# profile, and no cache location. The receipt script resolves all of them.
+#
+# `record` is a declared output column because it is the wire's own
+# discriminator and the projection needs it: `--family scip` interleaves several
+# record shapes, and scip_def and scip_ref BOTH carry a symbol and a file. The
+# named projection alone cannot tell them apart, so the rules below filter on
+# the tag the wire already puts on every line.
+sh scip_rel(root: text) -> (record: text, symbol: text, file: text) =
+  `"$DL_EXTRACT_BIN" --family scip --scip-cache "$SCIP_CACHE" {root}`.
+
+# The diet family's universe IS its argument list (it resolves across exactly
+# the files it is handed), so the template globs the root. One record shape per
+# declaration, and `resolved_edge` is the one with both paths.
+sh diet_rel(root: text) -> (record: text, caller_path: text, callee_path: text) =
+  `"$DL_EXTRACT_BIN" --family diet_scip {root}/*.ts`.
+
+# ── one demand row per family ────────────────────────────────────────────────
+# Two rels rather than one shared rel, so each family's demand is separately
+# assertable and either can be driven without the other.
+rel want_scip(root: text).
+rel want_diet(root: text).
+
+# ── the real-SCIP plane ──────────────────────────────────────────────────────
+rel scip_def(symbol: text, file: text).
+scip_def(symbol, file) <-
+  want_scip(root), scip_rel(root, record, symbol, file), record == 'scip_def'.
+
+rel scip_ref(symbol: text, file: text).
+scip_ref(symbol, file) <-
+  want_scip(root), scip_rel(root, record, symbol, file), record == 'scip_ref'.
+
+# ── the diet plane ───────────────────────────────────────────────────────────
+rel diet_edge(caller_path: text, callee_path: text).
+diet_edge(caller_path, callee_path) <-
+  want_diet(root),
+  diet_rel(root, record, caller_path, callee_path),
+  record == 'resolved_edge'.

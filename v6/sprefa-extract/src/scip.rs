@@ -28,14 +28,44 @@
 //! which owns the protobuf -> flat-types decode. Only the types in
 //! `crate::types` cross the seam.
 
+//! EVERY SPAWN HERE IS BUDGETED. The three `build` bodies below call
+//! `scip_ensure::run_capped` rather than `Command::output()`: the child runs in
+//! its own process group and the whole group is killed on the deadline. v5 had
+//! no bound at all, and these indexers fork (cargo metadata, tsc), so a bound
+//! that only reached the direct child would leak the real worker.
+
 use std::path::{Path, PathBuf};
 
 use crate::scip_decode::load_index;
+use crate::scip_ensure::{run_capped, Capped};
 use crate::shape::Span;
 use crate::types::{
     OccurrenceRole, PositionEncoding, ScipDocument, ScipError, ScipIndex, ScipOccurrence,
     ScipSource,
 };
+
+/// One budgeted indexer attempt, translated to the seam's error vocabulary.
+/// `Ok(None)` means the binary was not launchable, which is the PATH-first
+/// probe's signal to try its fallback; a timeout is a hard error and never
+/// falls back, because "this took too long" is not answered by running a second
+/// copy of the same work.
+fn attempt(argv: &[&str], cwd: &Path, log_dir: &Path, out: &Path) -> Result<Option<PathBuf>, ScipError> {
+    match run_capped(argv, cwd, log_dir) {
+        Capped::Exited {
+            success: true,
+            stderr_tail: _,
+        } => Ok(Some(out.to_path_buf())),
+        Capped::Exited {
+            success: false,
+            stderr_tail,
+        } => Err(ScipError::IndexerFailed(stderr_tail)),
+        Capped::Killed { secs } => Err(ScipError::IndexerFailed(format!(
+            "{} exceeded the {secs}s budget; process group killed",
+            argv.first().copied().unwrap_or("indexer")
+        ))),
+        Capped::NotLaunched => Ok(None),
+    }
+}
 
 /// scip-typescript 0.4.0 (the ledger ORACLE entry's version). `build` probes
 /// PATH first (v5's `dl index` convention), then falls back to the
@@ -84,28 +114,18 @@ impl ScipSource for ScipTypescript {
         // PATH first (v5's `dl index` convention); a spawn miss falls back to
         // the version-pinned npx form (the ORACLE entry ran 0.4.0). A PATH
         // binary that runs and fails is reported, not retried.
-        if let Ok(done) = std::process::Command::new("scip-typescript")
-            .args(argv)
-            .current_dir(&work)
-            .output()
-        {
-            return if done.status.success() {
-                Ok(out)
-            } else {
-                Err(ScipError::IndexerFailed(tail(&done.stderr)))
-            };
+        let direct: Vec<&str> = std::iter::once("scip-typescript")
+            .chain(argv.iter().copied())
+            .collect();
+        if let Some(path) = attempt(&direct, &work, &stage, &out)? {
+            return Ok(path);
         }
-        let done = std::process::Command::new("npx")
-            .args(["-y", "@sourcegraph/scip-typescript@0.4.0"])
-            .args(argv)
-            .current_dir(&work)
-            .output()
-            .map_err(|_| ScipError::IndexerMissing("scip-typescript"))?;
-        if done.status.success() {
-            Ok(out)
-        } else {
-            Err(ScipError::IndexerFailed(tail(&done.stderr)))
-        }
+        let fallback: Vec<&str> = ["npx", "-y", "@sourcegraph/scip-typescript@0.4.0"]
+            .into_iter()
+            .chain(argv.iter().copied())
+            .collect();
+        attempt(&fallback, &work, &stage, &out)?
+            .ok_or(ScipError::IndexerMissing("scip-typescript"))
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
@@ -133,16 +153,8 @@ impl ScipSource for ScipRust {
         // v5's argv verbatim (src/scip_setup.rs INDEXERS rust row), cwd = the
         // staged root. PATH only: rust-analyzer ships with the toolchain; a
         // spawn miss is IndexerMissing, a run failure is reported as-is.
-        let done = std::process::Command::new("rust-analyzer")
-            .args(["scip", ".", "--output", out_str.as_str()])
-            .current_dir(&work)
-            .output()
-            .map_err(|_| ScipError::IndexerMissing("rust-analyzer"))?;
-        if done.status.success() {
-            Ok(out)
-        } else {
-            Err(ScipError::IndexerFailed(tail(&done.stderr)))
-        }
+        let argv = ["rust-analyzer", "scip", ".", "--output", out_str.as_str()];
+        attempt(&argv, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing("rust-analyzer"))
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
@@ -177,45 +189,23 @@ impl ScipSource for ScipGo {
         // PATH first (v5's `dl index` convention); a spawn miss falls back to
         // the version-pinned `go run` form. A PATH binary that runs and fails
         // is reported, not retried.
-        if let Ok(done) = std::process::Command::new("scip-go")
-            .args(argv)
-            .current_dir(root)
-            .output()
-        {
-            return if done.status.success() {
-                Ok(out)
-            } else {
-                Err(ScipError::IndexerFailed(tail(&done.stderr)))
-            };
+        let direct: Vec<&str> = std::iter::once("scip-go")
+            .chain(argv.iter().copied())
+            .collect();
+        if let Some(path) = attempt(&direct, root, &stage, &out)? {
+            return Ok(path);
         }
-        let done = std::process::Command::new("go")
-            .args(["run", "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"])
-            .args(argv)
-            .current_dir(root)
-            .output()
-            .map_err(|_| ScipError::IndexerMissing("scip-go"))?;
-        if done.status.success() {
-            Ok(out)
-        } else {
-            Err(ScipError::IndexerFailed(tail(&done.stderr)))
-        }
+        let fallback: Vec<&str> = ["go", "run", "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"]
+            .into_iter()
+            .chain(argv.iter().copied())
+            .collect();
+        attempt(&fallback, root, &stage, &out)?.ok_or(ScipError::IndexerMissing("scip-go"))
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
         // The proto is language-agnostic, so every indexer shares one decode.
         load_index(index_path)
     }
-}
-
-/// The last nonempty stderr line (the indexer's own error line), trimmed.
-fn tail(stderr: &[u8]) -> String {
-    let text = String::from_utf8_lossy(stderr);
-    text.lines()
-        .filter(|l| !l.trim().is_empty())
-        .last()
-        .unwrap_or("")
-        .trim()
-        .to_string()
 }
 
 /// A fresh uniquely-named temp dir (no tempfile dep): base + pid + nanos.
