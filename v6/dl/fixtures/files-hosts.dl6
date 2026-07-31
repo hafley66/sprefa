@@ -1,10 +1,15 @@
-# enumerate-hosts.dl6 -- the FILE-SET FEED (golden plan phase 2).
+# files-hosts.dl6 -- the FILE-SET FEED (golden plan phase 2).
+#
+# NAMES ARE RULED (rulings.pl `files_naming =
+# files_unmarked_worktree_marked_rev`). These two hosts were spelled
+# `enumerate` / `enumerate_at` until 2026-07-31; the word `scan` is BANNED for
+# file enumeration and carries a named refusal pointing here.
 #
 # Two hosts, per the ruled rev shape: no null exists, and optionality is spelled
 # as variants, so "which revision" is not a nullable column -- it is two hosts.
 #
-#   enumerate(glob)          the WORKTREE, the UNMARKED default
-#   enumerate_at(rev, glob)  a PINNED revision, the marked case
+#   files(glob)          the WORKTREE, the UNMARKED default
+#   files_at(rev, glob)  a PINNED revision, the marked case
 #
 # A program unions them the way it unions enum variant rels, which is what the
 # two `file(...)` rules below are.
@@ -29,20 +34,20 @@
 #                   mergeMap(runShell), mergeMap(commitEdbArrival))
 #
 # CACHE LIFETIME, stated because the two hosts differ:
-#   enumerate_at  the rev pins the answer, so the witness caches FOREVER and
+#   files_at  the rev pins the answer, so the witness caches FOREVER and
 #                 that is correct -- a revision's tree never changes.
-#   enumerate     the witness is the glob alone, so the answer caches for the
+#   files     the witness is the glob alone, so the answer caches for the
 #                 life of the db. Worktree FRESHNESS is the watcher's job
-#                 (`bind watch(...)`, fixtures/extraction-live.dl6): enumerate
+#                 (`bind watch(...)`, fixtures/extraction-live.dl6): files
 #                 answers "what is here now", the watcher answers "what changed
-#                 since". Asking enumerate again for the same glob without a
+#                 since". Asking files again for the same glob without a
 #                 new salt returns the cached answer, by design and by ruling.
 
 # The worktree digest is `git hash-object` on the WORKING TREE file, not the
 # index entry, so an unstaged edit is visible. One process per file is the cost
 # of that honesty and is why this host is the boot feed rather than the steady
 # state; the watcher carries the steady state at zero processes.
-sh enumerate(glob: text) -> (path: text, digest: text) =
+sh files(glob: text) -> (path: text, digest: text) =
   `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
 
 # The pinned twin. MEASURED, not assumed: `git ls-tree` does NOT accept glob
@@ -57,12 +62,12 @@ sh enumerate(glob: text) -> (path: text, digest: text) =
 # `--with-tree` unions the tree with the index, so a path staged but absent at
 # that rev has no blob: `rev-parse` fails, the guard drops it, and it is no row
 # (absence is row absence, never an empty digest).
-sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
 
 rel want(glob: text).
 rel want_at(rev: text, glob: text).
 
 rel file(path: text, digest: text).
-file(path, digest) <- want(glob), enumerate(glob, path, digest).
-file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
+file(path, digest) <- want(glob), files(glob, path, digest).
+file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).

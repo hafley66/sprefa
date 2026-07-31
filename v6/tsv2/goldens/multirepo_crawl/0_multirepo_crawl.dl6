@@ -17,7 +17,7 @@
 # v6 leg can crawl a corpus the config file has never heard of.
 #
 # ── ONE HOST, PARAMETERISED BY ROOT ─────────────────────────────────────────
-# The shipped enumerate/grep hosts (fixtures/enumerate-hosts.dl6,
+# The shipped files/grep hosts (fixtures/files-hosts.dl6,
 # fixtures/v5-git-diags.dl6) run git in the SERVER'S cwd, so they can only ever
 # see one repository. Crossing repositories needs the root to become an input
 # column, and then it is an ordinary `cd` in the template. ZERO NEW CONSTRUCTS:

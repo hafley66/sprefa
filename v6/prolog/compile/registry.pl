@@ -188,6 +188,23 @@ surface(col_type/3,      decl,      no_refs,                      decl(column_ty
 % boundary read or in the tick log (arc header Edge 2).
 surface(type_decl/2,     decl,      no_refs,                      decl(struct_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
+% RULING files_naming = files_unmarked_worktree_marked_rev. `scan` is v5's word
+% for the corpus walk and it is BANNED here: file enumeration spells `files` for
+% the worktree and `files_at` for a pinned revision (fixtures/files-hosts.dl6).
+%
+% RESERVED, not absent, and the reason is the edb_definition ruling: an
+% undeclared unheaded relation atom is legal input, so a program carrying a
+% ported v5 `scan(repo, rev, glob, path, rev)` would otherwise become a silently
+% empty EDB relation and derive nothing on BOTH doors. This is the zip/2 shape
+% (registry row + reserved_body_word), and the refusal message names the two
+% replacements rather than only the removed word.
+%
+% VARIADIC because v5 spells scan at four and five arguments and the ban is on
+% the WORD. `goal(...)` rather than `wrapper(...)` keeps parse_dl.pl's
+% keyword_call clause out of it: the text door parses `scan(...)` as the plain
+% atom it looks like, and 0_program_check.pl's reserved_body_word refuses it
+% from the registry row through the shared body walk.
+surface(scan/variadic,   world,     no_refs,                      goal(refuse(removed_word)),            reserved).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
 surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).
 surface(probe/4,         world,     no_refs,                      wrapper(host_probe, lower),             live).
@@ -375,6 +392,13 @@ body_surface_for_term(Term, Signature, Axis, AnalyzeRole, LowerRole, Status) :-
 body_lower_role(wrapper(_, _)).
 body_lower_role(word(_)).
 body_lower_role(infix(_)).
+% A body word that takes the shape of an ORDINARY relation atom and carries no
+% wrapper syntax of its own: the parser reads it as the plain atom it looks
+% like (no keyword_call clause, because wrapper_lower_role/3 fails on this
+% shape) and the walk still reaches it, so a `reserved` row on this role
+% refuses through 0_program_check.pl instead of becoming a silent empty EDB.
+% `scan` is the first and the reason the role word exists.
+body_lower_role(goal(_)).
 
 wrapper_lower_role(wrapper(Shape, GateRole), Shape, GateRole).
 

@@ -307,8 +307,7 @@ Membership is decided by node's `path.matchesGlob` on both of those paths, never
 by Git's pathspec rules (ruling `glob_dialect`), so `**/*.md` includes
 repo-root files and `src/**/*.rs` includes `src/lib.rs` — the way the same glob
 reads in v5. Enumerating a tree on demand instead of watching it is a separate
-host (`enumerate`, backed by `git ls-files` as a pathspec); see `just
-enumerate`.
+host (`files`, backed by `git ls-files` as a pathspec); see `just files`.
 
 ---
 

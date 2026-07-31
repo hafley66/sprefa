@@ -42,6 +42,15 @@ refusal_reason_text(Reason, Text) :-
     ;  fallback_reason_text(ReasonName, Text)
     ).
 
+% A REMOVED word renders its replacement, because the whole point of keeping a
+% registry row for a deleted spelling is to answer "then what do I write". The
+% generic renderer below would print the removed word twice and name nothing.
+specific_reason_text(removed_word, removed_word(Word), Text) :-
+    !,
+    removed_word_replacement(Word, Replacement),
+    format(atom(Text),
+           "compiler refused rule 'removed_word': '~w' is not a construct, ~w (removed_word)",
+           [Word, Replacement]).
 specific_reason_text(ReasonName, Reason, Text) :-
     Reason = registered_surface(Signature),
     !,
@@ -55,6 +64,14 @@ specific_reason_text(ReasonName, Reason, Text) :-
     ;  format(atom(Text), "compiler refused rule '~w'~w (~w)",
                [ReasonName, Subject, ReasonName])
     ).
+
+% One line per removed word. The catch-all keeps a word that loses its row
+% before it gains a sentence here from printing a dangling comma.
+removed_word_replacement(scan,
+    'file enumeration is files(glob, path, digest) over the worktree and files_at(rev, glob, path, digest) over a pinned revision') :- !.
+removed_word_replacement(set,
+    'a bare rel declaration is already a set table') :- !.
+removed_word_replacement(_, 'the language assigns it no meaning').
 
 fallback_reason_text(ReasonName, Text) :-
     format(atom(Text), "compiler refused rule '~w' (~w)",
@@ -157,6 +174,12 @@ refusal_source_module(lower).
 
 refusal_reason_producer(Reason) :-
     clause(analyze:compiler_refusal(_, _, Reason), _).
+% The reserved-word arm of compiler_refusal/3 hands its reason term back
+% through this predicate, so its own head carries an unbound variable and the
+% clause above sees nothing. Reading the naming clauses directly is what puts
+% lifecycle_arm/1 and removed_word/1 in the inventory.
+refusal_reason_producer(Reason) :-
+    clause(analyze:reserved_construct_name(_, _, Reason), _).
 refusal_reason_producer(Reason) :-
     clause(analyze:edge_goal_refusal(_, _, _, Reason), _).
 refusal_reason_producer(Reason) :-

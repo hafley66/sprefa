@@ -403,6 +403,12 @@ print_surface_body_item(LowerRole, Term, Bindings, Text) :-
     print_surface_wrapper_args(Shape, Args, Bindings, ArgTexts),
     atomic_list_concat(ArgTexts, ', ', ArgsText),
     format(atom(Text), "~w(~w)", [Name, ArgsText]).
+% A `goal(...)` row is a registry-claimed word whose SHAPE is an ordinary
+% relation atom (`scan`, ruling files_naming). It prints exactly as the plain
+% atom it is -- the row exists so the reserved-word walk reaches it, not to
+% give it syntax -- and reparsing that text lands back on the same term.
+print_surface_body_item(goal(_), Term, Bindings, Text) :-
+    print_term(Term, Bindings, 0, top, Text).
 print_surface_body_item(word(_), Term, _Bindings, Text) :-
     format(atom(Text), "~w", [Term]).
 print_surface_body_item(infix(_), Term, Bindings, Text) :-

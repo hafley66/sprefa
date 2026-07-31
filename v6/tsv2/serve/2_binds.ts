@@ -271,10 +271,10 @@ function digestOf(absolutePath: string): string | null {
  *
  * SCOPE, from the audit run alongside this fix: this is the ONLY glob consumer
  * in the tree that had two halves to reconcile. Every other one -- the
- * `enumerate` / `enumerate_at` / `resolve_at` / `grep_at` / `repo_grep_at` `sh`
+ * `files` / `files_at` / `resolve_at` / `grep_at` / `repo_grep_at` `sh`
  * hosts, and the receipt scripts that check them -- is a ONE-SHOT answer per
  * witness, has no live half to disagree with, and stays on git pathspec BY
- * DESIGN (`v6/dl/fixtures/enumerate-hosts.dl6:19`, GETTING-STARTED §4). The
+ * DESIGN (`v6/dl/fixtures/files-hosts.dl6:19`, GETTING-STARTED §4). The
  * defect this file had is structurally impossible there.
  *
  * What the audit did leave open, and this function deliberately does NOT fix:
@@ -290,7 +290,7 @@ export const matchesWatchGlob: IMatchesWatchGlob = (relativePath: string, glob: 
 
 /** The tracked worktree, WHOLE: `git ls-files` with no pathspec, because the
  *  glob is not git's business any more (ruling above). Enumerating everything
- *  and filtering in JS keeps the enumerate host's standing ignore decision --
+ *  and filtering in JS keeps the files host's standing ignore decision --
  *  tracked-only, so an untracked `node_modules` is never walked, never listed
  *  and never hashed -- while leaving membership entirely to `matchesWatchGlob`.
  *  NUL framing preserves every path git permits. A non-repository root has the

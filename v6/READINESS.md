@@ -15,7 +15,7 @@ Base: `00305ff0`, graded at `f6259a25`.
 | 5 | auto-synced repo list | READY | `just multirepo-golden` | 5.6s |
 | 6 | v5 bench parity | GAP (84x, L) | `just crawl-bench` (repo-root justfile) | 41.8s |
 | 7 | rtkq examples | READY | `just rtkq-golden` | 0.5s |
-| 8 | file watcher scaling | SMALL-GAP-FIXED | `just watch-scale` + `just enumerate` | 1.0 / 6.7s |
+| 8 | file watcher scaling | SMALL-GAP-FIXED | `just watch-scale` + `just files` | 1.0 / 6.7s |
 | 9 | standardized tick-log format | GAP (no spec doc, S) | two implementations agree; nothing states the format | n/a |
 
 Four READY, three SMALL-GAP-FIXED in this lane, two standing GAPs plus one
@@ -64,7 +64,7 @@ inside program 4. Every row's receipt exits 0 as of this commit.
    `correct: true`, zero duplicate/stale/missing rows, final relations pinned by
    sha256. Ticks stay FLAT at 3 and write amplification is identical (1.185) across
    the 10x; wall goes 37.6ms to 248.1ms (6.6x) and statements 191 to 1316 (6.9x), so
-   the curve is sublinear in files over this range. `just enumerate` separately proves
+   the curve is sublinear in files over this range. `just files` separately proves
    the file-set feed against this repo: 273 rows equal to `git ls-files` exactly, and
    973 `node_modules` .ts files on disk with 0 in the answer.
 
@@ -184,6 +184,6 @@ and is quietly wrong: the `sprefa-store-engine` entry inside it is a RELATIVE li
 (`../../sprefa-store/js`), so it resolves against the MAIN checkout and every run reads
 main's store source instead of the worktree's. `pnpm install` in each of `v6/tsv2`,
 `v6/dl` and `v6/sprefa-store/js` is the fix and takes under a second each against the
-warm store. The symlink also fails `just enumerate` outright, because its
+warm store. The symlink also fails `just files` outright, because its
 node_modules-never-walked assertion counts files with `find`, which does not descend a
 symlinked argument.

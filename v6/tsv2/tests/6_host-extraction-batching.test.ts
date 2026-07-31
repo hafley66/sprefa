@@ -245,15 +245,15 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
     ["b.ts", "b1"],
     ["c.ts", "c1"],
   ] as const;
-  const enumerate = plan("enumerate_at", "shell", columns("found"), "enumerate {path}");
+  const filesAt = plan("files_at", "shell", columns("found"), "files_at {path}");
   const callPlans = [
     plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
     plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
   ];
   const callgraph = await runScenario(
-    [enumerate, ...callPlans],
+    [filesAt, ...callPlans],
     [
-      tick(1, [enumerate], [["repo", "rev"]]),
+      tick(1, [filesAt], [["repo", "rev"]]),
       tick(2, callPlans, files),
     ],
     1 + callPlans.length * files.length,
@@ -292,9 +292,9 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
     plan("sig_at", "sprefa_extract", columns("record", "family", "owner_start", "owner_end", "slot", "pos", "ty")),
   ];
   const flow = await runScenario(
-    [enumerate, resolve, ...flowPlans],
+    [filesAt, resolve, ...flowPlans],
     [
-      tick(1, [enumerate, resolve], [["repo", "rev"]]),
+      tick(1, [filesAt, resolve], [["repo", "rev"]]),
       tick(2, flowPlans, files),
     ],
     2 + flowPlans.length * files.length,

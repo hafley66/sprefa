@@ -148,3 +148,26 @@ fixture(error_is_a_named_refusal,
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(error/1)) ]).
+
+% RULING files_naming. `scan` is v5's corpus-walk word and this language does
+% not have it: file enumeration is the `files` / `files_at` host pair
+% (v6/dl/fixtures/files-hosts.dl6). Reserved rather than absent, because the
+% edb_definition ruling would otherwise make a ported v5 body a silently empty
+% relation -- the exact zip/2 shape one section up.
+%
+% FAIL-FIRST RECEIPT, both doors, before the registry row existed:
+%   oracle    src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev)  ->  rows=[]
+%   compiler  same program                                              ->  compiled clean
+% The word is banned at every arity v5 spells it, so the row is variadic and
+% the refusal reports the arity the author actually wrote.
+fixture(scan_is_a_named_refusal,
+  prog([], [ (src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev)) ]),
+  [],
+  [ [ +source(1) ] ],
+  [ throws(reserved_body_word(scan/4)) ]).
+
+fixture(scan_is_a_named_refusal_at_five_arguments,
+  prog([], [ (src(Path, Rev) <- scan(repo, 'HEAD', '**/*.go', Path, Rev)) ]),
+  [],
+  [ [ +source(1) ] ],
+  [ throws(reserved_body_word(scan/5)) ]).

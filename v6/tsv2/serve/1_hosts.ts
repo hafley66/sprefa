@@ -344,7 +344,7 @@ function parseJsonItems(text: string): unknown[] | null {
  * Whitespace stdout has TWO readings and no marker to pick between them, so the
  * order they are tried in is the whole semantics:
  *
- *   GRID       one row per line, N whitespace fields per line. `enumerate_at`'s
+ *   GRID       one row per line, N whitespace fields per line. `files_at`'s
  *              `printf '%s %s\n' "$entry" "$oid"` per tracked path.
  *   PER-COLUMN one row total, one VALUE per line. ghcacher's
  *              `printf '%s\n%s\n%s'`, where a value routinely carries internal
@@ -359,7 +359,7 @@ function parseJsonItems(text: string): unknown[] | null {
  * split into N fields, which is precisely why word-splitting would shred them).
  *
  * The precedence used to be the other way round, and the cost was silent: a
- * two-column grid host answering exactly TWO rows -- `enumerate_at` on a
+ * two-column grid host answering exactly TWO rows -- `files_at` on a
  * two-file glob, nothing more exotic -- had its two lines folded into one row
  * whose first column was the entire first line. Right at one file, right at
  * three, wrong at two. That is failure class 36's cross-contamination again,

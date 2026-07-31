@@ -38,7 +38,7 @@
 #       `rel` declaration in them, and SYNTAX.md's core-grammar table.
 #
 # ── WHAT IS STATED RATHER THAN DERIVED, STATED PLAINLY ──────────────────────
-# One thing cannot be computed: that v5's `scan` and v6's `enumerate` are the
+# One thing cannot be computed: that v5's `scan` and v6's `files` are the
 # same idea. That is a judgment, and judgments are DATA HERE, not code. They
 # live as `# @parity <family> <v5_thing> -> <v6_target>` marker comments in
 # this file's own text, and this program EXTRACTS ITS OWN MARKERS with the same
@@ -286,7 +286,7 @@ v6_grammar(phrase) <-
 # check by hand in one step.
 #
 # --- source ops -------------------------------------------------------------
-# @parity op scan -> enumerate
+# @parity op scan -> files
 # @parity op match_line -> sh_decl/4
 # @parity op match -> sh_decl/4
 # @parity op ast -> ts_query/1
