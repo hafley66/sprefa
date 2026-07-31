@@ -1,17 +1,21 @@
 # Refusal messages + parse positions — brief (codex luna)
 
 Beta gate item 1 (plans/2026-07-30-v6-beta-plan.md). Language design review
-B4: refusals print as raw swipl "Unknown message" terms with no file/line;
-parse failures print char-code dumps. Zero prolog:message//1 clauses exist.
-This lane makes every user-facing failure readable.
+B4. PARTIAL WORK EXISTS: v6/prolog/0_refusal_messages.pl already renders
+`unsupported_construct/1` as one line, has a derived refusal inventory, and
+an `at(File, Line, Reason)` arm waiting for positions the parser does not
+yet retain (its own header says "rule-index granularity only"). This lane
+finishes the job: positions become real, text becomes plain english, parse
+errors stop dumping char codes.
 
-## Part 1: message clauses
+## Part 1: message quality
 
-- New module v6/prolog/0_messages.pl: prolog:message//1 clauses for every
-  named refusal term the compiler/oracle throws. Inventory them first:
-  grep throw sites in analyze.pl, 0_program_check.pl, compile.pl, engine.pl,
-  lower.pl, parse_dl.pl; list every refusal functor in your report, and
-  state which got a clause (target: all of them).
+- Extend 0_refusal_messages.pl (do NOT start a new module). Current text is
+  semi-raw (`unsupported_construct(~q); reason=...`). Target shape:
+  per-functor plain-english clauses naming the rel/rule/column, functor kept
+  in parens. Use the module's own refusal_inventory/1 to enumerate; the
+  generic clause stays as fallback. Report: how many functors got a
+  specific clause vs fallback.
 - Message text: one line, plain english, names the rel/rule/column involved.
   Example shape: `door.dl6:12: log rel 'events' cannot head a level rule
   (log_on_level_headed_rel)`. Keep the functor name in parens — receipts
@@ -22,14 +26,15 @@ This lane makes every user-facing failure readable.
 
 ## Part 2: parse positions
 
-- parse_dl.pl: on parse failure report line:col of the furthest point
-  consumed (standard DCG furthest-failure technique — track position in the
-  token stream; do NOT thread positions through every grammar rule if a
-  lazy furthest-mark is enough). No more char-code lists in errors.
-- Refusals raised during analyze carry file + the rule/decl's line when the
-  parse can supply it cheaply (token stream already line-tracks or can);
-  if attaching lines to analyze refusals needs invasive threading, STOP
-  that half and report — messages without line numbers still land.
+- v6/prolog/compile/parse_dl.pl: on parse failure report line:col of the
+  furthest point consumed (standard DCG furthest-failure technique; do NOT
+  thread positions through every grammar rule if a lazy furthest-mark is
+  enough). No more char-code lists in errors.
+- Feed the existing at(File, Line, Reason) arm: text-door compiles wrap
+  refusals with the owning decl/rule's line when the tokenizer can supply
+  it cheaply (per-clause start line is enough — statement granularity, not
+  token granularity). If that needs invasive threading, STOP that half and
+  report — plain-english messages without line numbers still land.
 
 ## Receipts required
 
@@ -44,8 +49,9 @@ This lane makes every user-facing failure readable.
 
 ## Fences
 
-- Touch: new 0_messages.pl, parse_dl.pl (failure reporting only),
-  compile.pl/bop error paths, prolog-lint baseline if it trips.
+- Touch: 0_refusal_messages.pl, compile/parse_dl.pl (failure reporting +
+  clause start lines only), compile/compile.pl + bop error paths,
+  prolog-lint baseline if it trips.
 - Do NOT touch: lower.pl, emit_ts.pl, registry.pl, engine.pl semantics,
   fixtures' expected results (message rendering must not change what is
   thrown, only how it prints). A concurrent lane owns typing/emitter files.
