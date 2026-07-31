@@ -164,6 +164,79 @@ clock_check_inferences(Program, Count) :-
     statistics(inferences, After),
     Count is After - Before.
 
+% ── the second count rail: ROUTES, not length ───────────────────────────────
+%
+% The chain rail above stayed green through the whole path-enumeration era,
+% because a chain has exactly one route and simple-path enumeration is linear
+% on it. The cost that actually bit is a function of the number of PARALLEL
+% mid-chain routes, and nothing measured that until dataflow-atlas.dl6 walked
+% off the cliff in production (ARCH clock_check_path_blowup): its compile went
+% 30 s to 9 m 40 s, then died with `Stack limit (1.0Gb) exceeded` inside
+% clock_violation/2 at the served compiler's default stack.
+%
+% k diamonds in series is 2^k end-to-end routes over 4k rules. Every route
+% weighs the same, so there is no violation to find and the checker must walk
+% the whole thing. MEASURED on this machine:
+%
+%   | k  | shipped (offset propagation) | sabotage (simple-path enumeration) |
+%   |----|-----------------------------:|-----------------------------------:|
+%   |  4 |                       11,881 |                             14,876 |
+%   | 12 |                       32,614 |                          2,888,482 |
+%   | 16 |                       44,555 |                         60,464,484 |
+%   | 20 |                       57,186 |                      1,201,719,858 |
+%
+% Exponent is log(count12/count4) / log(12/4): 0.92 shipped, 4.81 sabotaged.
+% SABOTAGE RECEIPT, run: restore recurrence_free_clock/6 to clock_path/7 over
+% the dependency list and this test goes RED on both pins, at diamonds^4.892
+% against a 1.5 threshold and 2,888,482 against a 150,000 ceiling. The chain
+% rail beside it stays GREEN through that same sabotage, which is the whole
+% reason both exist.
+test(clock_check_cost_stays_near_linear_in_parallel_routes) :-
+    SmallRoutes = 4,
+    LargeRoutes = 12,
+    diamond_program(SmallRoutes, SmallProgram),
+    diamond_program(LargeRoutes, LargeProgram),
+    clock_check_inferences(SmallProgram, SmallCount),
+    clock_check_inferences(LargeProgram, LargeCount),
+    Exponent is log(LargeCount / SmallCount) / log(LargeRoutes / SmallRoutes),
+    (   Exponent =< 1.5
+    ->  true
+    ;   format(user_error,
+               "clock check scales as diamonds^~3f: ~w then ~w inferences~n",
+               [Exponent, SmallCount, LargeCount]),
+        fail
+    ),
+    (   LargeCount =< 150000
+    ->  true
+    ;   format(user_error,
+               "clock check cost ~w inferences at ~w diamonds, ceiling 150000~n",
+               [LargeCount, LargeRoutes]),
+        fail
+    ).
+
+% hop0 -> {left_i, right_i} -> hop_i, i in 1..DiamondCount. Level rules only,
+% so every edge is a grade-zero level_read and every one of the 2^k routes
+% carries offset 0; the program is ACCEPTED, which is what makes this a cost
+% measurement rather than an early-exit measurement.
+diamond_program(DiamondCount, prog([], Rules)) :-
+    findall(Rule,
+            ( between(1, DiamondCount, Index),
+              diamond_rules(Index, IndexRules),
+              member(Rule, IndexRules) ),
+            Rules).
+
+diamond_rules(Index, [ (Left <- Previous), (Right <- Previous),
+                       (Next <- Left),     (Next <- Right) ]) :-
+    PreviousIndex is Index - 1,
+    atom_concat(hop_, PreviousIndex, PreviousName),
+    atom_concat(hop_, Index, NextName),
+    atom_concat(left_, Index, LeftName),
+    atom_concat(right_, Index, RightName),
+    Previous =.. [PreviousName, Item],
+    Next =.. [NextName, Item],
+    Left =.. [LeftName, Item],
+    Right =.. [RightName, Item].
+
 test(zero_grade_negative_scc_refuses) :-
     Program =
       prog([], [ (left(X) <- not(right(X))),
