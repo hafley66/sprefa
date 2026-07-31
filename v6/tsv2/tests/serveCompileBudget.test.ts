@@ -41,7 +41,10 @@
  *       leg does prove is that the timeout kills SOMETHING: with (a) applied
  *       and the budget raised past the honest wall the compile would still be
  *       running when the test read, and a status-code-only test could not
- *       tell a killed compiler from an abandoned one.
+ *       tell a killed compiler from an abandoned one. (The process-group leg
+ *       IS proven, on the shell side, by the run-capped.sh command-form
+ *       receipt in docs/failure-modes.md class 38: a backgrounded grandchild
+ *       dies with its parent there.)
  */
 
 import assert from "node:assert/strict";
@@ -50,16 +53,36 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex } from "@noble/hashes/utils.js";
+
 import { postProgram, startServed } from "./serveHelpers.ts";
 
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 
-/** swipl processes currently running under this user, by pid. `pgrep -f` so a
- *  compiler invoked with an absolute path is still counted. Empty on no match:
- *  pgrep exits 1 with nothing to report, which is not an error here. */
-function swiplPids(): readonly string[] {
+/**
+ * A copy of the door program that no other test in this package can be
+ * compiling. `npm test` runs the suites in PARALLEL, so "swipl processes that
+ * were not running when this test started" is not the same set as "swipl
+ * processes this test started" -- a neighbour's compile that began a moment
+ * later lands in the difference and reads as a leak. The first run of this
+ * receipt failed exactly that way, on three pids belonging to other files.
+ *
+ * The digest 0_compile.ts names the source file by is the source's own sha256,
+ * so a unique trailing comment buys a unique file name, and `pgrep -f` on that
+ * name matches THIS test's compiler and nothing else. Comments do not reach
+ * the compiled program, so the two tests still compile the real door.
+ */
+function uniqueDoorSource(tag: string): { readonly source: string; readonly digest: string } {
+  const source = `${readFileSync(DOOR_DL6, "utf8")}\n# compile-budget receipt ${tag} ${process.pid}\n`;
+  return { source, digest: bytesToHex(sha256(new TextEncoder().encode(source))).slice(0, 32) };
+}
+
+/** Running swipl processes whose command line names this source digest. Empty
+ *  on no match: pgrep exits 1 with nothing to report, which is not an error. */
+function compilerPidsFor(digest: string): readonly string[] {
   try {
-    return execFileSync("pgrep", ["-f", "swipl"], { encoding: "utf8" })
+    return execFileSync("pgrep", ["-f", digest], { encoding: "utf8" })
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
@@ -78,7 +101,7 @@ function withCompileBudget<T>(budgetMs: number, body: () => Promise<T>): Promise
 }
 
 test("compile budget: a compile that outruns its budget is a NAMED compile_timeout, not a hang", async () => {
-  const source = readFileSync(DOOR_DL6, "utf8");
+  const { source } = uniqueDoorSource("named");
   const served = await startServed();
   try {
     const started = Date.now();
@@ -98,19 +121,18 @@ test("compile budget: a compile that outruns its budget is a NAMED compile_timeo
 });
 
 test("compile budget: the timed-out compiler's process group is dead, and the server still loads programs", async () => {
-  const source = readFileSync(DOOR_DL6, "utf8");
-  const before = new Set(swiplPids());
+  const { source, digest } = uniqueDoorSource("group");
   const served = await startServed();
   try {
     const answered = await withCompileBudget(50, () => postProgram(served.port, source));
     assert.equal(answered.statusCode, 400, answered.body);
 
-    // NOTHING SURVIVED THE KILL. Only pids this test could have minted are
-    // examined: another lane's swipl is none of this test's business, and
-    // asserting on the absolute count would make the receipt flaky by
-    // neighbour rather than by defect.
+    // NOTHING SURVIVED THE KILL. Only the compiler working on THIS source is
+    // examined -- see uniqueDoorSource: a neighbouring suite's swipl is none
+    // of this test's business, and the first draft of this assertion went red
+    // on three of them.
     await new Promise((resolve) => setTimeout(resolve, 500));
-    const leaked = swiplPids().filter((pid) => !before.has(pid));
+    const leaked = compilerPidsFor(digest);
     assert.deepEqual(leaked, [], `the timed-out compile left swipl process(es) running: ${leaked.join(",")}`);
 
     // THE SERVER SURVIVED. Same source, honest budget, ordinary 200.
