@@ -29,6 +29,7 @@
             compile_fixture/4,
             compile_dl6/2,
             compile_program/6,
+            throw_text_door_error/2,
             program_plan/2
           ]).
 
@@ -220,6 +221,14 @@ compile_dl6(File, OutFile) :-
         throw_text_door_error(File, Error)
     ).
 
+% EXPORTED because `bop check` is the SECOND caller of the text door and was
+% getting an unlocated refusal for the identical file (cold-author defect D3):
+% scripts/bop_check.pl calls compile_program/6 itself (it owns the temp output
+% file and the exit-code mapping), so wrapping only at compile_dl6/2's own
+% catch site left the CLI printing "rule-index unavailable" where the compile
+% script printed `broken.dl6:4`. One wrapper, two catch sites; the line comes
+% from parse_dl.pl's source_statement_fact/3, asserted by whichever
+% parse_dl_file/4 call preceded the compile.
 throw_text_door_error(_File, Error) :-
     Error = unsupported_construct(at(_, _, _)),
     !,

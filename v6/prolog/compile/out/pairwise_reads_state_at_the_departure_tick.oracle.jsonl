@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"reading":{"add":[["north",10]],"del":[]}}}
+{"tick":2,"deltas":{"reading":{"add":[["north",14]],"del":[["north",10]]}}}
+{"tick":3,"deltas":{"reading":{"add":[["north",9]],"del":[["north",14]]},"step":{"add":[["north",10,9]],"del":[]}}}
+{"tick":4,"deltas":{"step":{"add":[["north",14,9]],"del":[]}}}
+{"tick":5,"deltas":{}}

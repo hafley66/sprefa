@@ -131,9 +131,20 @@ def send(command):
         out.append(line.rstrip("\n"))
 
 # ── normalization ───────────────────────────────────────────────────────────
+# The realpath pass is not cosmetic on macOS: mktemp -d hands back
+# /var/folders/..., which is a symlink to /private/var/folders/..., and any
+# command that RESOLVES a path before printing it (node's resolve() inside
+# `bop check`, for one) reports the /private form. Replacing the longer
+# spelling first keeps a nested match from stranding a `/private` prefix.
+WORK_SPELLINGS = sorted({work, os.path.realpath(work)}, key=len, reverse=True)
+REPO_SPELLINGS = sorted({repo, os.path.realpath(repo)}, key=len, reverse=True)
+
 def normalize(lines, bytes_too):
     text = "\n".join(lines)
-    text = text.replace(work, "<workdir>").replace(repo, "<sprefa>")
+    for spelling in WORK_SPELLINGS:
+        text = text.replace(spelling, "<workdir>")
+    for spelling in REPO_SPELLINGS:
+        text = text.replace(spelling, "<sprefa>")
     text = re.sub(r"\b[0-9a-f]{64}\b", "<digest>", text)
     text = re.sub(r"\b[0-9a-f]{32}\b", "<program>", text)
     text = re.sub(r"\b\d{10}\b", "<epoch>", text)
