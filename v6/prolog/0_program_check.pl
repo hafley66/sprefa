@@ -321,22 +321,6 @@ program_violation(head_column_type_conflict, prog(Decls, Rules),
     \+ column_type_assignable(Types, BodyType, HeadType),
     !.
 
-% One entry per DISTINCT relation reference the rules mention, resolved once.
-% A ref whose columns are not fully declared simply has no entry, which is the
-% same all-or-nothing rule ref_column_names/4 applies.
-declared_column_table(Decls, Types, Rules, Table) :-
-    findall(Ref,
-            ( member(Rule, Rules), rule_relation_atom(Rule, Atom),
-              compound(Atom), functor(Atom, Name, Arity), Ref = Name/Arity ),
-            Refs0),
-    sort(Refs0, Refs),
-    findall(rel_columns(Ref, Columns, ColumnTypes),
-            ( member(Ref, Refs),
-              Ref = _/Arity,
-              relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
-              length(Columns, Arity) ),
-            Table).
-
 
 % ── two shapes that used to be a door DISAGREEMENT ───────────────────────────
 %
@@ -629,6 +613,24 @@ body_relation_atom(Body, Atom) :-
 % column it sits in and that column's declared type. Variable identity is the
 % clause's own, so two occurrences of the same source variable are `==` and two
 % anonymous `_` are not, which is exactly the flow question being asked.
+% One entry per DISTINCT relation reference the rules mention, resolved once.
+% A ref whose columns are not fully declared simply has no entry, which is the
+% same all-or-nothing rule ref_column_names/4 applies.
+declared_column_table(Decls, Types, Rules, Table) :-
+    findall(Ref,
+            ( member(Rule, Rules), rule_relation_atom(Rule, Atom),
+              compound(Atom), functor(Atom, Name, Arity), Ref = Name/Arity ),
+            Refs0),
+    sort(Refs0, Refs),
+    findall(rel_columns(Ref, Columns, ColumnTypes),
+            ( member(Ref, Refs),
+              Ref = _/Arity,
+              relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
+              length(Columns, Arity) ),
+            Table).
+
+
+
 % The head's own declared columns. A head argument takes part only when the
 % column type is a statement ABOUT THAT VARIABLE'S value:
 %
