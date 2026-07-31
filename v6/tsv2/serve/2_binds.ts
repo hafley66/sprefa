@@ -268,6 +268,22 @@ function digestOf(absolutePath: string): string | null {
  * child of `src/` and `**\/*.md` drops every repo-root file), and it has no
  * brace alternation at all (`*.{rs,ts}` selects nothing). The matcher gets all
  * four right, so every v5 glob ports byte-unmodified.
+ *
+ * SCOPE, from the audit run alongside this fix: this is the ONLY glob consumer
+ * in the tree that had two halves to reconcile. Every other one -- the
+ * `enumerate` / `enumerate_at` / `resolve_at` / `grep_at` / `repo_grep_at` `sh`
+ * hosts, and the receipt scripts that check them -- is a ONE-SHOT answer per
+ * witness, has no live half to disagree with, and stays on git pathspec BY
+ * DESIGN (`v6/dl/fixtures/enumerate-hosts.dl6:19`, GETTING-STARTED §4). The
+ * defect this file had is structurally impossible there.
+ *
+ * What the audit did leave open, and this function deliberately does NOT fix:
+ * a brace glob posted to one of those pathspec-backed `want(glob)` demand rows
+ * silently answers zero rows. `crawl-bench.sh` and `flagship-callgraph.sh` each
+ * discovered that independently and hand-split the glob at the call site. The
+ * fix there is a REFUSAL (pathspec is the intended dialect for a demand-row
+ * host, so swapping the matcher would be wrong), which is a different change on
+ * a different plane -- filed, not smuggled in here.
  */
 export const matchesWatchGlob: IMatchesWatchGlob = (relativePath: string, glob: string): boolean =>
   path.matchesGlob(relativePath, glob);
