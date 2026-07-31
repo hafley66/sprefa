@@ -623,21 +623,23 @@ because the referee reaches them:
 
 | cell | phase 0 | now | tsv2 wall ms | ticks | stmts | peak RSS MB |
 |---|---|---|---:|---:|---:|---:|
-| s1/10k | `no_reference` | `identical_vs_reference` | 627.2 | 101 | 2316 | 182.0 |
-| s1/100k | not benched | `identical_vs_reference` | 2627.3 | 1001 | 23016 | 485.2 |
-| s2/10k | `no_reference` | `identical_vs_reference` | 156.5 | 101 | 3744 | 177.8 |
-| s2/100k | not benched | `identical_vs_reference` | 1437.1 | 1001 | 37044 | 514.6 |
-| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 8141.9 | 20 | 500 | 911.6 |
+| s1/10k | `no_reference` | `identical_vs_reference` | 278.8 | 101 | 2316 | 176.9 |
+| s1/100k | not benched | `identical_vs_reference` | 2685.0 | 1001 | 23016 | 518.7 |
+| s2/10k | `no_reference` | `identical_vs_reference` | 155.9 | 101 | 3744 | 175.0 |
+| s2/100k | not benched | `identical_vs_reference` | 1450.7 | 1001 | 37044 | 521.1 |
+| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 8070.4 | 20 | 500 | 939.7 |
 
-Read the statement column, not the wall: s1 and s2 both hold ~23 statements per
-tick flat from 10k to 100k, which is the P1 incremental emitter's claim being
-re-stated by a different harness. s1/10k is the noisiest cell in the table
-(280-630 ms across runs at the same statement count); `BENCH_RUNS` medians it,
-and it is the one row not to read a 10% movement into.
+Read the statement column, not the wall: s1 and s2 both hold their per-tick
+statement count flat from 10k to 100k (23 and 37 respectively, 2316/23016 and
+3744/37044 over 101 and 1001 ticks), which is the P1 incremental emitter's
+claim being re-stated by a different harness. s1/10k is the noisiest cell in
+the table — three consecutive full runs put it at 280, 627 and 279 ms at an
+identical statement count — so it is the one row not to read a movement into;
+every other cell reproduced within a few percent across the same three runs.
 
 s3 stays at 1k: its shape is a 2-atom cross join, quadratic on purpose, and
 1000x1000 already produces the 1M combined rows the memory column is there to
-watch (911.6 MB peak RSS against a 512 MB V8 old-space cap — most of that is
+watch (939.7 MB peak RSS against a 512 MB V8 old-space cap — most of that is
 sqlite, outside the heap the flag bounds; the `SCALE.md` DNF this cell was
 recorded with is gone, and the memory-wall note in `cases.json` now reads as
 history rather than as an expectation).
