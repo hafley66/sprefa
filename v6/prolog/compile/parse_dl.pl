@@ -51,7 +51,11 @@
 :- module(parse_dl,
           [ parse_dl/4,
             parse_dl_file/4,
-            parse_dl_line_for_reason/2
+            parse_dl_line_for_reason/2,
+            % Exported for test/plunit_tests.pl:parse_error_positions, which
+            % checks the line table against a prefix walk at every index of a
+            % text; parse_dl/4 alone only reaches positions a refusal lands on.
+            remaining_line_column/3
           ]).
 
 :- set_prolog_flag(back_quotes, codes).
@@ -69,10 +73,13 @@
 :- dynamic(finding_fact/1).
 :- dynamic(rel_column_order_fact/2).
 :- dynamic(host_signature_fact/3).
-:- dynamic(parse_input_codes_fact/1).
-:- dynamic(parse_input_length_fact/1).
-:- dynamic(parse_furthest_index_fact/1).
 :- dynamic(source_statement_fact/3).
+
+% The four position values below live in non-backtrackable globals, not in
+% dynamic facts like the rest of this file's parse state, because a dynamic
+% fact COPIES its arguments on every read: the input length and the furthest
+% mark are read once per parse alternative, and the line-start table is a
+% term with one argument per source line.
 
 record_finding(F) :- assertz(finding_fact(F)).
 record_column_order(Name, Cols) :-
@@ -100,14 +107,11 @@ parse_dl_source(_Source, Codes, Prog, Bindings, Findings) :-
     retractall(finding_fact(_)),
     retractall(rel_column_order_fact(_, _)),
     retractall(host_signature_fact(_, _, _)),
-    retractall(parse_input_codes_fact(_)),
-    retractall(parse_input_length_fact(_)),
-    retractall(parse_furthest_index_fact(_)),
     retractall(source_statement_fact(_, _, _)),
-    assertz(parse_input_codes_fact(Codes)),
     length(Codes, InputLength),
-    assertz(parse_input_length_fact(InputLength)),
-    assertz(parse_furthest_index_fact(0)),
+    nb_setval(parse_input_length, InputLength),
+    nb_setval(parse_furthest_remaining, InputLength),
+    build_line_starts(Codes),
     statements(Codes, Left, [], VarsFinal, ParsedDecls, ParsedRules, Queries),
     ( Left == []
     -> true
@@ -129,31 +133,60 @@ parse_failure(Reason) :-
     furthest_line_col(Line, Column),
     throw(dl_parse_error(Reason, position(Line, Column))).
 
+% A suffix is identified by how many codes remain in it, so the furthest mark
+% is a MINIMUM remaining count and needs no arithmetic per call. The one thing
+% this predicate may not do is walk the input: it runs at every DCG
+% alternative, so anything proportional to file size here is quadratic.
 mark_furthest(Suffix) :-
-    parse_input_length_fact(InputLength),
     length(Suffix, RemainingLength),
-    ConsumedIndex is InputLength - RemainingLength,
-    ( parse_furthest_index_fact(FurthestIndex), ConsumedIndex > FurthestIndex
-    -> retractall(parse_furthest_index_fact(_)),
-       assertz(parse_furthest_index_fact(ConsumedIndex))
-    ;  true
-    ).
+    nb_getval(parse_furthest_remaining, FurthestRemaining),
+    RemainingLength < FurthestRemaining,
+    !,
+    nb_setval(parse_furthest_remaining, RemainingLength).
+mark_furthest(_).
 
 furthest_line_col(Line, Column) :-
-    parse_furthest_index_fact(FurthestIndex),
-    parse_input_codes_fact(Codes),
-    length(Prefix, FurthestIndex),
-    append(Prefix, _, Codes),
-    prefix_line_col(Prefix, 1, 1, Line, Column).
+    nb_getval(parse_furthest_remaining, RemainingLength),
+    remaining_line_column(RemainingLength, Line, Column).
 
-prefix_line_col([], Line, Column, Line, Column).
-prefix_line_col([0'\n | Rest], Line, _Column, FinalLine, FinalColumn) :-
-    !,
-    NextLine is Line + 1,
-    prefix_line_col(Rest, NextLine, 1, FinalLine, FinalColumn).
-prefix_line_col([_ | Rest], Line, Column, FinalLine, FinalColumn) :-
-    NextColumn is Column + 1,
-    prefix_line_col(Rest, Line, NextColumn, FinalLine, FinalColumn).
+% arg/3 over the line-start table, so a position costs one binary search
+% instead of a walk of every code before it.
+remaining_line_column(RemainingLength, Line, Column) :-
+    nb_getval(parse_input_length, InputLength),
+    Index is InputLength - RemainingLength,
+    nb_getval(parse_line_starts, LineStarts),
+    nb_getval(parse_line_count, LineCount),
+    line_containing(1, LineCount, Index, LineStarts, Line),
+    arg(Line, LineStarts, LineStart),
+    Column is Index - LineStart + 1.
+
+line_containing(Low, High, Index, LineStarts, Line) :-
+    (   Low >= High
+    ->  Line = Low
+    ;   Mid is (Low + High + 1) // 2,
+        arg(Mid, LineStarts, MidStart),
+        (   MidStart =< Index
+        ->  line_containing(Mid, High, Index, LineStarts, Line)
+        ;   Before is Mid - 1,
+            line_containing(Low, Before, Index, LineStarts, Line)
+        )
+    ).
+
+% split_string/4 does the newline scan below Prolog, so the table costs one
+% pass over the LINES rather than one pass per position asked about.
+build_line_starts(Codes) :-
+    split_string(Codes, "\n", "", Lines),
+    line_start_offsets(Lines, 0, Offsets),
+    LineStarts =.. [line_starts | Offsets],
+    length(Offsets, LineCount),
+    nb_setval(parse_line_starts, LineStarts),
+    nb_setval(parse_line_count, LineCount).
+
+line_start_offsets([], _, []).
+line_start_offsets([Line | Rest], Offset, [Offset | More]) :-
+    string_length(Line, Length),
+    Next is Offset + Length + 1,
+    line_start_offsets(Rest, Next, More).
 
 prolog:message(dl_parse_error(Reason, position(Line, Column))) -->
     [ 'parse error at line ~d, column ~d: ~w'-[Line, Column, Reason] ].
@@ -161,9 +194,9 @@ prolog:message(dl_parse_error(Reason, position(Line, Column))) -->
 parse_dl_line_for_reason(Reason, Line) :-
     findall(Ref, reason_relation_reference(Reason, Ref), References0),
     sort(References0, References),
-    ( member(Ref, References), source_statement_fact(Ref, rule, Line)
+    ( member(Ref, References), statement_line_for_reference(rule, Ref, Line)
     -> true
-    ;  member(Ref, References), source_statement_fact(Ref, decl, Line)
+    ;  member(Ref, References), statement_line_for_reference(decl, Ref, Line)
     -> true
     ).
 
@@ -172,32 +205,32 @@ reason_relation_reference(Reason, Name/Arity) :-
     atom(Name),
     integer(Arity).
 
-record_statement_source_lines(decl_list, Declarations, Line) :-
-    record_declaration_source_lines(Declarations, Line).
-record_statement_source_lines(rule, Rule, Line) :-
-    findall(Name/Arity,
-            ( sub_term(Term, Rule),
-              compound(Term),
-              functor(Term, Name, Arity),
-              atom(Name)
-            ),
-            References0),
-    sort(References0, References),
-    record_source_references(References, rule, Line).
+% Statements are recorded whole, at their suffix length, and turned into
+% references and line numbers only when a refusal asks: expanding each one into
+% its reference set costs one assert per relation the statement mentions, and
+% resolving its line costs a line-table lookup, on every successful parse.
+statement_line_for_reference(Kind, Reference, Line) :-
+    source_statement_fact(Kind, Item, RemainingLength),
+    statement_reference(Kind, Item, Reference),
+    !,
+    remaining_line_column(RemainingLength, Line, _Column).
+
+statement_reference(rule, Rule, Name/Arity) :-
+    sub_term(Term, Rule),
+    compound(Term),
+    functor(Term, Name, Arity),
+    atom(Name),
+    !.
+statement_reference(decl, Declarations, Reference) :-
+    member(Declaration, Declarations),
+    declaration_source_ref(Declaration, Reference),
+    !.
+
+record_statement_source_lines(decl_list, Declarations, RemainingLength) :-
+    assertz(source_statement_fact(decl, Declarations, RemainingLength)).
+record_statement_source_lines(rule, Rule, RemainingLength) :-
+    assertz(source_statement_fact(rule, Rule, RemainingLength)).
 record_statement_source_lines(_, _, _).
-
-record_source_references([], _, _).
-record_source_references([Reference | Rest], Kind, Line) :-
-    assertz(source_statement_fact(Reference, Kind, Line)),
-    record_source_references(Rest, Kind, Line).
-
-record_declaration_source_lines([], _).
-record_declaration_source_lines([Declaration | Rest], Line) :-
-    ( declaration_source_ref(Declaration, Ref)
-    -> assertz(source_statement_fact(Ref, decl, Line))
-    ;  true
-    ),
-    record_declaration_source_lines(Rest, Line).
 
 declaration_source_ref(kind(Ref, _), Ref).
 declaration_source_ref(keyed(Ref, _), Ref).
@@ -272,8 +305,8 @@ statements(S0, S, Vars0, Vars, Decls, Rules, Queries) :-
     ( S1 == []
     -> Decls = [], Rules = [], Queries = [], Vars = Vars0, S = S1
     ; ( statement(Kind, Item, Vars0, Vars1, S1, S2)
-      -> line_at_suffix(S1, StatementLine),
-         record_statement_source_lines(Kind, Item, StatementLine)
+      -> length(S1, StatementRemaining),
+         record_statement_source_lines(Kind, Item, StatementRemaining)
       ;  mark_furthest(S1), parse_failure(statement)
       ),
       statements(S2, S, Vars1, Vars, Decls1, Rules1, Queries1),
@@ -284,29 +317,22 @@ statements(S0, S, Vars0, Vars, Decls, Rules, Queries) :-
       )
     ).
 
-line_at_suffix(Suffix, Line) :-
-    parse_input_length_fact(InputLength),
-    length(Suffix, RemainingLength),
-    PrefixLength is InputLength - RemainingLength,
-    parse_input_codes_fact(Codes),
-    length(Prefix, PrefixLength),
-    append(Prefix, _, Codes),
-    prefix_line_col(Prefix, 1, 1, Line, _Column).
-
 % ═══ whitespace + `#` line comments (plain predicate, not `-->`, since the
 % rest of this parser is written with explicit S0/S args throughout) ════════
 
+% mark_furthest keeps a maximum and every position these two scans walk past
+% is behind the position they stop at, so one mark at the stop stands for all
+% of them. Marking each code instead costs one call per whitespace and comment
+% character in the file, which is most of the file.
 skip_ws(S0, S) :-
-    mark_furthest(S0),
     ( S0 = [C | S1], (code_type(C, space) ; C == 0'\n ; C == 0'\r)
     -> skip_ws(S1, S)
     ; S0 = [0'# | S1]
     -> skip_to_eol(S1, S2), skip_ws(S2, S)
-    ; S = S0
+    ; S = S0, mark_furthest(S0)
     ).
 
 skip_to_eol(S0, S) :-
-    mark_furthest(S0),
     ( S0 = [C | S1], C \== 0'\n -> skip_to_eol(S1, S)
     ; S0 = [0'\n | S1] -> S = S1
     ; S = S0
@@ -316,11 +342,19 @@ ws0(S0, S) :- skip_ws(S0, S).
 
 % ═══ literal punctuation / keyword matching ════════════════════════════════
 
+% A full match ends at S, which is past every code it consumed, so one mark
+% there covers the whole literal. A PARTIAL match still has to name the
+% deepest code it consumed, and only the failing recursion knows where that
+% is, which is why the miss marks on the way out instead of on the way in.
 lit_dcg([], S, S) :-
     mark_furthest(S).
-lit_dcg([C | Cs], [C | Rest], S) :-
-    mark_furthest([C | Rest]),
-    lit_dcg(Cs, Rest, S).
+lit_dcg([Code | Codes], Suffix, S) :-
+    Suffix = [Code | Rest],
+    (   lit_dcg(Codes, Rest, S)
+    ->  true
+    ;   mark_furthest(Suffix),
+        fail
+    ).
 
 % whole-word keyword match: literal Codes followed by a non-identifier char
 % (or end of input), so e.g. `rel` never fires on `related` and `sh` never

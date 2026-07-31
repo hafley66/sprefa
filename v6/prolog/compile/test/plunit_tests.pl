@@ -25,7 +25,11 @@
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
-:- use_module('../parse_dl', [ parse_dl/4 ]).
+% remaining_line_column/3 is exported for the parse_error_positions unit, which
+% checks the line table against a prefix walk at every index of a text; going
+% through parse_dl/4 alone only reaches the positions a refusal happens to land
+% on.
+:- use_module('../parse_dl', [ parse_dl/4, remaining_line_column/3 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
@@ -3407,3 +3411,145 @@ test(oracle_capture_types_match_their_json_type_answer) :-
     \+ json_capture_type(float, 1).
 
 :- end_tests(json_grammar).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% PARSE ERROR POSITIONS
+%
+% The line:column a refusal prints is the MAXIMUM position mark_furthest saw
+% during the parse, so which positions get marked is free to change only while
+% that maximum does not. These cases pin the reported position for each shape
+% of marking parse_dl.pl does -- whitespace stop, comment run, partially
+% matched keyword, token entry, string interior, digit run, end of input --
+% and the values were captured from the parser BEFORE the marking was thinned.
+%
+% SABOTAGE RECEIPT (run 2026-07-31, reverted): deleting the mark on lit_dcg's
+% failing recursion turns partial_keyword from position(1,6) into position(1,1)
+% and error_first_line from position(1,5) into position(1,4); deleting
+% skip_ws's stop mark turns 18 of the 21 refusing cases red at once.
+
+:- begin_tests(parse_error_positions).
+
+parse_position_case(empty_file, "", ok).
+parse_position_case(only_whitespace, "\n\n   \n", ok).
+parse_position_case(only_comments, "# a comment\n# another\n", ok).
+parse_position_case(escape_in_string, "rel a(x: text).\na(\"tail\\q\").\n", ok).
+parse_position_case(error_first_line,
+                    "rel ?bad(x: int).\n",
+                    dl_parse_error(statement, position(1, 5))).
+parse_position_case(error_first_char,
+                    "?\n",
+                    dl_parse_error(statement, position(2, 1))).
+parse_position_case(mid_statement,
+                    "rel good(a: int).\nrel bad(a: ?).\nrel more(b: int).\n",
+                    dl_parse_error(statement, position(2, 12))).
+parse_position_case(error_last_line,
+                    "rel a(x: int).\nrel b(y: int).\n@@@\n",
+                    dl_parse_error(statement, position(3, 1))).
+parse_position_case(trailing_brace,
+                    "rel a(x: int).\n}\n",
+                    dl_parse_error(statement, position(2, 1))).
+parse_position_case(partial_keyword,
+                    "relx a(x: int).\n",
+                    dl_parse_error(statement, position(1, 6))).
+parse_position_case(partial_keyword_deep,
+                    "rel a(x: int).\nre\n",
+                    dl_parse_error(statement, position(3, 1))).
+parse_position_case(unterminated_string,
+                    "rel a(x: text).\na(\"unterminated\n",
+                    dl_parse_error(statement, position(2, 3))).
+parse_position_case(unterminated_quoted_atom,
+                    "rel a(x: text).\nb('unterminated\n",
+                    dl_parse_error(statement, position(2, 3))).
+parse_position_case(error_after_comment_run,
+                    "# c1\n# c2\n# c3\nrel a(x: int).\n# c4\n%%%\n",
+                    dl_parse_error(statement, position(6, 1))).
+parse_position_case(error_after_blank_lines,
+                    "rel a(x: int).\n\n\n\n\n   \n%%%\n",
+                    dl_parse_error(statement, position(7, 1))).
+parse_position_case(bad_number,
+                    "rel a(x: int).\na(12x).\n",
+                    dl_parse_error(statement, position(2, 5))).
+parse_position_case(bad_float_exponent,
+                    "rel a(x: float).\na(1.0e).\n",
+                    dl_parse_error(statement, position(2, 6))).
+parse_position_case(missing_period,
+                    "rel a(x: int)\nrel b(y: int).\n",
+                    dl_parse_error(statement, position(2, 1))).
+parse_position_case(unbalanced_paren,
+                    "rel a(x: int).\na(1.\n",
+                    dl_parse_error(statement, position(2, 4))).
+parse_position_case(rule_arrow_broken,
+                    "rel a(x: int).\nrel b(x: int).\nb(X) <?- a(X).\n",
+                    dl_parse_error(statement, position(3, 6))).
+parse_position_case(no_trailing_newline,
+                    "rel a(x: int).\nrel bad(x: ",
+                    dl_parse_error(statement, position(2, 12))).
+parse_position_case(deep_in_last_statement,
+                    "rel a(x: int).\nrel b(y: int).\nrel c(z: %%%",
+                    dl_parse_error(statement, position(3, 10))).
+parse_position_case(tab_indentation,
+                    "rel a(x: int).\n\t\t\t%%%\n",
+                    dl_parse_error(statement, position(2, 4))).
+parse_position_case(crlf_line_ends,
+                    "rel a(x: int).\r\nrel b(y: int).\r\n%%%\r\n",
+                    dl_parse_error(statement, position(3, 1))).
+parse_position_case(long_correct_prefix, Text,
+                    dl_parse_error(statement, position(61, 12))) :-
+    findall(Line,
+            ( between(1, 60, Index),
+              format(string(Line), "rel r~d(x: int).\n", [Index]) ),
+            Lines),
+    atomics_to_string(Lines, Prefix),
+    string_concat(Prefix, "rel bad(x: %%%).\n", Text).
+
+parse_outcome(Text, Outcome) :-
+    string_codes(Text, Codes),
+    catch(( parse_dl(Codes, _Prog, _Bindings, _Findings) -> Outcome = ok
+          ; Outcome = failed ),
+          Error,
+          Outcome = Error).
+
+test(refusal_position_is_exact,
+     [forall(parse_position_case(Label, Text, Expected))]) :-
+    parse_outcome(Text, Outcome),
+    ( Outcome == Expected
+    -> true
+    ;  throw(parse_position_changed(Label, Expected, Outcome))
+    ).
+
+% The line table replaced a walk of every code before the position. Walking is
+% the definition it has to keep matching, at EVERY index of a text carrying the
+% cases that break off-by-one arithmetic: no trailing newline, a blank line, a
+% CR before the LF, and a tab.
+position_reference_text("rel a(x: int).\n\n\tb(1).\r\nc(2).").
+
+walked_line_column([], Line, Column, Line, Column).
+walked_line_column([0'\n | Rest], Line, _Column, FinalLine, FinalColumn) :-
+    !,
+    NextLine is Line + 1,
+    walked_line_column(Rest, NextLine, 1, FinalLine, FinalColumn).
+walked_line_column([_ | Rest], Line, Column, FinalLine, FinalColumn) :-
+    NextColumn is Column + 1,
+    walked_line_column(Rest, Line, NextColumn, FinalLine, FinalColumn).
+
+test(line_table_agrees_with_a_prefix_walk) :-
+    position_reference_text(Text),
+    string_codes(Text, Codes),
+    length(Codes, InputLength),
+    % parse_dl/4 is the only public way to load the table; the text is not a
+    % program, so whatever it raises is expected and discarded.
+    catch(( parse_dl(Codes, _P, _B, _F) -> true ; true ), _Error, true),
+    forall(between(0, InputLength, Index),
+           ( length(Prefix, Index),
+             append(Prefix, _, Codes),
+             walked_line_column(Prefix, 1, 1, WalkedLine, WalkedColumn),
+             Remaining is InputLength - Index,
+             remaining_line_column(Remaining, TableLine, TableColumn),
+             ( WalkedLine-WalkedColumn == TableLine-TableColumn
+             -> true
+             ;  throw(line_table_disagrees(Index,
+                                           WalkedLine-WalkedColumn,
+                                           TableLine-TableColumn))
+             ) )).
+
+:- end_tests(parse_error_positions).
