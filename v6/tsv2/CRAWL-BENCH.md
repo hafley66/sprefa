@@ -118,6 +118,20 @@ v6      779    8      19.16s  40.66        177733632 B  1069056 B
 `stmts/tick` from the v6 perf logs was 54.03 in both runs. The v5 leg has no
 comparable served-engine statement trace in this invocation.
 
+Re-run 2026-07-31 of the whole recipe after the loop was removed
+(`bash scripts/crawl-bench.sh --max-repos 8`, exit 0, 38.66s total):
+
+```text
+engine  files  repos  wall    files-per-s  RSS          db size
+v5      42739  389    12.99s  3290.15      344227840 B  52330496 B
+v6        779    8    17.96s    43.37      196591616 B   1368064 B
+
+loop delta (first-8-usable-of-389-cap-8, 779 files):
+  before (one served process per repository)  wall=20.26s  38.45 files/s
+  after  (ONE program, repo as a column)      wall=17.96s  43.37 files/s
+  speedup 1.13x
+```
+
 ## Gaps
 
 - The v5 row is a v5 `scan` fact at `HEAD`. The v6 row is a file-set row plus a
