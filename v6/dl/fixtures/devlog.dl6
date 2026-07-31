@@ -1,0 +1,202 @@
+# devlog.dl6 -- the DEVLOG production rail.
+#
+# The world door is one shell host. It consults one Prolog ledger at a time,
+# emits a normalized JSONL stream, and leaves all joins, selection, markdown
+# text, ordering, and document assembly to this program. The final shell host
+# is the one named filesystem write: the language produces the document text;
+# the host writes DEVLOG.md.
+#
+# Ledger shapes intentionally selected by name:
+#   lane_landed/3, in_flight/3, finding/3, answered/2, directive/2
+# Older predicate names and arities are not guessed into these relations. The
+# ARCH task/3 stream is a separate source row with session = 'ARCH' and is
+# used only as a status cross-reference for landed lanes.
+#
+# The JSONL envelope uses an args array so one host invocation can carry the
+# heterogeneous fact shapes. decode/spread expands that array into positional
+# fact_arg rows. group_concat/3 is the document fold; it is live in the current
+# surface and orders by the explicit ordinal column.
+
+bind watch(glob: text, path: text, digest: text).
+
+rel source(path: text, digest: text).
+source(path, digest) <- watch('chat_log/*.pl', path, digest).
+source(path, digest) <- watch('v6/prolog/ARCH.pl', path, digest).
+
+sh ledger(path: text, digest: text)
+  -> (day: text, session: text, session_order: int, fact_order: int, record: text, args: json) =
+  `: {digest}; swipl -q -g 'use_module(library(http/json)), current_prolog_flag(argv,[Path|_]), absolute_file_name(Path,Abs), consult(Abs), module_property(M,file(Abs)), ( M:session(id,Session) -> sub_atom(Session,0,8,_,Day), sub_atom(Session,9,_,0,SeqText), atom_number(Day,DayNumber), atom_number(SeqText,SeqNumber), SessionOrder is DayNumber * 1000 + SeqNumber, json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:0,record:session,args:[]}, [width(0)]), nl, findall(Name/Arity-Fact, (member(Name/Arity,[lane_landed/3,in_flight/3,finding/3,answered/2,directive/2]), functor(Fact,Name,Arity), catch(M:Fact,_,fail)), Facts), forall(nth1(FactOrder,Facts,Name/Arity-Fact), (Fact=..[_|RawArgs], findall(_{position:Position, value:Value}, (nth1(Position,RawArgs,RawArg), term_string(RawArg,Value,[quoted(false),portray(false)])), Args), json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:FactOrder,record:Name,args:Args}, [width(0)]), nl)) ; Session = ARCH, Day = 00000000, SessionOrder = 0, findall(task/3-Fact, (functor(Fact,task,3), catch(M:Fact,_,fail)), Tasks), forall(nth1(FactOrder,Tasks,task/3-Fact), (Fact=..[_|RawArgs], findall(_{position:Position, value:Value}, (nth1(Position,RawArgs,RawArg), term_string(RawArg,Value,[quoted(false),portray(false)])), Args), json_write_dict(current_output, _{day:Day,session:Session,session_order:SessionOrder,fact_order:FactOrder,record:task,args:Args}, [width(0)]), nl)))' -t halt -- {path}`.
+
+rel ledger_row(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  record: text,
+  args: json
+).
+ledger_row(day, session, session_order, fact_order, record, args) <-
+  source(path, digest),
+  ledger(path, digest, day, session, session_order, fact_order, record, args).
+
+rel fact_arg(
+  day: text,
+  session: text,
+  session_order: int,
+  record: text,
+  fact_order: int,
+  position: int,
+  value: text
+).
+fact_arg(day, session, session_order, record, fact_order, position, value) <-
+  ledger_row(day, session, session_order, fact_order, record, args),
+  decode(args, spread({position: position: int, value: value: text})).
+
+rel session_seen(day: text, session: text, session_order: int).
+session_seen(day, session, session_order) <-
+  ledger_row(day, session, session_order, 0, 'session', _).
+
+rel arch_task(name: text, state: text, detail: text).
+arch_task(name, state, detail) <-
+  fact_arg(_, 'ARCH', 0, 'task', _, 1, name),
+  fact_arg(_, 'ARCH', 0, 'task', _, 2, state),
+  fact_arg(_, 'ARCH', 0, 'task', _, 3, detail).
+
+rel has_arch_task(name: text).
+has_arch_task(name) <- arch_task(name, _, _).
+
+rel landed(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  name: text,
+  gate: text,
+  story: text
+).
+landed(day, session, session_order, fact_order, name, gate, story) <-
+  fact_arg(day, session, session_order, 'lane_landed', fact_order, 1, name),
+  fact_arg(day, session, session_order, 'lane_landed', fact_order, 2, gate),
+  fact_arg(day, session, session_order, 'lane_landed', fact_order, 3, story).
+
+rel answered(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  name: text,
+  story: text
+).
+answered(day, session, session_order, fact_order, name, story) <-
+  fact_arg(day, session, session_order, 'answered', fact_order, 1, name),
+  fact_arg(day, session, session_order, 'answered', fact_order, 2, story).
+
+rel finding(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  name: text,
+  who: text,
+  story: text
+).
+finding(day, session, session_order, fact_order, name, who, story) <-
+  fact_arg(day, session, session_order, 'finding', fact_order, 1, name),
+  fact_arg(day, session, session_order, 'finding', fact_order, 2, who),
+  fact_arg(day, session, session_order, 'finding', fact_order, 3, story).
+
+rel directive(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  name: text,
+  story: text
+).
+directive(day, session, session_order, fact_order, name, story) <-
+  fact_arg(day, session, session_order, 'directive', fact_order, 1, name),
+  fact_arg(day, session, session_order, 'directive', fact_order, 2, story).
+
+rel in_flight(
+  day: text,
+  session: text,
+  session_order: int,
+  fact_order: int,
+  name: text,
+  where: text,
+  story: text
+).
+in_flight(day, session, session_order, fact_order, name, where, story) <-
+  fact_arg(day, session, session_order, 'in_flight', fact_order, 1, name),
+  fact_arg(day, session, session_order, 'in_flight', fact_order, 2, where),
+  fact_arg(day, session, session_order, 'in_flight', fact_order, 3, story).
+
+rel session_block(session: text, block: int).
+session_block(session, block) <-
+  session_seen(_, session, session_order),
+  block := 100000000000 - session_order * 100000.
+
+rel devlog_line(ordinal: int, line: text).
+devlog_line(ordinal, '# Sprefa V6 Devlog') <-
+  session_seen(_, _, _),
+  ordinal := 0 - 9000000000000000.
+
+devlog_line(ordinal, line) <-
+  session_seen(day, session, _),
+  session_block(session, block),
+  ordinal := block,
+  line := concat(['## ', day, ' / ', session]).
+
+devlog_line(ordinal, '### Landed lanes') <-
+  session_block(_, block),
+  ordinal := block + 1.
+devlog_line(ordinal, line) <-
+  landed(_, session, _, fact_order, name, _gate, story),
+  session_block(session, block),
+  ordinal := block + 10 + fact_order,
+  line := concat(['- ', name, ': ', story]).
+
+devlog_line(ordinal, '### Rulings answered') <-
+  session_block(_, block),
+  ordinal := block + 200.
+devlog_line(ordinal, line) <-
+  answered(_, session, _, fact_order, name, story),
+  session_block(session, block),
+  ordinal := block + 210 + fact_order,
+  line := concat(['- ', name, ': ', story]).
+
+devlog_line(ordinal, '### Findings') <-
+  session_block(_, block),
+  ordinal := block + 400.
+devlog_line(ordinal, line) <-
+  finding(_, session, _, fact_order, name, who, story),
+  session_block(session, block),
+  ordinal := block + 410 + fact_order,
+  line := concat(['- ', name, ' (', who, '): ', story]).
+
+devlog_line(ordinal, '### Directives') <-
+  session_block(_, block),
+  ordinal := block + 600.
+devlog_line(ordinal, line) <-
+  directive(_, session, _, fact_order, name, story),
+  session_block(session, block),
+  ordinal := block + 610 + fact_order,
+  line := concat(['- ', name, ': ', story]).
+
+devlog_line(ordinal, '### Open in-flight at ledger close') <-
+  session_block(_, block),
+  ordinal := block + 800.
+devlog_line(ordinal, line) <-
+  in_flight(_, session, _, fact_order, name, where, story),
+  session_block(session, block),
+  ordinal := block + 810 + fact_order,
+  line := concat(['- ', name, ' at ', where, ': ', story]).
+
+rel devlog(document: text).
+devlog(group_concat(line, '\n', ordinal)) <- devlog_line(ordinal, line).
+
+sh write_devlog(document: text) -> (written: text) =
+  `printf '%s\n' "{document}" > DEVLOG.md; printf '%s' DEVLOG.md`.
+
+rel write_receipt(document: text, written: text).
+write_receipt(document, written) <- devlog(document), write_devlog(document, written).
