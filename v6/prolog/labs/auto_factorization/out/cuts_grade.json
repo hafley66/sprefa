@@ -4,13 +4,7 @@
   "component_mismatch": [],
   "cut_arrivals": 173,
   "cuts": 6,
-  "depth_mismatch": [
-    [
-      "v6/prolog=>v6/prolog/compile",
-      5,
-      64
-    ]
-  ],
+  "depth_mismatch": [],
   "edge_mismatch": [],
   "engine_component_sizes": [
     [
@@ -30,9 +24,13 @@
       "v6/prolog/0_body_walk.pl"
     ]
   ],
+  "engine_cyclic_cuts": [
+    "v6/prolog=>v6/prolog/compile"
+  ],
   "ranked": [
     {
       "cut": "v6/prolog/compile=>v6/prolog",
+      "cyclic_after_cut": false,
       "depth_after": 7,
       "depth_before": 6,
       "edge_delta": -6,
@@ -42,6 +40,7 @@
     },
     {
       "cut": "v6/tsv2/serve=>v6/tsv2/runtime",
+      "cyclic_after_cut": false,
       "depth_after": 7,
       "depth_before": 6,
       "edge_delta": 0,
@@ -51,6 +50,7 @@
     },
     {
       "cut": "v6/prolog=>v6/prolog/compile",
+      "cyclic_after_cut": true,
       "depth_after": 5,
       "depth_before": 6,
       "edge_delta": 1,
@@ -60,6 +60,7 @@
     },
     {
       "cut": "v6/dl/src=>v6/dl/src/0_generated",
+      "cyclic_after_cut": false,
       "depth_after": 6,
       "depth_before": 6,
       "edge_delta": 1,
@@ -69,6 +70,7 @@
     },
     {
       "cut": "v6/tsv2/cli=>v6/tsv2/runtime",
+      "cyclic_after_cut": false,
       "depth_after": 6,
       "depth_before": 6,
       "edge_delta": 1,
@@ -78,6 +80,7 @@
     },
     {
       "cut": "v6/tsv2/cli=>v6/tsv2/serve",
+      "cyclic_after_cut": false,
       "depth_after": 6,
       "depth_before": 6,
       "edge_delta": 1,

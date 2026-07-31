@@ -446,15 +446,17 @@ heuristic, no search.
 |---|---:|---:|---:|---:|---|---|---|
 | `v6/prolog/compile => v6/prolog` | 21 | 7 | 8 | **-6** | 6 -> 7 | 24 -> 24 | 0.4374 -> 0.4977 |
 | `v6/tsv2/serve => v6/tsv2/runtime` | 12 | 6 | 6 | 0 | 6 -> 7 | 24 -> 24 | 0.4374 -> 0.4465 |
-| `v6/prolog => v6/prolog/compile` | 7 | 5 | 3 | +1 | **6 -> 5** | 24 -> 25 | 0.4374 -> 0.4468 |
+| `v6/prolog => v6/prolog/compile` | 7 | 5 | 3 | +1 | **6 -> 5** (cyclic, see 4d) | 24 -> 25 | 0.4374 -> 0.4468 |
 | `v6/dl/src => v6/dl/src/0_generated` | 2 | 1 | 2 | +1 | 6 -> 6 | 24 -> 23 | 0.4374 -> 0.4370 |
 | `v6/tsv2/cli => v6/tsv2/runtime` | 1 | 1 | 1 | +1 | 6 -> 6 | 24 -> 23 | 0.4374 -> 0.4355 |
 | `v6/tsv2/cli => v6/tsv2/serve` | 1 | 1 | 1 | +1 | 6 -> 6 | 24 -> 23 | 0.4374 -> 0.4355 |
 
 Only one cut of six pays for itself in edges, and it is the same boundary
 everything else points at. The `v6/prolog => v6/prolog/compile` row is the
-interesting one for a different reason: it is the only cut that REDUCES depth
-(6 -> 5), because the seven edges it splices are the ones running the wrong way.
+interesting one for a different reason: it is the only cut that REDUCES depth,
+because the seven edges it splices are the ones running the wrong way. Its 5 is
+a CONDENSATION height rather than a longest path, because that counterfactual
+graph is cyclic; section 4d is where that was found and what it cost.
 
 ### 4b. Symbol granularity, where the cross-language hops live
 
@@ -990,6 +992,7 @@ uncapped runs. Scratch output stayed in the lab's own `out/`; no daemon, no
 | R6c | Q6 | `folder_depth/2` + `folder_cycle/1` in dl6 vs networkx quotient | depths match, cycle found on exactly `v6/prolog` and `v6/prolog/compile` |
 | R6d | Q6 | `hand_violation/4`, `hand_agrees/2`, `hand_differs/3`, `metric_blind/2` in dl6 | 2 violations / 15 / 23 / 1, all matching the referee |
 | R7 | SLOT-SCALE | both engines at 100 / 300 / 1k / 3k / 10k / 30k | engine walls between 300 and 1k, referee flat to 30k |
+| R8 | whole lab | fact base and referee re-run from scratch | `referee.json` and `rename_table.tsv` byte-identical |
 
 **Sabotage receipts (R1c, R1d), because a grade that cannot go red proves
 nothing.** Two independent sabotages, each flipping a different column, so no
