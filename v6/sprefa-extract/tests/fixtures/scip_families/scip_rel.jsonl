@@ -1,0 +1,15 @@
+{"record":"scip_def","symbol":"scip-typescript npm . . `animal.ts`/","file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_def","symbol":"scip-typescript npm . . `animal.ts`/Animal#","file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_def","symbol":"scip-typescript npm . . `animal.ts`/Animal#sound().","file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_def","symbol":"scip-typescript npm . . `animal.ts`/Dog#","file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_def","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound().","file":"animal.ts","repo":"scip_rel"}
+{"record":"scip_fn_edge","caller":"scip-typescript npm . . `animal.ts`/Animal#sound().","callee":"scip-typescript npm . . `animal.ts`/Animal#"}
+{"record":"scip_impl","impl":"scip-typescript npm . . `animal.ts`/Dog#","iface":"scip-typescript npm . . `animal.ts`/Animal#"}
+{"record":"scip_impl","impl":"scip-typescript npm . . `animal.ts`/Dog#sound().","iface":"scip-typescript npm . . `animal.ts`/Animal#sound()."}
+{"record":"scip_index","reused":false,"tool_name":"scip-typescript","tool_version":"0.4.0","documents":1}
+{"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/","name":"ts"}
+{"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Animal#","name":"Animal"}
+{"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Animal#sound().","name":"sound"}
+{"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#","name":"Dog"}
+{"record":"scip_name","symbol":"scip-typescript npm . . `animal.ts`/Dog#sound().","name":"sound"}
+{"record":"scip_ref","file":"animal.ts","symbol":"scip-typescript npm . . `animal.ts`/Animal#","def_file":"animal.ts","repo":"scip_rel"}
