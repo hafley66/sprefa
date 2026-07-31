@@ -13,6 +13,21 @@
 
 v6 := justfile_directory()
 
+# THE TIMEOUT GUN (timeout-gun lane, 2026-07-31). Standing law: every compute
+# invocation runs under a budget with a NAMED timeout failure. The receipt
+# SCRIPTS fire their own gun (each states its measured wall beside its default
+# in its own header); the recipes below that call swipl / node / tsgo DIRECTLY
+# have no script to carry a budget, so they go through the helper in command
+# form. Exit 124 is the coreutils budget-exceeded convention, and `just`
+# reports it as `Recipe <name> failed ... with exit code 124`, which names the
+# recipe -- the helper's own named line only exists for its sourced form.
+#
+# Every default below is stated beside the wall it was measured against on the
+# development machine, and every one is deliberately loose: these legs cost
+# seconds, so a tight multiple would be measuring machine load rather than the
+# work. The number each encodes is "this tool has stopped being this tool".
+capped := justfile_directory() + "/tools/run-capped.sh"
+
 default:
 	@just --list
 
@@ -20,8 +35,9 @@ default:
 
 # the fixture corpus vs the oracle engine (expect: 281 PASS, 0 fail; go.pl
 # exits 1 on any fail since the grader-exit gate landed)
+# budget: measured 0.2s, default 300s (CONFORMANCE_BUDGET_S)
 conformance:
-	cd {{v6}}/prolog/conformance && swipl -q -l go.pl -g go -g halt
+	cd {{v6}}/prolog/conformance && {{capped}} "${CONFORMANCE_BUDGET_S:-300}" swipl -q -l go.pl -g go -g halt
 
 # parse -> print -> reparse identity over all fixtures + real .dl files
 roundtrip:
@@ -32,12 +48,20 @@ text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
 # compiler unit tests (expect: 269/269 and growing)
+# budget: measured 40.8s, default 600s (PLUNIT_BUDGET_S)
 plunit:
-	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
+	cd {{v6}}/prolog/compile && {{capped}} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/plunit_tests.pl -g run_tests -g halt
+
+# scip + diet_scip extractor families smoke: real scip-typescript index
+# through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,
+# default 600s (SCIP_FAMILIES_BUDGET_S)
+scip-families:
+	cd {{v6}}/tsv2 && {{capped}} "${SCIP_FAMILIES_BUDGET_S:-600}" bash scripts/scip-families.sh
 
 # architecture claims machine-check + atlas re-emit
+# budget: measured 0.9s, default 300s (ARCH_BUDGET_S)
 arch:
-	swipl -q -l {{v6}}/prolog/ARCH.pl -g go -g halt
+	{{capped}} "${ARCH_BUDGET_S:-300}" swipl -q -l {{v6}}/prolog/ARCH.pl -g go -g halt
 
 # read-only organization gate: parse errors, duplicate modules, undefined
 # predicates, private cross-module calls, redefinitions, void declarations,
@@ -70,10 +94,11 @@ sweep:
 # the bop CLI's own receipts (exit-code contract 0/2/1, the located refusal's
 # file:line, and inventory parity); convenience slice -- these also run inside
 # tsv2-test (expect: 15 pass)
+# budget: measured 2.6s, default 300s (BOP_TEST_BUDGET_S)
 bop-test:
-	cd {{v6}}/tsv2 && node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
+	cd {{v6}}/tsv2 && {{capped}} "${BOP_TEST_BUDGET_S:-300}" node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
 
-# tsv2 runtime + served-engine tests (expect: 125 pass / 1 skip, and growing)
+# tsv2 runtime + served-engine tests (expect: 127 pass / 1 skip, and growing)
 tsv2-test:
 	cd {{v6}}/tsv2 && npm test
 
@@ -88,8 +113,10 @@ import-gate:
 # interfaces, one-declaration-per-name, no free contract-carrying exports)
 # are enforceable only by a compiler that actually runs.
 # (expect: no output, exit 0)
+# budget: measured 0.6s, default 600s -- looser than the wall suggests because
+# a cold `npx` may fetch before it compiles (TYPECHECK_BUDGET_S)
 typecheck:
-	cd {{v6}}/tsv2 && npx tsgo --noEmit -p tsconfig.json
+	cd {{v6}}/tsv2 && {{capped}} "${TYPECHECK_BUDGET_S:-600}" npx tsgo --noEmit -p tsconfig.json
 
 # ── TS apps ──
 
@@ -297,8 +324,11 @@ precommit-changed:
 # the scale-floor.sh treatment -- does not exist yet and is a named gap in
 # v6/READINESS.md.
 # (expect: two JSONL lines, correct:true, ticks flat at 3 across both sizes)
+# budget: measured 0.7s at 100/1000 files, default 900s -- loose because the
+# file counts are arguments and a bigger run is the point (WATCH_SCALE_BUDGET_S)
 watch-scale:
-	cd {{v6}}/tsv2 && NODE_NO_WARNINGS=1 node --experimental-transform-types \
+	cd {{v6}}/tsv2 && {{capped}} "${WATCH_SCALE_BUDGET_S:-900}" env NODE_NO_WARNINGS=1 \
+	  node --experimental-transform-types \
 	  scripts/5_file-watch-scale.ts --files 100,1000 --events-per-file 3 \
 	  --edit-ratio 0.25 --delete-ratio 0.10 --identical-resave-ratio 0.25
 

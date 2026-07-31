@@ -17,6 +17,14 @@
 # file the phase D contract lists, per its strict file-ownership rule.
 #
 # Usage: bash v6/prolog/compile/scripts/roundtrip.sh
+#
+# BUDGETS (timeout-gun lane, 2026-07-31). Two swipl legs, each capped
+# separately so the failure names WHICH grade hung. Measured walls on this
+# machine: 2.0s for the whole script, of which the G3 conformance leg is 0.4s.
+# The defaults are 300s apiece -- not a multiple of a two-second baseline (that
+# multiple would be noise), but the honest claim that a swipl still parsing
+# after five minutes is not parsing. Override with ROUNDTRIP_GRADER_BUDGET_S
+# and ROUNDTRIP_G3_BUDGET_S.
 
 set -euo pipefail
 
@@ -24,6 +32,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPILE_DIR="$(cd "$HERE/.." && pwd)"
 PROLOG_DIR="$(cd "$COMPILE_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PROLOG_DIR/../.." && pwd)"
+
+. "$REPO_ROOT/v6/tools/run-capped.sh"
 
 FIXTURES_DIR="$PROLOG_DIR/conformance/fixtures"
 DL_VIEW_DIR="$COMPILE_DIR/dl_view"
@@ -226,12 +236,24 @@ main :-
 PLEOF
 
 echo "=== phase D roundtrip grader ==="
-swipl -q -l "$GRADER" -g main -t 'halt(1)'
+capped "${ROUNDTRIP_GRADER_BUDGET_S:-300}" "the G1/G2 grader" \
+  swipl -q -l "$GRADER" -g main -t 'halt(1)'
 GRADER_STATUS=$?
 
 echo ""
 echo "=== G3 conformance suite (no-regression sanity) ==="
-CONFORMANCE_OUTPUT="$(swipl -q -l "$CONFORMANCE_GO" -g go -g halt 2>&1)"
+CONFORMANCE_OUTPUT="$(capped "${ROUNDTRIP_G3_BUDGET_S:-300}" "the G3 conformance suite" \
+  swipl -q -l "$CONFORMANCE_GO" -g go -g halt 2>&1)"
+G3_EXIT=$?
+# The G3 leg grades by GREPPING its captured output, so a leg that produced no
+# output at all reads as "0 pass / 0 fail" and passes. That is exactly what a
+# budget kill looks like from here, which is why the exit status is checked
+# before the counts rather than after.
+if [ "$G3_EXIT" -ne 0 ]; then
+  printf '%s\n' "$CONFORMANCE_OUTPUT"
+  echo "roundtrip.sh: the G3 conformance leg exited $G3_EXIT (124 = its budget fired)"
+  exit 1
+fi
 PASS_COUNT="$(printf '%s\n' "$CONFORMANCE_OUTPUT" | grep -c '^PASS' || true)"
 # grader.pl prints lowercase `fail  `; '^FAIL' matched nothing and this leg
 # was blind to red fixtures (class 37's sibling, found by the fork_join lane).

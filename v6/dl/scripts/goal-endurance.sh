@@ -14,7 +14,18 @@
 #   2  exactly-once: another reboot; no re-fire (witness cache holds); count==1
 #
 # Exit 0 = the end goal exists. Any phase failing prints WHERE the chain broke.
+# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 17s at the default
+# DL_GOAL_NAP of 4. Default 600s is ~35x that; the extra room is because the
+# nap is an argument and a longer nap is a legitimate run. Whole-script cap:
+# the cost is three server generations, two of which this script kills -9
+# itself, so an orphan from a botched kill is exactly the shape a per-command
+# cap would miss. Every curl also carries ENDURANCE_HTTP_BUDGET_S.
+# Override with DL_ENDURANCE_BUDGET_S.
 set -uo pipefail
+
+. "$(cd "$(dirname "$0")/../../tools" && pwd)/run-capped.sh"
+cap_self "${DL_ENDURANCE_BUDGET_S:-600}" dl_endurance "$@"
+
 cd "$(dirname "$0")/.."
 
 PORT="${DL_GOAL_PORT:-17491}"
@@ -35,7 +46,7 @@ start_server() {
     >"$WORK/server.log" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 50); do
-    if curl -sf "$BASE/idb/nothing" >/dev/null 2>&1 || curl -s -o /dev/null "$BASE/query" 2>/dev/null; then
+    if capped_curl "${ENDURANCE_HTTP_BUDGET_S:-30}" -sf "$BASE/idb/nothing" >/dev/null 2>&1 || capped_curl "${ENDURANCE_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/query" 2>/dev/null; then
       started=1
       break
     fi
@@ -52,7 +63,7 @@ post_program() {
   # want(tag, salt) is the demand seed; napper is a sh host that sleeps (a real
   # wall-clock yield) then emits its value; woke is the delayed derivation.
   local resp
-  resp=$(curl -s -w '\n%{http_code}' -X POST "$BASE/edb/program" \
+  resp=$(capped_curl "${ENDURANCE_LOAD_BUDGET_S:-900}" -s -w '\n%{http_code}' -X POST "$BASE/edb/program" \
     -H 'content-type: text/plain' --data-binary @- <<DL
 rel want(tag: text, salt: text).
 rel woke(tag: text, salt: text, value: text).
@@ -69,7 +80,7 @@ DL
 
 plant() { # plant <tag>
   local resp code
-  resp=$(curl -s -w '\n%{http_code}' -X POST "$BASE/edb/want" \
+  resp=$(capped_curl "${ENDURANCE_HTTP_BUDGET_S:-30}" -s -w '\n%{http_code}' -X POST "$BASE/edb/want" \
     -H 'content-type: application/json' \
     -d "{\"rows\":[{\"tag\":\"$1\",\"salt\":\"s-$1\"}]}")
   code="${resp##*$'\n'}"
@@ -77,7 +88,7 @@ plant() { # plant <tag>
 }
 
 woke_count() { # woke_count <tag>
-  curl -s "$BASE/idb/woke" | grep -o "awake-$1" | wc -l | tr -d ' '
+  capped_curl "${ENDURANCE_HTTP_BUDGET_S:-30}" -s "$BASE/idb/woke" | grep -o "awake-$1" | wc -l | tr -d ' '
 }
 
 wait_woke() { # wait_woke <tag> <seconds>

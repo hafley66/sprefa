@@ -1636,8 +1636,20 @@ sh write_file(path: text, document: text) -> (status: text) =
 # be on disk at the tick it first fired. With the digest in the answer the read
 # cannot be demanded before the render produced it, and it is re-demanded every
 # time the drawing changes.
+#
+# PER-RENDER BUDGET (timeout-gun lane, 2026-07-31). graphviz is a third-party
+# layout engine handed a graph this program derives, so its cost is a function
+# of data the program can change: a future edge family that makes layout
+# explode would hang the render, and from outside the rail a hung `dot` and a
+# hung server read identically. `$ATLAS_RUN_CAPPED` is v6/tools/run-capped.sh
+# in command form (fork + setpgrp + SIGALRM -> SIGKILL the group, exit 124);
+# `$ATLAS_DOT_BUDGET_S` is atlas.sh's default of 180s. Both arrive as
+# ENVIRONMENT names, like DL_EXTRACT_BIN and ATLAS_XREF_FACTS above, because
+# fillTemplate escapes `$` in any value it splices and a path arriving as a rel
+# column could never expand. A killed render writes no .svg, so the rail's own
+# "no .svg was rendered" check is what the caller sees.
 sh render_dot(dot_path: text, svg_path: text, source_digest: text) -> (status: text, svg_digest: text) =
-  `: {source_digest}; dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s %s' rendered "$(shasum -a 256 "$svg_path" | cut -c1-16)"`.
+  `: {source_digest}; "$ATLAS_RUN_CAPPED" "$ATLAS_DOT_BUDGET_S" dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s %s' rendered "$(shasum -a 256 "$svg_path" | cut -c1-16)"`.
 
 # The canvas graphviz actually chose. It is a property of the RENDER, not of
 # the graph, so it cannot be derived: the only honest source is the header

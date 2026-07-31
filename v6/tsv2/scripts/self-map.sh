@@ -57,12 +57,23 @@
 # renderer that read the .pl files itself would have produced the same visible
 # diff and proven nothing about the rail.
 
+# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 22s. Default 600s is
+# ~27x that. The cap is on the WHOLE script rather than a command inside it,
+# because the cost here is a backgrounded node server, the four swipl one-shots
+# that server spawns as `sh` hosts, and an HTTP poll loop -- none of which this
+# script waits on directly, and all of which live in the process group
+# `cap_self` kills. Override with SELF_MAP_BUDGET_S.
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TSV2="$(cd "$SCRIPT_DIR/.." && pwd)"
 V6="$(cd "$TSV2/.." && pwd)"
 ROOT="$(cd "$V6/.." && pwd)"
+
+. "$V6/tools/run-capped.sh"
+cap_self "${SELF_MAP_BUDGET_S:-600}" self_map "$@"
+
 PROGRAM="$V6/dl/fixtures/self-map.dl6"
 OUT="$V6/ARCH-MAP.md"
 SERVE="$TSV2/serve/main.ts"
@@ -115,13 +126,13 @@ done
 SERVER_PID=$!
 
 for ((attempt=1; attempt<=100; attempt++)); do
-  curl -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
+  capped_curl "${SELF_MAP_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
   kill -0 "$SERVER_PID" 2>/dev/null || die "server died: $(tail -30 "$WORK/server.log")"
   sleep 0.2
 done
-curl -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
+capped_curl "${SELF_MAP_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
 
-status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${SELF_MAP_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 
 # The source rels are readiness witnesses. The final two rels are the document
@@ -136,7 +147,7 @@ fetch_all() {
     [ "$first" = 1 ] || printf ',' >>"$target"
     first=0
     printf '"%s":' "$rel" >>"$target"
-    curl -s "$BASE/idb/$rel" >>"$target" || return 1
+    capped_curl "${SELF_MAP_HTTP_BUDGET_S:-30}" -s "$BASE/idb/$rel" >>"$target" || return 1
   done
   printf '}' >>"$target"
 }

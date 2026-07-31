@@ -107,4 +107,4 @@ The chain the atlas was built to answer: **12 hops** from the `run` subcommand t
 
 ## Fact volume behind the picture
 
-The drawn graph is a projection. Underneath it the program holds 258 TypeScript definition rows and 2735 prolog call rows, plus every call site, import specifier, shell token and SQL statement row the four hosts returned. Nothing is drawn that no fact supports, and the counts above are derived by `count` aggregates in the same file, never typed in.
+The drawn graph is a projection. Underneath it the program holds 260 TypeScript definition rows and 2744 prolog call rows, plus every call site, import specifier, shell token and SQL statement row the four hosts returned. Nothing is drawn that no fact supports, and the counts above are derived by `count` aggregates in the same file, never typed in.

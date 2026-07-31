@@ -66,11 +66,20 @@
 # is about, and a gate that compared only row COUNTS or only the final `bop q`
 # answer would have passed it, since the end state after that edit is identical
 # either way.
+# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 16s for 24 replayed
+# blocks. Default 600s is ~37x that. Whole-script cap, because the replay runs
+# a BACKGROUNDED `bop serve` inside a persistent shell that outlives every
+# individual block -- there is no single command to cap, and a doc block that
+# starts a server and never reaches its own teardown block is precisely the
+# leak this catches. Override with GETTING_STARTED_BUDGET_S.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 V6="$(cd "$HERE/../.." && pwd)"
 REPO="$(cd "$V6/.." && pwd)"
+
+. "$V6/tools/run-capped.sh"
+cap_self "${GETTING_STARTED_BUDGET_S:-600}" getting_started "$@"
 DOC="$V6/GETTING-STARTED.md"
 
 [ -f "$DOC" ] || { printf 'FAIL  no doc at %s\n' "$DOC"; exit 1; }

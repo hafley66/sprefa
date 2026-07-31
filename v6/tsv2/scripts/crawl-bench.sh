@@ -8,6 +8,19 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TSV2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$TSV2_DIR/../.." && pwd)"
+
+# BUDGET (timeout-gun lane, 2026-07-31). Measured walls over two runs on this
+# machine: 84s and 138s -- and the spread is the point, because BOTH legs are
+# crawls over a corpus whose size is an argument. Default 3600s (1h) is ~26x
+# the slower measurement, deliberately loose: the default corpus here is
+# ~/orgs/grafana and a bigger one is a supported use, so a tight cap would turn
+# a legitimate large run into a fake timeout. Override with
+# CRAWL_BENCH_BUDGET_S; each HTTP call also carries CRAWL_HTTP_BUDGET_S.
+#
+# The cap sits AFTER the nice re-exec above, so the capped process group is the
+# niced one that does the work rather than the shell that stepped aside.
+. "$TSV2_DIR/../tools/run-capped.sh"
+cap_self "${CRAWL_BENCH_BUDGET_S:-3600}" crawl_bench "$@"
 CORPUS="${CRAWL_BENCH_CORPUS:-$HOME/orgs/grafana}"
 DEFAULT_V6_CAP=8
 V6_CAP="$DEFAULT_V6_CAP"
@@ -245,7 +258,7 @@ run_v5_leg() {
 }
 
 json_rows() {
-  curl -fsS "$1" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["rows"]))'
+  capped_curl "${CRAWL_HTTP_BUDGET_S:-60}" -fsS "$1" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["rows"]))'
 }
 
 # Settle on repo_file reaching the corpus's own file count, then on `extracted`
@@ -291,7 +304,7 @@ start_server() {
   ) >"$log" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 200); do
-    if curl -s -o /dev/null "http://127.0.0.1:$port/ticks"; then return 0; fi
+    if capped_curl "${CRAWL_HTTP_BUDGET_S:-60}" -s -o /dev/null "http://127.0.0.1:$port/ticks"; then return 0; fi
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
       tail -20 "$log" >&2
       return 1
@@ -366,7 +379,7 @@ run_v6_leg() {
     fail "v6 server failed to boot"
   fi
   base="http://127.0.0.1:$port"
-  status="$(curl -fsS -o "$WORK/load.json" -w '%{http_code}' \
+  status="$(capped_curl "${CRAWL_HTTP_BUDGET_S:-60}" -fsS -o "$WORK/load.json" -w '%{http_code}' \
     -X POST --data-binary @"$V6_PROGRAM" "$base/program")"
   [ "$status" = 200 ] || { tail -20 "$server_log" >&2; stop_server; fail "v6 program load failed"; }
 
@@ -380,7 +393,7 @@ batch = [{"rel": "want_repo", "sign": "add", "row": [root, glob]}
          for root in roots for glob in globs]
 json.dump({"batch": batch}, sys.stdout)
 PY
-  curl -fsS -X POST -H 'content-type: application/json' \
+  capped_curl "${CRAWL_HTTP_BUDGET_S:-60}" -fsS -X POST -H 'content-type: application/json' \
     --data-binary @"$WORK/v6-arrivals.json" "$base/arrivals" >/dev/null
 
   if ! settled="$(wait_for_rows "$base" "$total_files")"; then

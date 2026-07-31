@@ -3,11 +3,27 @@
 # Arguments use the house layers x width convention: layers selects s1/s2/s3,
 # width is the ROWS value. The worker measures TickFold; this wrapper performs
 # generation, compile_fixture/4, oracle gating, warmup, timeout, and RSS merge.
+#
+# THE TIMEOUT (timeout-gun lane, 2026-07-31): both 600s caps below used to be
+# `perl -e 'alarm 600; exec @ARGV'`, which is the ORPHANING form -- `exec`
+# replaces perl with the command, so SIGALRM kills that one process and every
+# child it spawned survives, reparented, still burning a core beside the next
+# cell being measured. bench-cli's header carries the receipt that caught it
+# (an orphaned swipl running 3m past its cap while the next cell was timed).
+# Both now go through v6/tools/run-capped.sh's `run_capped`: fork + setpgrp +
+# SIGALRM -> `kill -KILL -pgid`, exit 124. Ledger row perl_alarm_orphan.
+#
+# The exit code changes with it, and the DNF reason below follows: SIGALRM
+# reached the worker as signal 14 (status 142), where a group kill reports the
+# coreutils convention 124.
 set -uo pipefail
 
 sdir="$(cd "$(dirname "$0")" && pwd)"
 bdir="$(cd "$sdir/.." && pwd)"
 root="$(cd "$bdir/../../.." && pwd)"
+
+. "$root/v6/tools/run-capped.sh"
+worker_budget_s="${TSV2_GEN_BUDGET_S:-600}"
 out="$bdir/out"
 shape="s$1"
 rows="$2"
@@ -44,7 +60,7 @@ run_worker() {
   if [[ "$mode" != measured ]]; then record_path="/dev/null"; fi
   local stdout_path="$out/tsv2-${shape}-${rows}.${mode}.out"
   local stderr_path="$out/tsv2-${shape}-${rows}.${mode}.err"
-  /usr/bin/time -l perl -e 'alarm 600; exec @ARGV' \
+  run_capped "$worker_budget_s" /usr/bin/time -l \
     node --max-old-space-size="$tsv2_heap_mb" --experimental-transform-types \
     "$root/v6/tsv2/scripts/scale-bench.ts" \
     "$shape" "$rows" "$record_path" "$log_path" >"$stdout_path" 2>"$stderr_path"
@@ -56,8 +72,11 @@ run_worker() {
     return 0
   fi
   if [[ "$status" -ne 0 ]]; then
-    if [[ "$status" -eq 142 ]]; then
-      reason="$mode timeout after 600 seconds"
+    # 124 is run_capped's budget-exceeded exit (the coreutils convention). 142
+    # was the old orphaning form's SIGALRM-to-the-worker code and is kept so an
+    # older record file still reads as a timeout rather than as a mystery.
+    if [[ "$status" -eq 124 || "$status" -eq 142 ]]; then
+      reason="$mode timeout after $worker_budget_s seconds"
     else
       reason="$mode worker exit status $status"
     fi
@@ -72,7 +91,7 @@ run_worker() {
 }
 
 if [[ "$shape" == s1 && "$rows" -eq 1000 ]]; then
-  if ! perl -e 'alarm 600; exec @ARGV' /opt/homebrew/bin/swipl -q \
+  if ! run_capped "$worker_budget_s" /opt/homebrew/bin/swipl -q \
       -l "$root/v6/prolog/conformance/ticklog.pl" -l "$term" \
       -g 'emit(scale_bench)' -g halt >"$oracle" 2>"$out/tsv2-s1-1000.oracle.err"; then
     echo "TSV2_FATAL oracle execution failed for s1/1000" >&2

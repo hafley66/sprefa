@@ -120,6 +120,7 @@ flowchart TD
     direction TB
     c_binddeclx2f2["bind_decl/2"]
     c_probex2f4["probe/4"]
+    c_scanx2fvariadic["scan/variadic<br/>reserved"]
     c_sgpatternx2f3["sg_pattern/3<br/>refused"]
     c_shdeclx2f4["sh_decl/4"]
     c_tsqueryx2f1["ts_query/1"]
@@ -147,9 +148,9 @@ flowchart TD
 | `sign` | 1 | 1 | 0 | 0 | yes |
 | `sugar` | 3 | 3 | 0 | 0 | yes |
 | `time` | 7 | 3 | 0 | 4 |  |
-| `world` | 5 | 4 | 1 | 0 |  |
+| `world` | 6 | 4 | 1 | 1 |  |
 ## 3. The build DAG open frontier
-`task/3` in `v6/prolog/ARCH.pl`: 202 tasks, 120 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
+`task/3` in `v6/prolog/ARCH.pl`: 213 tasks, 126 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
 ```mermaid
 flowchart TD
   t_bench_cli["bench_cli<br/>done"]
@@ -158,6 +159,8 @@ flowchart TD
   t_byte_span_flattener["byte_span_flattener<br/>closed"]
   t_c7_durable_carry["c7_durable_carry<br/>unbuilt"]
   t_clock_check["clock_check<br/>active"]
+  t_clock_check_path_blowup["clock_check_path_blowup<br/>unbuilt"]
+  t_clock_checker_full["clock_checker_full<br/>done"]
   t_clock_checker_proof_payoff["clock_checker_proof_payoff<br/>labbed"]
   t_clock_inference["clock_inference<br/>parked"]
   t_cold_author_defects["cold_author_defects<br/>unbuilt"]
@@ -229,6 +232,7 @@ flowchart TD
   t_clock_check --> t_clock_inference
   t_clock_check --> t_higher_order_rel_scan
   t_clock_check --> t_island_partition
+  t_clock_checker_full --> t_clock_check_path_blowup
   t_comment_rail_wiring --> t_text_expression_parity
   t_csp_idioms_lab --> t_per_row_consumption
   t_csp_idioms_lab --> t_point_free_lab
@@ -312,16 +316,16 @@ flowchart TD
 | `active` | 6 |
 | `canonical_plan` | 2 |
 | `closed` | 4 |
-| `done` | 119 |
+| `done` | 126 |
 | `labbed` | 21 |
 | `labbing` | 4 |
 | `parked` | 1 |
 | `superseded` | 2 |
-| `unbuilt` | 43 |
-**Ready** (open, every dependency done): 57 tasks. **Blocked**: 26 tasks.
+| `unbuilt` | 47 |
+**Ready** (open, every dependency done): 61 tasks. **Blocked**: 26 tasks.
 <details><summary>the ready set</summary>
 
-`amplification_sensors`, `analysis_oracle_exam`, `bigint_seam_normalize`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `cold_author_defects`, `compile_speed_regression`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `design_archaeology`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `json_pattern_expand`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `oracle_scale_ceiling`, `ordered_aggregate_lab`, `pathspec_brace_refusal`, `per_row_consumption`, `perl_alarm_orphan`, `point_free_lab`, `pre_registry_drift`, `purity_split`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `scan_spelling_card`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `type_matrix_lab`, `v5_lsp_exit_hang`
+`amplification_sensors`, `analysis_oracle_exam`, `assign_unknown_functor_escape`, `atlas_negation_zero_rows`, `bigint_seam_normalize`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check_path_blowup`, `clock_check`, `cold_author_defects`, `compile_speed_regression`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `design_archaeology`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `json_pattern_expand`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `oracle_scale_ceiling`, `ordered_aggregate_lab`, `pathspec_brace_refusal`, `per_row_consumption`, `perl_alarm_orphan`, `point_free_lab`, `pre_registry_drift`, `purity_split`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `scan_spelling_card`, `schema_import_epic`, `simplify_wave`, `sqlite_reserved_rel_name`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `type_matrix_lab`, `v5_lsp_exit_hang`
 
 </details>
 **`task/3` state contradictions.** `task_state_conflict` counts states per task name; a name with more than one is a row that was appended when its state changed instead of rewritten. the `just arch` `go` check does not catch this -- it checks the dependency graph is acyclic and total, which a duplicated row does not break.

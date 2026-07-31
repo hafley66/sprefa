@@ -2,11 +2,22 @@
 # v1 generated-program runner for bench/run.sh.
 # s2 and s3 are emitted by the existing literal-TS Prolog emitter and run via
 # evalProgramSql. s1 has no keyed-replace edge equivalent in the v1 AST.
+#
+# THE TIMEOUT (timeout-gun lane, 2026-07-31): the 600s cap below used to be
+# `perl -e 'alarm 600; exec @ARGV'`, the ORPHANING form -- `exec` replaces perl
+# with the command, so SIGALRM kills that one process and every child it
+# spawned survives to steal a core from the next cell being measured
+# (bench-cli's header carries the receipt). It now goes through
+# v6/tools/run-capped.sh's `run_capped`: fork + setpgrp + `kill -KILL -pgid`,
+# exit 124. Ledger row perl_alarm_orphan.
 set -uo pipefail
 
 sdir="$(cd "$(dirname "$0")" && pwd)"
 bdir="$(cd "$sdir/.." && pwd)"
 root="$(cd "$bdir/../../.." && pwd)"
+
+. "$root/v6/tools/run-capped.sh"
+worker_budget_s="${V1_GEN_BUDGET_S:-600}"
 out="$bdir/out"
 shape="s$1"
 rows="$2"
@@ -40,7 +51,7 @@ run_worker() {
   if [[ "$mode" != measured ]]; then record_path="/dev/null"; fi
   local stdout_path="$out/v1-${shape}-${rows}.${mode}.out"
   local stderr_path="$out/v1-${shape}-${rows}.${mode}.err"
-  /usr/bin/time -l perl -e 'alarm 600; exec @ARGV' \
+  run_capped "$worker_budget_s" /usr/bin/time -l \
     node --max-old-space-size="$v1_heap_mb" --experimental-transform-types \
     "$root/v6/sprefa-store/js/src/bench/v1_scale_bench.ts" \
     "$shape" "$rows" "$record_path" >"$stdout_path" 2>"$stderr_path"
@@ -53,8 +64,11 @@ run_worker() {
   fi
   if [[ "$status" -ne 0 ]]; then
     local reason
-    if [[ "$status" -eq 142 ]]; then
-      reason="$mode timeout after 600 seconds"
+    # 124 is run_capped's budget-exceeded exit (the coreutils convention); 142
+    # was the old orphaning form's SIGALRM code, kept so older record files
+    # still read as timeouts.
+    if [[ "$status" -eq 124 || "$status" -eq 142 ]]; then
+      reason="$mode timeout after $worker_budget_s seconds"
     else
       reason="$mode worker exit status $status"
     fi
