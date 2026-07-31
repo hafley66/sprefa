@@ -42,9 +42,17 @@ export type { EdgeRow, NodeRow, SpanRow, SqliteDb };
 /** The one constructor for that connection: every caller (dl included) opens SQLite
  *  through this alias, so `@libsql/client` is imported at runtime by this file alone
  *  (the header names the `Client` TYPE, which erases at build). `url` is passed
- *  through verbatim (`file:/abs/path.sqlite` or `:memory:`). */
+ *  through verbatim (`file:/abs/path.sqlite` or `:memory:`).
+ *
+ *  intMode stays the driver default ("number"): emitted modules project driver
+ *  rows RAW at several sites (ordered-occurrence arms, edge projections) and a
+ *  global "bigint" leaks BigInt into JSON.stringify there (3 fixtures threw
+ *  "Do not know how to serialize a BigInt"). Wide ints are refused at the
+ *  value boundary (compile.pl world-shape check + oracle + rowValueFromSql);
+ *  flipping this to "bigint" requires normalizing at the SqlRunner seam
+ *  first so no raw reader ever sees one. */
 export function open_db(url: string): SqliteDb {
-  return createClient({ url, intMode: "bigint" });
+  return createClient({ url });
 }
 
 /** Widest table is `node` at 7 columns; 100 rows/statement keeps bound params under 999. */
