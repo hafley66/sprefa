@@ -654,6 +654,26 @@ test(accepts_compound_pattern_on_derived_rel) :-
                        demanded(route_data(RouteId), _), route_row(RouteId, Body)) ]),
     check_supported_subset(Prog).
 
+% An EDGE trigger argument is already refused, and more precisely, as
+% trigger_arg_not_var: a trigger position must be a plain variable, full stop.
+% The first draft of the refusal above walked edge bodies too and silently
+% restated state_machine.pl:async_state_machine_with_pattern_scan and
+% same_tick_error_then_fresh_chains_arms as the new class, rewriting their
+% dl_view along with it. This pins the split of ownership, not just the fact
+% that something refuses.
+% trigger_arg_not_var is thrown by lower.pl:compile_trigger_bound/4, LATER than
+% check_supported_subset/1, so the gate has to stay silent here for the
+% lowering to reach its own sharper refusal at all.
+test(edge_trigger_compound_keeps_its_own_refusal,
+     [throws(unsupported_construct(trigger_arg_not_var(error(_))))]) :-
+    Prog = prog([ kind(fetch_result/2, log), keep(fetch_result/2, all),
+                  keyed(phase/2, [1]) ],
+                [ (phase(Endpoint, idle) <+ fetch_result(Endpoint, error(_))) ]),
+    check_supported_subset(Prog),
+    Term = fixture(edge_trigger_compound, Prog, [], [], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
 % bool_lit/1 is compound and is NOT a destructure: compile_pattern_arg/7 has
 % its own branch for it, ahead of the compound branch, and emits a plain
 % column literal with no json1 anywhere. bool_relation_negation_is_two_valued

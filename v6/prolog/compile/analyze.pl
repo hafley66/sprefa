@@ -1234,11 +1234,15 @@ check_supported_subset_expanded(Program) :-
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
-    % LAST of the per-rule capability checks on purpose. Every shape this could
-    % name is already named by an earlier class in the corpus
-    % (trigger_arg_not_var on the two edge fixtures, dynamic_relation_name on
-    % higher_order_call_over_atom_rejected), and running after them keeps those
-    % diagnostics exactly where they are.
+    % LAST of the per-rule capability checks on purpose: an earlier class that
+    % also fits a program keeps its diagnostic. MEASURED, not assumed -- the
+    % first draft of this check walked EDGE bodies too and silently restated
+    % `trigger_arg_not_var(fresh(_,_))` as this class on
+    % state_machine.pl:async_state_machine_with_pattern_scan and
+    % same_tick_error_then_fresh_chains_arms, rewriting their dl_view along
+    % with it. Level-only is also where the defect is: an edge trigger
+    % argument must be a plain variable, so trigger_arg_not_var owns that
+    % position, and it owns it more precisely.
     check_no_compound_pattern_on_arrival_rel(Decls, Rules),
     shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
 
@@ -1447,17 +1451,26 @@ check_no_edge_head_conflict_risk(Decls, Rules) :-
 % Mirroring this into 0_program_check.pl would delete a language capability to
 % hide a lowering hole.
 %
-% NAMED RESIDUE, uncovered on purpose: the test is one hop, "is this ref an
-% arrival target". A compound that arrives into a world-fed rel, is copied
-% whole into a DERIVED rel by a plain variable, and is destructured THERE
-% carries the same term text and would crash the same way. Covering it needs a
-% per-column encoding dataflow, which is the struct plane's own answer; no
-% corpus program has the shape (measured over all 265 fixtures), and the
-% one-hop test is what keeps switch_as_keyed_replace compiling.
+% TWO NAMED RESIDUES, both uncovered on purpose, both measured over all 265
+% fixtures as absent from the corpus, and both deleted by the same arc:
+%
+%   ONE HOP. The test is "is this ref an arrival target". A compound that
+%   arrives into a world-fed rel, is copied whole into a DERIVED rel by a
+%   plain variable, and is destructured THERE carries the same term text and
+%   would crash the same way. Covering it needs a per-column encoding
+%   dataflow, which is the struct plane's own answer; the one-hop test is what
+%   keeps scopes.pl:switch_as_keyed_replace compiling.
+%
+%   LEVEL ONLY. Edge bodies reach compile_pattern_arg/7 too (through
+%   compile_atom_args/7 on the trigger and compile_positive_uses/6 on the
+%   joined atoms), so a compound pattern on an edge JOINED atom over a
+%   world-fed rel has the same hole. The TRIGGER position is already refused,
+%   and more precisely, as trigger_arg_not_var; the joined position is not.
 check_no_compound_pattern_on_arrival_rel(Decls, Rules) :-
     arrival_target_refs(Rules, ArrivalRefs),
     type_definitions(Decls, Types),
     forall(( member(Rule, Rules),
+             rule_is_level(Rule),
              rule_body(Rule, Body),
              body_ref_uses(Body, Uses),
              member(use(Ref, Args, _Sign, _Marking), Uses),
