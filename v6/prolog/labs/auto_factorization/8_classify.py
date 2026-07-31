@@ -1,18 +1,8 @@
 """Classify every disagreement between the derived prefix and the hand one.
 
-Three buckets, and which bucket a row lands in is decided by the dependency
-closure rather than by taste:
-
-  HAND ERROR      some dependency path A -> B has hand(A) < hand(B). The hand
-                  numbering contradicts itself; nothing about the metric is
-                  needed to see it.
-  SCALE SHIFT     numbers differ, every dependency-implied order still holds
-                  under the hand numbering. The hand ladder is looser or offset,
-                  which is a presentation difference and not an error either way.
-  METRIC BLIND    derived depth is 0 with zero in-package dependencies while the
-                  hand number is high. Candidate for a dependency the fact base
-                  cannot see; the evidence column carries the out-of-package
-                  import count so it can be adjudicated rather than asserted.
+Bucket order is load-order sensitive: `agree` is tested before `hand_error` so a
+file whose number happens to be right is not convicted for appearing on the head
+side of someone else's violation.
 """
 import json
 import re

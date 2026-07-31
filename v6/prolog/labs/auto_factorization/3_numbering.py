@@ -1,22 +1,8 @@
-"""Q6: derive the numeric file prefix from dependency depth and classify every
-disagreement with the hand-assigned prefix.
+"""Q6 referee: derive the numeric file prefix from dependency depth.
 
-The classification rule, stated once because everything below is mechanical:
-
-  a hand prefix is WRONG when a dependency edge runs UPHILL. File A importing
-  file B asserts B is more fundamental than A, so hand(B) <= hand(A) must hold.
-  An edge with hand(B) > hand(A) is a contradiction the numbering itself makes,
-  decidable without any opinion about layering.
-
-  Everything else is UNCONSTRAINED: the metric orders two files only when a
-  dependency path connects them. Where no path runs either way, a difference
-  between derived and hand is not an error on either side, and calling it one
-  would be the metric overclaiming.
-
-  A METRIC error is a third case: derived and hand disagree, no path exists in
-  the fact base, and reading the file shows a real dependency the fact base
-  cannot see (type-only import erased at runtime, dynamic import, a module
-  named in a string). Those are listed for hand adjudication, not auto-called.
+The prefix is a DENSE rank, so files at one depth share a number; the tiebreak
+orders the listing inside a layer and never splits it. 8_classify.py owns the
+disagreement buckets.
 """
 import json
 import re

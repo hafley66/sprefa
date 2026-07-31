@@ -113,7 +113,7 @@
         0,
         1
       ],
-      "on": "v6/prolog/1_host_expand.pl"
+      "on": "v6/prolog/1_expansion.pl"
     },
     {
       "depends": "v6/prolog/0_refusal_messages.pl",
@@ -121,7 +121,7 @@
         0,
         1
       ],
-      "on": "v6/prolog/1_expansion.pl"
+      "on": "v6/prolog/1_host_expand.pl"
     }
   ],
   "rows": [

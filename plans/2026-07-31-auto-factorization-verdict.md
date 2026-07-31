@@ -459,7 +459,7 @@ interesting one for a different reason: it is the only cut that REDUCES depth
 ### 4b. Symbol granularity, where the cross-language hops live
 
 The atlas symbol graph minus `resides` (containment, not dataflow): 421 nodes,
-626 edges, 200-plus file-to-file boundaries. Top by edge reduction, minimum 3
+626 edges, 131 file-to-file boundaries. Top by edge reduction, minimum 3
 spliced edges:
 
 | cut | spliced | tails | heads | edge delta | max cluster |
@@ -610,7 +610,7 @@ genuinely absent is ordering as an OUTPUT, which no metric here needs.
 ## 5. Auto-search: exhaustive, and the ranking is degenerate on this codebase
 
 The search space here is small enough that "smallest correct first" means no
-search at all: 6 folder boundaries at file granularity, 200-plus at symbol
+search at all: 6 folder boundaries at file granularity, 131 at symbol
 granularity, 45 bridge edges, and 62 files x folder-in-package relocations. All
 enumerated, none sampled.
 
@@ -981,7 +981,7 @@ uncapped runs. Scratch output stayed in the lab's own `out/`; no daemon, no
 | R3b | Q3 | `lpa.dl6` through the reference engine | `not_stratified`, the named refusal |
 | R3c | Q3 | `components.dl6` vs `networkx.connected_components` | matches |
 | R3d | Q3 | `min_text_repro.dl6` through both doors | compiler names it, engine crashes |
-| R4 | Q4 | exhaustive folder-boundary cuts, both granularities | 6 file-level, 200+ symbol-level, table in 4a/4b |
+| R4 | Q4 | exhaustive folder-boundary cuts, both granularities | 6 file-level, 131 symbol-level, table in 4a/4b |
 | R4b | Q4 | dl6 cut algebra vs networkx applied cuts | `edges_after` 6/6 exact, depth 5/6 exact, cycle flag exact on the sixth |
 | R5 | Q5 | exhaustive relocation search plus exact min-cut | 2-move and 9-move minima, section 4c |
 | R5b | Q5 | `dense_rank` + `competition_rank` + `best_cut` in dl6 | 21 candidates, both ranks exact, best cut agrees |
