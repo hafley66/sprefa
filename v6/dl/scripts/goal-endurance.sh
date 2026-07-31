@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# THE END GOAL, EXECUTABLE (user ask 2026-07-27: "define it in bash so we know
-# it works").
+# Endurance receipt for durable delayed derivations.
 #
 #   A dl program's time-delayed derivations are DURABLE. A value that is still
 #   "in the future" when the server process dies is delivered after reboot,
@@ -14,12 +13,7 @@
 #   2  exactly-once: another reboot; no re-fire (witness cache holds); count==1
 #
 # Exit 0 = the end goal exists. Any phase failing prints WHERE the chain broke.
-# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 17s at the default
-# DL_GOAL_NAP of 4. Default 600s is ~35x that; the extra room is because the
-# nap is an argument and a longer nap is a legitimate run. Whole-script cap:
-# the cost is three server generations, two of which this script kills -9
-# itself, so an orphan from a botched kill is exactly the shape a per-command
-# cap would miss. Every curl also carries ENDURANCE_HTTP_BUDGET_S.
+# Whole-script budget; every curl also carries ENDURANCE_HTTP_BUDGET_S.
 # Override with DL_ENDURANCE_BUDGET_S.
 set -uo pipefail
 

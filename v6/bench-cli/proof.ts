@@ -1,36 +1,4 @@
-/**
- * proof.ts — the reference-validity proof the promotion rule consumes.
- *
- * Ruling `bench_reference = proven_engine_reference` (rulings.pl, user
- * 2026-07-31): the big-scale referee is a pinned engine that EARNS reference
- * status by being byte-proven against the swipl oracle over the entire
- * oracle-reachable corpus. This file reads that proof; it does not create it.
- *
- * WHY IT READS RATHER THAN RUNS. The proof already exists on disk as the
- * sweep's own artifacts -- `v6/prolog/compile/out/manifest.json` (compile
- * bucket per fixture, written by sweep.pl) and `out/run-results.json` (tick-log
- * bucket + final-state bucket per compiled fixture, written by
- * v6/tsv2/scripts/sweep.ts). Re-running 191 fixtures inside a bench run would
- * be a second, slower copy of `just sweep` whose only new information is that
- * the sweep still passes. So the breadth half of the proof is consumed, with
- * the exact bytes it was read from identified by `sweep_sha`.
- *
- * WHAT THIS FILE DOES NOT PROVE, and who does. Artifacts are a claim about the
- * tree AT SWEEP TIME. Nothing here can tell whether the compiler or the runtime
- * moved since. That half of the promotion rule is proved by the bench run
- * itself and lives in bench.sh: every case where the swipl oracle DID reach is
- * graded against swipl in the same run, by the same adapter that would act as
- * referee at scale, and a single `wrong` there refuses the whole reference
- * tier. Breadth from the artifacts, currency from the run. Neither alone is
- * the promotion rule; CONTRACT.md section 7 states both halves together.
- *
- * Exit code is 0 whether the proof is valid or not: validity is DATA the
- * harness reads (`.valid`), not a signal that this script failed. The gate
- * that turns an invalid proof into a red run is report.ts's, so that the
- * standings are written first and the reader can see WHICH cells were lost.
- *
- * Usage: node --experimental-transform-types proof.ts [outPath]
- */
+/** Reads the sweep artifacts used by the reference-promotion gate. */
 
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -85,11 +53,7 @@ function tally(buckets: readonly string[]): Readonly<Record<string, number>> {
   return counts;
 }
 
-/** Identity of the exact proof consumed, not a checksum to compare against a
- *  stored value: SCOREBOARD.md records that manifest.json is NOT byte-stable
- *  across sweeps (27 lines carry raw prolog variable names that shift run to
- *  run), so this sha changes whenever the sweep is re-run and that is correct
- *  -- it names WHICH sweep these standings leaned on. */
+/** Identifies the exact manifest and run-results pair consumed. */
 function sweepSha(): string {
   const hash = createHash("sha256");
   hash.update(readFileSync(MANIFEST));

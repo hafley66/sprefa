@@ -1,14 +1,11 @@
 /**
- * 2_binds.ts — LIVE world PUSH sources: `bind interval(...)` (runtime-bridge
- * arc) and `bind watch(...)` (golden plan phase 2, extraction live). Both are
- * the same shape -- a cold observable of world events, each window committing
- * one arrival batch -- so they share a file.
+ * Live interval and filesystem watch bind sources.
  *
  *   interval(periodMs, scheduler) -> map(toBucketRow) -> mergeMap(submit)
  *   watchSource(root) -> bufferTime(coalesceMs) -> map(diffAgainstLast) -> submit
  *
- * WHICH INSTANCES. The bind DECLARATION authorizes a world source; the
- * program's own RULES say which instances it consumes, as literals in the bind
+ * The bind declaration authorizes a world source; the program's rules say
+ * which instances it consumes, as literals in the bind
  * atom's first column (registry.pl calls it the configuration column):
  * `interval(300, Bucket)`, `watch("src/**\/*.ts", Path, Digest)`. emit_ts.pl
  * collects those into the emitted plan's `literals`, so this file starts
@@ -16,28 +13,22 @@
  * bind and reads no literal gets `literals: []` and therefore no live source at
  * all -- an honest zero, never an invented cadence or an invented glob.
  *
- * This closes v6/dl's own recorded gap in passing: `1_binds.ts` reads its
- * `clock_period` config from a rel ONCE at subscribe time, so a period added
- * mid-run spins nothing until reload. Here the cadence is a COMPILE-TIME fact
- * of the program text, so "read once per program load" is not a gap, it is the
- * whole truth: a new period is a new program.
+ * The cadence is a compile-time fact of the program text and is read once per
+ * program load.
  *
- * BUCKET LAW, unchanged from the shipped clock bind: floor(epoch_secs/period),
+ * Buckets use `floor(epoch_secs / period)`,
  * never a process-local counter, so a restart does not replay bucket 0,1,2...
  * The scheduler seam moves the FIRING; the bucket VALUE stays real wall clock
  * (a TestScheduler run therefore produces real-clock bucket values, which is
  * why the receipt asserts firing COUNT and column shape, not bucket numbers).
  *
- * TEARDOWN is unsubscription and nothing else: an rxjs `interval`'s unsubscribe
+ * Teardown is unsubscription: an rxjs `interval` clears its timer and the
  * IS the underlying clearInterval, and the watch source's unsubscribe aborts
  * the `fsPromises.watch` iterator. A program swap's `switchMap` therefore stops
  * every world source with no Subscription field and no dispose() here.
- *
- * ── THE WATCH BIND ──────────────────────────────────────────────────────────
- *
- * WHAT CROSSES THE SEAM (slot SLOT-P2-WATCHER-EVENT-SHAPE, decided here): NOT
- * the backend's event vocabulary. node's `fs.watch` says "rename"/"change",
- * @parcel/watcher says "create"/"update"/"delete", and neither word survives
+ * The watcher seam carries
+ * paths and digest-based arrival signs instead of backend event vocabulary.
+ * The backend's create/update/delete vocabulary does not survive
  * `NodeWatchSource` -- what leaves it is a bare PATH, and what leaves this
  * runner is one `(glob, path, digest)` row carrying an arrival SIGN. Three
  * consequences, all of them the reason for the choice:
@@ -53,8 +44,7 @@
  *   - there is no null and no "kind" column: presence rides the delta sign,
  *     which is the language's own lifecycle decomposition (TICK-MODEL.md §3).
  *
- * BOOT RECONCILE, the sanctioned resolution of extraction ambiguity A12
- * (plans/2026-07-29-watch-boot-reconcile-brief.md): once per watched glob at
+ * Boot reconciliation runs once per watched glob at
  * subscribe, read the engine's durable watch rows and compare them with the
  * tracked worktree set from `git ls-files`. Their difference is one arrival
  * batch, and the reconciled rows seed `lastDigest`. This is the named one-shot
@@ -62,19 +52,12 @@
  * paths from the watch source, sign from digest comparison, and `bufferTime`
  * coalescing.
  *
- * ONE GLOB DIALECT, both halves (ruling `glob_dialect =
- * node_matcher_both_halves`, user 2026-07-31). `git ls-files` supplies the
+ * One glob matcher serves both boot and live paths. `git ls-files` supplies the
  * tracked SET and nothing else -- it is called with no pathspec -- and
  * membership is decided for boot and for live by the same `matchesWatchGlob`
- * call. This was a live defect until that ruling: boot selected with git
- * pathspec, live with `path.matchesGlob`, and the two disagreed on 170 of the
- * 242 globs in the v5 corpus (plans/2026-07-31-scan-spelling-card.md §2). The
- * disagreement was silent and self-erasing -- a file boot dropped appeared on
- * its first edit and was reconciled away again on the next restart. The
- * boot==live property is now a test (tests/watchGlobDialect.test.ts), not a
- * comment.
+ * call. The boot==live property is covered by tests/watchGlobDialect.test.ts.
  *
- * COALESCE WINDOW = 100ms by default (`IServeConfig.watchCoalesceMs`), on the
+ * The coalesce window is 100ms by default (`IServeConfig.watchCoalesceMs`), on the
  * injected scheduler so a test drives it on virtual time. `bufferTime` and not
  * `debounceTime`: a debounce never emits while a large `git checkout` keeps
  * firing, while a fixed window is bounded on BOTH sides -- a 2-second checkout

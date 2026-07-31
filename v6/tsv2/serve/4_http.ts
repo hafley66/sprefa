@@ -1,7 +1,5 @@
 /**
- * 4_http.ts — the served tsv2 engine's http front. curl is the CLI; node:http,
- * localhost, no framework (four literal path shapes; a router library would be
- * more machinery than the problem).
+ * HTTP front for the served tsv2 engine. Routes are literal node:http paths.
  *
  *   POST /program    text/plain .dl6 -> compile -> boot -> run
  *                    200 {loaded, rels, arrivalTargets, hosts, binds} | 400 {error}
@@ -15,23 +13,22 @@
  *                    dbstat pass, omitted or empty means PRAGMA-only.
  *   anything else    -> 404 {error, routes}
  *
- * THE APP IS ONE COLD OBSERVABLE (`serveTsv2`), subscribed exactly once, in
- * serve/main.ts. Same shape v6/dl's `serveDl` settled on, for the same reasons:
+ * `serveTsv2` is one cold observable subscribed exactly once in serve/main.ts:
  *
  *   httpServer$ -> mergeMap(server =>
  *        merge( programExchanges$ -> switchMap(runProgram$)   the program's lifetime
  *             , otherExchanges$   -> mergeMap(routeRequest)   one inner per request
  *             , of(listening) ))
  *
- * `switchMap` is what makes a program swap work under one subscription: an
+ * `switchMap` makes a program swap work under one subscription: an
  * accepted program unsubscribes the previous program's whole branch -- its tick
  * loop, its host effects, and its bind timers (an rxjs interval's unsubscribe
  * IS clearInterval) -- and subscribes the new one. Compilation runs BEFORE the
  * switch, so a program that does not compile is answered 400 and the running
  * one keeps running.
  *
- * ARRIVAL VALIDATION lives here, not in the engine: a malformed POST is a
- * client error (400). A fault raised by the tick loop ITSELF is a 500 and
+ * Arrival validation lives here: a malformed POST is a client error (400). A
+ * tick-loop fault is a 500 and
  * reaches only the submitter that caused it -- the tick lane absorbs it and
  * keeps turning (serve/3_engine.ts runBatch, tests/engineFault.test.ts). The
  * two must not be mixed: a 400 for an engine bug would blame the client, and a
@@ -122,9 +119,7 @@ function readBody(request: http.IncomingMessage): Promise<string> {
   });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Program lifetime.
-// ─────────────────────────────────────────────────────────────────────────────
 
 interface ProgramLoad {
   readonly program: IServedProgram;

@@ -1,4 +1,4 @@
-/** DlRuntime: one sqlite connection, one tick loop, one delta stream.
+/** DlRuntime: one SQLite connection, one tick loop, one delta stream.
  *
  *    commits$ -> concatMap(applyEdbTxn) -> concatMap(applyDerivedTxn)
  *             -> tap(clearScratchRels) -> mergeMap(events) -> share()   = deltas$
@@ -6,7 +6,7 @@
  *  concatMap is the lock. share() is the only fan-out. The fixpoint (evalProgramSql) is
  *  awaited inside applyDerivedTxn, so a settled answer is the only thing anyone observes.
  *
- *  THE TICK LOOP TURNS ONLY WHILE SOMETHING SUBSCRIBES `deltas$`. This class holds no
+ *  The tick loop turns only while something subscribes `deltas$`. This class holds no
  *  subscription of its own (one-subscribe law): the app graph in 6_http.ts hands
  *  `deltas$` to main.ts's single terminal subscription for the life of the program, and
  *  a test fixture does the same for the life of the test. `share()` multicasts that one

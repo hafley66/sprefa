@@ -1,9 +1,9 @@
 /**
- * 1_hosts.ts — HostDef registry: sh executor, builtin sg (ast-grep), builtin extract,
+ * HostDef registry: shell, ast-grep, extractor, and HostRunner.
  * and HostRunner (the `?` probe machinery: demand rows -> digest-cached effect ->
  * response rows land as one commit per effect).
  *
- * Contract (plan M4, tasks.d.ts): `HostDef{name, requestCols, responseCols, run}`;
+ * `HostDef{name, requestCols, responseCols, run}`;
  * `shHost(decl)` fills the backtick template ({col} raw / $col env) and spawns;
  * `builtinSg` = `sg run --pattern <p> --json <path>` (bin from node_modules/.bin,
  * devDep @ast-grep/cli); `builtinExtract` = DL_EXTRACT_BIN (task 4.4: exposing the
@@ -15,7 +15,7 @@
  * in-flight run per full digest (the cache row IS the lock); errors land as cache state
  * 'error'; the stream never dies.
  *
- * NUMBERING LAW (why this file looks the way it does): 1_hosts.ts imports ONLY
+ * This file imports only
  * 0_types.ts types + 0_digest.ts (shared fold) + sprefa-store-engine (store
  * ast/engine helpers) + rxjs + node stdlib + the two owner-pinned law types
  * (ExtractBinDefault) straight from ../tasks.d.ts (M7 recomposition: that type
@@ -24,9 +24,7 @@
  * them would be an upward import). HostRunner's constructor therefore takes the
  * runtime as a STRUCTURAL parameter typed by 0_types.ts's `DlRuntime` interface
  * (deltas$/commit/rows), never the concrete `DlRuntime` class from 3_runtime.ts.
- * The digest fold (effectDigest below) shares 2_schema.ts's rowDigest law via
- * 0_digest.ts's foldRowDigest (M7 consolidation; this file used to duplicate the
- * fold in miniature, documented rather than imported -- now imported instead).
+ * The digest fold uses 0_digest.ts's shared fold.
  */
 
 import { spawn, type SpawnOptions } from "node:child_process";

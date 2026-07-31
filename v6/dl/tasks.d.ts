@@ -1,8 +1,5 @@
 /**
- * tasks.d.ts — v6/dl plan-as-types. The MVP slice ledger in the type system.
- * Twin of v6/plans/2026-07-24-v6-dl-mvp-slice.md; this file is the checkable half.
- * Convention follows v6/sprefa-store/js/tasks.d.ts: types are the plan, comments
- * are the receipts. No runtime code.
+ * v6/dl plan ledger and cross-package type re-exports. No runtime code.
  *
  * Slice goal: .dl text -> Langium bridge -> lowered rx graph + SQLite tick store
  * -> extract/sg host effects -> diag rel -> v5 LSP (--diag-db compat view),
@@ -14,9 +11,9 @@
  * min tests max coverage (one golden per epic; unit tests only where a golden
  * can't reach). This file + the plan doc ARE the jira board — update on land.
  *
- * M7 recomposition (2026-07-24, types-header consolidation): this file stopped
- * mixing roles. It keeps ONLY the plan ledger (EpicLedger) plus the pin/law
- * comment blocks the owner named as standing here (LiteralSeeds pin,
+ * Shared runtime types live in src/0_types.ts and are re-exported here.
+ * The file keeps the plan ledger plus the pin/law
+ * blocks (LiteralSeeds pin,
  * NamedArgLaw, DiagHeadDefaultLaw, SpineRelName, ExtractBinDefault). Every
  * other type this file used to declare now lives in src/0_types.ts (the
  * package's C-header-style type system, one file, organized by pipeline

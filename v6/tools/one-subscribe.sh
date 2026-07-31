@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-# Ratchet: exactly one manual rxjs .subscribe() per app, ever. Target reached
-# 2026-07-27 (standing plan item 3): the one site in v6/dl is dl/src/main.ts.
-#
-# TWO APPS ARE SCANNED as of the runtime-bridge arc (2026-07-29): dl/src, and
-# tsv2/serve -- the served tsv2 engine, which is a second APP (its own process,
-# its own cold graph, its own entry point), not a second subscription inside the
-# first. Each carries its own baseline of exactly 1. tsv2's one-shot CLI scripts
-# (scripts/run-fixture.ts, run-emitted.ts, sweep.ts) are deliberately NOT
-# scanned: each is a standalone one-shot entry point with its own single
-# terminal subscription, as run-fixture.ts's own header records.
+# Exactly one manual rxjs `.subscribe()` per scanned app. Scanned apps are
+# dl/src and tsv2/serve. Standalone one-shot CLI scripts are excluded.
 #
 # The diagnostics_channel handles in dl/src/0_trace.ts and tsv2/serve/0_trace.ts
 # are subscribed by a different API that happens to share the method name, so
@@ -18,9 +10,7 @@
 # 2). Adding another diagnostics_channel handle means adding its name here, on
 # purpose.
 #
-# Each count is also floored at 1: a zero means that scan path stopped matching
-# any source (a rename, a moved package), which used to read as a silent pass
-# (probe 3).
+# Each count is floored at 1 so a missing scan path cannot pass silently.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

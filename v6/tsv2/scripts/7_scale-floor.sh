@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
 # 7_scale-floor.sh -- acceptance floor for tsv2 throughput at scale.
 #
-# WHAT WAS MISSING
-# memory-soak proves memory stays flat and serve-leak-soak proves handles stay
-# flat, but NOTHING failed if throughput cratered. The scale bench (SCALE.md)
-# measured a superlinear curve and an OOM and both were written down rather
-# than gated. This is the gate.
-#
-# THE RIG IS BORROWED, NOT INVENTED
+# The existing scale runners provide statement counts and wall-time samples.
 # Two existing runners do all the work, unmodified:
 #   scripts/1_p1-receipts.ts  statements per tick via stmt_counter, EXPLAIN
 #                             plans, incrementalSafe -- the deterministic half
@@ -16,7 +10,7 @@
 # and the fixture comes from sprefa-store/bench/scale-gen.pl + compile_fixture/4,
 # exactly as bench/engines/tsv2_gen.sh drives them.
 #
-# WHAT IS GATED, AND WHY THE SPLIT
+# Deterministic counters are gated exactly; wall-time samples are informational.
 # Deterministic counters are gated EXACTLY:
 #   * the SET of statements-per-tick values must equal the pinned set AND must
 #     be IDENTICAL at two cell sizes 10x apart. Measured here, s2 runs 37 or 41

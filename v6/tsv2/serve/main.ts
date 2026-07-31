@@ -1,18 +1,9 @@
-/**
- * main.ts — the served tsv2 engine's ONE terminal subscription.
- *
- * Everything above this line is cold and composed. `serveTsv2(...)` IS the app;
- * this file starts it and prints what it emits. The one-subscribe law's ratchet
- * (v6/tools/one-subscribe.sh) scans this directory with its own baseline of 1;
- * a second terminal subscription anywhere under serve/ fails it. (The ratchet
- * greps for the call text and does not skip comments, so this sentence says it
- * in words rather than in code.)
+/** Starts the served tsv2 engine with its single terminal subscription.
  *
  *   TSV2_DB=file:/tmp/x.sqlite TSV2_PORT=17501 TSV2_WATCH_ROOT=/repo \
  *     node --experimental-transform-types serve/main.ts
  *
- * DB default is `:memory:`, so a run that names no db keeps nothing. A file url
- * is what makes restart (and therefore the endurance receipt) meaningful.
+ * DB default is `:memory:`; a file URL makes restart persistence meaningful.
  *
  * TSV2_WATCH_ROOT is the directory every `bind watch(...)` glob resolves
  * against and every emitted path is relative to; it defaults to the process

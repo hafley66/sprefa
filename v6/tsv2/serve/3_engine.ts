@@ -1,42 +1,30 @@
 /**
- * 3_engine.ts — the live tick loop: one compiled program, one SQLite seam, one
- * serialized lane of ticks.
+ * Serialized live tick loop for one compiled program and SQLite seam.
+ * Serving receives batches from HTTP posts, bind timers, and host responses.
  *
- * The schedule-fed path (`runtime/tickLoop.ts`) folds a KNOWN list of arrival
- * batches. Serving differs in exactly one way: the batches arrive over time
- * from three sources at once (HTTP posts, bind timers, host responses). The
- * fold law is unchanged and reused verbatim, including the drain rule below,
- * because the tick log this loop prints is graded byte-for-byte against the
- * oracle's schedule-fed log.
+ * The schedule-fed fold and drain rule are reused so served tick logs remain
+ * byte-for-byte compatible with the oracle.
  *
- * DRAIN, matched to the oracle exactly. `TickFold` drains (ticks with an empty
+ * `TickFold` drains (ticks with an empty
  * batch while `carryPending` holds) only AFTER the schedule is exhausted -- a
  * carrying tick that still has a scheduled batch waiting takes the batch, not a
  * drain tick. The live loop reproduces that with `queuedBatches`: a batch
  * drains only when nothing else is already queued behind it. Without that
  * counter a served run would drain between every pair of posts and print a
- * different (still correct, but differently-numbered) log than the oracle,
- * which would sink the byte grading.
+ * differently-numbered log than the oracle.
  *
- * THE ONE SUBJECT, and why it is not the banned bridge. Host responses are
- * CAUSED BY the tick stream they feed, so the served dataflow is genuinely
- * cyclic and needs one merge point that can be pushed into. `arrivals` is that
- * point. It is not a request/response bridge: a submitter's reply travels with
+ * Host responses re-enter the cyclic dataflow through `arrivals`, the merge
+ * point that can be pushed into. A submitter's reply travels with
+ * point. A submitter's reply travels with
  * its own request (the queued item carries its subscriber), so nothing pushes
  * into one Subject and awaits a matching id on another, and no caller is forced
  * back into `await`.
  *
- * The loop turns only while `ticks$` is subscribed -- the same law
- * `DlRuntime.deltas$` states in v6/dl. `submit` before that is a loud failure,
- * never a silent hang.
+ * The loop turns only while `ticks$` is subscribed. `submit` before that is an
+ * error.
  *
- * REBOOT ON THE SAME FILE. The emitted DDL says `CREATE TABLE`, not `CREATE
- * TABLE IF NOT EXISTS`, because the graded harnesses always run on a fresh
- * `:memory:` db. A served process on a FILE db is restartable by definition, so
- * `bootSchema` runs the DDL statement by statement and tolerates exactly one
- * error text, "already exists". TEMP tables are per-connection and get created
- * every boot regardless; permanent ones survive, which is what makes the
- * endurance receipt possible at all.
+ * File-backed boot tolerates existing permanent tables and recreates TEMP
+ * tables on each boot.
  */
 
 import {

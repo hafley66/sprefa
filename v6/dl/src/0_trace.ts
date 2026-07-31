@@ -1,13 +1,12 @@
 /**
- * 0_trace.ts — Phase 0 perf tracing spine (plans/2026-07-27-v5-port-perf-header.md,
- * SLOT-LIB filled by plans/2026-07-27-perf-tracing-buy-verdict.md): node:diagnostics_channel
+ * Performance tracing through node:diagnostics_channel and pino.
  * as the event spine, pino as the JSONL emit layer, performance.now() as the duration
  * primitive. Off by default: DL_PERF_LOG unset means every channel here has zero
  * subscribers, and every publish site below checks `channel.hasSubscribers` before
  * doing any real work — an unsubscribed diagnostics_channel publish is documented as
  * near-free, which is the whole "near-zero when off" contract.
  *
- * FOUR SEAMS (sql/effect/ingest match the header 1:1; sprefa:bind was added by the
+ * The event seams are sql, effect, ingest, and bind.
  * bind-seam arc, same shape as sprefa:effect):
  *
  *   sprefa:sql — one event per SQL statement, fed from SqlRunner's EXISTING
@@ -60,7 +59,7 @@
  *   for the unexplained-3s-per-60-files perf hunt). Tagged with the commit's own
  *   `TickReport.tick`, known only once `rt.commit()` resolves.
  *
- * AGGREGATION: exactly one subscriber per channel, installed only when DL_PERF_LOG
+ * Aggregation uses exactly one subscriber per channel, installed only when DL_PERF_LOG
  * is set (`installFromEnv`, called once at import time for the real app; tests call
  * it again after mutating env — idempotent either way). It folds events into a
  * per-tick buffer and writes ONE pino JSONL line per tick — never one write per

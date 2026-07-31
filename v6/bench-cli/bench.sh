@@ -1,31 +1,9 @@
 #!/usr/bin/env bash
 # bench.sh — the language-agnostic CLI bench harness (CONTRACT.md).
-#
-# Two passes over cases.json, and the split is the promotion rule:
-#
-#   PASS 1 (swipl referee). For every case: run the ORACLE adapter under its
-#     budget. Where it completes, its stdout is the reference log and every
-#     other engine is byte-diffed against it -- verdict `identical`, the
-#     original contract, unchanged. Where it exceeds the budget the case is
-#     DEFERRED and the oracle row records `over_budget`.
-#   PASS 2 (proven referee). Deferred cases are graded against the TSV2
-#     adapter's own log -- verdict `identical_vs_reference` -- but only when
-#     BOTH halves of the reference-validity proof hold (CONTRACT.md section 7):
-#       breadth  proof.ts: the sweep artifacts record total oracle agreement
-#                over the whole oracle-reachable corpus.
-#       currency this run: every case swipl DID reach graded `identical` for
-#                tsv2, by the same adapter that would referee at scale.
-#     Missing either half, the deferred cells stay `no_reference` and the run
-#     exits 1 (report.ts's gate). A promotion is never silent.
-#
-# Every graded (case, engine) pair appends one record to out/records.jsonl.
-# Then report.ts renders standings.csv + STANDINGS.md.
-#
-# The v1-asymmetry rule is enforced in the grading step and nowhere else: a
-# `wrong`, `refused` or `error` engine gets N/A timings with the reason
-# attached, never a number. SCALE.md's "v1 is 10x faster" was measured against
-# an engine that emitted no delta log at all; under this harness that run
-# produces no number.
+# Pass 1 uses swipl for reachable cases. Pass 2 uses tsv2 only when the
+# corpus proof and this run's reference checks both authorize promotion.
+# Each graded pair is written to out/records.jsonl, then report.ts renders the
+# standings. Wrong, refused, and error cells have no timing.
 #
 # ── SABOTAGE RECEIPTS for the promotion rule (all three reverted) ───────────
 # (a) BREADTH. `run-results.json` entry 5 (keyed_edge_head_still_replaces)
@@ -65,25 +43,8 @@
 #
 # Usage: cd v6 && just bench-cli     (or: bash v6/bench-cli/bench.sh)
 #
-# ── HERMETICITY, read this before trusting a number from a worktree ─────────
-# A git worktree has no node_modules of its own, so the usual fix is to
-# symlink the main tree's. That is NOT sufficient here, and the shortfall is
-# measured, not theoretical.
-#
-# v6/tsv2/node_modules/sprefa-store-engine is a WORKSPACE link
-# (`link:../sprefa-store/js`). Symlinking the whole node_modules directory
-# therefore resolves the store to the MAIN TREE'S LIVE SOURCE -- which other
-# agents edit while this bench runs. During one full run, six consecutive
-# int-column cases failed with "Do not know how to serialize a BigInt" and
-# then the failure vanished; a concurrent lane was editing exactly the
-# float/bigint handling in the main tree's store at the time. Re-measured
-# afterwards: 0 failures in 12 runs of the same case.
-#
-# So: run `pnpm install` in v6/sprefa-store/js and v6/tsv2 inside the
-# worktree. `bench-cli/node_modules` is a committed relative symlink to
-# `../tsv2/node_modules`, which then resolves `sprefa-store-engine` to the
-# WORKTREE'S own store. Without that install this harness is measuring code
-# that is not in the tree it reports on.
+# The bench-cli node_modules link must resolve to the worktree's tsv2 and store
+# installs. Otherwise the measured engine can come from another worktree.
 
 set -uo pipefail
 

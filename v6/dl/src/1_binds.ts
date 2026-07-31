@@ -1,5 +1,5 @@
 /**
- * 1_binds.ts -- BindDef registry: the input-side twin of 1_hosts.ts's HostDef/
+ * BindDef registry for input-side world sources.
  * HostRunner. Where a HostDef answers OUTBOUND demand (`host?(args)` rows drive a
  * subprocess, whose response rows land back on `__resp_h`), a BindDef feeds
  * INBOUND arrival rows into an ordinary EDB rel with no demand row at all -- the
@@ -8,7 +8,7 @@
  * ordinary arrival rows; SWR policy is program rules over latest state, NEVER
  * runtime machinery").
  *
- * LINKING BY REL NAME (spine_residency ruling: the kernel learns the word
+ * A bind activates by relation name. The kernel learns the word
  * "bind", never the word "clock" -- zero grammar changes this arc): a BindDef
  * activates for a loaded program iff the program declares an EDB rel whose name
  * matches `bind.rel` (BindRunner's constructor, below, checks this once per
@@ -16,7 +16,7 @@
  * inactive bind's `source$` is never subscribed, so it costs nothing (no timer,
  * no query) for a program that never mentions its rel.
  *
- * LIFECYCLE: `BindRunner.commits$` is cold, composed into the SAME region of the
+ * `BindRunner.commits$` is cold and is composed into the program graph.
  * app graph HostRunner's `effects$` lives in (runProgram$'s merge, 6_http.ts) --
  * one subscription per program load, torn down by the same switchMap unsubscribe
  * a program swap already triggers on the running program's whole branch. An
@@ -25,14 +25,13 @@
  * no bespoke timer bookkeeping, no dispose() method, no held Subscription/handle
  * field, matching IHostRunner's own no-bespoke-lifecycle shape exactly.
  *
- * NUMBERING LAW (same reasoning as 1_hosts.ts's header): this file imports only
+ * This file imports only
  * 0_types.ts + 0_trace.ts + rxjs + sprefa-store-engine's ast types + node stdlib,
  * never 2_schema.ts or 3_runtime.ts (both numbered above it). BindRunner's
  * constructor therefore takes the runtime as a STRUCTURAL parameter typed by
  * 0_types.ts's `IDlRuntime` interface, never the concrete `DlRuntime` class.
  *
- * WHAT DID NOT TRANSFER CLEANLY FROM THE EFFECT SIDE (reported, not worked
- * around -- see the agent report for the full note):
+ * The bind and effect seams differ in two ways:
  *   - HostRunner reads its config (which requests are outstanding) from a LIVE
  *     watch of deltas$ merged with a one-time boot replay, so a request posted
  *     after boot is picked up immediately. The clock bind reads its config

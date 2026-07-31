@@ -1,8 +1,7 @@
 /**
- * rows.ts — runs a SELECT through the driver seam and shapes the result back
+ * Run a SELECT through the driver seam and shape the result back
  * into plain `IRow[]` (columns in the caller's declared order). Shared by
- * every gen/*.ts tick chain; the SQL TEXT itself is per-rule and lives in
- * gen/*.ts, this only unwraps the QueryResult.
+ * into `IRow[]` by declared column order.
  */
 
 import { catchError, map, type Observable } from "rxjs";
@@ -57,19 +56,8 @@ export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefin
  *  A raw `RangeError` names no rel, no column and no statement, which is the
  *  one unnamed emitter failure the type matrix still measured.
  *
- *  Ruling wide_int_fate = refuse_everywhere_with_todo (user 2026-07-31): the
- *  answer is the SAME named refusal the arrival gate gives, at every reach
- *  point, including this read-back one. An arrival can no longer carry such an
- *  integer in; what still arrives here is an integer SQL COMPUTED (a sum, a
- *  json_extract out of a document, a bigint bind), so the statement text is
- *  what says where it came from.
- *
- *  TODO(bigint): the other half of the ruling is not taken. Carrying
- *  arbitrary-precision integers end to end needs `intMode: "bigint"` (reverted
- *  once already: a global bigint leaks into JSON.stringify at every raw row
- *  projection), a bigint column type, and a tick-log encoding for values a
- *  JSON number cannot hold. User: "not finance yet". The prolog-side twin of
- *  this comment is at 0_type_plane.pl:wide_integer_witness/2. */
+ *  The same named refusal is used for values computed by SQL.
+ */
 const isWideIntegerRangeError = (error: unknown): boolean =>
   error instanceof RangeError && /safely represented|out of range/i.test(error.message);
 

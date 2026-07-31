@@ -1,24 +1,8 @@
-/**
- * schedule-gen.ts — writes the scale schedules for the keyed_replace /
- * two_hop_join / cross_join programs at a given row count.
- *
- * Transcribed from v6/sprefa-store/bench/scale-gen.pl's s1_schedule/2,
- * s2_schedule/2 and s3_schedule/2 so the arrival stream is the same shape the
- * existing SCALE.md numbers were taken over: 100 arrivals per tick,
- * TickCount = Rows / 100. The one deliberate difference is two_hop_join's link rows,
- * which the fixture supplies as `Initial` (boot) and which the text door
- * cannot express as bare facts -- they arrive here as tick 1 instead. See
- * programs/two_hop_join.dl6's header.
- *
- * This is plain array code that returns arrays and writes one file. It is not
- * an Observable: nothing here is async above the single fs write.
- *
- * Usage: node --experimental-transform-types schedule-gen.ts <shape> <rows> <outPath>
- */
+/** Writes keyed_replace, two_hop_join, and cross_join schedules. */
 
 import { writeFileSync } from "node:fs";
 
-/** One arrival row, the shape both doors read (CONTRACT.md section 2.3). */
+/** One arrival row consumed by both adapters. */
 interface IArrivalRow {
   readonly rel: string;
   readonly sign: "add" | "del";
@@ -29,7 +13,7 @@ type Shape = "keyed_replace" | "two_hop_join" | "cross_join";
 
 const BATCH = 100;
 
-/** keyed_replace: 100 keys, every tick rewrites all of them with a fresh value. */
+/** keyed_replace rewrites 100 keys per tick. */
 function keyedReplaceSchedule(rows: number): IArrivalRow[][] {
   const ticks: IArrivalRow[][] = [];
   for (let tick = 0; tick < rows / BATCH; tick++) {
@@ -42,11 +26,7 @@ function keyedReplaceSchedule(rows: number): IArrivalRow[][] {
   return ticks;
 }
 
-/**
- * two_hop_join: one seeding tick of 100 b_link + 100 a_link rows, then `rows`/100 ticks
- * of 100 `c` arrivals each. scale-gen.pl builds the identical link rows in
- * lookup_rows/1 (k<i> -> m<i>, m<i> -> o<i>) but delivers them as Initial.
- */
+/** two_hop_join seeds link rows, then emits 100 c rows per tick. */
 function twoHopJoinSchedule(rows: number): IArrivalRow[][] {
   const seed: IArrivalRow[] = [];
   for (let key = 0; key < BATCH; key++) seed.push({ rel: "b_link", sign: "add", row: [`k${key}`, `m${key}`] });
@@ -63,7 +43,7 @@ function twoHopJoinSchedule(rows: number): IArrivalRow[][] {
   return ticks;
 }
 
-/** cross_join: all left arrivals, then all right arrivals. Quadratic on purpose. */
+/** cross_join emits all left arrivals before all right arrivals. */
 function crossJoinSchedule(rows: number): IArrivalRow[][] {
   const ticks: IArrivalRow[][] = [];
   for (const rel of ["left_value", "right_value"] as const) {

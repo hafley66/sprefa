@@ -1,5 +1,5 @@
 /**
- * ticklog.ts — formats one tick's `ITickDeltas` into the shared oracle/tsv2
+ * Format one tick's `ITickDeltas` into the shared log envelope
  * log envelope (plan header item 9, mirrored by
  * v6/prolog/conformance/ticklog.pl on the oracle side):
  *
@@ -12,17 +12,8 @@
  * lexicographically by their own JSON text; no spaces, no trailing newline
  * (the caller adds LF).
  *
- * WHICH COLUMNS ARE JSON IS READ FROM THE PROGRAM, never guessed. The encoder
- * used to decide by looking at the value's first character:
- *
- *   if (value[0] !== "{" && value[0] !== "[") return null;
- *
- * and the json_flex lab measured that guess wrong in both directions -- a
- * json column holding `42` printed as the string "42" where the oracle
- * printed 42 (fifteen of twenty-three value kinds, including null, true and
- * every number), and a text column holding `{"a":1}` printed as an object
- * where the oracle printed a string. `boundary_column_type/2` in emit_ts.pl
- * stopped collapsing `json` to `text` for exactly this seam.
+ * JSON encoding follows the declared column type, including scalar JSON
+ * values.
  */
 
 import type {

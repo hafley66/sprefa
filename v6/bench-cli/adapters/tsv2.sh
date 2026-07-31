@@ -1,22 +1,6 @@
 #!/usr/bin/env bash
-# tsv2.sh — the tsv2 engine as a CONTRACT.md section 2.1 executable.
-#
-#   tsv2.sh --program <file.dl6> --schedule <s.json> --db <path> --perf-out <p.json>
-#
-# Two phases, and the split is the contract's:
-#   1. compile  .dl6 text -> TS module, via the UNMODIFIED
-#      v6/prolog/compile/scripts/compile_dl6.sh. Timed, reported as
-#      compile_ms, and NOT part of wall_ms.
-#   2. run      the module over the schedule, via adapters/tsv2_run.ts.
-#
-# Exit codes per CONTRACT.md section 2.1: 0 ran, 2 named refusal, 1 error.
-# A compile that fails with one of the named refusal functors is a REFUSAL,
-# not a failure -- the same classification bop.ts does on a 400 body, and the
-# functor list is kept in step with it deliberately (bop.ts
-# NAMED_REASON_FUNCTORS, itself a mirror of bop_check.pl's
-# named_reason_functor/1; three copies now, all documented as mirrors because
-# each sees the reason in a different form -- a live term, an HTTP body, a
-# swipl stderr line).
+# tsv2.sh — compile a .dl6 program, then run the compiled module.
+# Exit codes: 0 ran, 2 named refusal, 1 error.
 
 set -uo pipefail
 
@@ -45,14 +29,8 @@ COMPILE_LOG="$BENCH_CLI/out/$NAME.compile.log"
 mkdir -p "$BENCH_CLI/out"
 
 # ── phase 1: compile ────────────────────────────────────────────────────────
-# Recompiled every run rather than cached: a stale compiled module is the
-# gen_staleness_gate class of defect this repo has been bitten by four times
-# (door-handwritten.ts), and the compile is cheap next to the run.
-# Date.now(), not performance.now(): performance.now()'s origin is PER
-# PROCESS, so subtracting one process's reading from another's is meaningless
-# (it produced a negative compile_ms before this was caught). Epoch ms is
-# comparable across processes, and 1ms resolution is ample for a compile that
-# runs in the hundreds of ms.
+# Recompile each run so generated output cannot be stale. Epoch milliseconds
+# are used for the cross-process compile duration.
 compile_start=$(node -e 'process.stdout.write(String(Date.now()))')
 bash "$COMPILE_DL6" "$PROGRAM" "$MODULE" > "$COMPILE_LOG" 2>&1
 compile_status=$?
@@ -61,8 +39,7 @@ COMPILE_MS=$(( compile_end - compile_start ))
 
 if [ "$compile_status" -ne 0 ]; then
   cat "$COMPILE_LOG" >&2
-  # A named refusal is a designed answer, not a bug: exit 2 so the harness
-  # records REFUSED with the reason instead of ERROR.
+  # Named refusals are recorded separately from errors.
   if grep -qE 'unsupported_construct|not_stratified|column_mismatch|bind_mismatch|bind_and_rule_head|probe_mismatch|query_mismatch|refused_host_decl|template_mismatch|unmapped_feature|keyed_level_head|latest_in_level_rule|pre_in_level_rule|finalize_in_level_rule|log_on_level_headed_rel|keep_on_non_log_rel|partial_head|join_column_type_mismatch|edge_head_column_type_mismatch|trigger_arg_not_var' "$COMPILE_LOG"; then
     exit 2
   fi
