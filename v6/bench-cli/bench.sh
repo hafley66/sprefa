@@ -22,6 +22,26 @@
 #   TSV2_HEAP_MB=512    node old-space ceiling for the tsv2 engine
 #
 # Usage: cd v6 && just bench-cli     (or: bash v6/bench-cli/bench.sh)
+#
+# ── HERMETICITY, read this before trusting a number from a worktree ─────────
+# A git worktree has no node_modules of its own, so the usual fix is to
+# symlink the main tree's. That is NOT sufficient here, and the shortfall is
+# measured, not theoretical.
+#
+# v6/tsv2/node_modules/sprefa-store-engine is a WORKSPACE link
+# (`link:../sprefa-store/js`). Symlinking the whole node_modules directory
+# therefore resolves the store to the MAIN TREE'S LIVE SOURCE -- which other
+# agents edit while this bench runs. During one full run, six consecutive
+# int-column cases failed with "Do not know how to serialize a BigInt" and
+# then the failure vanished; a concurrent lane was editing exactly the
+# float/bigint handling in the main tree's store at the time. Re-measured
+# afterwards: 0 failures in 12 runs of the same case.
+#
+# So: the worktree's node_modules must be a real directory of per-package
+# symlinks with `sprefa-store-engine` OVERRIDDEN to point at the worktree's
+# own v6/sprefa-store/js. Third-party packages can still come from the main
+# tree's install; workspace source may not. Without that override this
+# harness is measuring code that is not in the tree it reports on.
 
 set -uo pipefail
 

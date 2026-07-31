@@ -145,7 +145,11 @@ function main(): void {
             );
           },
           error: (error: unknown) => {
-            process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+            // Stack, not just message: this adapter's failures are read out of
+            // a log by a harness, and a bare message cost a whole debugging
+            // round on the intermittent BigInt failure (see the HERMETICITY
+            // note in bench.sh's header).
+            process.stderr.write(`${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
             process.exitCode = 1;
           },
         });
