@@ -63,6 +63,7 @@ prepare_program(Input, prog(Decls, Rules), HostPlans, BindPlans, QueryPlans) :-
               compile_host_decl(Decl, HostPlan)
             ),
             HostPlans),
+    no_duplicate_host_names(HostPlans),
     findall(bind_plan(Name, Columns),
             ( member(bind_decl(Name, Columns), RawDecls),
               validate_bind_decl(Name, Columns, NormalizedRules)
@@ -78,6 +79,33 @@ prepare_program(Input, prog(Decls, Rules), HostPlans, BindPlans, QueryPlans) :-
 
 program_parts(prog(Decls, Rules), Decls, Rules, []).
 program_parts(program(Decls, Rules, Queries), Decls, Rules, Queries).
+
+% A HOST NAME IS A KEY, so it has to be unique, and until 2026-07-31 nothing
+% said so.
+%
+% FAIL-FIRST RECEIPT (ARCH row host_arity_overload_miscompile, measured by the
+% files lane before this predicate existed). Two declarations, one name:
+%
+%   sh look(path: text)             -> (line: text) = `head -1 {path}`.
+%   sh look(repo: text, path: text) -> (line: text) = `head -1 {repo}/{path}`.
+%
+% compiled CLEAN, exit 0, on BOTH doors. host_relation_refs/3 derives the two
+% generated relation names from the NAME alone, so both plans point at
+% __host_demand_look and __host_response_look; the second declaration's `repo`
+% column has nowhere to live, and which arity a probe resolves against comes
+% down to which plan the lookup reaches first. Nothing in the emitted module
+% reads as wrong -- there is simply one relation where the author wrote two.
+%
+% The overload that a cold author reaches for is what the repo-scoped pair in
+% fixtures/files-hosts.dl6 spells instead, and this refusal is the other half of
+% ruling repo_column_spelling = distinct_name_hosts: the ruling says the repo
+% case gets its own name, and this says the language will not let it not.
+no_duplicate_host_names(HostPlans) :-
+    findall(Name, member(host_plan(Name, _, _, _, _, _, _), HostPlans), Names),
+    ( duplicate(Names, Name)
+    -> throw(duplicate_host_decl(Name))
+    ; true
+    ).
 
 normalize_rule(Raw, Rule) :-
     normalize_rule_shape(Raw, Shaped),
@@ -294,7 +322,39 @@ host_relation_refs(Name, DemandRef, ResponseRef) :-
     DemandRef = DemandName,
     ResponseRef = ResponseName.
 
+% A BIND IS NOT WHERE `repo` GOES, and the refusal is named rather than left to
+% the generic bind_mismatch below, because `bind watch(repo, glob, path,
+% digest)` is the obvious next thought once repo_files/repo_files_at exist and
+% the generic message ("these are not watch's columns") answers the wrong
+% question. Four reasons, and the first is the one that decides it:
+%
+%   1  A CRAWL ENUMERATES, IT DOES NOT REACT. The repo set is DATA -- rows the
+%      `repos` host answers on a clock -- and a bind's configuration column is
+%      read from the program's own LITERALS (registry.pl bind_definition header,
+%      emit_ts.pl bind_read_literals/4). A watcher per repository row would need
+%      the seam to spawn and retire OS resources from row deltas, which no bind
+%      does and which nothing in the alpha asks for.
+%   2  The handle budget is per working tree. `bind watch` is one recursive
+%      watcher over one root, and every flatness receipt in the phase-2 exit
+%      (v6/tsv2/scripts/extraction-live.sh) is measured at that scope. N repos
+%      is N watchers with no measurement behind it.
+%   3  (glob, path, digest) stops being a key. Two repositories routinely hold
+%      the same path, so the repo column would have to join every downstream
+%      rule -- the same reason repo_file/3 is its own rel and not more clauses
+%      of file/2.
+%   4  Freshness is already spelled for the crawl, twice: repo_files_at pins a
+%      rev and caches forever, and repo_files re-asked on an interval bucket is
+%      a fresh witness. A live seam with no consumer is a widened seam with no
+%      receipt.
+%
+% This is a REFUSAL, not a ruling against the shape forever: it is decidable at
+% load, so the day a program proves the gap the refusal is where the argument
+% gets reopened.
 validate_bind_decl(Name, Columns, Rules) :-
+    ( memberchk(col(repo, _), Columns)
+    -> throw(bind_repo_column(Name))
+    ; true
+    ),
     ( bind_definition(Name, Columns)
     -> true
     ; throw(bind_mismatch(Name, Columns))
