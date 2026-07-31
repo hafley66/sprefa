@@ -26,7 +26,10 @@ test("run: a program with no binds/hosts quiesces at zero ticks and exits 0", ()
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "run", EMPTY_DL6], {
     encoding: "utf8",
     env: { ...process.env, BOP_RUN_IDLE_MS: "300" },
-    timeout: 10_000,
+    // 30s not 10s: the in-process swipl compile grew ~30-50% inferences across
+    // the 2026-07-30 landings and under full-suite parallel load the boot
+    // crossed 10s (3 sightings that day; 3/3 pass isolated at ~2s).
+    timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), "", `expected zero tick lines, got: ${result.stdout}`);
@@ -36,7 +39,10 @@ test("run --ticks 1: a live interval bind produces exactly one tick line, then a
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "run", CLOCK_DL6, "--ticks", "1"], {
     encoding: "utf8",
     env: { ...process.env, BOP_RUN_IDLE_MS: "5000" },
-    timeout: 10_000,
+    // 30s not 10s: the in-process swipl compile grew ~30-50% inferences across
+    // the 2026-07-30 landings and under full-suite parallel load the boot
+    // crossed 10s (3 sightings that day; 3/3 pass isolated at ~2s).
+    timeout: 30_000,
   });
   assert.equal(result.status, 0, result.stderr);
   const lines = result.stdout.trim().split("\n").filter((line) => line.length > 0);
