@@ -16,10 +16,10 @@ Machine: Apple M2 Pro, 16 GB, macOS 23.6.0, Node v24.15.0, SWI-Prolog 10.0.2 arm
 
 ## Reference validity (ruling `bench_reference = proven_engine_reference`)
 
-- verdict: **VALID** — sweep artifacts record total oracle agreement: 190 identical + 1 rejection over 191 compiled of 267 swept
-- sweep sha: `122d52b68e607dc1` (sha256 over `manifest.json` ‖ NUL ‖ `run-results.json`, first 16 hex)
-- corpus: 267 fixtures swept, 191 compiled, **190 tick-log identical**, 0 wrong, 0 emitted crashes, 1 rejection, 76 named refusals
-- final-state leg of the same sweep: 190 identical, 0 wrong
+- verdict: **VALID** — sweep artifacts record total oracle agreement: 195 identical + 1 rejection over 196 compiled of 277 swept
+- sweep sha: `72afb4bfbbf9b7b0` (sha256 over `manifest.json` ‖ NUL ‖ `run-results.json`, first 16 hex)
+- corpus: 277 fixtures swept, 196 compiled, **195 tick-log identical**, 0 wrong, 0 emitted crashes, 1 rejection, 81 named refusals
+- final-state leg of the same sweep: 195 identical, 0 wrong
 - cells graded by the proven referee in this run: **5**; cells nothing could grade: **0**
 
 **Which referee graded a cell is never implicit.** `identical` means the cell
@@ -56,8 +56,8 @@ _input hash `a7b2708ed448737b` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 133 | N/A | 0 | N/A | 41.1 | N/A | `f829a11468b19db1` |
-| tsv2 | identical | oracle | 7.591 | 112 | 4 | 145 | 140.9 | N/A | `f829a11468b19db1` |
+| oracle | reference | oracle | 136 | N/A | 0 | N/A | 39.5 | N/A | `f829a11468b19db1` |
+| tsv2 | identical | oracle | 7.08 | 112 | 4 | 145 | 134.4 | N/A | `f829a11468b19db1` |
 
 ### callgraph_unused
 
@@ -66,8 +66,8 @@ _input hash `283b9cf68aaa550c` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 121 | N/A | 0 | N/A | 40.9 | N/A | `b45597e255434aec` |
-| tsv2 | identical | oracle | 8.686 | 109 | 5 | 212 | 145.2 | N/A | `b45597e255434aec` |
+| oracle | reference | oracle | 116 | N/A | 0 | N/A | 40.7 | N/A | `b45597e255434aec` |
+| tsv2 | identical | oracle | 8.702 | 109 | 5 | 212 | 133.2 | N/A | `b45597e255434aec` |
 
 ### flow_reach_recursive
 
@@ -76,8 +76,8 @@ _input hash `5eb25369a351dba6` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 122 | N/A | 0 | N/A | 41.6 | N/A | `5f08b9a04cc4ef4b` |
-| tsv2 | identical | oracle | 4.986 | 112 | 2 | 58 | 139.7 | N/A | `5f08b9a04cc4ef4b` |
+| oracle | reference | oracle | 115 | N/A | 0 | N/A | 39.7 | N/A | `5f08b9a04cc4ef4b` |
+| tsv2 | identical | oracle | 4.972 | 113 | 2 | 58 | 135.6 | N/A | `5f08b9a04cc4ef4b` |
 
 ### flow_sig_owner_join
 
@@ -86,8 +86,8 @@ _input hash `727407f9996e02ec` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 122 | N/A | 0 | N/A | 41.5 | N/A | `761dcbf0c0678603` |
-| tsv2 | identical | oracle | 5.616 | 112 | 1 | 56 | 142.5 | N/A | `761dcbf0c0678603` |
+| oracle | reference | oracle | 131 | N/A | 0 | N/A | 41.2 | N/A | `761dcbf0c0678603` |
+| tsv2 | identical | oracle | 5.482 | 119 | 1 | 56 | 137.9 | N/A | `761dcbf0c0678603` |
 
 ### diag_seven_ticks
 
@@ -96,8 +96,8 @@ _input hash `566c9e6904354be3` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 123 | N/A | 0 | N/A | 40.7 | N/A | `f66f0fefd622af4d` |
-| tsv2 | identical | oracle | 31.807 | 118 | 7 | 988 | 151.1 | N/A | `f66f0fefd622af4d` |
+| oracle | reference | oracle | 123 | N/A | 0 | N/A | 39.3 | N/A | `f66f0fefd622af4d` |
+| tsv2 | identical | oracle | 30.872 | 116 | 7 | 988 | 141.7 | N/A | `f66f0fefd622af4d` |
 
 ### clock_rel_join_storms
 
@@ -106,8 +106,8 @@ _input hash `6a906448c5a75f1f` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 120 | N/A | 0 | N/A | 40.7 | N/A | `39e1d09b3e4e0b1f` |
-| tsv2 | identical | oracle | 19.723 | 108 | 7 | 540 | 150.2 | N/A | `39e1d09b3e4e0b1f` |
+| oracle | reference | oracle | 119 | N/A | 0 | N/A | 39.3 | N/A | `39e1d09b3e4e0b1f` |
+| tsv2 | identical | oracle | 18.665 | 113 | 7 | 540 | 133.1 | N/A | `39e1d09b3e4e0b1f` |
 
 ### match_classify
 
@@ -116,8 +116,8 @@ _input hash `f71e559ddab60233` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 114 | N/A | 0 | N/A | 40.7 | N/A | `604c87c48f9b77f0` |
-| tsv2 | identical | oracle | 4.232 | 103 | 1 | 38 | 137.8 | N/A | `604c87c48f9b77f0` |
+| oracle | reference | oracle | 116 | N/A | 0 | N/A | 39.3 | N/A | `604c87c48f9b77f0` |
+| tsv2 | identical | oracle | 4.34 | 106 | 1 | 38 | 133.8 | N/A | `604c87c48f9b77f0` |
 
 ### aggregate_retraction
 
@@ -126,8 +126,8 @@ _input hash `25705d70571dc370` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 116 | N/A | 0 | N/A | 40.8 | N/A | `6be92fce389d15e8` |
-| tsv2 | identical | oracle | 5.499 | 104 | 3 | 77 | 144.7 | N/A | `6be92fce389d15e8` |
+| oracle | reference | oracle | 116 | N/A | 0 | N/A | 39.5 | N/A | `6be92fce389d15e8` |
+| tsv2 | identical | oracle | 5.609 | 103 | 3 | 77 | 132.7 | N/A | `6be92fce389d15e8` |
 
 ### enum_tag_view
 
@@ -136,8 +136,8 @@ _input hash `b4ce6a6ec7a079fb` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 113 | N/A | 0 | N/A | 40.8 | N/A | `b7332a3f5dfe7fa7` |
-| tsv2 | identical | oracle | 4.304 | 101 | 2 | 54 | 139.7 | N/A | `b7332a3f5dfe7fa7` |
+| oracle | reference | oracle | 118 | N/A | 0 | N/A | 40 | N/A | `b7332a3f5dfe7fa7` |
+| tsv2 | identical | oracle | 4.26 | 104 | 2 | 54 | 135.8 | N/A | `b7332a3f5dfe7fa7` |
 
 ## Scale shapes
 
@@ -147,8 +147,8 @@ _input hash `aaa19a529a175aa6` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 1347 | N/A | 0 | N/A | 41 | N/A | `N/A` |
-| tsv2 | identical | oracle | 33.209 | 106 | 11 | 246 | 144.9 | N/A | `fe7134a2af8ee99e` |
+| oracle | reference | oracle | 1360 | N/A | 0 | N/A | 39.5 | N/A | `N/A` |
+| tsv2 | identical | oracle | 33.682 | 108 | 11 | 246 | 149.6 | N/A | `fe7134a2af8ee99e` |
 
 ### s1/10k
 
@@ -158,7 +158,7 @@ _input hash `0cff8edfe11fdec3` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 278.807 | 113 | 101 | 2316 | 176.9 | N/A | `1f19d33822b870fd` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 271.609 | 105 | 101 | 2316 | 160.8 | N/A | `1f19d33822b870fd` |
 
 ### s1/100k
 
@@ -168,7 +168,7 @@ _input hash `9b4451a2613b058d` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 2685.044 | 112 | 1001 | 23016 | 518.7 | N/A | `f086a030143bfd8a` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 2556.054 | 106 | 1001 | 23016 | 452.1 | N/A | `f086a030143bfd8a` |
 
 ### s2/1k
 
@@ -176,8 +176,8 @@ _input hash `cbc057b61af18b57` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 2280 | N/A | 0 | N/A | 40.7 | N/A | `N/A` |
-| tsv2 | identical | oracle | 25.089 | 117 | 11 | 414 | 151.5 | N/A | `4c471042a492d02d` |
+| oracle | reference | oracle | 2247 | N/A | 0 | N/A | 39.7 | N/A | `N/A` |
+| tsv2 | identical | oracle | 24.368 | 108 | 11 | 414 | 145.8 | N/A | `4c471042a492d02d` |
 
 ### s2/10k
 
@@ -187,7 +187,7 @@ _input hash `b0cb70503efeb162` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 155.878 | 116 | 101 | 3744 | 175 | N/A | `e8100b1036f80d7f` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 150.103 | 107 | 101 | 3744 | 156.1 | N/A | `e8100b1036f80d7f` |
 
 ### s2/100k
 
@@ -197,7 +197,7 @@ _input hash `f83b7d6e4a85f703` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 1450.673 | 132 | 1001 | 37044 | 521.1 | N/A | `50f6928bee7eb255` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 1391.407 | 107 | 1001 | 37044 | 427.5 | N/A | `50f6928bee7eb255` |
 
 ### s3/1k
 
@@ -207,7 +207,7 @@ _input hash `cde50d7bedee3c16` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 8070.354 | 252 | 20 | 500 | 939.7 | N/A | `6677a5da6e964dc3` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 7961.108 | 105 | 20 | 500 | 978.4 | N/A | `6677a5da6e964dc3` |
 
 ## N/A and disqualification reasons
 

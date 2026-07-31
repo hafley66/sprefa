@@ -60,6 +60,7 @@
 #   BENCH_TIMEOUT=60      per-run seconds for a TIMED engine
 #   BENCH_ORACLE_BUDGET=30  seconds the swipl reference engine gets before a
 #                         case is deferred to the proven referee
+#   BENCH_ORACLE_PROBE=1  parallel doom probe (below); 0 = serial-only pass 1
 #   TSV2_HEAP_MB=512      node old-space ceiling for the tsv2 engine
 #
 # Usage: cd v6 && just bench-cli     (or: bash v6/bench-cli/bench.sh)
@@ -96,6 +97,9 @@ RECORDS="$OUT/records.jsonl"
 # Generated schedules are run scratch, not a cache: a schedule-gen.ts edit must
 # not be able to leave a previous shape in place under the same file name.
 rm -f "$OUT"/*.schedule.json
+# Probe verdicts are THIS run's or nobody's: a stale 124 from a previous run
+# would silently skip a live oracle (the staleness class, gen_staleness_gate).
+rm -f "$OUT"/*.oracle.probe-status
 
 RUNS="${BENCH_RUNS:-5}"
 # 60s, not the house rig's 600s. Every case that clears the reference engine
@@ -372,6 +376,45 @@ DEFERRED=""
 LIVE_IDENTICAL=0
 LIVE_FAILED=0
 
+# ── pass 1a: the oracle DOOM PROBE (parallel) ───────────────────────────────
+# Receipts (2026-07-31, coordinator): full run 4m48s -> 2m40s, verdict parity
+# zero mismatches on (case, engine, verdict, referee) across all 32 rows,
+# hash-agreement OK. Sabotage: a PLANTED stale probe-status=124 for
+# callgraph_derivation was wiped by the run-start rm and the cell still
+# graded `identical` vs swipl (swipl 1 / reference 0) -- the staleness rail
+# holds. Note: a BENCH_CASES-filtered run rewrites standings.csv wholesale
+# (1-cell file); do not commit standings from a filtered run.
+# Over half of a full serial run was 5 cells x the full 30s budget, each
+# re-proving that swipl cannot finish -- serially, every run. The probe runs
+# EVERY oracle attempt concurrently and records ONLY the exit status. No
+# number from this phase is ever reported: cells the probe clears are re-run
+# serially and alone in pass 1b (clean wall, clean RSS, authoritative status),
+# and no timed tsv2 run starts until run_capped has killed every prober
+# (process-group KILL, same guarantee as the serial path). Concurrency note:
+# on a machine with fewer cores than grinding cells, a borderline cell could
+# time out under contention that would finish alone; the consequence is that
+# it defers to the PROVEN referee instead of swipl -- sound, just the less
+# preferred referee -- and pass 1b's serial run remains the authority for
+# every cell the probe clears.
+if [ "${BENCH_ORACLE_PROBE:-1}" = "1" ]; then
+  echo "== pass 1a: oracle doom probe (parallel, budget ${ORACLE_BUDGET}s)"
+  PROBE_PIDS=""
+  for index in $(seq 0 $((case_count - 1))); do
+    load_case "$index" || continue
+    if [ -n "$ONLY" ] && [[ ",$ONLY," != *",$CASE_NAME,"* ]]; then continue; fi
+    (
+      run_capped "$ORACLE_BUDGET" "$(engine_cmd oracle)" \
+          --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
+          --db ":memory:" --perf-out "$OUT/$SAFE.probe.perf.json" \
+          > /dev/null 2>&1
+      echo $? > "$OUT/$SAFE.oracle.probe-status"
+    ) &
+    PROBE_PIDS="$PROBE_PIDS $!"
+  done
+  wait $PROBE_PIDS 2>/dev/null
+  rm -f "$OUT"/*.probe.perf.json "$OUT"/*.probe.perf.json.final.jsonl
+fi
+
 for index in $(seq 0 $((case_count - 1))); do
   if ! load_case "$index"; then
     if [ -n "$ONLY" ] && [[ ",$ONLY," != *",$CASE_NAME,"* ]]; then continue; fi
@@ -385,11 +428,20 @@ for index in $(seq 0 $((case_count - 1))); do
   REF_LOG="$OUT/$SAFE.oracle.log"
   ORACLE_PERF="$OUT/$SAFE.oracle.perf.json"
   ORACLE_TIME_FILE="$OUT/$SAFE.oracle.time"
-  run_capped "$ORACLE_BUDGET" /usr/bin/time -l "$(engine_cmd oracle)" \
-      --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
-      --db ":memory:" --perf-out "$ORACLE_PERF" \
-      > "$REF_LOG" 2> "$ORACLE_TIME_FILE"
-  ORACLE_STATUS=$?
+  PROBE_STATUS="$(cat "$OUT/$SAFE.oracle.probe-status" 2>/dev/null || echo "")"
+  if [ "$PROBE_STATUS" = "124" ]; then
+    # The probe already burned this cell's budget; do not re-prove the
+    # timeout serially. 124 is the ONE status taken from the probe: any
+    # completion or crash is re-established by the serial run below.
+    ORACLE_STATUS=124
+    : > "$REF_LOG"; : > "$ORACLE_TIME_FILE"
+  else
+    run_capped "$ORACLE_BUDGET" /usr/bin/time -l "$(engine_cmd oracle)" \
+        --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
+        --db ":memory:" --perf-out "$ORACLE_PERF" \
+        > "$REF_LOG" 2> "$ORACLE_TIME_FILE"
+    ORACLE_STATUS=$?
+  fi
   grep -v 'maximum resident set size\|average shared\|average unshared\|page reclaims\|page faults\|swaps\|block input\|block output\|messages sent\|messages received\|signals received\|context switches\|instructions retired\|cycles elapsed\|peak memory footprint\|real  *[0-9]' "$ORACLE_TIME_FILE" > "$OUT/$SAFE.oracle.err" 2>/dev/null
   ORACLE_RSS_KB=$(awk '/maximum resident set size/{print int($1/1024)}' "$ORACLE_TIME_FILE" | head -1)
   ORACLE_RSS_KB="${ORACLE_RSS_KB:-0}"
