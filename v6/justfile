@@ -174,6 +174,17 @@ golden-flex:
 self-map:
 	bash {{v6}}/tsv2/scripts/self-map.sh
 
+# v6/GETTING-STARTED.md, EXECUTED. Every marked block on that page is replayed
+# in one persistent shell (so the backgrounded `bop serve` and the exports
+# survive across blocks, exactly as a reader's terminal does) and its captured
+# output is diffed against the text the page prints. Temp paths, content
+# digests and epoch buckets normalize; every relation row is compared
+# literally. A doc that drifts from the engine fails here rather than in a
+# stranger's first thirty minutes.
+# (expect: GETTING STARTED HOLDS: 24 blocks replayed, exit 0; ~16s)
+getting-started:
+	bash {{v6}}/tsv2/scripts/getting-started.sh
+
 # exactly one terminal subscription per app (dl/src and tsv2/serve)
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
@@ -309,4 +320,4 @@ bench-cli:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
