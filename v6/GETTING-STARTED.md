@@ -289,10 +289,26 @@ terminal, or, since it is a background job here:
 $ kill %1
 ```
 
-Note what is missing from `notes/plan.md`: it never appears in `file`. The
-watcher reports **changes**, and that file has not changed since the server
-started. Enumerating an existing tree is a separate host (`enumerate`, backed by
-`git ls-files`); see `just enumerate`.
+Note what is missing from `notes/plan.md`: it never appears in `file`, even
+though it matches `**/*.md`. Two things decide what a `watch` glob sees, and
+only one of them is the glob:
+
+- at subscribe, the bind reconciles against the **tracked** worktree
+  (`git ls-files`), so a committed file that matches is already there on the
+  first tick, before anything changes;
+- after that it reports **changes**.
+
+This scratch directory is not a Git repository at all, so the tracked set is
+empty and only the second rule ever fires — which is why `plan.md` stays absent
+while `todo.md` appears the moment it is written. Run the same page inside a
+repo with `plan.md` committed and it is in `file` from the start.
+
+Membership is decided by node's `path.matchesGlob` on both of those paths, never
+by Git's pathspec rules (ruling `glob_dialect`), so `**/*.md` includes
+repo-root files and `src/**/*.rs` includes `src/lib.rs` — the way the same glob
+reads in v5. Enumerating a tree on demand instead of watching it is a separate
+host (`enumerate`, backed by `git ls-files` as a pathspec); see `just
+enumerate`.
 
 ---
 
