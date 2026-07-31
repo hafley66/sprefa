@@ -398,13 +398,28 @@ column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Typ
        % witness(entry/2, 2, json, int), refusing a legal document.
        ; Storage == json
        -> Type = Storage
-       ; member(WitnessType, WitnessTypes), WitnessType \== Storage
+       % Ruling type_gate_widening: a NUMERIC literal of the other numeric kind
+       % is not a contradiction at one column, because affinity settles it --
+       % INTEGER always widens into a REAL column, and a REAL converts into an
+       % INTEGER column when the value has no fractional part. The lossy half
+       % (1.5 at an int column) is refused by the arrival gate itself
+       % (0_type_plane.pl:column_value_shape_error/4), which runs on the same
+       % rows before this does, so what reaches here is only the convertible
+       % case -- and the reference engine now runs it. Calling it a conflict
+       % here would refuse a program the reference door accepts, which is the
+       % door disagreement this arc exists to remove.
+       ; member(WitnessType, WitnessTypes),
+         WitnessType \== Storage,
+         \+ numeric_affinity_pair(Storage, WitnessType)
        -> throw(unsupported_construct(
                     decl_type_conflicts_witness(Ref, Position, Storage, WitnessType)))
        ; Type = Storage
        )
     ; column_type_at(Rules, Initial, Schedule, Ref, Position, Type)
     ).
+
+numeric_affinity_pair(float, int).
+numeric_affinity_pair(int, float).
 
 literal_witness(Witness) :-
     nonvar(Witness),
@@ -1178,6 +1193,14 @@ check_supported_subset_expanded(Program) :-
                               % `INTEGER NOT NULL` ref column and sqlite keeps
                               % it.
                               relation_column_type_conflict,
+                              % Ruling type_gate_widening, same slot engine.pl
+                              % gives it: the declared-type wall at a level or
+                              % aggregate head. The edge head's own wall
+                              % (check_edge_head_column_types/2 below) reads
+                              % INFERRED types and stays a compiler capability
+                              % check; this one is about what the program
+                              % wrote down and so belongs to both doors.
+                              head_column_type_conflict,
                               % Burrs B3/B4, in the same slot engine.pl gives
                               % them: shapes this compiler refused at LOWERING
                               % while the reference engine ran them. Shared now,
@@ -1274,6 +1297,14 @@ compiler_refusal(relation_column_type_conflict,
                  conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                  relation_column_type_conflict(Ref, Column, TypeName,
                                                OtherRef, OtherColumn, OtherType)).
+% Same term as engine.pl's. Nothing here for the two vocabularies to disagree
+% about: neither door defines the mix, and the payload is the pair of
+% declarations the author wrote.
+compiler_refusal(head_column_type_conflict,
+                 conflict(HeadRef, HeadColumn, HeadType,
+                          BodyRef, BodyColumn, BodyType),
+                 head_column_type_conflict(HeadRef, HeadColumn, HeadType,
+                                           BodyRef, BodyColumn, BodyType)).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(key_position_out_of_range, Payload, Payload).
 compiler_refusal(key_position_duplicate,    Payload, Payload).

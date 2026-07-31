@@ -49,7 +49,7 @@
                 event_relation_atom/2, body_reserved_word/4 ]).
 :- use_module('0_type_plane',
               [ type_definitions/2, type_cycle_witness/2, declared_type_name/2,
-                type_definition/4, relation_columns_and_types/5,
+                type_definition/4, relation_columns_and_types/5, column_storage/3,
                 relation_value_shape/3 ]).
 :- use_module('compile/registry', [surface_for_term/6, surface/5]).
 
@@ -268,6 +268,47 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
     Other == Variable,
     OtherType \== TypeName,
     !.
+
+% ── the head column type wall (ruling type_gate_widening) ────────────────────
+%
+% A variable carries a value out of a body column and into a HEAD column. When
+% both columns are declared and their storage disagrees, the two doors used to
+% answer differently and neither answer was defensible: the reference engine
+% keeps whatever term the body held, while the emitted program writes it into a
+% column of the other affinity, so the same rule prints `4` on one door and
+% `"4"` on the other, or the emitted CHECK on a bool column drops the row
+% entirely and the tick log just has one fewer row in it. 41 of the type
+% matrix's divergent cells were this one shape at a level head or an aggregate
+% head.
+%
+% The edge head has had this wall since PHASE C2 (analyze.pl:
+% check_edge_head_column_types/2, which reads INFERRED types and so is a
+% compiler capability check). This one is the DECLARED-type statement, it is
+% shared, and it is what the ruling widens to the remaining head positions.
+%
+% What is allowed to mix is SQLite's own numeric widening, and only in the
+% direction affinity performs losslessly: an int column's value entering a
+% float column becomes a double. The reverse is a refusal -- REAL to INTEGER
+% converts only when the value happens to have no fractional part, so the same
+% program would keep or lose a row depending on the data.
+%
+% SCOPE, stated: only DECLARED types take part, both sides. An undeclared
+% column has no type here to contradict (the divergence undeclared columns
+% still show is a different open question -- what a bare column's default
+% should be -- and is not this ruling's).
+program_violation(head_column_type_conflict, prog(Decls, Rules),
+                  conflict(HeadRef, HeadColumn, HeadType,
+                           BodyRef, BodyColumn, BodyType)) :-
+    type_definitions(Decls, Types),
+    member(Rule, Rules),
+    rule_head_column_variable(Decls, Types, Rule, HeadVariable,
+                              HeadRef, HeadColumn, HeadType),
+    rule_body_column_variable(Decls, Types, Rule, BodyVariable,
+                              BodyRef, BodyColumn, BodyType),
+    BodyVariable == HeadVariable,
+    \+ column_type_assignable(Types, BodyType, HeadType),
+    !.
+
 
 % ── two shapes that used to be a door DISAGREEMENT ───────────────────────────
 %
@@ -560,6 +601,71 @@ body_relation_atom(Body, Atom) :-
 % column it sits in and that column's declared type. Variable identity is the
 % clause's own, so two occurrences of the same source variable are `==` and two
 % anonymous `_` are not, which is exactly the flow question being asked.
+% The head's own declared columns. A head argument takes part only when the
+% column type is a statement ABOUT THAT VARIABLE'S value:
+%
+%   bare variable    the value travels unchanged; checked
+%   min(V) / max(V)  min and max return an element of the input, so the head
+%                    column types V; checked through the wrapper
+%
+% Nothing else. count/sum/avg return a number the input's type says nothing
+% about, group_concat and json_group_array return text and json whatever went
+% in, an arithmetic head expression computes a new value, and a RELATION VALUE
+% (`file(repo(Name), Path)`) puts its inner variable in the TARGET type's own
+% column, not in the ref column that holds it -- the first draft of this
+% predicate unwrapped every compound one level and refused nine struct
+% fixtures and one aggregate fixture on exactly that mistake.
+rule_head_column_variable(Decls, Types, Rule, Variable, Ref, Column, Type) :-
+    rule_head(Rule, Head),
+    compound(Head),
+    functor(Head, Name, Arity),
+    Ref = Name/Arity,
+    relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
+    length(Columns, Arity),
+    nth1(Position, ColumnTypes, Type),
+    nth1(Position, Columns, Column),
+    arg(Position, Head, Argument),
+    head_argument_variable(Argument, Variable).
+
+head_argument_variable(Argument, Argument) :- var(Argument), !.
+head_argument_variable(Argument, Variable) :-
+    nonvar(Argument),
+    ( Argument = min(Inner) ; Argument = max(Inner) ),
+    var(Inner),
+    Variable = Inner.
+
+rule_body_column_variable(Decls, Types, Rule, Variable, Ref, Column, Type) :-
+    rule_body(Rule, Body),
+    body_relation_atom(Body, Atom),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    Ref = Name/Arity,
+    relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
+    length(Columns, Arity),
+    nth1(Position, ColumnTypes, Type),
+    nth1(Position, Columns, Column),
+    arg(Position, Atom, Variable),
+    var(Variable).
+
+rule_head((Head <- _), Head).
+rule_head((Head <+ _), Head).
+
+% Storage, not spelling: `list(text)` and `json` are one column kind, so a
+% value moving between them is not a type mix. The one asymmetric pair is the
+% affinity widening.
+% column_storage/3 THROWS column_type_unknown on an unrecognized type and its
+% clauses are cut on the first two arguments, so both storages have to be
+% computed into fresh variables and compared afterwards. Passing a bound third
+% argument makes every non-matching clause fall through to that throw.
+column_type_assignable(Types, From, To) :-
+    column_storage(Types, From, FromStorage),
+    column_storage(Types, To, ToStorage),
+    storage_assignable(FromStorage, ToStorage).
+
+storage_assignable(Storage, Storage) :- !.
+storage_assignable(int, float).
+
+
 rule_column_variable(Decls, Types, Rule, Argument, Ref, Column, Type) :-
     rule_relation_atom(Rule, Atom),
     compound(Atom),

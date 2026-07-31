@@ -53,10 +53,16 @@ scalar_schedule_value(Value, Atom) :- term_to_atom(Value, Atom).
 json_column_term(_Context, _Rel, Value, Term) :- string(Value), !,
     json_text_term(Value, Term).
 json_column_term(_Context, _Rel, Value, Value) :- number(Value), !.
+% Both refusals lead with the LANGUAGE's name for them, not the door's.
+% A json column rejecting its arrival is the same fact as any other column
+% rejecting one (0_type_plane.pl:world_row_shape_violation/3), and a reader --
+% cold author or grading harness -- should not have to know that json arrivals
+% are read by a different predicate to see that. The door Context stays in the
+% line, after the name, because it still says which of the two doors spoke.
 json_column_term(Context, Rel, Value, _) :-
     format(user_error,
-           "~w: '~w' json column takes a json document as text, got ~q~n",
-           [Context, Rel, Value]),
+           "type_arrival_shape_mismatch(~w, json, field_not_json) [~w]: json column takes a json document as text, got ~q~n",
+           [Rel, Context, Value]),
     halt(1).
 
 json_text_term(Text, Term) :-
@@ -67,7 +73,9 @@ json_text_term(Text, Term) :-
     ).
 
 json_text_error(Text) :-
-    format(user_error, "json_arrival: json column value is not valid json: ~q~n", [Text]),
+    format(user_error,
+           "type_arrival_shape_mismatch(json, field_not_json) [json_arrival]: json column value is not valid json: ~q~n",
+           [Text]),
     halt(1).
 
 json_parsed_term(Parsed, obj(Sorted)) :- is_dict(Parsed), !,

@@ -280,6 +280,41 @@
     "finalDetail": ""
   },
   {
+    "name": "int_accepts_integral_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_widens_integer_ingress",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_widens_wide_integer_ingress",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_column_int_widens_into_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_column_list_and_json_share_storage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_depth2_construct_and_read",
     "bucket": "identical",
     "detail": "",

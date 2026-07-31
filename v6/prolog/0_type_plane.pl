@@ -481,6 +481,14 @@ world_row_shape_violation(Decls, Rows, mismatch(Ref, Column, TypeName, Reason)) 
 %    ran. So the value is refused wherever it appears, including inside a json
 %    document, and including a rel with no colon types at all -- which is why
 %    this pass does not go through ref_column_names/4.
+%
+%    ONE exception, and it is the other ruling: a `float` column. REAL affinity
+%    widens an integer to a double BEFORE anything asks how big it was, so
+%    there is no integer left to be out of range -- 9007199254740993 at a float
+%    column is the double 9007199254740992.0, approximate by construction, on
+%    both doors. Skipping the column here is also what keeps the two doors
+%    equal: the emitted guard cannot tell integer 1e20 from float 1.0e20 and
+%    reads the declaration for the answer, exactly as this does.
 % 2. The DECLARED-TYPE pass, which needs the column's declared type and so
 %    needs full col_type/3 coverage.
 row_column_violation(Decls, _, Ref, Arity, Row, Column, none, int_out_of_range(Value)) :-
@@ -488,7 +496,8 @@ row_column_violation(Decls, _, Ref, Arity, Row, Column, none, int_out_of_range(V
     arg(Position, Row, Argument),
     nonvar(Argument),
     wide_integer_witness(Argument, Value),
-    position_column_name(Decls, Ref, Position, Column).
+    position_column_name(Decls, Ref, Position, Column),
+    \+ memberchk(col_type(Ref, Column, float), Decls).
 row_column_violation(Decls, Types, Ref, Arity, Row, Column, TypeName, Reason) :-
     ref_column_names(Decls, Ref, Arity, Columns),
     nth1(Position, Columns, Column),
