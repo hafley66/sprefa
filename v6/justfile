@@ -31,7 +31,7 @@ roundtrip:
 text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
-# compiler unit tests (expect: 268/268 and growing)
+# compiler unit tests (expect: 269/269 and growing)
 plunit:
 	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
 

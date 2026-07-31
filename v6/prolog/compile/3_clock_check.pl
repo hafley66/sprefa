@@ -459,8 +459,7 @@ delayed_recurrence_nodes(Program, Dependencies, DelayedNodes) :-
 % already refuses one clause further down.
 recurrence_free_clock(Nodes, Dependencies, DelayedNodes, Ref, Origin, Offset) :-
     live_causal_edges(Dependencies, DelayedNodes, Edges),
-    exclude_delayed(Nodes, DelayedNodes, LiveNodes),
-    (   zero_weight_cycles_only(LiveNodes, Edges)
+    (   zero_weight_cycles_only(Nodes, DelayedNodes, Edges)
     ->  successor_index(Edges, Successors),
         clock_origin(Nodes, Dependencies, Origin),
         propagated_offsets(Origin, Successors, Reached),
@@ -491,16 +490,28 @@ live_causal_edges(Dependencies, DelayedNodes, Edges) :-
             Edges0),
     sort(Edges0, Edges).
 
-zero_weight_cycles_only(LiveNodes, Edges) :-
+% Two halves, and the second one only runs when it can fail. Every grade being
+% zero already makes every cycle weigh zero, whatever shape the graph has, so
+% the component search is skipped outright on the common program -- and that
+% short-circuit is not a special case, it is the same theorem with an empty
+% delaying set.
+zero_weight_cycles_only(Nodes, DelayedNodes, Edges) :-
     forall(member(_-_-Grade, Edges), Grade >= 0),
-    findall(From-To, member(From-To-_, Edges), PlainEdges),
-    graph_from_edges(LiveNodes, PlainEdges, Graph),
-    graph_cyclic_components(Graph, Components),
-    forall(( member(Component, Components),
-             member(From-To-Grade, Edges),
+    include(delaying_edge, Edges, DelayingEdges),
+    (   DelayingEdges == []
+    ->  true
+    ;   exclude_delayed(Nodes, DelayedNodes, LiveNodes),
+        findall(From-To, member(From-To-_, Edges), PlainEdges),
+        graph_from_edges(LiveNodes, PlainEdges, Graph),
+        graph_cyclic_components(Graph, Components),
+        \+ ( member(Component, Components),
+             member(From-To-_, DelayingEdges),
              memberchk(From, Component),
-             memberchk(To, Component) ),
-           Grade =:= 0).
+             memberchk(To, Component) )
+    ).
+
+delaying_edge(_-_-Grade) :-
+    Grade =\= 0.
 
 successor_index(Edges, Successors) :-
     findall(From-(To-Grade), member(From-To-Grade, Edges), Pairs0),
