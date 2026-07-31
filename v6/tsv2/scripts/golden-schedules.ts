@@ -39,6 +39,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { StructPlane } from "../runtime/structPlane.ts";
 import type { IArrivalBatch, IArrivalRow } from "../runtime/types.ts";
 
 /**
@@ -59,6 +60,45 @@ function treeRow(index: number): IArrivalRow {
   const species = index % 3 === 0 ? "apple" : index % 3 === 1 ? "pear" : "weed";
   const site: StructValue = { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } };
   return { rel: "tree", sign: "add", row: [index, species, site as unknown as string] };
+}
+
+function orchardDocument(index: number): Readonly<Record<string, unknown>> {
+  const species = index % 3 === 0 ? "apple" : index % 3 === 1 ? "pear" : "weed";
+  const stars = 4 + (index % 6);
+  return {
+    empty: {},
+    items: [
+      { fruit: species, stars },
+      { fruit: "pear", stars: stars + 1 },
+    ],
+    nested: { box: { leaf: index } },
+    species,
+    stars,
+    tags: { blue: index + 1, red: index },
+  };
+}
+
+function orchardJsonRow(index: number): IArrivalRow {
+  return {
+    rel: "orchard_json",
+    sign: "add",
+    row: [index, StructPlane.canonicalText(orchardDocument(index))],
+  };
+}
+
+function orchardListRow(index: number): IArrivalRow {
+  return {
+    rel: "orchard_list",
+    sign: "add",
+    row: [index, StructPlane.canonicalText(["red", `tree-${index}`])],
+  };
+}
+
+function orchardTagSourceRows(index: number): readonly IArrivalRow[] {
+  return [
+    { rel: "orchard_tag_source", sign: "add", row: [index, "red"] },
+    { rel: "orchard_tag_source", sign: "add", row: [index, `tree-${index}`] },
+  ];
 }
 
 function sugarOf(index: number): number {
@@ -94,8 +134,13 @@ export function scheduleFor(count: number): readonly IArrivalBatch[] {
   const half = all.filter((index) => index % 2 === 1);
   return [
     [{ rel: "quarantined", sign: "add", row: ["weed"] }],
-    [...all.map(treeRow), ...all.map((index) => ({ rel: "sensor", sign: "add", row: [index, index % 4 !== 0] }) as IArrivalRow)],
-    all.map(pickRow),
+    [
+      ...all.map(treeRow),
+      ...all.map((index) => ({ rel: "sensor", sign: "add", row: [index, index % 4 !== 0] }) as IArrivalRow),
+      ...all.map(orchardJsonRow),
+      ...all.map(orchardListRow),
+    ],
+    all.flatMap((index) => [pickRow(index), ...orchardTagSourceRows(index)]),
     all.map(hostAnswerRow),
     [{ rel: "interval", sign: "add", row: [1, 1_800_000] }],
     all.map(gradeRow),
@@ -112,8 +157,8 @@ export function perturbedSchedule(count: number): readonly IArrivalBatch[] {
   const extra = 999;
   return [
     ...scheduleFor(count),
-    [treeRow(extra), { rel: "sensor", sign: "add", row: [extra, true] }],
-    [pickRow(extra)],
+    [treeRow(extra), { rel: "sensor", sign: "add", row: [extra, true] }, orchardJsonRow(extra), orchardListRow(extra)],
+    [pickRow(extra), ...orchardTagSourceRows(extra)],
     [hostAnswerRow(extra), gradeRow(extra)],
     [{ ...treeRow(extra), sign: "del" }],
     [],
