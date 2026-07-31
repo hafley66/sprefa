@@ -1,0 +1,9 @@
+# corpus 5 -- DISTINCT UNTIL CHANGED. rx: raw$.pipe(distinctUntilChanged())
+#
+# One rule and no move. This is not sugar for anything: a keyed rel's identical
+# write is a zero delta by construction (R7 boundary diffing), so the operator
+# is the storage decl rather than a body word.
+rel raw(sensor: text, value: int).
+rel stable(sensor: text, value: int) key(1).
+
+stable(Sensor, Value) <+ raw(Sensor, Value).

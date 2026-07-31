@@ -1,0 +1,10 @@
+# Q3 probe, the today spelling of the joining-stage chain.
+rel reading(sensor: text, raw: int).
+rel label(sensor: text, label: text).
+rel doubled(sensor: text, value: int).
+rel labelled(sensor: text, value: int, label: text).
+rel enriched(sensor: text, label: text, value: int).
+
+doubled(Sensor, Value) <- reading(Sensor, Raw), Value := Raw * 2.
+labelled(Sensor, Value, Label) <- doubled(Sensor, Value), label(Sensor, Label).
+enriched(Sensor, Label, Value) <- labelled(Sensor, Doubled, Label), Value := Doubled + 1.

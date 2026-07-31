@@ -1,0 +1,14 @@
+# corpus 1 -- COUNTER, written the way it is written TODAY.
+#
+# rx: tickEvent$.pipe(groupBy(e => e.counter), mergeMap(g => g.pipe(
+#       scan((prev, e) => prev + e.delta, 0))))
+#
+# Hand-written independently of the expander so the receipt is not vacuous:
+# different variable names, a literal seed in the base arm instead of `0 + Delta`,
+# and the two arms in the other order.
+rel tick_event(counter: text, delta: int).
+rel total(counter: text, amount: int) key(1).
+
+total(Counter, Running) <+ tick_event(Counter, Delta), pre(total(Counter, Carried)),
+                           Running := Carried + Delta.
+total(Counter, Delta)   <+ tick_event(Counter, Delta), not(total(Counter, _Any)).

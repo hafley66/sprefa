@@ -1,0 +1,15 @@
+# corpus 10 -- MAP/MAP/FILTER CHAIN (the shape `|>` exists for), today.
+#
+# rx: reading$.pipe(map(r => r.raw * 2), map(v => v + 10), filter(v => v > 50))
+#
+# Three rules, and two of the three rels exist only to be the seam between two
+# stages. `scaled` and `shifted` are named by the author, declared by the
+# author, and read by exactly one rule each.
+rel reading(sensor: text, raw: int).
+rel scaled(sensor: text, value: int).
+rel shifted(sensor: text, value: int).
+rel alert(sensor: text, value: int).
+
+scaled(Sensor, Value) <- reading(Sensor, Raw), Value := Raw * 2.
+shifted(Sensor, Value) <- scaled(Sensor, Doubled), Value := Doubled + 10.
+alert(Sensor, Value) <- shifted(Sensor, Value), Value > 50.

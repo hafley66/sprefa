@@ -1,0 +1,6 @@
+rel ping(client: text, size: int).
+rel logged(client: text, size: int) log keep(all).
+
+stage_logged_2_1(Client, Size) <- ping(Client, Size).
+stage_logged_2_2(Client, Doubled) <- stage_logged_2_1(Client, Size), Doubled := Size * 2.
+logged(Client, Scaled) <- stage_logged_2_2(Client, Doubled), Scaled := Doubled + 1.

@@ -1,0 +1,13 @@
+# The program break/scan_on_log_head.sugar.pl claims to be sugar for: a
+# running score per page, APPENDED to a journal rather than replaced. Written
+# the only way it can be written today -- the fold lives on a keyed rel and the
+# journal is a separate log fed from it, because the fold's `not(head)` base
+# arm needs a key to test.
+rel hit(page: text, weight: int).
+rel score(page: text, running: int) key(1).
+rel trail(page: text, score: int) log keep(all).
+
+score(Page, Weight) <+ hit(Page, Weight), not(score(Page, _Any)).
+score(Page, Running) <+ hit(Page, Weight), pre(score(Page, Carried)),
+                        Running := Carried + Weight.
+trail(Page, Running) <+ hit(Page, _Weight), latest(score(Page, Running)).

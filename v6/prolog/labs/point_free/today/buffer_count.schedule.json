@@ -1,0 +1,9 @@
+[
+  [ {"rel":"arrival","sign":"add","row":["a"]} ],
+  [ {"rel":"arrival","sign":"add","row":["b"]},
+    {"rel":"arrival","sign":"add","row":["c"]} ],
+  [ {"rel":"arrival","sign":"add","row":["d"]} ],
+  [ {"rel":"arrival","sign":"add","row":["e"]},
+    {"rel":"arrival","sign":"add","row":["f"]},
+    {"rel":"arrival","sign":"add","row":["g"]} ]
+]

@@ -1,0 +1,7 @@
+[
+  [ {"rel":"sample","sign":"add","row":["north",10]} ],
+  [ {"rel":"sample","sign":"add","row":["north",20]},
+    {"rel":"sample","sign":"add","row":["south",7]} ],
+  [ {"rel":"sample","sign":"add","row":["north",30]},
+    {"rel":"sample","sign":"add","row":["north",40]} ]
+]

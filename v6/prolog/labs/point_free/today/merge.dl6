@@ -1,0 +1,11 @@
+# Q1 row: rx `merge` = two rules heading one rel.
+# rx: merge(clickA$, clickB$)
+#
+# The head rel is a log, so both sources append and neither replaces. Nothing
+# in the body says "merge"; the merge is that two rules share a head.
+rel click_left(at: int).
+rel click_right(at: int).
+rel click(at: int, source: text) log keep(all).
+
+click(At, 'left')  <+ click_left(At).
+click(At, 'right') <+ click_right(At).

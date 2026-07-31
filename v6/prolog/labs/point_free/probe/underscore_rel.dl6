@@ -1,0 +1,8 @@
+# Probe: can a compiler-minted rel name that starts with `__` appear in .dl6
+# TEXT at all? The stage/cursor rels this lab mints follow the engine's own
+# `__host_*` / `__pre_*` convention, but those names never pass through the
+# parser -- these would.
+rel arrival(payload: text).
+rel __seq_numbered_1(partition: text, at: int) key(1).
+
+__seq_numbered_1('q', 1) <+ arrival(_Payload), not(__seq_numbered_1('q', _At)).

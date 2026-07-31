@@ -1,0 +1,10 @@
+# BREAK M3-1, the SILENT half. Same chain, but the head is a keyed rel instead
+# of a log, so the wrong expansion is not caught by log_on_level_headed_rel and
+# loads clean on both doors.
+#
+# This file is the EDGE reading: `seen` is written when a ping OCCURS and is
+# not touched when the ping row departs.
+rel ping(client: text, size: int).
+rel seen(client: text, scaled: int) key(1).
+
+seen(Client, Scaled) <+ ping(Client, Size), Doubled := Size * 2, Scaled := Doubled + 1.
