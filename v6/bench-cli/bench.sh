@@ -167,11 +167,17 @@ echo ""
 
 # Timeout that kills the whole PROCESS GROUP, not just the wrapper.
 #
-# The house one-liner (`perl -e "alarm shift; exec @ARGV"`, used by
-# v6/sprefa-store/bench/engines/tsv2_gen.sh; macOS ships no coreutils
-# `timeout`) execs the command in the SAME process, so SIGALRM terminates the
-# adapter shell -- and orphans the engine it spawned. Measured here, not
-# assumed: at the keyed_replace/10k timeout the harness moved on to two_hop_join/1k while the
+# `run_capped` NOW LIVES IN v6/tools/run-capped.sh, hoisted there by the
+# timeout-gun lane (2026-07-31) so every receipt script in the repository fires
+# the same gun. The behaviour is byte-identical to the copy that used to sit
+# here; the receipt that motivated it stays, because it is the reason the
+# process-group form exists at all.
+#
+# The house one-liner (`perl -e "alarm shift; exec @ARGV"`, which used to sit in
+# v6/sprefa-store/bench/engines/tsv2_gen.sh; macOS ships no coreutils `timeout`)
+# execs the command in the SAME process, so SIGALRM terminates the adapter shell
+# -- and orphans the engine it spawned. Measured here, not assumed: at the
+# keyed_replace/10k timeout the harness moved on to two_hop_join/1k while the
 # timed-out swipl kept running,
 #
 #     03:03 swipl      <- keyed_replace/10k oracle, orphaned, past its 180s cap
@@ -183,19 +189,7 @@ echo ""
 # with the wrapper. Exit 124 on timeout, the coreutils convention -- and that
 # 124 is exactly what the promotion rule reads as "budget exceeded", which is
 # why a genuine oracle CRASH (any other non-zero) must NOT promote.
-run_capped() {
-  local limit="$1"; shift
-  perl -e '
-    my $limit = shift;
-    my $pid = fork();
-    if ($pid == 0) { setpgrp(0, 0); exec @ARGV; exit 127; }
-    $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit 124; };
-    alarm $limit;
-    waitpid($pid, 0);
-    alarm 0;
-    exit($? >> 8);
-  ' "$limit" "$@"
-}
+. "$HERE/../tools/run-capped.sh"
 
 engine_cmd() {
   case "$1" in

@@ -42,9 +42,19 @@
 # The language already refuses a host whose template ignores its own demand
 # column, which is a stronger guarantee than this script could assert: a host
 # cannot silently answer a question it was not asked.
+# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 9s. Default 300s is
+# ~33x that. Whole-script cap, because the cost is a backgrounded node server
+# plus the `git ls-files` subprocesses it spawns as hosts and an HTTP poll
+# loop; each individual curl also carries FILES_HTTP_BUDGET_S so a poll loop's
+# own attempt counter stays meaningful (a request that never returns freezes
+# the counter, which is how a bounded loop becomes an unbounded wait).
+# Override with FILES_BUDGET_S.
 set -uo pipefail
 TSV2="$(cd "$(dirname "$0")/.." && pwd)"
 REPO="$(cd "$TSV2/../.." && pwd)"
+
+. "$TSV2/../tools/run-capped.sh"
+cap_self "${FILES_BUDGET_S:-300}" files "$@"
 
 PORT="${TSV2_FILES_PORT:-17572}"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tsv2-enum.XXXXXX")"
@@ -69,20 +79,20 @@ TSV2_DB=":memory:" TSV2_PORT="$PORT" \
   node --experimental-transform-types "$SERVE_MAIN" >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 60); do
-  curl -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
+  capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
   kill -0 "$SERVER_PID" 2>/dev/null || fail "server died on boot: $(tail -5 "$WORK/server.log")"
   sleep 0.2
 done
 
-status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "program load returned $status: $(cat "$WORK/load.json")"
 grep -q 'files_at' "$WORK/load.json" || fail "both files hosts should be declared: $(cat "$WORK/load.json")"
 say "PASS  program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"
 
 post_arrival() {
-  curl -s -o /dev/null -X POST --data-binary "$1" "$BASE/arrivals"
+  capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o /dev/null -X POST --data-binary "$1" "$BASE/arrivals"
 }
-rows_json() { curl -s "$BASE/idb/$1"; }
+rows_json() { capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s "$BASE/idb/$1"; }
 await_rows() {
   local rel="$1" want="$2" deadline=$((SECONDS + 120))
   while [ "$SECONDS" -lt "$deadline" ]; do

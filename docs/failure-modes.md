@@ -1385,6 +1385,68 @@ sites but not against new code. **missing** = nothing.
   exit 0 after the fixture fix). Every runner riding run/1 (conformance,
   arch, labs) inherits the rail.
 
+## 38. Unbounded compute grind (no budget, so a cliff arrives as a hang or an OOM death)
+
+- WHAT IT LOOKS LIKE: a toolchain invocation with no time limit. It is not a
+  bug until the invocation hits a cliff, and then the cliff cannot report
+  itself: the caller sees silence for as long as it is willing to wait, and
+  the eventual end is a crash, an OOM kill, or a human losing patience. The
+  incident always reads as "it hung", which names nothing and locates nothing.
+  Its close cousin, and the reason a naive fix does not work: a timeout that
+  ORPHANS. `perl -e 'alarm N; exec @ARGV'` — the house one-liner on macOS,
+  which ships no coreutils `timeout` — execs the command in perl's own
+  process, so SIGALRM kills that one process and every child it spawned
+  survives, reparented, still consuming the machine the caller thinks it
+  reclaimed.
+- HOW IT BIT US, three incidents, all 2026-07-30/31:
+  1. a `just devlog` run hung for 35 minutes with nothing on stdout;
+  2. `3_clock_check.pl`'s simple-path enumeration ground 9m40s into 8GB and
+     died as a stack overflow INSIDE the served compiler — POST /program had
+     no budget, so the request held open behind a live swipl and the only
+     signal at the end was a crash (ARCH row clock_check_path_blowup);
+  3. 236 orphaned servers accumulated from rails whose teardown never ran.
+  And the orphaning-timeout receipt, measured in v6/bench-cli/bench.sh's own
+  header: at a bench cell's timeout the harness moved on to the next cell
+  while the timed-out swipl kept running — `03:03 swipl` (orphaned, 3 minutes
+  past its 180s cap) beside `00:01 swipl` (the cell being measured) — so every
+  subsequent measurement was taken against a stolen core.
+- LAW (user-set 2026-07-31): every compute invocation in the toolchain runs
+  under a budget with a NAMED timeout failure. No open-ended grind anywhere. A
+  resource cliff is a named refusal, never a hang, never an OOM death. A
+  budget that trips on today's honest wall is a mis-set budget, so every site
+  states its measured wall beside its default.
+- RAIL: `v6/tools/run-capped.sh`, one helper, four entry points — `run_capped`
+  (fork + setpgrp + SIGALRM -> `kill -KILL -pgid`, exit 124, the coreutils
+  convention), `capped` (the same plus the named failure line), `cap_self`
+  (whole-script process-group cap, for the served rails whose cost is a
+  background server and the subprocesses it spawns rather than a command they
+  wait on), and `capped_curl` (a request that cannot outlive its budget, so a
+  poll loop's own attempt counter keeps advancing). Executed rather than
+  sourced it is `run_capped` as a command, which is how an `sh` host template
+  inside a .dl6 program reaches it. Sites wrapped in the landing sweep:
+  the served compile door (v6/tsv2/serve/0_compile.ts, `compile_timeout`
+  answered as a 400 with the swipl group killed and the running program
+  untouched), atlas/self-map/devlog/files/getting-started/extraction-live/
+  crawl-bench/goal-endurance/leak-soak x2/memory-soak (whole-script caps),
+  roundtrip/text-door/sweep (per-leg caps), the graphviz render inside
+  dataflow-atlas.dl6 (per-render cap), and both bench engine runners, whose
+  orphaning one-liners this closes.
+  Fail-first receipts, one per wrapped class (2026-07-31, planted budgets
+  below each site's honest wall): `capped` on text_door_receipt.sh ->
+  `TIMEOUT text_door_receipt.sh: the term-door vs text-door swipl receipt
+  exceeded 2s`, exit 124, zero surviving swipl; `cap_self` on files.sh ->
+  `TIMEOUT files.sh: whole run (files) exceeded 3s; the process group was
+  killed`, exit 124, zero surviving `serve/main.ts`; the command form on a
+  shell that backgrounds a child -> exit 124 and the BACKGROUNDED grandchild
+  dead too (the process-group leg, which the orphaning one-liner fails);
+  `capped_curl` against a socket that accepts and never answers -> curl's own
+  28 in 3s, where the uncapped request was still waiting at 8s.
+  v6/tsv2/tests/serveCompileBudget.test.ts carries the compile door's, with
+  its own two-part sabotage receipt.
+- RESIDUAL, named not fixed: `scripts/dl-trace.sh` and `scripts/verify.sh`
+  still carry the orphaning one-liner on the v5 side, outside this sweep's
+  scope.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1422,6 +1484,7 @@ sites but not against new code. **missing** = nothing.
 | 32 | normalizing a folded composite id onto a lossier decomposition | missing | the sym-dict migration (next chapter) must ship the bijection count-equality gate + per-join parity probe from `plans/2026-07-21-sym-dict-correctness-proof.md`; today only R1 (df in-memory id → `NodeIdx`) landed, mint_sym/lambda_sym still fold `format!` strings |
 | 35 | dev server outlives its spawner | missing | stdin-watch exit in v6 main.ts (parent death closes the pipe) + pid-owns-port assertion in goal-endurance readiness; fail-pre-fix test per the pipeline |
 | 36 | non-finite number spliced unquoted into SQL text | enforced | — (encode-site guard + execute$ SQL-in-error, both v6/dl/src/3_runtime.ts; parseWhitespaceColumns line-per-column fix, v6/dl/src/1_hosts.ts; fail-pre-fix tests in v6/dl/tests/4_hosts.test.ts + tests/3_runtime.test.ts) |
+| 38 | unbounded compute grind (hang or OOM instead of a named refusal) | mostly enforced | v6/tools/run-capped.sh wraps the served compile door, every v6 receipt script, the graphviz render and both bench engine runners; residual = `scripts/dl-trace.sh` and `scripts/verify.sh` still carry the orphaning `perl -e 'alarm N; exec'` on the v5 side, and no rail yet REFUSES a new unwrapped invocation (a ratchet over `swipl`/`node`/`dot`/`curl` call sites is the promotion) |
 
 ## How a new rail gets born here
 

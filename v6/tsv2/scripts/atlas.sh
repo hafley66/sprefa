@@ -123,12 +123,45 @@
 #
 #   and with `grep -v '^  ratio='` for the unlevered row.
 
+# ── BUDGETS (timeout-gun lane, 2026-07-31) ───────────────────────────────────
+#
+# Standing law: every compute invocation runs under a budget with a NAMED
+# timeout failure. This rail is the law's hardest case, because almost none of
+# its cost is a command it waits on: it is a backgrounded node server, one
+# extractor subprocess per TypeScript file and one swipl per .pl file that the
+# SERVER spawns, five graphviz renders the PROGRAM demands, and an HTTP poll
+# loop. Only a process-group cap around the whole script covers all of that,
+# which is what `cap_self` installs (v6/tools/run-capped.sh: fork + setpgrp,
+# SIGKILL to the group, exit 124).
+#
+# ATLAS_BUDGET_S, default 2400 (40 min). The measured wall is ~10 min for the
+# two runs the byte-stability leg needs, of which ~8.5 min is the text door
+# compiling this program TWICE at 4m16s each -- all of it the filed
+# `clock_check_path_blowup`, none of it this rail's to fix. 4x the honest wall
+# is the headroom, and the honest wall is currently a defect's. When the
+# blowup lands this default should come down with it.
+#
+# ATLAS_DOT_BUDGET_S, default 180, PER RENDER. graphviz is the one leg the
+# whole-script cap would report unhelpfully (a hung `dot` and a hung server
+# read the same from outside), so the render host in dataflow-atlas.dl6 fires
+# its own gun. It reaches the helper through ATLAS_RUN_CAPPED for the reason
+# every other path here is an env var: fillTemplate escapes `$` in any value it
+# splices, so a path arriving as a rel column could never expand. The five
+# renders together are seconds; 180s is the "graphviz has stopped being
+# graphviz" line.
+
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TSV2="$(cd "$SCRIPT_DIR/.." && pwd)"
 V6="$(cd "$TSV2/.." && pwd)"
 ROOT="$(cd "$V6/.." && pwd)"
+
+. "$V6/tools/run-capped.sh"
+cap_self "${ATLAS_BUDGET_S:-2400}" atlas "$@"
+
+export ATLAS_RUN_CAPPED="$V6/tools/run-capped.sh"
+export ATLAS_DOT_BUDGET_S="${ATLAS_DOT_BUDGET_S:-180}"
 PROGRAM="${ATLAS_PROGRAM:-$V6/dl/fixtures/dataflow-atlas.dl6}"
 
 # THE FIVE DRAWINGS, in the same order `variant/7` declares them. The names are
@@ -217,13 +250,13 @@ resolve_extract_bin
 SERVER_PID=$!
 
 for ((attempt = 1; attempt <= 100; attempt++)); do
-  curl -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
+  capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
   kill -0 "$SERVER_PID" 2>/dev/null || die "server died: $(tail -30 "$WORK/server.log")"
   sleep 0.2
 done
-curl -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
+capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
 
-status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 
 # The readiness witnesses: one per fact plane, the derived graph, the two
@@ -241,7 +274,7 @@ fetch_all() {
     [ "$first" = 1 ] || printf ',' >>"$target"
     first=0
     printf '"%s":' "$rel" >>"$target"
-    curl -s "$BASE/idb/$rel" >>"$target" || return 1
+    capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s "$BASE/idb/$rel" >>"$target" || return 1
   done
   printf '}' >>"$target"
 }

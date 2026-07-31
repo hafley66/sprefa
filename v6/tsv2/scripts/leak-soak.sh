@@ -8,7 +8,19 @@
 # fails at "timeout waiting for SSE teardown (iteration 0)"; merging each bind's
 # timers twice fails at "timeout waiting for the interval timer to be the only
 # one". The test header records the one sabotage that does NOT flip it.
+#
+# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 5s at the default 20
+# iterations. Default 900s, because TSV2_LEAK_ITERATIONS is an argument and a
+# soak exists to be raised; the number encodes "still running after fifteen
+# minutes" rather than a multiple of five seconds. Whole-script cap: the work
+# is a node test process that starts and swaps servers 20 times, so an
+# orphaned generation is exactly what the process-group kill is for.
+# Override with TSV2_LEAK_BUDGET_S.
 set -euo pipefail
+
+. "$(cd "$(dirname "$0")/../.." && pwd)/tools/run-capped.sh"
+cap_self "${TSV2_LEAK_BUDGET_S:-900}" tsv2_leak_soak "$@"
+
 cd "$(dirname "$0")/.."
 
 PORT="${TSV2_LEAK_PORT:-17551}"

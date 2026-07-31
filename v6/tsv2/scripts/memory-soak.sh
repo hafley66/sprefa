@@ -11,8 +11,17 @@
 # reading process.memoryUsage() (scripts/memory-soak.ts's `sample`), cutting
 # GC-timing noise out of the RSS/heapUsed comparison; the assertions do not
 # depend on it (global.gc is optional there too).
+# BUDGET (timeout-gun lane, 2026-07-31). THE ONLY DERIVED BUDGET IN THE SWEEP,
+# and it has to be: this script's honest wall is an ARGUMENT
+# (TSV2_SOAK_DURATION_S, 100s short / 28800s long), so a constant would be
+# either a fake timeout on the overnight run or no cap at all on the short one.
+# Budget = 2 x duration + 120s of boot/teardown slack. Measured: the short mode
+# ran 108s against a 320s budget. Override outright with TSV2_SOAK_BUDGET_S.
+#
+# The cap is on the whole script and the duration is computed BEFORE the `cd`,
+# because `cap_self` re-execs `bash "$0"` and a relative $0 only resolves from
+# the cwd this script was invoked in.
 set -uo pipefail
-cd "$(dirname "$0")/.."
 
 PORT="${TSV2_SOAK_PORT:-17571}"
 if [ "${TSV2_SOAK_LONG:-0}" = "1" ]; then
@@ -29,6 +38,11 @@ case "$DURATION_S" in
     exit 1
     ;;
 esac
+
+. "$(cd "$(dirname "$0")/../.." && pwd)/tools/run-capped.sh"
+cap_self "${TSV2_SOAK_BUDGET_S:-$((DURATION_S * 2 + 120))}" tsv2_memory_soak "$@"
+
+cd "$(dirname "$0")/.."
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tsv2-memsoak.XXXXXX")"
 if [ -n "${DL_PERF_LOG:-}" ]; then
