@@ -17,6 +17,8 @@
           ]).
 
 :- use_module(library(lists)).
+:- use_module(library(assoc)).
+:- use_module(library(pairs)).
 :- use_module(analyze,
               [ conjunction_goals/2, edge_headed_refs/2,
                 program_refs/2, rule_head_ref/2,
@@ -407,11 +409,139 @@ delayed_recurrence_nodes(Program, Dependencies, DelayedNodes) :-
             Nodes0),
     sort(Nodes0, DelayedNodes).
 
+% ── offsets without paths ───────────────────────────────────────────────────
+%
+% recurrence_free_clock/6 answers ONE question: which offsets can reach Ref
+% from Origin along a path that touches no delayed-recurrence node. It used to
+% answer it by enumerating every such simple path, which is exponential in the
+% number of parallel mid-chain routes and not in the size of the program.
+% Measured on the shape below (k diamonds in series, so 2^k routes end to end,
+% every route the same weight and therefore no violation to find):
+%
+%   | k  |   old inferences | old ms |  new inferences | new ms |
+%   |----|-----------------:|-------:|----------------:|-------:|
+%   |  4 |           15,030 |    1.5 |          13,691 |    1.3 |
+%   |  8 |          140,478 |    6.9 |          24,253 |    1.5 |
+%   | 12 |        2,888,484 |    153 |          37,374 |    2.4 |
+%   | 16 |       60,464,486 |  3,283 |          51,044 |    3.3 |
+%   | 20 |    1,201,719,860 | 51,103 |          65,538 |    4.1 |
+%
+% The old column doubles per k; the new one adds ~3,300 inferences per
+% diamond. dataflow-atlas.dl6 is that shape in the wild:
+% a sixteen-rel filesystem fold that four different file depths enter, and its
+% compile went 30 s to 9 m 40 s at an 8 GB stack, dying with `Stack limit
+% (1.0Gb) exceeded` inside this predicate's setof at the served compiler's
+% default (ARCH clock_check_path_blowup).
+%
+% What replaces it is Lustre's own shape: propagate one offset per edge and
+% read the answer off the NODES. A node holding two offsets IS the conflict,
+% and clock_violation/2 reports it with the same reason functor and the same
+% two numbers, because the offset SET per node is what the path enumeration
+% was computing all along.
+%
+% WHY THE SETS AGREE, and it is not obvious. Propagation follows WALKS; the
+% old code followed SIMPLE PATHS. The two give the same weights exactly when
+% every cycle in the searched graph weighs zero: a closed walk decomposes into
+% simple cycles, so a zero-weight cycle can be excised from any walk without
+% moving its weight, and repeated excision leaves a simple path. That
+% condition is CHECKED, never assumed, by zero_weight_cycles_only/2 --
+%
+%   every causal grade is >= 0 (registry clock_role/4 gives 0 or 1, and
+%   causal_dependency/4 admits no other role), and
+%   every causal edge inside a cyclic component weighs 0.
+%
+% Together those two make every cycle weigh zero: a grade-1 edge inside a
+% strongly connected component would sit on a cycle of weight >= 1. When
+% either half fails the old enumeration runs unchanged, so no program can
+% change verdict on a graph this reasoning does not cover. The one shape that
+% reaches the fallback is a component holding both a zero cycle and a positive
+% one, which classify_component/3 already calls invalid and clock_violation/2
+% already refuses one clause further down.
 recurrence_free_clock(Nodes, Dependencies, DelayedNodes, Ref, Origin, Offset) :-
-    clock_origin(Nodes, Dependencies, Origin),
-    clock_path(Origin, Ref, Dependencies, [Origin], 0, Offset, Path),
-    \+ ( member(Node, Path),
-         memberchk(Node, DelayedNodes) ).
+    live_causal_edges(Dependencies, DelayedNodes, Edges),
+    exclude_delayed(Nodes, DelayedNodes, LiveNodes),
+    (   zero_weight_cycles_only(LiveNodes, Edges)
+    ->  successor_index(Edges, Successors),
+        clock_origin(Nodes, Dependencies, Origin),
+        propagated_offsets(Origin, Successors, Reached),
+        member(Ref-Offsets, Reached),
+        member(Offset, Offsets)
+    ;   clock_origin(Nodes, Dependencies, Origin),
+        clock_path(Origin, Ref, Dependencies, [Origin], 0, Offset, Path),
+        \+ ( member(Node, Path),
+             memberchk(Node, DelayedNodes) )
+    ).
+
+exclude_delayed(Nodes, DelayedNodes, LiveNodes) :-
+    exclude(delayed_node(DelayedNodes), Nodes, LiveNodes).
+
+delayed_node(DelayedNodes, Node) :-
+    memberchk(Node, DelayedNodes).
+
+% From-To-Grade triples, delayed nodes dropped at both ends. Duplicate
+% triples collapse; two rules producing the SAME grade between the same pair
+% are one edge, two rules producing different grades stay two edges, which is
+% the parallel-route disagreement this checker exists to find.
+live_causal_edges(Dependencies, DelayedNodes, Edges) :-
+    findall(From-To-Grade,
+            ( member(Dependency, Dependencies),
+              causal_dependency(Dependency, From, To, Grade),
+              \+ memberchk(From, DelayedNodes),
+              \+ memberchk(To, DelayedNodes) ),
+            Edges0),
+    sort(Edges0, Edges).
+
+zero_weight_cycles_only(LiveNodes, Edges) :-
+    forall(member(_-_-Grade, Edges), Grade >= 0),
+    findall(From-To, member(From-To-_, Edges), PlainEdges),
+    graph_from_edges(LiveNodes, PlainEdges, Graph),
+    graph_cyclic_components(Graph, Components),
+    forall(( member(Component, Components),
+             member(From-To-Grade, Edges),
+             memberchk(From, Component),
+             memberchk(To, Component) ),
+           Grade =:= 0).
+
+successor_index(Edges, Successors) :-
+    findall(From-(To-Grade), member(From-To-Grade, Edges), Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Grouped),
+    list_to_assoc(Grouped, Successors).
+
+% One worklist pass. A node is re-expanded only when it gains an offset it
+% did not already hold, so the work is bounded by the number of DISTINCT
+% offsets in the graph rather than by the number of routes: with every cycle
+% at weight zero, every reachable offset is the weight of some simple path,
+% so the value domain is bounded by the count of grade-1 edges.
+propagated_offsets(Origin, Successors, Reached) :-
+    empty_assoc(Empty),
+    put_assoc(Origin, Empty, [0], Seeded),
+    propagate([Origin-0], Successors, Seeded, Final),
+    assoc_to_list(Final, Reached).
+
+propagate([], _, Assoc, Assoc).
+propagate([Node-Offset | Queue0], Successors, Assoc0, Assoc) :-
+    (   get_assoc(Node, Successors, Targets)
+    ->  true
+    ;   Targets = []
+    ),
+    relax(Targets, Offset, Assoc0, Assoc1, Queue0, Queue),
+    propagate(Queue, Successors, Assoc1, Assoc).
+
+relax([], _, Assoc, Assoc, Queue, Queue).
+relax([To-Grade | Rest], Offset, Assoc0, Assoc, Queue0, Queue) :-
+    Next is Offset + Grade,
+    (   get_assoc(To, Assoc0, Known)
+    ->  true
+    ;   Known = []
+    ),
+    (   memberchk(Next, Known)
+    ->  Assoc1 = Assoc0,
+        Queue1 = Queue0
+    ;   put_assoc(To, Assoc0, [Next | Known], Assoc1),
+        Queue1 = [To-Next | Queue0]
+    ),
+    relax(Rest, Offset, Assoc1, Assoc, Queue1, Queue).
 
 check_clock_program(Program) :-
     ( clock_violation(Program, Violation)
