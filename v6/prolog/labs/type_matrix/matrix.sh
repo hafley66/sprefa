@@ -15,6 +15,19 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
+# The two symlinks an emitted cell module needs to resolve its own
+# `../runtime/...` and bare `rxjs` imports. They are gitignored, so a fresh
+# clone, a worktree or a merge that did not carry them leaves the whole matrix
+# reading emitter_run_error at exit 0 -- that has now happened three times
+# (this lab's own merged-main regrade, and the bench-cli lane). Recreated here
+# rather than diagnosed again.
+ln -sfn ../../../tsv2/runtime runtime
+ln -sfn ../../../tsv2/node_modules node_modules
+if [ ! -e node_modules/rxjs ]; then
+  echo "matrix.sh: v6/tsv2/node_modules is empty -- run pnpm install in v6/tsv2 and v6/sprefa-store/js" >&2
+  exit 1
+fi
+
 node gen_cells.mjs
 node drive.mjs
 node classify.mjs
