@@ -43,6 +43,16 @@ RECORD SHAPES
   record=scip_documentation  symbol=<string>  pos=<u32>  text=<string>
   record=scip_signature  symbol=<string>  language=<string>  text=<string>
   record=scip_signature_occurrence  symbol=<string>  ref_symbol=<string>  start=<u32>  end=<u32>  roles=<i32>
+  record=scip_index  reused=<bool>  tool_name=<string>  tool_version=<string>  documents=<u32>
+  record=scip_skip  lang=<string>  bin=<string>  reason=<not_installed|timed_out|failed>  detail=<string>
+  record=scip_def  symbol=<string>  file=<string>  repo=<string>
+  record=scip_name  symbol=<string>  name=<string>
+  record=scip_ref  file=<string>  symbol=<string>  def_file=<string>  repo=<string>
+  record=scip_edge  src=<string>  dst=<string>  repo=<string>
+  record=scip_fn_edge  caller=<string>  callee=<string>
+  record=scip_callee_type  sym=<string>  type=<string>
+  record=scip_local  fn=<string>  name=<string>
+  record=scip_impl  impl=<string>  iface=<string>
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
@@ -142,6 +152,27 @@ DEPENDENCY EDGES (--scip-deps and --deps)
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,
   byte count and line count. It rides the same read as extraction.
+
+THE TWO NAMED FAMILIES (--family scip | --family diet_scip)
+  DIET MEANS PARSE TECHNIQUE AND HEURISTICS, NEVER ACTUAL SCIP DATA.
+  --family scip ROOT ensures the root's SCIP index (an existing index wins; else
+  the indexer its marker files name runs once under a wall budget, its whole
+  process group killed on the deadline) and streams v5's scip_* relation shapes:
+  scip_def, scip_name, scip_ref, scip_edge, scip_fn_edge, scip_callee_type,
+  scip_local, scip_impl, behind one scip_index header row. Compiler-resolved.
+  v5's scip_occurrence and scip_binding are NOT in that set. scip_occurrence is
+  already a record tag on this wire (the byte-span passthrough row under
+  --scip-facts) with different fields, and two shapes under one tag is exactly
+  the silent drift the goldens exist to stop. Both are one consumer join off
+  --scip-facts --scip-record scip_occurrence, which carries the spans and every
+  role bit; scip_binding additionally wants the source slice at those spans.
+  --family diet_scip PATH... runs this crate's own front-ends plus name-match
+  resolution over the supplied files, emitting resolved_edge and
+  resolved_type_edge. No indexer, no type checker, no index. It is wrong
+  wherever a name is ambiguous corpus-wide, which is what the other name buys.
+  A root that cannot be indexed emits scip_skip rows and exits 0: a missing
+  toolchain skips a root without killing the caller, and without the silently
+  empty stream that reads as 'this project has no symbols'.
 
 PROJECT MODE (--resolve)
   `--resolve PATH...` runs phase 2 over the supplied files as one project.

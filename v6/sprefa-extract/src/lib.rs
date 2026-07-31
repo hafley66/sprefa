@@ -25,7 +25,9 @@ pub mod rows;
 pub mod schema;
 pub mod scip;
 pub mod scip_decode;
+pub mod scip_ensure;
 pub mod scip_rows;
+pub mod scip_v5_rels;
 pub mod seams;
 pub mod shape;
 pub mod source;
@@ -44,9 +46,15 @@ pub use lang::{
     KotlinSource, PrologSource, RustSource, TsSource,
 };
 pub use project::{
-    resolve_project, resolve_project_jsonl, scip_facts, scip_facts_jsonl, scip_file_edges_jsonl,
-    FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipMode,
+    diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,
+    scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
+    FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode,
 };
+pub use scip_ensure::{
+    default_cache_dir, detect, ensure_index, index_path, EnsureReport, IndexBudget, Indexer,
+    IndexerSkip, SkipReason, INDEXERS,
+};
+pub use scip_v5_rels::v5_rel_rows;
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,

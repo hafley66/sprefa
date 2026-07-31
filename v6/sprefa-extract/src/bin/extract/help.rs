@@ -13,6 +13,36 @@ pub const LONG_ABOUT: &str = "\
 Extract normalized graph facts from one source file and stream them as JSONL
 (one JSON object per line) to stdout. No daemon, no database, no network.
 
+THE TWO NAMED FAMILIES: scip AND diet_scip
+  DIET MEANS PARSE TECHNIQUE AND HEURISTICS, NEVER ACTUAL SCIP DATA.
+
+  `--family scip ROOT` is REAL SCIP INDEX DATA. The root's marker files pick the
+  language's own indexer (Cargo.toml -> rust-analyzer, tsconfig.json or
+  package.json -> scip-typescript, go.mod -> scip-go); an index already on disk
+  wins untouched, otherwise the indexer runs ONCE under a wall budget with its
+  whole process group killed on the deadline, and the result is cached. The
+  index is then projected to v5's scip_* relation shapes: scip_def, scip_name,
+  scip_ref, scip_edge, scip_fn_edge, scip_callee_type, scip_local, scip_impl,
+  plus one scip_index header row. Every fact is compiler-resolved.
+
+  `--family diet_scip PATH...` is this crate's own tree-sitter / oxc / syn
+  front-ends plus name-match resolution across the supplied files. No indexer,
+  no type checker, no index anywhere. It emits resolved_edge and
+  resolved_type_edge, needs no toolchain, and is silently wrong wherever a name
+  is ambiguous corpus-wide: two files defining `helper` make every unqualified
+  call to `helper` unresolvable here, and a real index resolves it through the
+  import. That difference is why the two names exist.
+
+  A root `--family scip` cannot index emits scip_skip rows naming the language,
+  the binary and the reason (not_installed with the install command, timed_out
+  with the budget, or failed with the indexer's own last stderr line), and
+  exits 0. A missing toolchain skips a root; it never kills the caller, and it
+  never yields a silently empty stream.
+
+  cst, type, call and df are unaffected: they remain the per-file extraction
+  mask. `--resolve` remains the pre-existing spelling of the pass diet_scip
+  labels, with its own narrower call-only default.
+
 PROJECT MODE
   `--resolve PATH...` extracts every supplied file, builds one definition index,
   then emits resolved edges as JSONL. It requires two or more source paths when
@@ -92,7 +122,17 @@ Comma-separated subset of: cst,type,call,df. Defaults to all four. Unknown names
 are silently ignored; `type` and `types` are equivalent.
 
 Under --resolve this selects the phase-2 arms instead of the phase-1 mask: only
-`call` and `type` are meaningful there, and the default is `call`.";
+`call` and `type` are meaningful there, and the default is `call`.
+
+TWO NAMES ARE WHOLE-PROJECT MODES, not members of that mask:
+  scip       REAL SCIP index data over one ROOT. Ensures the root's index (an
+             existing one wins, else the detected indexer runs under a budget),
+             then streams v5's scip_* relation shapes.
+  diet_scip  This crate's tree-sitter / oxc / syn parse plus heuristic name
+             resolution over the supplied PATHs. DIET MEANS PARSE TECHNIQUE AND
+             HEURISTICS, NEVER ACTUAL SCIP DATA.
+Naming either alongside a mask name is an error: one is a per-file mask and the
+other a whole-project run, so combining them has no honest reading.";
 
 pub const PROJECT_ROOT_LONG: &str = "\
 The directory SCIP document paths are relative to, and the root --scip-build
@@ -176,6 +216,28 @@ Prepend one `file` record carrying the path, the content digest every resolved
 edge is keyed on, the byte count and the line count. Off by default so existing
 output is unchanged; on, it rides the same invocation, so counting lines never
 costs a second read of the file.";
+
+pub const SCIP_CACHE_LONG: &str = "\
+Where `--family scip` places a freshly built index and finds it again. The
+default is v5's location, <ROOT>/.dl/.state/index.scip, and a `.dl/.gitignore`
+gains a `.state/` line so a turnkey build never leaves a committable index blob
+in a worktree.
+
+Point it elsewhere when the root must not be written to at all: a committed
+fixture, a read-only checkout, or a run whose cache should not outlive it. The
+reuse probe still checks <ROOT>/index.scip and <ROOT>/.dl/index.scip either way,
+and $SPREFA_SCIP_INDEX still overrides everything.";
+
+pub const SCIP_TIMEOUT_LONG: &str = "\
+Wall budget in seconds for ONE indexer run under `--family scip`. Overrides
+$SPREFA_SCIP_TIMEOUT_SECS; the default is 600.
+
+On the deadline the indexer's WHOLE PROCESS GROUP is killed, not just the
+process that was spawned. That is the part that matters: these indexers fork
+(rust-analyzer runs cargo metadata, scip-typescript runs the TypeScript
+compiler), so a bound reaching only the direct child would leave the real work
+running and reparented. A run that exceeds the budget emits a scip_skip row with
+reason timed_out and the stream continues.";
 
 pub const BENCH_LONG: &str = "\
 Extract + flatten, then print one summary line to stderr (per-family node counts
