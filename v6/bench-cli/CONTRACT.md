@@ -24,7 +24,7 @@ Three different quantities, and they do not share a tool:
 | quantity | why it is in the standings |
 |---|---|
 | **run wall time** | the number the rust-vs-TS decision turns on |
-| **peak RSS** | the s3 OOM and the 682 MB tsv2 row in `SCALE.md` are memory findings, not time findings |
+| **peak RSS** | the cross_join OOM and the 682 MB tsv2 row in `SCALE.md` are memory findings, not time findings |
 | **statements / ticks / db bytes** | engine-internal; no external tool can see them |
 
 ### Candidate 1 — hyperfine 1.20.0
@@ -54,7 +54,7 @@ were already on the box:
 
   30-50 ms for node against 10-20 ms for swipl. A ~30 ms constant that has
   nothing to do with engine speed, charged unequally, against fixture cells
-  whose real engine work is single-digit milliseconds (`SCALE.md` s2/1k =
+  whose real engine work is single-digit milliseconds (`SCALE.md` two_hop_join/1k =
   47.5 ms total wall for tsv2, 4.8 ms for v1). Ranking engines on that number
   ranks their runtimes' boot code.
 - hyperfine cannot average a value the child process writes to a file. The
@@ -306,7 +306,7 @@ engine is not timed and the reason line names whose ceiling it is.
 
 **An engine without a matching log is never timed.** This is the v1 asymmetry
 lesson made structural: `SCALE.md` recorded v1 as ~10x faster than tsv2 on
-s2/100k while v1 emitted no delta log at all, so it was never paying the
+two_hop_join/100k while v1 emitted no delta log at all, so it was never paying the
 tick-log obligation it was being compared on. Under this contract that run
 does not produce a number.
 
@@ -417,7 +417,7 @@ $ diff out/mod_filter_map_is_a_level_rule.ts \
 ```
 
 That is a limit of the .dl6 SURFACE, not a compiler divergence, and it is the
-same one `schedule-gen.ts`'s header records for s2's link rows. **All nine
+same one `schedule-gen.ts`'s header records for two_hop_join's link rows. **All nine
 program cases in `cases.json` are in the byte-identical 96**, which is what the
 claim above needs; a case that was not would be timing a program with a
 different starting world than the sweep graded, and should be moved or seeded
@@ -434,7 +434,7 @@ matching schedule from `v6/prolog/compile/out/`. These exercise real language
 constructs (match blocks, aggregates, retraction, enum expansion, edge
 carries) and are the correctness backbone.
 
-**Scale cases** — generated programs at parameterised row counts, the s1/s2/s3
+**Scale cases** — generated programs at parameterised row counts, the keyed_replace/two_hop_join/cross_join
 shapes `SCALE.md` already uses. See §6 for what was and was not taken.
 
 ---
@@ -473,8 +473,8 @@ Recorded here rather than silently skipped.
   that is the right precedent to extend when a v5 row is wanted.
   **Priced: a `dl bench --schedule` mode in `src/cli/`, plus a tick-log
   emitter over the v5 fixpoint. Not small, not this lane.**
-- **s3 scale case** — the 2-atom combine cross join. `SCALE.md` records tsv2
-  DNF at every s3 size (V8 heap ceiling) against v1 completing s3/1k. Included
+- **cross_join scale case** — the 2-atom combine cross join. `SCALE.md` records tsv2
+  DNF at every size (V8 heap ceiling) against v1 completing cross_join/1k. Included
   in `cases.json` as a **memory-wall** case, not a timing case: it is expected
   to produce `error`, and the standings record the wall rather than a number.
 - **gnuplot charts** — `bench/chart.sh` exists and works for the scale-sweep
@@ -515,7 +515,7 @@ run exits 1.
 
 1. **The oracle exceeded its BUDGET on this cell** — exit 124 from the
    process-group timeout, and only 124. `BENCH_ORACLE_BUDGET` defaults to 30s;
-   the slowest case swipl actually reaches is s2/1k at ~2.3s and the fastest it
+   the slowest case swipl actually reaches is two_hop_join/1k at ~2.3s and the fastest it
    does not was still running past 183s, so every budget on that plateau defers
    the same five cells. Any OTHER non-zero oracle exit is `error` +
    `no_reference`: an unexplained reference failure is the moment when grading
@@ -575,8 +575,8 @@ not a fix:
   per-tick delta stream. It catches a divergence the delta log cancels out; it
   does not catch a divergence both readings share.
 
-The honest summary: at s1/1k the standings assert equality with the language's
-specification. At s1/100k they assert equality with an engine that was equal to
+The honest summary: at keyed_replace/1k the standings assert equality with the language's
+specification. At keyed_replace/100k they assert equality with an engine that was equal to
 the specification everywhere the specification could be run. Those are different
 claims, and the `identical` / `identical_vs_reference` split exists so that no
 reader has to remember which is which.
@@ -591,11 +591,11 @@ Measured:
 
 | cell | oracle | tsv2 | verdict |
 |---|---:|---:|---|
-| s1/1k | 1325 ms | 33.1 ms | identical |
-| s2/1k | 2230 ms | 24.0 ms | identical |
-| s1/10k | > 180 s (173.58 s killed, then still running past 183 s) | — | `no_reference` |
-| s2/10k | walls | — | `no_reference` |
-| s3/1k | walls | — | `no_reference` |
+| keyed_replace/1k | 1325 ms | 33.1 ms | identical |
+| two_hop_join/1k | 2230 ms | 24.0 ms | identical |
+| keyed_replace/10k | > 180 s (173.58 s killed, then still running past 183 s) | — | `no_reference` |
+| two_hop_join/10k | walls | — | `no_reference` |
+| cross_join/1k | walls | — | `no_reference` |
 
 The two engines are already ~40-90x apart at 1k, and the gap grows in the
 direction that removes the referee. PERF-REPORT competes at 960k. So a rust
@@ -609,7 +609,7 @@ harness work:
 2. **A cheaper invariant at scale.** The full per-tick log is the strongest
    check and the most expensive. The sweep already computes a FINAL-STATE line
    (`oracle_final/2`, `<name>.oracle.final.jsonl`); a final-state hash would
-   grade s1/10k for a fraction of the cost, at the price of not catching a
+   grade keyed_replace/10k for a fraction of the cost, at the price of not catching a
    divergence that cancels out by the last tick. Tiered grading — full tick
    log where the oracle reaches, final-state hash beyond — is the obvious
    shape, and it is a ruling, not a refactor.
@@ -623,21 +623,21 @@ because the referee reaches them:
 
 | cell | phase 0 | now | tsv2 wall ms | ticks | stmts | peak RSS MB |
 |---|---|---|---:|---:|---:|---:|
-| s1/10k | `no_reference` | `identical_vs_reference` | 278.8 | 101 | 2316 | 176.9 |
-| s1/100k | not benched | `identical_vs_reference` | 2685.0 | 1001 | 23016 | 518.7 |
-| s2/10k | `no_reference` | `identical_vs_reference` | 155.9 | 101 | 3744 | 175.0 |
-| s2/100k | not benched | `identical_vs_reference` | 1450.7 | 1001 | 37044 | 521.1 |
-| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 8070.4 | 20 | 500 | 939.7 |
+| keyed_replace/10k | `no_reference` | `identical_vs_reference` | 278.8 | 101 | 2316 | 176.9 |
+| keyed_replace/100k | not benched | `identical_vs_reference` | 2685.0 | 1001 | 23016 | 518.7 |
+| two_hop_join/10k | `no_reference` | `identical_vs_reference` | 155.9 | 101 | 3744 | 175.0 |
+| two_hop_join/100k | not benched | `identical_vs_reference` | 1450.7 | 1001 | 37044 | 521.1 |
+| cross_join/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 8070.4 | 20 | 500 | 939.7 |
 
-Read the statement column, not the wall: s1 and s2 both hold their per-tick
+Read the statement column, not the wall: keyed_replace and two_hop_join both hold their per-tick
 statement count flat from 10k to 100k (23 and 37 respectively, 2316/23016 and
 3744/37044 over 101 and 1001 ticks), which is the P1 incremental emitter's
-claim being re-stated by a different harness. s1/10k is the noisiest cell in
+claim being re-stated by a different harness. keyed_replace/10k is the noisiest cell in
 the table — three consecutive full runs put it at 280, 627 and 279 ms at an
 identical statement count — so it is the one row not to read a movement into;
 every other cell reproduced within a few percent across the same three runs.
 
-s3 stays at 1k: its shape is a 2-atom cross join, quadratic on purpose, and
+cross_join stays at 1k: its shape is a 2-atom cross join, quadratic on purpose, and
 1000x1000 already produces the 1M combined rows the memory column is there to
 watch (939.7 MB peak RSS against a 512 MB V8 old-space cap — most of that is
 sqlite, outside the heap the flag bounds; the `SCALE.md` DNF this cell was

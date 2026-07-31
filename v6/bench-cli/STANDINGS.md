@@ -56,8 +56,8 @@ _input hash `a7b2708ed448737b` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 136 | N/A | 0 | N/A | 39.5 | N/A | `f829a11468b19db1` |
-| tsv2 | identical | oracle | 7.08 | 112 | 4 | 145 | 134.4 | N/A | `f829a11468b19db1` |
+| oracle | reference | oracle | 137 | N/A | 0 | N/A | 40.3 | N/A | `f829a11468b19db1` |
+| tsv2 | identical | oracle | 7.206 | 111 | 4 | 145 | 132.9 | N/A | `f829a11468b19db1` |
 
 ### callgraph_unused
 
@@ -66,8 +66,8 @@ _input hash `283b9cf68aaa550c` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 116 | N/A | 0 | N/A | 40.7 | N/A | `b45597e255434aec` |
-| tsv2 | identical | oracle | 8.702 | 109 | 5 | 212 | 133.2 | N/A | `b45597e255434aec` |
+| oracle | reference | oracle | 119 | N/A | 0 | N/A | 39.7 | N/A | `b45597e255434aec` |
+| tsv2 | identical | oracle | 8.761 | 109 | 5 | 212 | 134.5 | N/A | `b45597e255434aec` |
 
 ### flow_reach_recursive
 
@@ -76,8 +76,8 @@ _input hash `5eb25369a351dba6` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 115 | N/A | 0 | N/A | 39.7 | N/A | `5f08b9a04cc4ef4b` |
-| tsv2 | identical | oracle | 4.972 | 113 | 2 | 58 | 135.6 | N/A | `5f08b9a04cc4ef4b` |
+| oracle | reference | oracle | 121 | N/A | 0 | N/A | 40 | N/A | `5f08b9a04cc4ef4b` |
+| tsv2 | identical | oracle | 5.062 | 111 | 2 | 58 | 131.5 | N/A | `5f08b9a04cc4ef4b` |
 
 ### flow_sig_owner_join
 
@@ -86,8 +86,8 @@ _input hash `727407f9996e02ec` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 131 | N/A | 0 | N/A | 41.2 | N/A | `761dcbf0c0678603` |
-| tsv2 | identical | oracle | 5.482 | 119 | 1 | 56 | 137.9 | N/A | `761dcbf0c0678603` |
+| oracle | reference | oracle | 128 | N/A | 0 | N/A | 40.4 | N/A | `761dcbf0c0678603` |
+| tsv2 | identical | oracle | 5.449 | 115 | 1 | 56 | 139.3 | N/A | `761dcbf0c0678603` |
 
 ### diag_seven_ticks
 
@@ -96,8 +96,8 @@ _input hash `566c9e6904354be3` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 123 | N/A | 0 | N/A | 39.3 | N/A | `f66f0fefd622af4d` |
-| tsv2 | identical | oracle | 30.872 | 116 | 7 | 988 | 141.7 | N/A | `f66f0fefd622af4d` |
+| oracle | reference | oracle | 128 | N/A | 0 | N/A | 40 | N/A | `f66f0fefd622af4d` |
+| tsv2 | identical | oracle | 32.503 | 123 | 7 | 988 | 139.3 | N/A | `f66f0fefd622af4d` |
 
 ### clock_rel_join_storms
 
@@ -106,8 +106,8 @@ _input hash `6a906448c5a75f1f` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 119 | N/A | 0 | N/A | 39.3 | N/A | `39e1d09b3e4e0b1f` |
-| tsv2 | identical | oracle | 18.665 | 113 | 7 | 540 | 133.1 | N/A | `39e1d09b3e4e0b1f` |
+| oracle | reference | oracle | 130 | N/A | 0 | N/A | 41.8 | N/A | `39e1d09b3e4e0b1f` |
+| tsv2 | identical | oracle | 18.359 | 109 | 7 | 540 | 134.1 | N/A | `39e1d09b3e4e0b1f` |
 
 ### match_classify
 
@@ -116,8 +116,8 @@ _input hash `f71e559ddab60233` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 116 | N/A | 0 | N/A | 39.3 | N/A | `604c87c48f9b77f0` |
-| tsv2 | identical | oracle | 4.34 | 106 | 1 | 38 | 133.8 | N/A | `604c87c48f9b77f0` |
+| oracle | reference | oracle | 117 | N/A | 0 | N/A | 39.3 | N/A | `604c87c48f9b77f0` |
+| tsv2 | identical | oracle | 4.287 | 106 | 1 | 38 | 138.9 | N/A | `604c87c48f9b77f0` |
 
 ### aggregate_retraction
 
@@ -126,8 +126,8 @@ _input hash `25705d70571dc370` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 116 | N/A | 0 | N/A | 39.5 | N/A | `6be92fce389d15e8` |
-| tsv2 | identical | oracle | 5.609 | 103 | 3 | 77 | 132.7 | N/A | `6be92fce389d15e8` |
+| oracle | reference | oracle | 113 | N/A | 0 | N/A | 39.5 | N/A | `6be92fce389d15e8` |
+| tsv2 | identical | oracle | 5.607 | 109 | 3 | 77 | 133.3 | N/A | `6be92fce389d15e8` |
 
 ### enum_tag_view
 
@@ -136,21 +136,21 @@ _input hash `b4ce6a6ec7a079fb` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 118 | N/A | 0 | N/A | 40 | N/A | `b7332a3f5dfe7fa7` |
-| tsv2 | identical | oracle | 4.26 | 104 | 2 | 54 | 135.8 | N/A | `b7332a3f5dfe7fa7` |
+| oracle | reference | oracle | 117 | N/A | 0 | N/A | 39.3 | N/A | `b7332a3f5dfe7fa7` |
+| tsv2 | identical | oracle | 4.33 | 106 | 2 | 54 | 131 | N/A | `b7332a3f5dfe7fa7` |
 
 ## Scale shapes
 
-### s1/1k
+### keyed_replace/1k
 
 _input hash `aaa19a529a175aa6` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 1360 | N/A | 0 | N/A | 39.5 | N/A | `N/A` |
-| tsv2 | identical | oracle | 33.682 | 108 | 11 | 246 | 149.6 | N/A | `fe7134a2af8ee99e` |
+| oracle | reference | oracle | 1369 | N/A | 0 | N/A | 39.3 | N/A | `N/A` |
+| tsv2 | identical | oracle | 34.037 | 109 | 11 | 246 | 147.8 | N/A | `fe7134a2af8ee99e` |
 
-### s1/10k
+### keyed_replace/10k
 
 beyond the swipl budget; graded against the proven referee
 _input hash `0cff8edfe11fdec3` (all engines must match)_
@@ -158,9 +158,9 @@ _input hash `0cff8edfe11fdec3` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 271.609 | 105 | 101 | 2316 | 160.8 | N/A | `1f19d33822b870fd` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 279.949 | 109 | 101 | 2316 | 159.3 | N/A | `1f19d33822b870fd` |
 
-### s1/100k
+### keyed_replace/100k
 
 the scale the referee had to reach for a rust engine to be gradeable at all
 _input hash `9b4451a2613b058d` (all engines must match)_
@@ -168,18 +168,18 @@ _input hash `9b4451a2613b058d` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 2556.054 | 106 | 1001 | 23016 | 452.1 | N/A | `f086a030143bfd8a` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 2596.015 | 109 | 1001 | 23016 | 449 | N/A | `f086a030143bfd8a` |
 
-### s2/1k
+### two_hop_join/1k
 
 _input hash `cbc057b61af18b57` (all engines must match)_
 
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
-| oracle | reference | oracle | 2247 | N/A | 0 | N/A | 39.7 | N/A | `N/A` |
-| tsv2 | identical | oracle | 24.368 | 108 | 11 | 414 | 145.8 | N/A | `4c471042a492d02d` |
+| oracle | reference | oracle | 2256 | N/A | 0 | N/A | 39.3 | N/A | `N/A` |
+| tsv2 | identical | oracle | 25.619 | 116 | 11 | 414 | 143.9 | N/A | `4c471042a492d02d` |
 
-### s2/10k
+### two_hop_join/10k
 
 beyond the swipl budget; graded against the proven referee
 _input hash `b0cb70503efeb162` (all engines must match)_
@@ -187,9 +187,9 @@ _input hash `b0cb70503efeb162` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 150.103 | 107 | 101 | 3744 | 156.1 | N/A | `e8100b1036f80d7f` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 153.322 | 117 | 101 | 3744 | 159 | N/A | `e8100b1036f80d7f` |
 
-### s2/100k
+### two_hop_join/100k
 
 the two-hop join at competition scale; ms/1k-arrivals is the shape to read
 _input hash `f83b7d6e4a85f703` (all engines must match)_
@@ -197,9 +197,9 @@ _input hash `f83b7d6e4a85f703` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 1391.407 | 107 | 1001 | 37044 | 427.5 | N/A | `50f6928bee7eb255` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 1414.777 | 109 | 1001 | 37044 | 430.4 | N/A | `50f6928bee7eb255` |
 
-### s3/1k
+### cross_join/1k
 
 the memory-wall cell: 1000x1000 = 1M combined rows; SCALE.md recorded tsv2 DNF here before the P1 emitter. Quadratic on purpose, so it stays at 1k
 _input hash `cde50d7bedee3c16` (all engines must match)_
@@ -207,7 +207,7 @@ _input hash `cde50d7bedee3c16` (all engines must match)_
 | engine | verdict | referee | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes | final-state hash |
 |---|:---:|:---:|---:|---:|---:|---:|---:|---:|---|
 | oracle | over_budget | none | N/A | N/A | N/A | N/A | N/A | N/A | `N/A` |
-| tsv2 | identical_vs_reference | tsv2(proven) | 7961.108 | 105 | 20 | 500 | 978.4 | N/A | `6677a5da6e964dc3` |
+| tsv2 | identical_vs_reference | tsv2(proven) | 8084.791 | 114 | 20 | 500 | 992.8 | N/A | `6677a5da6e964dc3` |
 
 ## N/A and disqualification reasons
 
@@ -217,9 +217,9 @@ Per CONTRACT.md section 2.4 no `N/A` ships bare.
 - `oracle` **db_bytes** — db_bytes: the reference engine holds its world in prolog, --db is accepted and ignored
 - `oracle` **statements** — statements: the reference engine evaluates in prolog and issues no SQL
 - `oracle` **wall_ms** — wall_ms: measured by the wrapper around the whole swipl process, so it includes swipl's ~10-20ms startup floor; tsv2's wall_ms excludes node startup. Not comparable head to head -- see CONTRACT.md section 6.
-- `oracle` on **s1/100k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
-- `oracle` on **s1/10k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
-- `oracle` on **s2/100k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
-- `oracle` on **s2/10k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
-- `oracle` on **s3/1k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
+- `oracle` on **cross_join/1k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
+- `oracle` on **keyed_replace/100k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
+- `oracle` on **keyed_replace/10k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
+- `oracle` on **two_hop_join/100k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
+- `oracle` on **two_hop_join/10k** — swipl exceeded the 30s reference budget on this case. This is the reference engine's scale ceiling (ARCH `oracle_scale_ceiling`), not a finding about the case; grading moves to the proven referee.
 - `tsv2` **db_bytes** — db_bytes: run used an in-memory database, so there is no file to size

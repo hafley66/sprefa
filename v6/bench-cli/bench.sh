@@ -18,7 +18,7 @@
 #     Missing either half, the deferred cells stay `no_reference` and the run
 #     exits 1 (report.ts's gate). A promotion is never silent.
 #
-#   3. append one record per (case, engine) to out/records.jsonl.
+# Every graded (case, engine) pair appends one record to out/records.jsonl.
 # Then report.ts renders standings.csv + STANDINGS.md.
 #
 # The v1-asymmetry rule is enforced in the grading step and nowhere else: a
@@ -34,7 +34,7 @@
 #                       oracle; identical(189) + rejection(1) does not account
 #                       for all 191 run records
 #         == reference tier: false ==  REFUSED (breadth)
-#         s1/10k  tsv2  no_reference  none
+#         keyed_replace/10k  tsv2  no_reference  none
 #         BENCH-CLI GATE: 1 cell(s) are ungraded because the sweep proof is
 #                         INVALID ... EXIT=1
 #     Same result with the artifact simply MISSING (renamed away):
@@ -43,8 +43,8 @@
 # (b) THE REFERENCE LOG IS REALLY DIFFED. One line of the pass-2 reference log
 #     mutated between writing it and grading against it
 #     (`sed -i '' '3s/"tick":3/"tick":33/' "$REF_LOG"`):
-#         s1/10k  tsv2  wrong  tsv2(proven)
-#         BENCH-CLI GATE: tsv2 on s1/10k did not reproduce its referee
+#         keyed_replace/10k  tsv2  wrong  tsv2(proven)
+#         BENCH-CLI GATE: tsv2 on keyed_replace/10k did not reproduce its referee
 #                         (tsv2(proven)): tick log differs ... EXIT=1
 #     and the wall column went blank -- a cell that fails its referee is not
 #     timed, whichever referee it was.
@@ -101,17 +101,28 @@ rm -f "$OUT"/*.schedule.json
 # would silently skip a live oracle (the staleness class, gen_staleness_gate).
 rm -f "$OUT"/*.oracle.probe-status
 
+# ── BENCH-TRACE: the run accounts for its own wall (self-diagnosis law) ─────
+# Printed before the final line, always on. Never make the user ask what was
+# slow: phase walls + invocation walls + the process-startup tax (invocation
+# wall minus engine-internal wall) are the answer, from this run's own clock.
+now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time()*1000'; }
+TRACE_T0=$(now_ms)
+TRACE_PROBE_MS=0
+TRACE_ORACLE_MS=0;  TRACE_ORACLE_N=0
+TRACE_TSV2_MS=0;    TRACE_TSV2_N=0
+TRACE_TSV2_ENGINE_MS=0
+
 RUNS="${BENCH_RUNS:-5}"
 # 60s, not the house rig's 600s. Every case that clears the reference engine
 # at all clears it in under 3s here; the cases that do not clear it do not
-# clear 180s either -- s1/10k's oracle was measured at 173.58s killed, then
+# clear 180s either -- keyed_replace/10k's oracle was measured at 173.58s killed, then
 # again still running past 183s. So the cap only decides how long the harness
 # waits to learn a fact it learns either way, and 60s keeps `just bench-cli`
 # usable as a gate. Raise it if a case that SHOULD pass starts timing out.
 TIMEOUT="${BENCH_TIMEOUT:-60}"
 # The reference engine's BUDGET is a contract concept now (CONTRACT.md section
 # 7): exceeding it is what defers a case to the proven referee. 30s, with the
-# measurement that fixes it: the slowest case swipl actually reaches is s2/1k
+# measurement that fixes it: the slowest case swipl actually reaches is two_hop_join/1k
 # at ~2.2s, and the fastest case it does not reach was still running past 183s.
 # Any budget between ~5s and ~180s produces the identical set of deferrals, so
 # the number is chosen at the low end of that plateau to keep the gate quick.
@@ -120,7 +131,7 @@ ONLY="${BENCH_CASES:-}"
 
 # hyperfine is the right tool for the EXTERNAL wall column and the wrong one
 # for the primary number (CONTRACT.md section 1, candidate 1). Detected, never
-# required; its absence changes one column's provenance and nothing else.
+# required; its absence changes one column's source and nothing else.
 if command -v hyperfine >/dev/null 2>&1; then
   EXTERNAL_TIMER="hyperfine $(hyperfine --version | awk '{print $2}')"
 else
@@ -160,11 +171,11 @@ echo ""
 # v6/sprefa-store/bench/engines/tsv2_gen.sh; macOS ships no coreutils
 # `timeout`) execs the command in the SAME process, so SIGALRM terminates the
 # adapter shell -- and orphans the engine it spawned. Measured here, not
-# assumed: at the s1/10k timeout the harness moved on to s2/1k while the
+# assumed: at the keyed_replace/10k timeout the harness moved on to two_hop_join/1k while the
 # timed-out swipl kept running,
 #
-#     03:03 swipl      <- s1/10k oracle, orphaned, past its 180s cap
-#     00:01 swipl      <- s2/1k oracle, being measured beside it
+#     03:03 swipl      <- keyed_replace/10k oracle, orphaned, past its 180s cap
+#     00:01 swipl      <- two_hop_join/1k oracle, being measured beside it
 #
 # so every subsequent cell was timed against a stolen core. That is the same
 # contamination class as the two-concurrent-runs defect, arriving by a
@@ -319,12 +330,17 @@ time_engine() {
     rm -f "$perf.final.jsonl"
     local tsv2_env=""
     [ "$engine" = "tsv2" ] && tsv2_env="NODE_OPTIONS=--max-old-space-size=${TSV2_HEAP_MB:-512}"
+    local trace_a trace_b
+    trace_a=$(now_ms)
     run_capped "$TIMEOUT" env $tsv2_env /usr/bin/time -l \
       "$(engine_cmd "$engine")" \
         --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
         --db ":memory:" --perf-out "$perf" \
       > "$log" 2> "$time_file"
     status=$?
+    trace_b=$(now_ms)
+    TRACE_TSV2_MS=$((TRACE_TSV2_MS + trace_b - trace_a))
+    TRACE_TSV2_N=$((TRACE_TSV2_N + 1))
     grep -v 'maximum resident set size\|average shared\|average unshared\|page reclaims\|page faults\|swaps\|block input\|block output\|messages sent\|messages received\|signals received\|context switches\|instructions retired\|cycles elapsed\|peak memory footprint\|real  *[0-9]' "$time_file" > "$err" 2>/dev/null
 
     rss_kb=$(awk '/maximum resident set size/{print int($1/1024)}' "$time_file" | head -1)
@@ -367,6 +383,10 @@ time_engine() {
       catch { process.stdout.write("null"); }
     ' "$perf" 2>/dev/null)
     TE_WALLS="$TE_WALLS $wall"
+    case "$wall" in
+      ''|null) : ;;
+      *) TRACE_TSV2_ENGINE_MS=$(perl -e 'printf "%d", $ARGV[0] + $ARGV[1]' "$TRACE_TSV2_ENGINE_MS" "$wall") ;;
+    esac
   done
 }
 
@@ -398,6 +418,7 @@ LIVE_FAILED=0
 # every cell the probe clears.
 if [ "${BENCH_ORACLE_PROBE:-1}" = "1" ]; then
   echo "== pass 1a: oracle doom probe (parallel, budget ${ORACLE_BUDGET}s)"
+  TRACE_PROBE_A=$(now_ms)
   PROBE_PIDS=""
   for index in $(seq 0 $((case_count - 1))); do
     load_case "$index" || continue
@@ -413,6 +434,7 @@ if [ "${BENCH_ORACLE_PROBE:-1}" = "1" ]; then
   done
   wait $PROBE_PIDS 2>/dev/null
   rm -f "$OUT"/*.probe.perf.json "$OUT"/*.probe.perf.json.final.jsonl
+  TRACE_PROBE_MS=$(( $(now_ms) - TRACE_PROBE_A ))
 fi
 
 for index in $(seq 0 $((case_count - 1))); do
@@ -436,11 +458,14 @@ for index in $(seq 0 $((case_count - 1))); do
     ORACLE_STATUS=124
     : > "$REF_LOG"; : > "$ORACLE_TIME_FILE"
   else
+    TRACE_A=$(now_ms)
     run_capped "$ORACLE_BUDGET" /usr/bin/time -l "$(engine_cmd oracle)" \
         --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
         --db ":memory:" --perf-out "$ORACLE_PERF" \
         > "$REF_LOG" 2> "$ORACLE_TIME_FILE"
     ORACLE_STATUS=$?
+    TRACE_ORACLE_MS=$(( TRACE_ORACLE_MS + $(now_ms) - TRACE_A ))
+    TRACE_ORACLE_N=$((TRACE_ORACLE_N + 1))
   fi
   grep -v 'maximum resident set size\|average shared\|average unshared\|page reclaims\|page faults\|swaps\|block input\|block output\|messages sent\|messages received\|signals received\|context switches\|instructions retired\|cycles elapsed\|peak memory footprint\|real  *[0-9]' "$ORACLE_TIME_FILE" > "$OUT/$SAFE.oracle.err" 2>/dev/null
   ORACLE_RSS_KB=$(awk '/maximum resident set size/{print int($1/1024)}' "$ORACLE_TIME_FILE" | head -1)
@@ -526,12 +551,15 @@ for index in $DEFERRED; do
   REF_LOG="$OUT/$SAFE.reference.log"
   REF_PERF="$OUT/$SAFE.reference.perf.json"
   rm -f "$REF_PERF.final.jsonl"
+  TRACE_A=$(now_ms)
   run_capped "$TIMEOUT" env "NODE_OPTIONS=--max-old-space-size=${TSV2_HEAP_MB:-512}" \
     "$(engine_cmd tsv2)" \
       --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
       --db ":memory:" --perf-out "$REF_PERF" \
     > "$REF_LOG" 2> "$OUT/$SAFE.reference.err"
   REF_STATUS=$?
+  TRACE_TSV2_MS=$(( TRACE_TSV2_MS + $(now_ms) - TRACE_A ))
+  TRACE_TSV2_N=$((TRACE_TSV2_N + 1))
 
   if [ "$REF_STATUS" -ne 0 ]; then
     record_row tsv2 no_reference none "" 0 "$OUT/$SAFE.tsv2.perf.json" "N/A" \
@@ -546,6 +574,16 @@ for index in $DEFERRED; do
 done
 
 echo ""
+TRACE_TOTAL=$(( $(now_ms) - TRACE_T0 ))
+TRACE_OTHER=$(( TRACE_TOTAL - TRACE_PROBE_MS - TRACE_ORACLE_MS - TRACE_TSV2_MS ))
+TRACE_STARTUP=$(( TRACE_TSV2_MS - TRACE_TSV2_ENGINE_MS ))
+echo "BENCH-TRACE wall ${TRACE_TOTAL}ms ="
+echo "  doom probe (parallel swipl timeouts)  ${TRACE_PROBE_MS}ms"
+echo "  swipl answer keys, serial x${TRACE_ORACLE_N}          ${TRACE_ORACLE_MS}ms"
+echo "  tsv2 invocations x${TRACE_TSV2_N}                   ${TRACE_TSV2_MS}ms"
+echo "    of which engine-internal            ${TRACE_TSV2_ENGINE_MS}ms"
+echo "    of which process startup+wrapper    ${TRACE_STARTUP}ms  <- node boot + type transform, per invocation"
+echo "  everything else (compile, schedules, proof, hashing)  ${TRACE_OTHER}ms"
 node --experimental-transform-types report.ts "$RECORDS" "$PROOF_FILE"
 REPORT_EXIT=$?
 [ "$REPORT_EXIT" -eq 0 ] || exit "$REPORT_EXIT"
