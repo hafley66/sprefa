@@ -1605,7 +1605,7 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
     naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
-    retention_tick_lines(HasRetention, RetentionLines),
+    retention_tick_lines_ordered(HasRetention, RetentionLines),
     format(atom(NameCommentLine),
            '  // ~w: ordered process_occurrences with evolving pre snapshots.',
            [Name]),
@@ -1620,7 +1620,11 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
         '    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),',
         '    concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),',
         '    concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),',
-        '    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),'
+        '    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),',
+        %% rxjs pipe() typed overloads stop at 9 operators; past that the chain
+        %% collapses to Observable<unknown> (first hit when the golden reached
+        %% 12 ordered-tick stages). Second .pipe() keeps every stage typed.
+        '  ).pipe('
       ],
       RetentionLines,
       [ '    concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),',
@@ -1638,6 +1642,14 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
 retention_tick_lines(true,
     ['    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),']).
 retention_tick_lines(false, []).
+
+% The ordered tick carries the { before, mid, written } triple at this point;
+% the bare `before` passthrough above collapses TypeScript's inference to
+% Observable<unknown> (first exercised when the golden gained an ordered pre
+% rule). Same stage, triple spelled out.
+retention_tick_lines_ordered(true,
+    ['    concatMap(({ before, mid, written }) => applyNaiveRetention(seam).pipe(map(() => ({ before, mid, written })))),']).
+retention_tick_lines_ordered(false, []).
 
 % The referee's own end-of-tick departure staging. It reuses the RUNTIME's
 % IncrementalRuntime.stageDepartures over the deltas THIS path computed from

@@ -73,7 +73,8 @@ surface(not/1,          sign,      arm(neg),                     wrapper(body_it
 % so the pre-expansion readers (print_dl.pl's decl synthesis) see the source
 % relation as the sampled reference it is.
 surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, expand(coalesce)), live).
-surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, refuse(goal)),       refused).
+surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
+surface(seq/1,          sugar,     no_refs,                      wrapper(expr, expand(seq)),           live).
 % Contextual gate, same shape as latest/1: live around a plain VARIABLE in an
 % edge body (lowered to a read of the emitted __tick counter); analyze.pl
 % keeps now_in_level_rule and edge_body_with_now for the wider placements.

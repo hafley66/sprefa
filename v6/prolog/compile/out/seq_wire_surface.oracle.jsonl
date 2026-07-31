@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_1":{"add":[["q",1]],"del":[]}}}
+{"tick":2,"deltas":{"arrival":{"add":[["two"]],"del":[]},"numbered":{"add":[[2,"two"]],"del":[]},"seq_numbered_1":{"add":[["q",2]],"del":[["q",1]]}}}
+{"tick":3,"deltas":{"arrival":{"add":[["three"]],"del":[]},"numbered":{"add":[[3,"three"]],"del":[]},"seq_numbered_1":{"add":[["q",3]],"del":[["q",2]]}}}
+{"tick":4,"deltas":{}}

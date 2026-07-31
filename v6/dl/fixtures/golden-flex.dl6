@@ -25,12 +25,6 @@
 # Every line below is a construct or composition this program CANNOT express.
 # None of them is worked around: the refusal name is the record.
 #
-#   pre/1                          registry status `refused`. In an edge body it
-#                                  is edge_body_needs_pre -- the fold is
-#                                  occurrence-ordered and cross-arm, which is a
-#                                  new execution shape (ARCH pre_occurrence_loop).
-#                                  The ORACLE runs it; the compiler refuses it,
-#                                  so a program using it is ungradeable.
 #   json_each/2                    registry status `refused`.
 #   json_array/1, json_object/2    aggregate heads, registry status `refused`
 #                                  (ruling json_ticklog_encoding executed on the
@@ -245,6 +239,23 @@ rel pick_log(tree_id: int, picker: text) log keep(all).
 # `log` + `keep(count(N))`: the same journal, bounded. Retention lowers to one
 # set-based DELETE ... RETURNING into the negative-delta path.
 rel recent_pick(tree_id: int, picker: text) log keep(count(2)).
+
+# `seq/1`: one global order when its argument is an atom, one order per value
+# when its argument is a variable. The cursor is compiler-minted and visible
+# in the tick log; this rule uses one order per tree.
+rel pick_ordinal(tree_id: int, ordinal: int) log keep(all).
+pick_ordinal(TreeId, PickOrdinal) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar), PickOrdinal := seq(TreeId).
+
+# `pre/1`: the occurrence-ordered fold reads the evolving keyed row, so the
+# base arm handles the first pick and the step arm chains later picks.
+rel pick_count(tree_id: int, count: int) key(1).
+pick_count(TreeId, 1) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar), not(pick_count(TreeId, _Previous)).
+pick_count(TreeId, PickCountValue) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  pre(pick_count(TreeId, PickPreviousCount)),
+  PickCountValue := PickPreviousCount + 1.
 
 # enum_decl/2 with the `;` variant separator. Variants become typed variant rels
 # (grade_ripe/2, grade_green/2, grade_bruised/2, each carrying a leading

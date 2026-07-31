@@ -625,7 +625,7 @@
   {
     "name": "log_retraction_rejected",
     "bucket": "run_error",
-    "detail": "retract from log rel 'event'",
+    "detail": "log_retraction_rejected: retract from log rel 'event' (engine.pl retract_from_log)",
     "finalBucket": "final_wrong",
     "finalDetail": "run threw before the final state could be read"
   },
@@ -1079,6 +1079,20 @@
   },
   {
     "name": "zombie_scope_negative_case_a2b",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "seq_wire_surface",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "seq_wire_hand",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
