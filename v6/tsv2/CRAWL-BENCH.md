@@ -44,20 +44,57 @@ scratch `DL_STATE_DIR`, then runs `target/release/dl <program> --db <scratch>`.
 
 ## v6 leg
 
-The v6 program is generated in the scratch directory. It declares the existing
-files host shape from `v6/dl/fixtures/files-hosts.dl6` and an extraction
-host with this command shape:
+The v6 program is generated in the scratch directory. It declares the
+repo-scoped file host from `v6/dl/fixtures/files-hosts.dl6` and a repo-scoped
+extraction host:
 
 ```text
-extract(path) -> sprefa-extract --family cst,type,call,df <repo>/<path>
+repo_files(repo, glob)          -> git -C <repo> ls-files + git hash-object
+repo_extract(repo, path, digest) -> sprefa-extract --family cst,type,call,df <repo>/<path>
 ```
 
-The shell script loops over the selected repos. For each repo it starts one
-served tsv2 process, sends three `want` arrivals for `**/*.go`, `**/*.ts`, and
-`**/*.tsx`, waits for the `file` and `extracted` relations to settle, reads the
-per-process `DL_PERF_LOG`, and closes the process. The extraction host emits
-one success row per extracted file. The v6 program has no org fan-out spelling;
-the shell loop supplies that missing operation at the orchestration boundary.
+**The shell loop over repositories is gone (2026-07-31).** It was the
+`SLOT-ORG-FANOUT` gap the first version of this page recorded: the v6 program
+had no way to say which repository a file came from, so the script supplied
+that operation at the orchestration boundary with one served process, one
+sqlite database and one program load PER REPOSITORY.
+
+Ruling `repo_column_spelling = distinct_name_hosts` closed it. The repository
+root is an ordinary demand column on distinct-named hosts, so the leg now
+starts ONE server, loads ONE program, and posts ONE `/arrivals` batch holding
+`want_repo(root, glob)` for every selected repository and every glob. Each
+fan-out below that -- per repository, then per file -- is rows through the
+incremental emitter.
+
+The extraction host still answers one success row per extracted file, on
+purpose: this bench's question is the loop, so the extraction leg has to stay
+the work it was. (Measured while writing it: capturing every `cst`/`type`/
+`call`/`df` record as an EDB arrival instead takes the same 779-file corpus
+from 20.26s to 62.97s and the scratch database from 1.0MB to 595MB. That is a
+real number about the extraction seam, and it is a different question.)
+
+### Before / after, same corpus, same extraction leg
+
+`scripts/crawl-bench-loop-baseline.tsv` pins the pre-change measurement (the
+loop no longer exists in the script, so it cannot be re-derived by running it);
+`report_loop_delta` prints it beside every run at a matching scope.
+
+| scope | files | before (loop) | after (one program) | speedup |
+|---|---:|---:|---:|---:|
+| first 8 usable | 779 | 20.26s, 38.45 files/s | 18.08s, 43.09 files/s | 1.12x |
+| first 32 usable | 2,890 | 72.19s, 40.03 files/s | 57.55s, 50.22 files/s | 1.25x |
+
+Row counts agreed exactly on both sides (`repo_file` 2,890 / `extracted` 2,890
+at cap 32), so the two legs did the same work. The saving is per REPOSITORY and
+not per file, which is what the two rows show: ~0.27s/repo at cap 8 and
+~0.46s/repo at cap 32, against a per-file extraction cost that did not move.
+`stmts/tick` stayed 54.03-54.04 throughout -- the fan-out is rows, not
+statements.
+
+Scratch database size went UP (1.0MB -> 1.4MB at cap 8), which is the honest
+cost of the change: one database now holds every repository's rows plus the
+repo column on each, where before the number was the sum of N smaller files
+with no repo column in them.
 
 ## Parity table
 
@@ -85,18 +122,23 @@ comparable served-engine statement trace in this invocation.
 
 - The v5 row is a v5 `scan` fact at `HEAD`. The v6 row is a file-set row plus a
   successful v6 extraction command over the selected file.
-- v5 expands `[[org]]` and joins `repo(r, _, _)` inside the program. v6 has no
-  org fan-out spelling; the script performs one shell-level repo loop and
-  sends host demands for each repo.
+- ~~v5 expands `[[org]]` and joins `repo(r, _, _)` inside the program. v6 has
+  no org fan-out spelling; the script performs one shell-level repo loop and
+  sends host demands for each repo.~~ CLOSED 2026-07-31. The repo set is a
+  column, the loop is gone, and `v6/dl/fixtures/crawl_org.dl6` goes one step
+  further than v5 by discovering the repository set itself through a `repos`
+  host on an interval bind rather than reading it out of a config file. The
+  bench still POSTS its repository set rather than discovering it, because
+  `--max-repos` has to select a corpus slice.
 - v5 resolves `HEAD` files from each Git tree and uses the Git revision identity
   in the returned row. The v6 files host reads the working-tree path list
   and hashes each working-tree file with `git hash-object`.
 - The v5 glob is one globset expression, `**/*.{go,ts,tsx}`. The v6 leg sends
   three Git pathspec demands, `**/*.go`, `**/*.ts`, and `**/*.tsx`, and unions
   their rows in the v6 relation.
-- v5 stores the scan relation in the v5 SQLite schema. v6 opens one served
-  SQLite database per selected repo and the reported database size is the sum
-  of those scratch files.
+- v5 stores the scan relation in the v5 SQLite schema. v6 opens ONE served
+  SQLite database for the whole selected corpus (it opened one per repository
+  until 2026-07-31).
 - v6 runs `cst`, `type`, `call`, and `df` extraction families. The parity
   number counts one successful extraction row per file; it does not count the
   extracted family facts.
