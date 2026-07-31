@@ -2,10 +2,32 @@
 
 Status: formal record (2026-07-29, user-directed "write this math proof
 down near the clock checker code"). The clock/cardinality checker
-(golden plan phase 5) implements THIS document; until it exists, the
-load-time refusals listed in "Theorems" are its hand-proven instances.
+(golden plan phase 5) implements THIS document; the load-time refusals
+listed in "Theorems" are its hand-proven instances.
 The checker's home is analyze.pl's supported-subset gate (see the
 pointer comment there) plus engine.pl check_program/1.
+
+**Checker status (2026-07-31).** `compile/3_clock_check.pl` is live and
+runs from both doors. Sections 1 and 3 are implemented: every rule
+dependency is projected with its read ring, write ring, sign, grade and
+role (`clock_dependency/8`), path offsets are inferred and unequal
+offsets into one relation from one origin are a refusal
+(`clock_path_conflict`), and SCCs are classified `constructive_b` /
+`productive_delayed` / `invalid` (`clock_scc/3`). Section 6 item 1 is
+`registry.pl clock_role/4`; item 3 is `inferred_clock/4` plus the
+`clock_fact/5` proof facts fixtures compare against tick logs.
+
+What the checker does NOT do is stated rather than implied. Two facts
+are LABELS, not refusals, because both shapes appear in ruled programs:
+`multi_trigger_batch_invariance` (a bare multi-atom arm fires per source
+by design) and `arm_absence_batch_invariance` (section 4). Both are
+`clock_boundary/2`, queryable and non-refusing.
+
+The replay gate is the completeness evidence:
+`compile/test/3_clock_history.pl` records eleven historical bug classes
+with the program that produced each, and, where the catch is a label, the
+FIXED twin that must NOT carry it. Classes whose catch is `not_provable`
+name why in the table; they are ruled boundaries, not gaps left silent.
 
 ## 1. Objects: three semirings
 
@@ -83,7 +105,7 @@ coercion operators are:
 | operator | coercion | status |
 |---|---|---|
 | latest(Atom) | N -> (0 or 1) per tick (sample) | lowered for a plain sampled atom in edge bodies; in level rules it is the identity on B and therefore REFUSED (latest_in_level_rule) |
-| not(Atom) | the 0-test | lowered (NOT EXISTS) |
+| not(Atom) | the 0-test | lowered (NOT EXISTS). **Which plane it tests decides batch invariance**: over a level-headed rel the plane is frozen after arrivals and before edges, so every occurrence in one batch tests the same extent (order-independent, measured). Over an edge-headed rel a later occurrence tests what an earlier one in the same batch wrote (order-DEPENDENT, measured: `out(Item) <+ req(Item), not(out(_))` gives `out(a)` or `out(b)` by arrival order). The second case is LABELLED, not refused: `clock_boundary/2` `arm_absence_batch_invariance`, because `json_typed_capture_folds_into_a_keyed_int_total` is a live graded fixture on that shape |
 | keyed decl | per-key B at boundaries | landed incl world-fed arrivals (keyed-divergence fix) |
 | retention keep(count) | bounds the N accumulation | lowered (match lane) |
 
@@ -162,14 +184,16 @@ both doors and both emitter modes, not inferred from final state:
 
 ## 6. What the checker does (phase 5 spec)
 
-1. registry.pl gains two columns per construct: ring signature (what
-   it reads/writes in {B, N, Z}) and tick grade.
-2. Per rule body: every atom's ring must compose; an N-B junction
-   requires an explicit coercion operator or is refused with the
-   junction named (this generalizes the five theorems and would have
-   caught A2 at design time).
-3. Per rule-graph path: grades sum; a program's tick-offset table is
-   derivable output (the answer to "what tick is this row on"), and
-   cross-checks the oracle's observed tick placement in fixtures.
-4. The refusal discipline is the enforcement: named term, both
-   implementations, fail-first fixture. No warnings-only mode.
+| # | spec | status |
+|---:|---|---|
+| 1 | registry.pl gains two columns per construct: ring signature (what it reads/writes in {B, N, Z}) and tick grade | DONE, `clock_role/4`, seven roles, inventory-pinned |
+| 2 | Per rule body: every atom's ring must compose; an N-B junction requires an explicit coercion operator or is refused with the junction named (this generalizes the five theorems and would have caught A2 at design time) | PARTIAL. The junction is projected and named (`clock_dependency/8` carries both rings) and the five theorems are re-derived from it. It is not REFUSED: a bare multi-atom arm is ruled either-source firing, so the N-B junction is a `clock_boundary/2` label. A2 is caught as a label, not a refusal |
+| 3 | Per rule-graph path: grades sum; a program's tick-offset table is derivable output (the answer to "what tick is this row on"), and cross-checks the oracle's observed tick placement in fixtures | DONE, `inferred_clock/4` and `clock_fact/5`; unequal offsets from one origin refuse (`clock_path_conflict`); the pipe, a6 and c2 receipts pair inferred grades with observed ticks |
+| 4 | The refusal discipline is the enforcement: named term, both implementations, fail-first fixture. No warnings-only mode | HOLDS for refusals. The two batch-invariance facts are labels by ruling, not warnings: they carry a named term and a fixed twin that must not carry it |
+
+The gap item 2 leaves open is deliberate and measured. Refusing every
+N-B junction would reject `json_typed_capture_folds_into_a_keyed_int_total`
+and every bare multi-atom arm, both ruled programs. What replaced the
+refusal is the replay gate: eleven historical classes in
+`test/3_clock_history.pl`, each either caught by a named term or carrying
+a written reason why rings cannot decide it.

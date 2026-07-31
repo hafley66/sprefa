@@ -354,6 +354,36 @@ test(a11_replay_labels_grade_zero_aggregate_dependency) :-
       a11, not_provable,
       empty_group_policy_requires_aggregate_semantics).
 
+% a4, strengthened. The recorded a4 program is a bare keyed declaration with
+% no rules, so its projection is empty BY CONSTRUCTION and the test above
+% cannot tell a working checker from a broken one. This replays the same
+% class with a consumer attached, which is what a world-fed keyed rel looks
+% like in a real program, and states the boundary precisely:
+%
+%   the checker CAN say mode/2 is ring B, so at most one row per key survives
+%   a boundary (TICK-MODEL section 1);
+%   the checker CANNOT say which SQL primary key the emitter chose, and
+%   PK-over-all-columns versus PK-over-key-columns was the entire A4 bug.
+%
+% Ring B is the specification the emitter violated. It is not a proof that
+% the emitter implements it, which is why a4 stays not_provable.
+test(a4_replay_with_a_consumer_labels_ring_b_and_stops_there) :-
+    Program =
+      prog([ keyed(mode/2, [1]),
+             kind(mode_log/2, log), keep(mode_log/2, all) ],
+           [ (mode_log(Key, Value) <+ mode(Key, Value)) ]),
+    check_clock_program(Program),
+    clock_dependencies(Program, Dependencies),
+    Dependencies ==
+      [ dependency(rule(1, edge, mode_log/2), mode/2, mode_log/2,
+                   z, n, positive, 0, trigger) ],
+    % proof facts: the keyed source is ring B, its reader is ring N, both on
+    % the same clock. Neither carries a storage key.
+    once(clock_fact(Program, mode/2, b, clock(mode/2, 0), acyclic)),
+    once(clock_fact(Program, mode_log/2, n, clock(mode/2, 0), acyclic)),
+    historical_clock_receipt(
+      a4, not_provable, keyed_boundary_replacement_requires_runtime_deltas).
+
 % ── the 2026-07-31 legs round ──────────────────────────────────────────────
 %
 % Three classes replayed for the first time. Every claim below is a MEASURED
