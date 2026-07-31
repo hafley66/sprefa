@@ -206,6 +206,23 @@ clock_path(Origin, Target, Dependencies, Visited, Offset0, Offset,
 % A zero-grade positive B cycle is constructive. A delayed recurrence is
 % productive when every simple cycle has a positive total grade.
 %
+% The proof-payoff plan's rank 3 also proposed rejecting zero-grade cycles
+% that carry an "occurrence-sensitive" edge, meaning edge_sample or
+% edge_absence. That extension is REFUTED by measurement, not skipped.
+% causal_dependency/4 excludes both roles, so neither closes a cycle here,
+% and both shapes were run through the oracle under two arrival orders:
+%
+%   out(Item) <+ req(Item), not(seen(Item)).  seen(Item) <- out(Item).
+%   out(Item) <+ req(Item), latest(seen(Item)). seen(Item) <- out(Item).
+%
+% Both are zero-grade cycles through the arm plane and both are
+% order-independent, because the level plane freezes after arrivals and
+% before edges run (tick_phase_alignment). Adding them to the causal graph
+% would refuse two correct programs. The one shape that IS order-dependent
+% closes through the arm's own EDGE-headed head, and it is named by the
+% arm_absence_batch_invariance boundary below rather than refused, because a
+% ruled fixture rides it.
+%
 % The component set comes from 0_graph.pl. It used to come from an all-pairs
 % mutual-reachability search over a private graph_reachable/4 that enumerated
 % simple paths with a Visited list, which is what cost the plan phase 255 s on
@@ -343,6 +360,35 @@ clock_boundary(Program,
             TriggerRefs0),
     sort(TriggerRefs0, TriggerRefs),
     TriggerRefs = [_, _ | _].
+
+% An arm's not(Atom) is a zero-test against a plane, and WHICH plane decides
+% whether the arm is a function of tick-start state or of arrival order.
+%
+%   negated rel is LEVEL-headed : the level plane freezes after arrivals and
+%       before edges run, so every occurrence in the batch tests the same
+%       frozen extent. Measured order-independent (the match-frontier lab's
+%       d2, re-measured here on the post-tick-alignment engine).
+%   negated rel is EDGE-headed  : edge writes land as the batch is consumed,
+%       so a later occurrence tests a plane that an earlier occurrence in the
+%       SAME batch already wrote. Measured order-DEPENDENT: `out(Item) <+
+%       req(Item), not(out(_))` over one batch of req(a), req(b) yields
+%       out(a) in one order and out(b) in the other (the lab's d1).
+%
+% This is stated, not refused. `json_typed_capture_folds_into_a_keyed_int_total`
+% is a live graded fixture on exactly this shape: its keyed first-write arm
+% reads not(total(Repo, _)) over its own edge-headed head, and its schedule
+% never puts two rows of one key in one batch, so the order sensitivity is
+% real but unexercised. Refusing the shape would reject a ruled program;
+% naming the boundary is what the checker can honestly own, the same call
+% already made for multi_trigger_batch_invariance above.
+clock_boundary(Program,
+               not_provable(arm_absence_batch_invariance(RuleId, Ref))) :-
+    Program = prog(_, Rules),
+    edge_headed_refs(Rules, EdgeHeaded),
+    clock_dependencies(Program, Dependencies),
+    member(dependency(RuleId, Ref, _, b, _, negative, 0, edge_absence),
+           Dependencies),
+    memberchk(Ref, EdgeHeaded).
 
 clock_refusal_reason(clock_path_conflict(_, _, _, _)).
 clock_refusal_reason(unconstructive_clock_cycle(_, _)).
