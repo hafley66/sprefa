@@ -206,6 +206,23 @@ clock_path(Origin, Target, Dependencies, Visited, Offset0, Offset,
 % A zero-grade positive B cycle is constructive. A delayed recurrence is
 % productive when every simple cycle has a positive total grade.
 %
+% The proof-payoff plan's rank 3 also proposed rejecting zero-grade cycles
+% that carry an "occurrence-sensitive" edge, meaning edge_sample or
+% edge_absence. That extension is REFUTED by measurement, not skipped.
+% causal_dependency/4 excludes both roles, so neither closes a cycle here,
+% and both shapes were run through the oracle under two arrival orders:
+%
+%   out(Item) <+ req(Item), not(seen(Item)).  seen(Item) <- out(Item).
+%   out(Item) <+ req(Item), latest(seen(Item)). seen(Item) <- out(Item).
+%
+% Both are zero-grade cycles through the arm plane and both are
+% order-independent, because the level plane freezes after arrivals and
+% before edges run (tick_phase_alignment). Adding them to the causal graph
+% would refuse two correct programs. The one shape that IS order-dependent
+% closes through the arm's own EDGE-headed head, and it is named by the
+% arm_absence_batch_invariance boundary below rather than refused, because a
+% ruled fixture rides it.
+%
 % The component set comes from 0_graph.pl. It used to come from an all-pairs
 % mutual-reachability search over a private graph_reachable/4 that enumerated
 % simple paths with a Visited list, which is what cost the plan phase 255 s on
