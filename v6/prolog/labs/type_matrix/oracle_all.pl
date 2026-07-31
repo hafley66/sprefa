@@ -80,12 +80,37 @@ cell_log(Door, Source, ScheduleFile, Text) :-
     with_output_to(string(TickText), print_tick_lines(1, DeltaTicks)),
     format(string(Text), "~w~w~n", [TickText, FinalLine]).
 
-% read_schedule/4 is dl6_oracle.pl's, read_schedule/2 is golden_oracle.pl's;
-% the arities differ so both files load into one process untouched.
+% ── THE TWO DOORS HAVE CONVERGED (measured 2026-07-31, on this base) ────────
+%
+% When this lab was written the two doors held DIFFERENT arrival mappings and
+% different arities: read_schedule/4 was dl6_oracle.pl's, read_schedule/2 was
+% golden_oracle.pl's, and the arity difference is what let both files load into
+% one process untouched. That is no longer true. golden_oracle.pl now carries
+% read_schedule/4 with the SAME signature, and both files delegate the actual
+% value mapping to the shared compile/scripts/0_json_arrival.pl
+% (schedule_value/5), whose only per-door argument is a Context atom used
+% exclusively in halt/1 diagnostic text. The mapping is therefore identical.
+%
+% Two consequences, both recorded rather than papered over:
+%
+%   1  read_schedule/2 no longer exists, so the golden leg answered every cell
+%      with existence_error(procedure, read_schedule/2). It is called at the
+%      shared arity here; the leg runs again and the door-agreement axis
+%      becomes a measurement instead of an error column.
+%   2  Loading both files into one process now CLASHES: swipl reports
+%      "Redefined static procedure" for read_schedule/4, batch_terms/4 and
+%      arrival_term/4, and golden_oracle.pl (loaded second) wins. Both legs
+%      consequently run golden_oracle.pl's clauses, which differ from
+%      dl6_oracle.pl's only in the Context atom passed to the shared mapping.
+%      The clash is behaviourally inert for grading and loudly warned at load.
+%
+% The two legs are kept rather than collapsed because "the doors agree" is a
+% RESULT this matrix should keep re-measuring, not an assumption to bake in:
+% if either door grows its own mapping again, this axis is what notices.
 door_schedule(dl6, Prog, Bindings, ScheduleFile, Schedule) :-
     read_schedule(Prog, Bindings, ScheduleFile, Schedule).
-door_schedule(golden, _Prog, _Bindings, ScheduleFile, Schedule) :-
-    read_schedule(ScheduleFile, Schedule).
+door_schedule(golden, Prog, Bindings, ScheduleFile, Schedule) :-
+    read_schedule(Prog, Bindings, ScheduleFile, Schedule).
 
 % Same rule compile_all.pl states and for the same measured reason: an ISO
 % `error/2` term is a crash, any other thrown compound is a named answer whose

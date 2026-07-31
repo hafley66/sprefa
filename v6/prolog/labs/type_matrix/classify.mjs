@@ -9,10 +9,15 @@
 //                     `compiler_only` for the standing bucket where the
 //                     compiler is narrower than the reference engine (that is
 //                     the sweep's own `unsupported` class, not a divergence).
+//                     A refusal counts here whether it lands at COMPILE time or
+//                     at RUN time: the emitted module carries its own arrival
+//                     gate (see RUNTIME_REFUSALS), and a program refused by
+//                     that gate has been refused, not crashed.
 //   DIVERGENT         the doors disagree: a byte difference in the graded
 //                     surface, a refusal on one door and an answer on the
-//                     other, an unnamed crash, or the two EMITTER MODES
-//                     disagreeing with each other.
+//                     other (`oracle_only_refusal` and its mirror
+//                     `emitter_only_refusal`), an unnamed crash, or the two
+//                     EMITTER MODES disagreeing with each other.
 //   SILENT COERCION   every door agrees, and the value that came out is not
 //                     the value that went in.
 //   IDENTICAL         every door agrees and the value survived.
@@ -50,13 +55,62 @@ const SURVIVES = {
 /** `unsupported_construct(edge_into_unkeyed_set(probe_out/1))` -> the inner
  *  functor, which is the name the refusal is known by everywhere else. A
  *  refusal thrown WITHOUT a wrapper (the engine's own, see oracle_all.pl)
- *  keeps its own functor. */
+ *  keeps its own functor.
+ *
+ *  The refusal-messages arc added a SECOND wrapper the first draft did not
+ *  know: `at(File, Line, Reason)` carries the text door's file:line, so
+ *  `unsupported_construct(at('out/cell_x.dl6',7,edge_head_column_type_mismatch(...)))`
+ *  read as the refusal named `at` in 50 of 422 cells. Unwrapped here; the
+ *  location is a coordinate, never the name. */
 function refusalName(detail) {
   if (typeof detail !== "string" || detail.length === 0) return "";
   const outer = /^(unsupported_construct|unsupported_surface|parse_findings)\((.*)\)$/s.exec(detail.trim());
   const inner = outer === null ? detail.trim() : outer[2];
-  const named = /^\[?\s*([a-z_][A-Za-z0-9_]*)/.exec(inner);
+  const located = /^at\(\s*'[^']*'\s*,\s*\d+\s*,\s*(.*)\)$/s.exec(inner.trim());
+  const named = /^\[?\s*([a-z_][A-Za-z0-9_]*)/.exec(located === null ? inner : located[1]);
   return named === null ? inner.slice(0, 60) : named[1];
+}
+
+/** THE EMITTED MODULE REFUSES TOO, and the first draft could not hear it.
+ *
+ *  A generated program carries its own arrival type gate (emit_ts.pl, the four
+ *  `throw new Error(...)` lines it writes into every module) and the shared
+ *  read seam carries three more (runtime/rows.ts, runtime/1_incremental.ts).
+ *  Those throws are DELIBERATE REFUSALS, not crashes, but they reach this file
+ *  as a run_error like any other exception, so 46 cells where BOTH sides
+ *  refused were graded `oracle_only_refusal` and 14 where only the emitter
+ *  refused were graded `emitter_run_error`.
+ *
+ *  The vocabulary below is a CLOSED SET copied from those two files, not a
+ *  pattern guess: an unrecognised throw stays an unnamed failure, which is what
+ *  keeps the driver's `RangeError` (the bigint_seam_normalize residual, ARCH)
+ *  visible as the crash it is rather than laundering it into a refusal.
+ *
+ *  `name` is the refusal FUNCTOR when the message carries one that exists on
+ *  the prolog side (`int_out_of_range` is thrown by compile.pl:202 and by the
+ *  reference engine), and "" when the guard is prose with no functor at all.
+ *  The empty name is not a shrug: it is the finding that two of the emitted
+ *  guards answer in a vocabulary the oracle's `type_arrival_shape_mismatch`
+ *  does not share, and it is what drives those pairs to `name_mismatch`
+ *  instead of quietly asserting the two sides agree. */
+const RUNTIME_REFUSALS = [
+  // emit_ts.pl -- the arrival gate written into every generated module.
+  { probe: /\bint_out_of_range\b/, name: "int_out_of_range" },
+  { probe: /^\w*Error: float arrival .* requires a finite number$/, name: "" },
+  { probe: /^\w*Error: bool arrival .* requires true or false$/, name: "" },
+  { probe: /^\w*Error: arrival shape mismatch for /, name: "" },
+  // runtime/rows.ts -- the read seam, shared by every module.
+  { probe: /^\w*Error: bool column crossed SQLite with /, name: "" },
+  { probe: /^\w*Error: float column crossed SQLite with /, name: "" },
+];
+
+/** `{ recognized, name }` for one emitter run outcome. */
+function runtimeRefusal(detail) {
+  const text = typeof detail === "string" ? detail.trim() : "";
+  const found = RUNTIME_REFUSALS.find((entry) => entry.probe.test(text));
+  return found === undefined
+    ? { recognized: false, name: "" }
+    : { recognized: true, name: found.name };
 }
 
 /** `dl_parse_error(statement,[112,114,...])` prints its offending statement as
@@ -123,6 +177,18 @@ function classify(cell, result) {
 
   const compilerRefused = compiled.status === "refused";
   const oracleRefused = !dl6Ran && !goldenRan;
+
+  // The emitter answers on TWO paths and both have to say the same thing before
+  // a throw counts as that program's answer. One mode refusing while the other
+  // returns rows is a mode disagreement -- a divergence, not a refusal -- and
+  // is left to the emitter_modes_disagree reading below.
+  const incrementalRefusal = runtimeRefusal(incremental?.detail);
+  const naiveRefusal = runtimeRefusal(naive?.detail);
+  const emitterThrew = incremental?.status !== "ok" || naive?.status !== "ok";
+  const emitterRefused =
+    incremental?.status !== "ok" && naive?.status !== "ok" &&
+    incrementalRefusal.recognized && naiveRefusal.recognized &&
+    incrementalRefusal.name === naiveRefusal.name;
   const compilerBroke = compiled.status === "error" || compiled.status === "halt";
   const oracleBroke = oracleRefused &&
     (oracle.status === "error" || oracle.status === "halt") &&
@@ -139,6 +205,10 @@ function classify(cell, result) {
     oracleRefusal: oracle.status === "ok" ? "" : refusalName(oracle.detail),
     goldenStatus: oracle.goldenStatus,
     goldenRefusal: oracle.goldenStatus === "ok" ? "" : refusalName(oracle.goldenDetail),
+    // "" when the emitter did not refuse at all AND when it refused through a
+    // guard that carries no functor; `emitterRefusedBy` separates those two.
+    emitterRefusal: emitterRefused ? incrementalRefusal.name : "",
+    emitterRefusedBy: emitterRefused ? (incremental?.detail ?? "") : "",
     gradedVia,
     doorGap: !dl6Ran && goldenRan ? refusalName(oracle.detail) : "",
     // goldenRanClean, not goldenRan: this axis asks whether the two doors
@@ -176,6 +246,21 @@ function classify(cell, result) {
     record.graded = gradedValue(oracleLog, cell.columnIndex);
     return record;
   }
+  // BOTH SIDES REFUSE, one of them at run time. The compiler accepted the
+  // program, so the emitter's answer is its module's own arrival gate rather
+  // than a compile-time wall; that is still a refusal and it belongs in the
+  // refusal territory beside the compile-time ones, not in a divergence bucket.
+  if (oracleRefused && compiled.status === "ok" && emitterRefused) {
+    record.verdict = "NAMED_REFUSAL";
+    const namesAgree = record.emitterRefusal !== "" &&
+      record.emitterRefusal === record.oracleRefusal;
+    record.label = namesAgree ? "both" : "name_mismatch";
+    record.detail = namesAgree
+      ? record.emitterRefusal
+      : `emitter=${record.emitterRefusal === "" ? `(no functor) ${record.emitterRefusedBy}` : record.emitterRefusal}` +
+        ` oracle=${record.oracleRefusal}`;
+    return record;
+  }
   if (oracleRefused && compiled.status === "ok") {
     // The receipt that matters is not that the doors disagree, it is WHAT the
     // emitter stored where the reference engine refused to accept the row.
@@ -189,7 +274,19 @@ function classify(cell, result) {
   }
 
   // ── both doors ran ───────────────────────────────────────────────────────
-  if (incremental?.status !== "ok" || naive?.status !== "ok") {
+  // The mirror of oracle_only_refusal: the reference engine accepted the
+  // arrival and the emitted module refused it BY NAME. Still a divergence --
+  // one side has rows and the other has none -- but a named one, which is a
+  // different and much cheaper thing to close than an unnamed crash.
+  if (emitterRefused) {
+    record.verdict = "DIVERGENT";
+    record.label = "emitter_only_refusal";
+    record.graded = gradedValue(oracleLog, cell.columnIndex);
+    record.detail = `oracle ran and graded ${JSON.stringify(record.graded)}; emitter refused with ` +
+      `${record.emitterRefusal === "" ? "no functor" : record.emitterRefusal}: ${record.emitterRefusedBy}`;
+    return record;
+  }
+  if (emitterThrew) {
     record.verdict = "DIVERGENT";
     record.label = "emitter_run_error";
     record.detail = (incremental?.status !== "ok" ? incremental?.detail : naive?.detail) ?? "";
