@@ -80,35 +80,40 @@
 #
 # ── THIS HOST EMITS JSON, AND enumerate-hosts.dl6's TWIN EMITS WHITESPACE ───
 # The shipped `enumerate_at` (fixtures/enumerate-hosts.dl6) ends its loop with
-# `printf '%s %s\n'`, i.e. whitespace-separated columns. THAT SPELLING IS
-# SILENTLY WRONG FOR SOME ANSWERS, and this rail found it the hard way:
+# `printf '%s %s\n'`, i.e. whitespace-separated columns. THAT SPELLING WAS
+# SILENTLY WRONG FOR SOME ANSWERS, and this rail is what found it:
 #
-#   serve/1_hosts.ts `parseWhitespace` reads N lines as ONE ROW OF N COLUMNS
-#   whenever the line count happens to equal the declared output-column count.
+#   serve/1_hosts.ts `parseWhitespace` read N lines as ONE ROW OF N COLUMNS
+#   whenever the line count happened to equal the declared output-column count.
 #
-# The heuristic is deliberate and documented (ghcacher's `printf '%s\n%s\n%s'`
-# templates emit one row as one value per line), but it is DATA-DEPENDENT: a
-# two-column host answering with exactly two rows is indistinguishable from a
-# two-column host answering with one row, and the decoder picks the second
-# reading. So `enumerate_at` over a corpus of exactly two files returns one
-# garbage row whose `path` is the first whole line and whose `digest` is the
-# second whole line. No refusal, no diagnostic, and every downstream join
-# quietly derives nothing.
+# The per-column heuristic is deliberate and documented (ghcacher's
+# `printf '%s\n%s\n%s'` templates emit one row as one value per line), but
+# preferring it was DATA-DEPENDENT: a two-column host answering with exactly two
+# rows is indistinguishable from a two-column host answering with one row, and
+# the decoder picked the second reading. So `enumerate_at` over a corpus of
+# exactly two files returned one garbage row whose `path` was the first whole
+# line and whose `digest` was the second. No refusal, no diagnostic, and every
+# downstream join quietly derived nothing.
 #
-# The shipped `enumerate.sh` receipt cannot see this: it runs against this
+# The shipped `enumerate.sh` receipt could not see it: it runs against this
 # repository, where the glob matches hundreds of files, and 2 == 2 never holds.
 #
-# The fix in program text is to emit a named JSON projection, which
-# `decodeObjectItems` reads by column NAME and which no row count can confuse.
-# That is what this declaration does. The whitespace twin is kept immediately
-# below, unused by the rail, purely so the receipt can prove the defect rather
-# than assert it. NAMED in plans/2026-07-30-v5-parity-spelunk.md; not patched,
-# because the runtime is not this lane's to edit.
+# FIXED at 7c338827 by precedence -- the GRID reading (every nonempty line
+# splits into exactly N fields) is unambiguous, so it goes first, and
+# tests/hostDecode.test.ts pins cardinalities 0/1/2/3 at the decode seam.
+#
+# Emitting a named JSON projection, which `decodeObjectItems` reads by column
+# NAME, is still the right spelling here and is what this declaration does: no
+# row count can confuse it under any future decode change. The whitespace twin
+# below is kept, unused by the rail, as the receipt's REGRESSION GUARD -- two
+# declarations differing only in output encoding, compared end to end at the
+# two cardinalities that discriminate (2 and 3). History in
+# plans/2026-07-30-v5-parity-spelunk.md.
 sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '{"path":"%s","digest":"%s"}\n' "$entry" "$oid"; done`.
 
 # The shipped whitespace spelling, verbatim from fixtures/enumerate-hosts.dl6.
-# It exists ONLY as the defect's witness; `ws_file` below is read by the
+# It exists ONLY as the decode regression guard; `ws_file` below is read by the
 # receipt and by nothing else in the rail.
 sh enumerate_at_ws(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
@@ -135,10 +140,11 @@ base_file(path, digest) <- base_at(rev, glob), enumerate_at(rev, glob, path, dig
 rel new_file(path: text).
 new_file(path) <- head_file(path, _), not(base_file(path, _)).
 
-# The defect's witness. Same rev, same glob, same declared columns as
-# `base_file` above -- only the host template's output encoding differs. At a
-# revision holding exactly two matching files these two rels MUST agree and do
-# not; at any other count they agree. The receipt asserts both halves.
+# The decode regression guard. Same rev, same glob, same declared columns as
+# `base_file` above -- only the host template's output encoding differs, so the
+# two rels MUST agree at every cardinality. Before 7c338827 they disagreed at
+# exactly two matching files and agreed everywhere else; the receipt asserts
+# both cardinalities so a re-regression cannot hide in the corpus size.
 rel ws_file(path: text, digest: text).
 ws_file(path, digest) <- base_at(rev, glob), enumerate_at_ws(rev, glob, path, digest).
 

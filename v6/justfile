@@ -222,6 +222,52 @@ rtkq-golden:
 multirepo-golden:
 	bash {{v6}}/tsv2/goldens/multirepo_crawl/2_gate.sh
 
+# STOPPING-POINT PROGRAM #3: git pre-commit --changed, the biome-style
+# recent-change-lines gating, spelled as ordinary rules. "Which files are NEW
+# since a base revision" is a join between two rev-pinned `enumerate_at` host
+# answers with `not/1` over the base side; three finding classes ride it
+# (banned pattern in a new file, missing required header, whole-tree ratchet
+# above a committed ceiling) and land in v5's own 9-column diag_v5 schema.
+#
+# The receipt drives a REAL four-commit git repository through the served
+# engine: c0 baseline, c1 adds one offending file AND one clean control file,
+# c2 deletes the offender, c3 advances the base. Every assertion is sorted
+# row-set equality, so a rail that fired on every new file would fail on the
+# control rather than pass on a count. The ratchet's ceiling is proven data-
+# driven by lowering it under an unchanged tree.
+#
+# The program and its receipt landed at 321a3d4c and were never wired into a
+# battery; this recipe is that wiring.
+# (expect: GIT-FACT DIAGS RAIL HOLDS, exit 0; ~20s, one ephemeral server)
+precommit-changed:
+	bash {{v6}}/tsv2/scripts/v5-git-diags.sh
+
+# STOPPING-POINT PROGRAM #8 at scale: the watch bind's own cost and correctness
+# curve. Duplicate path notifications, edits, identical re-saves and deletes are
+# pushed through the real WatchBindRunner and coalesced by a virtual window; the
+# final `watch` and `seen` relations are pinned by sha256, and any cell that
+# decodes a duplicate, stale or missing row exits 1.
+#
+# Cost is REPORTED, not gated (wall ms and RSS are machine-dependent); the
+# gated part is correctness at each size. A gated cost floor for this path --
+# the scale-floor.sh treatment -- does not exist yet and is a named gap in
+# v6/READINESS.md.
+# (expect: two JSONL lines, correct:true, ticks flat at 3 across both sizes)
+watch-scale:
+	cd {{v6}}/tsv2 && NODE_NO_WARNINGS=1 node --experimental-transform-types \
+	  scripts/5_file-watch-scale.ts --files 100,1000 --events-per-file 3 \
+	  --edit-ratio 0.25 --delete-ratio 0.10 --identical-resave-ratio 0.25
+
+# the v5 surface inventory: every built-in rel, operator and function v5's
+# examples/*.dl corpus actually uses, ranked by how many files name it, each
+# marked covered / partial / absent against v6. Regenerates
+# plans/2026-07-30-v5-parity-table.tsv, so it MUTATES A TRACKED FILE and is
+# deliberately outside every battery -- run it when you want the number, and
+# commit the table only when the movement is the point.
+# (expect: V5 PARITY TABLE SEEDED, exit 0)
+v5-parity:
+	bash {{v6}}/tsv2/scripts/v5-parity.sh
+
 # checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
 # regenerated + diffed against their .dl6 source; target/release/dl and
 # sprefa-extract's release binary refused if a source .rs/Cargo.toml is
@@ -253,4 +299,4 @@ bench:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale

@@ -16,13 +16,18 @@ main(Argv) :-
     ).
 
 golden_oracle(ProgramFile, ScheduleFile) :-
-    parse_dl_file(ProgramFile, Prog, _Bindings, Findings),
+    parse_dl_file(ProgramFile, Prog, Bindings, Findings),
     ( Findings == []
     -> true
     ; format(user_error, 'ghcacher oracle: parse findings ~q~n', [Findings]),
       halt(1)
     ),
-    read_schedule(ScheduleFile, Schedule),
+    % read_schedule/4, not /2: dl6_oracle.pl made the JSON arrival mapping
+    % TYPE-DIRECTED at 17fe0d4b (a json column's schedule value is JSON TEXT
+    % that the door parses into oracle json terms), which needs the parsed
+    % program and its bindings to look the column types up. This caller was
+    % left on the old /2 spelling and this golden has been red since.
+    read_schedule(Prog, Bindings, ScheduleFile, Schedule),
     print_ticklog(Prog, [], Schedule),
     run_program(Prog, [], Schedule, FinalAll, _DeltaTicks),
     final_state_line(FinalAll, FinalLine),

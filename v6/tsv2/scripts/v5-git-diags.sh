@@ -158,21 +158,30 @@ settle || die "stage 0 never settled"
 expect "stage 0  new_file empty (base == head)" "$(read_rel new_file 0)" ""
 expect "stage 0  diag_v5 empty (GREEN)"          "$(read_rel diag_v5 6,0,1)" ""
 
-# ═══ THE WHITESPACE-DECODE DEFECT, proven rather than asserted ═════════════
-# c0 holds exactly TWO matching files and `enumerate_at` declares exactly TWO
-# output columns, so serve/1_hosts.ts `parseWhitespace` reads the two LINES as
-# the two COLUMNS of ONE row. The JSON-emitting host and the whitespace-
-# emitting host are otherwise identical declarations over identical inputs.
-expect "defect   JSON host reads c0's two files as TWO ROWS (correct)" \
+# ═══ THE WHITESPACE-DECODE COLLAPSE, now a REGRESSION GUARD ════════════════
+# This block was written as a DEFECT WITNESS: c0 holds exactly TWO matching
+# files and `enumerate_at` declares exactly TWO output columns, and
+# serve/1_hosts.ts `parseWhitespace` used to try the one-value-per-line reading
+# FIRST whenever those two numbers matched, so a two-file answer -- and only a
+# two-file answer -- decoded into ONE row whose `path` was the whole first line
+# and whose `digest` was the whole second. Right at one file, right at three,
+# silently wrong at two.
+#
+# 7c338827 fixed it by precedence: the GRID reading (every nonempty line splits
+# into exactly N fields) is unambiguous, so it goes first. tests/hostDecode.
+# test.ts pins all four cardinalities 0/1/2/3 at the decode seam.
+#
+# So the witness is inverted here rather than deleted, and stays for one
+# reason: it is the only check that runs the collapse cardinality END TO END --
+# a real git repository, a real subprocess host, two declarations differing
+# ONLY in output encoding, through the served engine. A decode bug that is a
+# function of ROW COUNT is invisible to any receipt whose corpus is the wrong
+# size, which is exactly how this one shipped. The two encodings must now agree
+# at every cardinality; stage 3 asserts the same equality at three files.
+expect "decode   JSON host reads c0's two files as TWO ROWS (correct)" \
   "$(read_rel base_file 0)" "$(printf 'src/clean.ts\nsrc/existing.ts')"
-ws="$(read_rel ws_file 0)"
-if [ "$ws" = "$(printf 'src/clean.ts\nsrc/existing.ts')" ]; then
-  fail "defect   whitespace host agreed at 2 files -- parseWhitespace's line-count collapse has been fixed; delete enumerate_at_ws and this block"
-else
-  say "PASS  defect   whitespace host MIS-DECODES the same answer into 1 row, silently:"
-  printf '        %s\n' "$ws"
-  say "        (serve/1_hosts.ts parseWhitespace: lines.length === outputs.length)"
-fi
+expect "decode   whitespace host agrees at TWO files (the 7c338827 grid-first fix holds)" \
+  "$(read_rel ws_file 0)" "$(read_rel base_file 0)"
 
 # ═══ STAGE 1: c1 adds one offending file and one clean new file ════════════
 cat >"$ROOT/src/new_bad.ts" <<'EOF'
@@ -228,11 +237,11 @@ advance_base "$C0" "$C2"
 settle || die "stage 3 never settled"
 expect "stage 3  new_file empty once the base advances to head" "$(read_rel new_file 0)" ""
 expect "stage 3  diag_v5 empty (GREEN)" "$(read_rel diag_v5 6,0,1)" ""
-# c2 holds THREE matching files against two declared columns, so the collapse
-# condition no longer holds and both encodings agree. This is the other half of
-# the defect receipt: the bug is DATA-DEPENDENT, not constant, which is exactly
-# why no existing receipt catches it.
-expect "defect   at THREE files the two encodings agree again (the bug is data-dependent)" \
+# c2 holds THREE matching files against two declared columns. Three was always
+# the cardinality the old collapse could not reach, so this leg passed before
+# the fix and passes after it -- keeping it is what makes the pair a
+# CARDINALITY sweep (2 and 3) rather than a single sample.
+expect "decode   at THREE files the two encodings agree (cardinality sweep, 2 and 3)" \
   "$(read_rel ws_file 0)" "$(read_rel base_file 0)"
 
 # ═══ the ratchet's own red leg, proven by lowering the ceiling ══════════════
