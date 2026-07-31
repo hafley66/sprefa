@@ -16,8 +16,12 @@
 :- use_module(library(filesex), [make_directory_path/1]).
 :- use_module(library(http/json), [json_write_dict/3]).
 :- use_module(library(prolog_profile), [profile/2]).
-:- use_module(library(tableutil), [table_statistics/2]).
-:- use_module(compile, [program_plan/2]).
+:- use_module(compile,
+              [ measure_phase/3,
+                program_plan/2,
+                restore_phase_outcome/1,
+                write_compile_trace/2
+              ]).
 :- use_module(parse_dl, [parse_dl_file/4]).
 :- use_module(lower, [lower_program/2, boot_statements/5]).
 :- use_module(emit_ts, [emit_program/5]).
@@ -34,7 +38,8 @@ compile_dl6_profiled(File, OutFile) :-
 
 compile_dl6_profiled(File, OutFile, LogStream) :-
     phase(LogStream, File, 1, parse,
-          parse_dl_file(File, Prog, Bindings, Findings)),
+          parse_dl_file(File, Prog, Bindings, Findings),
+          ParseMeasurement),
     ( Findings == []
     -> true
     ; throw(unsupported_construct(surface_findings(Findings)))
@@ -43,18 +48,32 @@ compile_dl6_profiled(File, OutFile, LogStream) :-
     file_name_extension(Name, _Extension, BaseName),
     Term = fixture(Name, Prog, [], [], []),
     phase(LogStream, File, 2, plan,
-          program_plan(Term-Bindings, Plan)),
+          program_plan(Term-Bindings, Plan),
+          PlanMeasurement),
     phase(LogStream, File, 3, lower,
-          lower_program(Plan, Lowered)),
+          lower_program(Plan, Lowered),
+          LowerMeasurement),
     Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     phase(LogStream, File, 4, boot,
           boot_statements(Decls, RelPlans, [], LevelStatements,
-                          BootStatements)),
+                          BootStatements),
+          BootMeasurement),
     phase(LogStream, File, 5, emit,
-          emit_program(Name, Plan, Lowered, BootStatements, Text)),
+          emit_program(Name, Plan, Lowered, BootStatements, Text),
+          EmitMeasurement),
     phase(LogStream, File, 6, write,
-          write_output(OutFile, Text)),
+          write_output(OutFile, Text),
+          WriteMeasurement),
+    write_compile_trace(
+        Name,
+        [ phase(parse, ParseMeasurement),
+          phase(plan, PlanMeasurement),
+          phase(lower, LowerMeasurement),
+          phase(boot, BootMeasurement),
+          phase(emit, EmitMeasurement),
+          phase(write, WriteMeasurement)
+        ]),
     format("wrote ~w~n", [OutFile]).
 
 write_output(OutFile, Text) :-
@@ -63,51 +82,17 @@ write_output(OutFile, Text) :-
         format(Stream, "~s", [Text]),
         close(Stream)).
 
-phase(LogStream, Source, Tick, Phase, Goal) :-
-    setup_call_cleanup(
-        statistics_snapshot(Before),
-        phase_outcome(Goal, Outcome),
-        write_phase_line(LogStream, Source, Tick, Phase, Before, Outcome)),
-    restore_outcome(Outcome).
+phase(LogStream, Source, Tick, Phase, Goal, Measurement) :-
+    measure_phase(Goal, Measurement, Outcome),
+    write_phase_line(LogStream, Source, Tick, Phase, Measurement, Outcome),
+    restore_phase_outcome(Outcome).
 
-phase_outcome(Goal, Outcome) :-
-    catch(
-        ( once(call(Goal))
-        -> Outcome = ok
-        ; Outcome = failed
-        ),
-        Error,
-        Outcome = error(Error)).
-
-restore_outcome(ok).
-restore_outcome(failed) :-
-    fail.
-restore_outcome(error(Error)) :-
-    throw(Error).
-
-statistics_snapshot(
-        stats(CpuSeconds, Inferences, WallMilliseconds,
-              GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes,
-              TableCount, TableAnswers, TableReuses,
-              TableSpaceBytes, TableCompiledSpaceBytes)) :-
-    statistics(cputime, CpuSeconds),
-    statistics(inferences, Inferences),
-    statistics(walltime, [WallMilliseconds, _SinceLast]),
-    statistics(garbage_collection,
-               [GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes]),
-    table_statistics(tables, TableCount),
-    table_statistics(answers, TableAnswers),
-    table_statistics(complete_call, TableReuses),
-    table_statistics(space, TableSpaceBytes),
-    table_statistics(compiled_space, TableCompiledSpaceBytes).
-
-write_phase_line(LogStream, Source, Tick, Phase, Before, Outcome) :-
-    statistics_snapshot(After),
-    statistics_delta(Before, After,
-                     WallMs, CpuMs, Inferences,
-                     GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
-                     TableCount, TableAnswers, TableReuses,
-                     TableSpaceBytes, TableCompiledSpaceBytes),
+write_phase_line(LogStream, Source, Tick, Phase, Measurement, Outcome) :-
+    Measurement = measurement(
+        WallMs, CpuMs, Inferences,
+        GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
+        TableCount, TableAnswers, TableReuses,
+        TableSpaceBytes, TableCompiledSpaceBytes),
     outcome_fields(Outcome, Status, Error),
     Line = _{
         tick: Tick,
@@ -130,32 +115,6 @@ write_phase_line(LogStream, Source, Tick, Phase, Before, Outcome) :-
     },
     json_write_dict(LogStream, Line, [width(0)]),
     nl(LogStream).
-
-statistics_delta(
-        stats(Cpu0, Inf0, Wall0, GcCount0, GcBytes0, GcMs0, _GcLeft0,
-              TableCount0, TableAnswers0, TableReuses0,
-              TableSpace0, TableCompiledSpace0),
-        stats(Cpu1, Inf1, Wall1, GcCount1, GcBytes1, GcMs1, GcLeft1,
-              TableCount1, TableAnswers1, TableReuses1,
-              TableSpace1, TableCompiledSpace1),
-        WallMs, CpuMs, Inferences,
-        GcCount, GcReclaimedBytes, GcMs, GcLeft1,
-        TableCount, TableAnswers, TableReuses,
-        TableSpaceBytes, TableCompiledSpaceBytes) :-
-    round_two(Wall1 - Wall0, WallMs),
-    round_two((Cpu1 - Cpu0) * 1000, CpuMs),
-    Inferences is Inf1 - Inf0,
-    GcCount is GcCount1 - GcCount0,
-    GcReclaimedBytes is GcBytes1 - GcBytes0,
-    GcMs is GcMs1 - GcMs0,
-    TableCount is TableCount1 - TableCount0,
-    TableAnswers is TableAnswers1 - TableAnswers0,
-    TableReuses is TableReuses1 - TableReuses0,
-    TableSpaceBytes is TableSpace1 - TableSpace0,
-    TableCompiledSpaceBytes is TableCompiledSpace1 - TableCompiledSpace0.
-
-round_two(Value, Rounded) :-
-    Rounded is round(Value * 100) / 100.
 
 outcome_fields(ok, ok, null).
 outcome_fields(failed, failed, null).

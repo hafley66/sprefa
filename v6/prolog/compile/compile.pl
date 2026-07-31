@@ -29,6 +29,9 @@
             compile_fixture/4,
             compile_dl6/2,
             compile_program/6,
+            measure_phase/3,
+            restore_phase_outcome/1,
+            write_compile_trace/2,
             throw_text_door_error/2,
             program_plan/2
           ]).
@@ -42,6 +45,7 @@
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
+:- use_module(library(tableutil), [table_statistics/2]).
 :- use_module(parse_dl,
               [ parse_dl_file/4,
                 parse_dl_line_for_reason/2
@@ -51,6 +55,8 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
+
+:- meta_predicate measure_phase(0, -, -).
 
 % ═══ reading ═════════════════════════════════════════════════════════════════
 
@@ -207,7 +213,9 @@ check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     ).
 
 compile_dl6(File, OutFile) :-
-    parse_dl_file(File, Prog, Bindings, Findings),
+    run_compile_phase(parse,
+                      parse_dl_file(File, Prog, Bindings, Findings),
+                      ParseMeasurement),
     ( Findings == []
     -> true
     ; throw(unsupported_construct(surface_findings(Findings)))
@@ -215,11 +223,14 @@ compile_dl6(File, OutFile) :-
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
     catch(
-        compile_program(Name, fixture(Name, Prog, [], [], []), Bindings,
-                        [], OutFile, emit_ts:emit_program),
+        compile_program_phases(Name, fixture(Name, Prog, [], [], []),
+                               Bindings, [], OutFile, emit_ts:emit_program,
+                               PhaseMeasurements),
         Error,
         throw_text_door_error(File, Error)
-    ).
+    ),
+    write_compile_trace(
+        Name, [phase(parse, ParseMeasurement) | PhaseMeasurements]).
 
 % EXPORTED because `bop check` is the SECOND caller of the text door and was
 % getting an unlocated refusal for the identical file (cold-author defect D3):
@@ -242,14 +253,166 @@ throw_text_door_error(_File, Error) :-
     throw(Error).
 
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
-    program_plan(Term-Bindings, Plan),
-    lower_program(Plan, Lowered),
+    compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
+                           PhaseMeasurements),
+    zero_phase_measurement(EmptyMeasurement),
+    write_compile_trace(
+        Name, [phase(parse, EmptyMeasurement) | PhaseMeasurements]).
+
+compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
+                       PhaseMeasurements) :-
+    run_compile_phase(plan,
+                      program_plan(Term-Bindings, Plan),
+                      PlanMeasurement),
+    run_compile_phase(lower,
+                      lower_program(Plan, Lowered),
+                      LowerMeasurement),
     Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
-    call(Emitter, Name, Plan, Lowered, BootStatements, Text),
+    run_compile_phase(
+        boot,
+        boot_statements(Decls, RelPlans, Initial, LevelStatements,
+                        BootStatements),
+        BootMeasurement),
+    run_compile_phase(
+        emit,
+        call(Emitter, Name, Plan, Lowered, BootStatements, Text),
+        EmitMeasurement),
+    run_compile_phase(
+        write,
+        write_compiled_output(OutFile, Text),
+        WriteMeasurement),
+    PhaseMeasurements = [ phase(plan, PlanMeasurement),
+                          phase(lower, LowerMeasurement),
+                          phase(boot, BootMeasurement),
+                          phase(emit, EmitMeasurement),
+                          phase(write, WriteMeasurement)
+                        ].
+
+write_compiled_output(OutFile, Text) :-
     setup_call_cleanup(
         open(OutFile, write, Stream),
         format(Stream, "~s", [Text]),
         close(Stream)),
     format("wrote ~w~n", [OutFile]).
+
+run_compile_phase(_Phase, Goal, Measurement) :-
+    measure_phase(Goal, Measurement, Outcome),
+    restore_phase_outcome(Outcome).
+
+measure_phase(Goal, Measurement, Outcome) :-
+    setup_call_cleanup(
+        statistics_snapshot(Before),
+        phase_outcome(Goal, Outcome),
+        capture_phase_measurement(Before, Measurement)).
+
+phase_outcome(Goal, Outcome) :-
+    catch(
+        ( once(call(Goal))
+        -> Outcome = ok
+        ; Outcome = failed
+        ),
+        Error,
+        Outcome = error(Error)).
+
+restore_phase_outcome(ok).
+restore_phase_outcome(failed) :-
+    fail.
+restore_phase_outcome(error(Error)) :-
+    throw(Error).
+
+capture_phase_measurement(Before, Measurement) :-
+    statistics_snapshot(After),
+    statistics_delta(Before, After,
+                     WallMs, CpuMs, Inferences,
+                     GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
+                     TableCount, TableAnswers, TableReuses,
+                     TableSpaceBytes, TableCompiledSpaceBytes),
+    Measurement = measurement(
+        WallMs, CpuMs, Inferences,
+        GcCount, GcReclaimedBytes, GcMs, GcLeftBytes,
+        TableCount, TableAnswers, TableReuses,
+        TableSpaceBytes, TableCompiledSpaceBytes).
+
+statistics_snapshot(
+        stats(CpuSeconds, Inferences, WallMilliseconds,
+              GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes,
+              TableCount, TableAnswers, TableReuses,
+              TableSpaceBytes, TableCompiledSpaceBytes)) :-
+    statistics(cputime, CpuSeconds),
+    statistics(inferences, Inferences),
+    statistics(walltime, [WallMilliseconds, _SinceLast]),
+    statistics(garbage_collection,
+               [GcCount, GcReclaimedBytes, GcMilliseconds, GcLeftBytes]),
+    table_statistics(tables, TableCount),
+    table_statistics(answers, TableAnswers),
+    table_statistics(complete_call, TableReuses),
+    table_statistics(space, TableSpaceBytes),
+    table_statistics(compiled_space, TableCompiledSpaceBytes).
+
+statistics_delta(
+        stats(Cpu0, Inf0, Wall0, GcCount0, GcBytes0, GcMs0, _GcLeft0,
+              TableCount0, TableAnswers0, TableReuses0,
+              TableSpace0, TableCompiledSpace0),
+        stats(Cpu1, Inf1, Wall1, GcCount1, GcBytes1, GcMs1, GcLeft1,
+              TableCount1, TableAnswers1, TableReuses1,
+              TableSpace1, TableCompiledSpace1),
+        WallMs, CpuMs, Inferences,
+        GcCount, GcReclaimedBytes, GcMs, GcLeft1,
+        TableCount, TableAnswers, TableReuses,
+        TableSpaceBytes, TableCompiledSpaceBytes) :-
+    round_two(Wall1 - Wall0, WallMs),
+    round_two((Cpu1 - Cpu0) * 1000, CpuMs),
+    Inferences is Inf1 - Inf0,
+    GcCount is GcCount1 - GcCount0,
+    GcReclaimedBytes is GcBytes1 - GcBytes0,
+    GcMs is GcMs1 - GcMs0,
+    TableCount is TableCount1 - TableCount0,
+    TableAnswers is TableAnswers1 - TableAnswers0,
+    TableReuses is TableReuses1 - TableReuses0,
+    TableSpaceBytes is TableSpace1 - TableSpace0,
+    TableCompiledSpaceBytes is TableCompiledSpace1 - TableCompiledSpace0.
+
+round_two(Value, Rounded) :-
+    Rounded is round(Value * 100) / 100.
+
+zero_phase_measurement(
+        measurement(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)).
+
+write_compile_trace(Name, PhaseMeasurements) :-
+    phase_trace_measurement(PhaseMeasurements, parse, ParseMeasurement),
+    phase_trace_measurement(PhaseMeasurements, plan, PlanMeasurement),
+    phase_trace_measurement(PhaseMeasurements, lower, LowerMeasurement),
+    phase_trace_measurement(PhaseMeasurements, boot, BootMeasurement),
+    phase_trace_measurement(PhaseMeasurements, emit, EmitMeasurement),
+    phase_trace_measurement(PhaseMeasurements, write, WriteMeasurement),
+    phase_trace_measurement_values(ParseMeasurement, ParseWall, ParseInf),
+    phase_trace_measurement_values(PlanMeasurement, PlanWall, PlanInf),
+    phase_trace_measurement_values(LowerMeasurement, LowerWall, LowerInf),
+    phase_trace_measurement_values(BootMeasurement, BootWall, BootInf),
+    phase_trace_measurement_values(EmitMeasurement, EmitWall, EmitInf),
+    phase_trace_measurement_values(WriteMeasurement, WriteWall, WriteInf),
+    TotalWall is ParseWall + PlanWall + LowerWall + BootWall + EmitWall + WriteWall,
+    TotalInf is ParseInf + PlanInf + LowerInf + BootInf + EmitInf + WriteInf,
+    format(user_error,
+           "COMPILE-TRACE program=~w parse=~w/~w plan=~w/~w lower=~w/~w boot=~w/~w emit=~w/~w write=~w/~w total=~w/~w~n",
+           [ Name,
+             ParseWall, ParseInf,
+             PlanWall, PlanInf,
+             LowerWall, LowerInf,
+             BootWall, BootInf,
+             EmitWall, EmitInf,
+             WriteWall, WriteInf,
+             TotalWall, TotalInf
+           ]).
+
+phase_trace_measurement(PhaseMeasurements, Phase, Measurement) :-
+    memberchk(phase(Phase, Measurement), PhaseMeasurements).
+
+phase_trace_measurement_values(measurement(WallMs, _CpuMs, Inferences, _GcCount,
+                                           _GcReclaimedBytes, _GcMs,
+                                           _GcLeftBytes, _TableCount,
+                                           _TableAnswers, _TableReuses,
+                                           _TableSpaceBytes,
+                                           _TableCompiledSpaceBytes),
+                               WallMs, Inferences).
