@@ -169,7 +169,7 @@ resolve_extract_bin
 install_extract_shim
 start_server
 
-status="$(capped_curl "${EXTRACTION_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${EXTRACTION_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "program load returned $status: $(cat "$WORK/load.json")"
 grep -q '"watch"' "$WORK/load.json" || fail "loaded program declares no watch bind: $(cat "$WORK/load.json")"
 say "PASS  program loaded, binds: $(cat "$WORK/load.json" | tr -d ' \n' | sed 's/.*"binds"://; s/,"hosts".*//')"
@@ -245,7 +245,7 @@ before_restart_ticks="$(tick_count)"
 [ "$before_restart" -ge 3 ] || fail "expected at least 3 extractions before the restart, counted $before_restart"
 stop_server
 start_server 0
-status="$(capped_curl "${EXTRACTION_HTTP_BUDGET_S:-30}" -s -o "$WORK/load2.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${EXTRACTION_LOAD_BUDGET_S:-900}" -s -o "$WORK/load2.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "phase 6: program reload returned $status: $(cat "$WORK/load2.json")"
 sleep 3
 after_restart="$(marks_count)"
@@ -269,7 +269,7 @@ await_rows banned_call '"src/d.ts","eval"' present \
 stop_server
 rm -f "$CORPUS/src/d.ts"
 start_server 0
-status="$(capped_curl "${EXTRACTION_HTTP_BUDGET_S:-30}" -s -o "$WORK/load3.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${EXTRACTION_LOAD_BUDGET_S:-900}" -s -o "$WORK/load3.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "phase 7: program reload returned $status: $(cat "$WORK/load3.json")"
 await_rows watch '"src/d.ts"' absent \
   || fail "phase 7: watch row survived deletion while server was down (rows: $(rows_of watch))"
@@ -284,7 +284,7 @@ say "PASS  phase 7  delete while down -> boot retracted watch row and downstream
 # and the finding must still land after the restart.
 stop_server
 start_server 6
-status="$(capped_curl "${EXTRACTION_HTTP_BUDGET_S:-30}" -s -o "$WORK/load4.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${EXTRACTION_LOAD_BUDGET_S:-900}" -s -o "$WORK/load4.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "phase 8: program reload returned $status: $(cat "$WORK/load4.json")"
 before_kill="$(marks_count)"
 cat >"$CORPUS/src/c.ts" <<'EOF'
@@ -304,7 +304,7 @@ say "PASS  phase 8  killed -9 mid-extraction with src/c.ts demanded and unanswer
 
 # ── phase 9: the crashed extraction re-runs and its finding lands ───────────
 start_server 0
-status="$(capped_curl "${EXTRACTION_HTTP_BUDGET_S:-30}" -s -o "$WORK/load5.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${EXTRACTION_LOAD_BUDGET_S:-900}" -s -o "$WORK/load5.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "phase 9: program reload returned $status: $(cat "$WORK/load5.json")"
 await_rows banned_call '"src/c.ts","eval"' present \
   || fail "phase 9: the crashed extraction never finished (rows: $(rows_of banned_call), marks $(marks_count))"

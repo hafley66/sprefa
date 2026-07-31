@@ -149,6 +149,12 @@
 # splices, so a path arriving as a rel column could never expand. The five
 # renders together are seconds; 180s is the "graphviz has stopped being
 # graphviz" line.
+#
+# ATLAS_LOAD_BUDGET_S, default 900, on the `POST /program` request alone, vs
+# ATLAS_HTTP_BUDGET_S (30) on every poll. That POST is not a poll: it holds the
+# connection open for the whole ~256s compile. A uniform 30s cap failed this
+# rail with `program load returned 000` after thirty seconds, which is the
+# reason the two budgets are separate rather than one number.
 
 set -uo pipefail
 
@@ -256,7 +262,7 @@ for ((attempt = 1; attempt <= 100; attempt++)); do
 done
 capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
 
-status="$(capped_curl "${ATLAS_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${ATLAS_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 
 # The readiness witnesses: one per fact plane, the derived graph, the two

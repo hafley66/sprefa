@@ -58,6 +58,15 @@
 #       bound is not bounded at all if a single curl inside it never returns:
 #       the counter stops advancing. That is the shape of the devlog hang.
 #
+#       TWO BUDGETS PER SERVED SCRIPT, not one, and the split is not cosmetic.
+#       A poll (`/ticks`, `/idb/<rel>`) answers in milliseconds and gets a short
+#       cap. `POST /program` is not a poll: it holds the connection open for the
+#       WHOLE COMPILE, so its cap must sit above the compile's own budget. That
+#       distinction was found the hard way -- a uniform 30s cap made `just
+#       atlas` fail with `program load returned 000` after 30 seconds, because
+#       dataflow-atlas.dl6 compiles in ~256s. Load POSTs read *_LOAD_BUDGET_S
+#       (900s), polls read *_HTTP_BUDGET_S (10-60s).
+#
 # ── BUDGETS ──────────────────────────────────────────────────────────────────
 #
 # Every call site reads an env var with a default measured off that site's real

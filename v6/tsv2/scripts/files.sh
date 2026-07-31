@@ -84,7 +84,7 @@ for _ in $(seq 1 60); do
   sleep 0.2
 done
 
-status="$(capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${FILES_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = "200" ] || fail "program load returned $status: $(cat "$WORK/load.json")"
 grep -q 'files_at' "$WORK/load.json" || fail "both files hosts should be declared: $(cat "$WORK/load.json")"
 say "PASS  program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"

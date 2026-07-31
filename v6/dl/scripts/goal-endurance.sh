@@ -63,7 +63,7 @@ post_program() {
   # want(tag, salt) is the demand seed; napper is a sh host that sleeps (a real
   # wall-clock yield) then emits its value; woke is the delayed derivation.
   local resp
-  resp=$(capped_curl "${ENDURANCE_HTTP_BUDGET_S:-30}" -s -w '\n%{http_code}' -X POST "$BASE/edb/program" \
+  resp=$(capped_curl "${ENDURANCE_LOAD_BUDGET_S:-900}" -s -w '\n%{http_code}' -X POST "$BASE/edb/program" \
     -H 'content-type: text/plain' --data-binary @- <<DL
 rel want(tag: text, salt: text).
 rel woke(tag: text, salt: text, value: text).

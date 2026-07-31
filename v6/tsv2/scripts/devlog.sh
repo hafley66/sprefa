@@ -71,7 +71,7 @@ while [ "$attempt" -le 120 ]; do
 done
 capped_curl "${DEVLOG_HTTP_BUDGET_S:-10}" -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
 
-status="$(capped_curl "${DEVLOG_HTTP_BUDGET_S:-10}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST \
+status="$(capped_curl "${DEVLOG_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST \
   --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 

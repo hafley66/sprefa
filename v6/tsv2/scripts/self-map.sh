@@ -132,7 +132,7 @@ for ((attempt=1; attempt<=100; attempt++)); do
 done
 capped_curl "${SELF_MAP_HTTP_BUDGET_S:-30}" -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become ready"
 
-status="$(capped_curl "${SELF_MAP_HTTP_BUDGET_S:-30}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
+status="$(capped_curl "${SELF_MAP_LOAD_BUDGET_S:-900}" -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 
 # The source rels are readiness witnesses. The final two rels are the document
