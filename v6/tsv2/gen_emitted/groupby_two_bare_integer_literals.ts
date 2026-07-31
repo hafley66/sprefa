@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "source" ("name" TEXT NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_classified" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_classified_sign" ON "__delta_classified" ("_sign")`,
+  `CREATE INDEX "__delta_classified_group" ON "__delta_classified" ("name", "line", "column")`,
   `CREATE TEMP TABLE "__frontier_classified" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_classified_phase" ON "__frontier_classified" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_classified" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_classified_phase" ON "__next_frontier_classified" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_source_sign" ON "__delta_source" ("_sign")`,
+  `CREATE INDEX "__delta_source_group" ON "__delta_source" ("name")`,
   `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,

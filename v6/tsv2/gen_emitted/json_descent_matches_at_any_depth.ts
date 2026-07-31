@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "image" ("repository" TEXT NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_chart" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_chart_sign" ON "__delta_chart" ("_sign")`,
+  `CREATE INDEX "__delta_chart_group" ON "__delta_chart" ("body")`,
   `CREATE TEMP TABLE "__frontier_chart" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_chart_phase" ON "__frontier_chart" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_chart" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__next_frontier_chart_phase" ON "__next_frontier_chart" ("_phase")`,
   `CREATE TEMP TABLE "__delta_image" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_image_sign" ON "__delta_image" ("_sign")`,
+  `CREATE INDEX "__delta_image_group" ON "__delta_image" ("repository", "tag")`,
   `CREATE TEMP TABLE "__frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_image_phase" ON "__frontier_image" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,

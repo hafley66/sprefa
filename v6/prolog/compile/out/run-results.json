@@ -224,6 +224,13 @@
     "finalDetail": ""
   },
   {
+    "name": "int_float_arithmetic_keeps_real_result",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "float_avg_is_grouped",
     "bucket": "identical",
     "detail": "",
@@ -238,6 +245,13 @@
     "finalDetail": ""
   },
   {
+    "name": "float_exact_join_has_no_epsilon",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "float_negative_zero_canonical_boundary",
     "bucket": "identical",
     "detail": "",
@@ -246,6 +260,20 @@
   },
   {
     "name": "float_integral_value_keeps_real_storage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_shortest_round_trip_wire",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_avg_retracts_to_empty_group",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

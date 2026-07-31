@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -89,36 +92,42 @@ const ddl: readonly string[] = [
   `CREATE TABLE "open_pane" ("col1" TEXT NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "pane_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demanded_sign" ON "__delta_demanded" ("_sign")`,
+  `CREATE INDEX "__delta_demanded_group" ON "__delta_demanded" ("target", "pane_id")`,
   `CREATE TEMP TABLE "__frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "pane_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demanded_phase" ON "__frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "pane_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_demanded_phase" ON "__next_frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__delta_detail_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_detail_row_sign" ON "__delta_detail_row" ("_sign")`,
+  `CREATE INDEX "__delta_detail_row_group" ON "__delta_detail_row" ("item_id", "body")`,
   `CREATE TEMP TABLE "__frontier_detail_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_detail_row_phase" ON "__frontier_detail_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_detail_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_detail_row_phase" ON "__next_frontier_detail_row" ("_phase")`,
   `CREATE TEMP TABLE "__delta_detail_view" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_detail_view_sign" ON "__delta_detail_view" ("_sign")`,
+  `CREATE INDEX "__delta_detail_view_group" ON "__delta_detail_view" ("item_id", "body")`,
   `CREATE TEMP TABLE "__frontier_detail_view" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_detail_view_phase" ON "__frontier_detail_view" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_detail_view" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_detail_view_phase" ON "__next_frontier_detail_view" ("_phase")`,
   `CREATE TEMP TABLE "__delta_live_detail" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_live_detail_sign" ON "__delta_live_detail" ("_sign")`,
+  `CREATE INDEX "__delta_live_detail_group" ON "__delta_live_detail" ("pane_id", "target")`,
   `CREATE TEMP TABLE "__frontier_live_detail" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_live_detail_phase" ON "__frontier_live_detail" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_live_detail" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_live_detail_phase" ON "__next_frontier_live_detail" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_detail" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "item_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_detail_sign" ON "__delta_open_detail" ("_sign")`,
+  `CREATE INDEX "__delta_open_detail_group" ON "__delta_open_detail" ("pane_id", "item_id")`,
   `CREATE TEMP TABLE "__frontier_open_detail" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "item_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_detail_phase" ON "__frontier_open_detail" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_detail" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "pane_id" TEXT NOT NULL, "item_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_open_detail_phase" ON "__next_frontier_open_detail" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_pane" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_pane_sign" ON "__delta_open_pane" ("_sign")`,
+  `CREATE INDEX "__delta_open_pane_group" ON "__delta_open_pane" ("col1", "col2")`,
   `CREATE TEMP TABLE "__frontier_open_pane" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_pane_phase" ON "__frontier_open_pane" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_pane" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,

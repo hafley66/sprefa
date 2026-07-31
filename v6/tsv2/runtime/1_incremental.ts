@@ -32,14 +32,26 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) =>
     typeof value === "boolean"
       ? BigInt(value ? 1 : 0)
-      : typeof value === "number" && Number.isInteger(value)
+      : typeof value === "number" && Number.isSafeInteger(value)
         ? BigInt(value)
         : value,
   );
 }
 
 function resultRows(result: QueryResult, columns: readonly string[]): readonly IRow[] {
-  return result.rows.map((row) => columns.map((column) => row[column] as IRowValue));
+  return result.rows.map((row) =>
+    columns.map((column) => normalizeIntegerValue(row[column])),
+  );
+}
+
+function normalizeIntegerValue(value: unknown): IRowValue {
+  if (typeof value === "bigint") {
+    if (value < -9007199254740991n || value > 9007199254740991n) {
+      throw new Error("int_out_of_range");
+    }
+    return Number(value);
+  }
+  return value as IRowValue;
 }
 
 function valuesSql(rowCount: number, columnCount: number): string {
@@ -577,7 +589,7 @@ function boundaryDelta(
         }
         return Object.is(value, -0) ? 0 : value;
       }
-      return value as IRowValue;
+      return normalizeIntegerValue(value);
     });
     const key = JSON.stringify(row);
     const weight = Number(resultRow.__sign) * Number(resultRow.__count);
@@ -928,6 +940,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           throw new Error(`incremental level head relation missing: ${statement.headRel}`);
         }
         if (statement.aggregateSql !== null) {
+          if (statement.aggregateSql.deltaMaintained === true) return of(undefined);
           // afterEdges=false HERE, unlike applyLevelsAfterEdges. engine.pl's
           // carry set is edge-written rows plus POST-WRITE level growth
           // (tick/7: `ord_subtract(Level, MidLevel, PostWriteLevelRows)` --

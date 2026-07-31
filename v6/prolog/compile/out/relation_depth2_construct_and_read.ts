@@ -60,7 +60,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -76,6 +76,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -106,36 +109,42 @@ const ddl: readonly string[] = [
   `CREATE TABLE "span" ("file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file", "start", "end")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_coord" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_coord_sign" ON "__delta_coord" ("_sign")`,
+  `CREATE INDEX "__delta_coord_group" ON "__delta_coord" ("path_name", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_coord" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_coord_phase" ON "__frontier_coord" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_coord" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_coord_phase" ON "__next_frontier_coord" ("_phase")`,
   `CREATE TEMP TABLE "__delta_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_file_sign" ON "__delta_file" ("_sign")`,
+  `CREATE INDEX "__delta_file_group" ON "__delta_file" ("repo", "at")`,
   `CREATE TEMP TABLE "__frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_file_phase" ON "__frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_file_phase" ON "__next_frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_fpath" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fpath_sign" ON "__delta_fpath" ("_sign")`,
+  `CREATE INDEX "__delta_fpath_group" ON "__delta_fpath" ("name")`,
   `CREATE TEMP TABLE "__frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fpath_phase" ON "__frontier_fpath" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_fpath_phase" ON "__next_frontier_fpath" ("_phase")`,
   `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_raw_sign" ON "__delta_raw" ("_sign")`,
+  `CREATE INDEX "__delta_raw_group" ON "__delta_raw" ("repo_name", "path_name", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_raw_phase" ON "__frontier_raw" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_raw_phase" ON "__next_frontier_raw" ("_phase")`,
   `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
+  `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name")`,
   `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_repo_phase" ON "__frontier_repo" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_repo_phase" ON "__next_frontier_repo" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE INDEX "__delta_span_group" ON "__delta_span" ("file", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,

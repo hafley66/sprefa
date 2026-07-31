@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -104,12 +107,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "heard_count" ("item" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_heard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_heard_sign" ON "__delta_heard" ("_sign")`,
+  `CREATE INDEX "__delta_heard_group" ON "__delta_heard" ("item")`,
   `CREATE TEMP TABLE "__frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_heard_phase" ON "__frontier_heard" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_heard_phase" ON "__next_frontier_heard" ("_phase")`,
   `CREATE TEMP TABLE "__delta_heard_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_heard_count_sign" ON "__delta_heard_count" ("_sign")`,
+  `CREATE INDEX "__delta_heard_count_group" ON "__delta_heard_count" ("item")`,
   `CREATE TEMP TABLE "__frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_heard_count_phase" ON "__frontier_heard_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,

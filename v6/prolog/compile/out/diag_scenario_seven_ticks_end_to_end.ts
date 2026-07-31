@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -111,54 +114,63 @@ const ddl: readonly string[] = [
   `CREATE TABLE "violation" ("code" TEXT NOT NULL, "count" INTEGER NOT NULL, "allowed" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("code", "count", "allowed")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_diag_history" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_diag_history_sign" ON "__delta_diag_history" ("_sign")`,
+  `CREATE INDEX "__delta_diag_history_group" ON "__delta_diag_history" ("path", "line", "code", "opened_at")`,
   `CREATE TEMP TABLE "__frontier_diag_history" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_diag_history_phase" ON "__frontier_diag_history" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag_history" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_diag_history_phase" ON "__next_frontier_diag_history" ("_phase")`,
   `CREATE TEMP TABLE "__delta_diagnostic" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_diagnostic_sign" ON "__delta_diagnostic" ("_sign")`,
+  `CREATE INDEX "__delta_diagnostic_group" ON "__delta_diagnostic" ("path", "line", "code", "col4")`,
   `CREATE TEMP TABLE "__frontier_diagnostic" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_diagnostic_phase" ON "__frontier_diagnostic" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diagnostic" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_diagnostic_phase" ON "__next_frontier_diagnostic" ("_phase")`,
   `CREATE TEMP TABLE "__delta_file_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_file_line_sign" ON "__delta_file_line" ("_sign")`,
+  `CREATE INDEX "__delta_file_line_group" ON "__delta_file_line" ("path", "line", "code")`,
   `CREATE TEMP TABLE "__frontier_file_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_file_line_phase" ON "__frontier_file_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_file_line_phase" ON "__next_frontier_file_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_hook_window" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "since" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hook_window_sign" ON "__delta_hook_window" ("_sign")`,
+  `CREATE INDEX "__delta_hook_window_group" ON "__delta_hook_window" ("turn", "since")`,
   `CREATE TEMP TABLE "__frontier_hook_window" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "since" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hook_window_phase" ON "__frontier_hook_window" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hook_window" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "since" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_hook_window_phase" ON "__next_frontier_hook_window" ("_phase")`,
   `CREATE TEMP TABLE "__delta_lint_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_lint_count_sign" ON "__delta_lint_count" ("_sign")`,
+  `CREATE INDEX "__delta_lint_count_group" ON "__delta_lint_count" ("code", "count")`,
   `CREATE TEMP TABLE "__frontier_lint_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_lint_count_phase" ON "__frontier_lint_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_lint_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_lint_count_phase" ON "__next_frontier_lint_count" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ratchet" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "allowed" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ratchet_sign" ON "__delta_ratchet" ("_sign")`,
+  `CREATE INDEX "__delta_ratchet_group" ON "__delta_ratchet" ("code", "allowed")`,
   `CREATE TEMP TABLE "__frontier_ratchet" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "allowed" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ratchet_phase" ON "__frontier_ratchet" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ratchet" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "allowed" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_ratchet_phase" ON "__next_frontier_ratchet" ("_phase")`,
   `CREATE TEMP TABLE "__delta_turn_diag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_turn_diag_sign" ON "__delta_turn_diag" ("_sign")`,
+  `CREATE INDEX "__delta_turn_diag_group" ON "__delta_turn_diag" ("turn", "path", "line", "code", "opened_at")`,
   `CREATE TEMP TABLE "__frontier_turn_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_turn_diag_phase" ON "__frontier_turn_diag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_turn_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn" TEXT NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_turn_diag_phase" ON "__next_frontier_turn_diag" ("_phase")`,
   `CREATE TEMP TABLE "__delta_unratcheted_lint" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_unratcheted_lint_sign" ON "__delta_unratcheted_lint" ("_sign")`,
+  `CREATE INDEX "__delta_unratcheted_lint_group" ON "__delta_unratcheted_lint" ("code", "count")`,
   `CREATE TEMP TABLE "__frontier_unratcheted_lint" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_unratcheted_lint_phase" ON "__frontier_unratcheted_lint" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_unratcheted_lint" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_unratcheted_lint_phase" ON "__next_frontier_unratcheted_lint" ("_phase")`,
   `CREATE TEMP TABLE "__delta_violation" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL, "allowed" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_violation_sign" ON "__delta_violation" ("_sign")`,
+  `CREATE INDEX "__delta_violation_group" ON "__delta_violation" ("code", "count", "allowed")`,
   `CREATE TEMP TABLE "__frontier_violation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL, "allowed" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_violation_phase" ON "__frontier_violation" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_violation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "code" TEXT NOT NULL, "count" INTEGER NOT NULL, "allowed" INTEGER NOT NULL)`,
@@ -299,7 +311,7 @@ INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT b0."p
   { headRel: "turn_diag", headDeltaTableName: "__delta_turn_diag", headColumns: ["turn", "path", "line", "code", "opened_at"], insertSql: `INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT DISTINCT d0."turn", b0."path", b0."line", b0."code", b1."opened_at" FROM "__frontier_hook_window" d0, "diagnostic" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = b0."path" AND b1."line" = b0."line" AND b1."code" = b0."code" AND (b1."opened_at" > d0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", b1."opened_at" FROM "__frontier_diagnostic" d0, "hook_window" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (b1."opened_at" > b0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", d0."opened_at" FROM "__frontier_diag_history" d0, "hook_window" b0, "diagnostic" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (d0."opened_at" > b0."since") RETURNING "turn", "path", "line", "code", "opened_at"`, selectSql: `SELECT "turn", "path", "line", "code", "opened_at" FROM "turn_diag"`, recomputeSql: `DELETE FROM "turn_diag";
 INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT b0."turn", b1."path", b1."line", b1."code", b2."opened_at" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since")`, supportSql: [`DELETE FROM "__support_next_turn_diag"`, `INSERT INTO "__support_next_turn_diag" ("turn", "path", "line", "code", "opened_at", "__support_count") SELECT "turn", "path", "line", "code", "opened_at", sum("__support_count") FROM (SELECT b0."turn" AS "turn", b1."path" AS "path", b1."line" AS "line", b1."code" AS "code", b2."opened_at" AS "opened_at", count(*) AS "__support_count" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since") GROUP BY b0."turn", b1."path", b1."line", b1."code", b2."opened_at") GROUP BY "turn", "path", "line", "code", "opened_at"`, `UPDATE "turn_diag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_turn_diag" n WHERE n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at"), 0))`, `DELETE FROM "turn_diag" WHERE "__support_count" <= 0 RETURNING "turn", "path", "line", "code", "opened_at"`, `INSERT INTO "turn_diag" ("turn", "path", "line", "code", "opened_at", "__support_count") SELECT "turn", "path", "line", "code", "opened_at", n."__support_count" FROM "__support_next_turn_diag" n WHERE NOT EXISTS (SELECT 1 FROM "turn_diag" h WHERE n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at") RETURNING "turn", "path", "line", "code", "opened_at"`], aggregateSql: null },
   { headRel: "lint_count", headDeltaTableName: "__delta_lint_count", headColumns: ["code", "count"], insertSql: null, selectSql: `SELECT "code", "count" FROM "lint_count"`, recomputeSql: `DELETE FROM "lint_count";
-INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 GROUP BY b0."code" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_lint_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_lint_count" ("code") SELECT DISTINCT d0."code" FROM "__delta_diagnostic" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "lint_count" WHERE ("code") IN (SELECT "code" FROM "__agg_scope_lint_count") RETURNING "code", "count"`, insertScopedSql: [`INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 WHERE (b0."code") IN (SELECT "code" FROM "__agg_scope_lint_count") GROUP BY b0."code" HAVING count(*) > 0 RETURNING "code", "count"`] } },
+INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 GROUP BY b0."code" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_lint_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_lint_count" ("code") SELECT DISTINCT d0."code" FROM "__delta_diagnostic" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "lint_count" WHERE ("code") IN (SELECT "code" FROM "__agg_scope_lint_count") RETURNING "code", "count"`, insertScopedSql: [`INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 WHERE (b0."code") IN (SELECT "code" FROM "__agg_scope_lint_count") GROUP BY b0."code" HAVING count(*) > 0 RETURNING "code", "count"`], deltaMaintained: false } },
   { headRel: "unratcheted_lint", headDeltaTableName: "__delta_unratcheted_lint", headColumns: ["code", "count"], insertSql: `INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT DISTINCT d0."code", d0."count" FROM "__frontier_lint_count" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = d0."code") RETURNING "code", "count"`, selectSql: `SELECT "code", "count" FROM "unratcheted_lint"`, recomputeSql: `DELETE FROM "unratcheted_lint";
 INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT b0."code", b0."count" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code")`, supportSql: [`DELETE FROM "__support_next_unratcheted_lint"`, `INSERT INTO "__support_next_unratcheted_lint" ("code", "count", "__support_count") SELECT "code", "count", sum("__support_count") FROM (SELECT b0."code" AS "code", b0."count" AS "count", count(*) AS "__support_count" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code") GROUP BY b0."code", b0."count") GROUP BY "code", "count"`, `UPDATE "unratcheted_lint" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_unratcheted_lint" n WHERE n."code" = h."code" AND n."count" = h."count"), 0))`, `DELETE FROM "unratcheted_lint" WHERE "__support_count" <= 0 RETURNING "code", "count"`, `INSERT INTO "unratcheted_lint" ("code", "count", "__support_count") SELECT "code", "count", n."__support_count" FROM "__support_next_unratcheted_lint" n WHERE NOT EXISTS (SELECT 1 FROM "unratcheted_lint" h WHERE n."code" = h."code" AND n."count" = h."count") RETURNING "code", "count"`], aggregateSql: null },
   { headRel: "violation", headDeltaTableName: "__delta_violation", headColumns: ["code", "count", "allowed"], insertSql: `INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT DISTINCT d0."code", d0."count", b0."allowed" FROM "__frontier_lint_count" d0, "ratchet" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (d0."count" > b0."allowed") UNION ALL SELECT DISTINCT d0."code", b0."count", d0."allowed" FROM "__frontier_ratchet" d0, "lint_count" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (b0."count" > d0."allowed") RETURNING "code", "count", "allowed"`, selectSql: `SELECT "code", "count", "allowed" FROM "violation"`, recomputeSql: `DELETE FROM "violation";

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -86,18 +89,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_body_page" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_page_sign" ON "__delta_body_page" ("_sign")`,
+  `CREATE INDEX "__delta_body_page_group" ON "__delta_body_page" ("id", "view")`,
   `CREATE TEMP TABLE "__frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_body_page_phase" ON "__frontier_body_page" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_body_page_phase" ON "__next_frontier_body_page" ("_phase")`,
   `CREATE TEMP TABLE "__delta_body_redirect" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_body_redirect_sign" ON "__delta_body_redirect" ("_sign")`,
+  `CREATE INDEX "__delta_body_redirect_group" ON "__delta_body_redirect" ("id", "to")`,
   `CREATE TEMP TABLE "__frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_body_redirect_phase" ON "__frontier_body_redirect" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_body_redirect_phase" ON "__next_frontier_body_redirect" ("_phase")`,
   `CREATE TEMP TABLE "__delta_body_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_body_tag_sign" ON "__delta_body_tag" ("_sign")`,
+  `CREATE INDEX "__delta_body_tag_group" ON "__delta_body_tag" ("id", "tag")`,
   `CREATE TEMP TABLE "__frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_body_tag_phase" ON "__frontier_body_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,

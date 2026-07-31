@@ -564,7 +564,10 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
 check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     append([Initial | Schedule], WorldRows),
     (   world_row_shape_violation(Decls, WorldRows, mismatch(Ref, Column, TypeName, Reason))
-    ->  throw(type_arrival_shape_mismatch(Ref, Column, TypeName, Reason))
+    ->  ( Reason = int_out_of_range(Value)
+        -> throw(int_out_of_range(Ref, Column, Value))
+        ;  throw(type_arrival_shape_mismatch(Ref, Column, TypeName, Reason))
+        )
     ;   true
     ).
 

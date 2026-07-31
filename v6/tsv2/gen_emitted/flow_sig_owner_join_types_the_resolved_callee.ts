@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -89,36 +92,42 @@ const ddl: readonly string[] = [
   `CREATE TABLE "type_owner" ("path" TEXT NOT NULL, "name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, PRIMARY KEY ("path", "name", "start", "end")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_df_param" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "node" TEXT NOT NULL, "pos" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_df_param_sign" ON "__delta_df_param" ("_sign")`,
+  `CREATE INDEX "__delta_df_param_group" ON "__delta_df_param" ("path", "node", "pos", "end")`,
   `CREATE TEMP TABLE "__frontier_df_param" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "node" TEXT NOT NULL, "pos" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_df_param_phase" ON "__frontier_df_param" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_df_param" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "node" TEXT NOT NULL, "pos" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_df_param_phase" ON "__next_frontier_df_param" ("_phase")`,
   `CREATE TEMP TABLE "__delta_flow_node_type" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node" TEXT NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_flow_node_type_sign" ON "__delta_flow_node_type" ("_sign")`,
+  `CREATE INDEX "__delta_flow_node_type_group" ON "__delta_flow_node_type" ("node", "path", "name", "ty")`,
   `CREATE TEMP TABLE "__frontier_flow_node_type" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node" TEXT NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_flow_node_type_phase" ON "__frontier_flow_node_type" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flow_node_type" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node" TEXT NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_flow_node_type_phase" ON "__next_frontier_flow_node_type" ("_phase")`,
   `CREATE TEMP TABLE "__delta_flow_param_type" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_flow_param_type_sign" ON "__delta_flow_param_type" ("_sign")`,
+  `CREATE INDEX "__delta_flow_param_type_group" ON "__delta_flow_param_type" ("path", "name", "pos", "ty")`,
   `CREATE TEMP TABLE "__frontier_flow_param_type" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_flow_param_type_phase" ON "__frontier_flow_param_type" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flow_param_type" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_flow_param_type_phase" ON "__next_frontier_flow_param_type" ("_phase")`,
   `CREATE TEMP TABLE "__delta_sig" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "owner_start" INTEGER NOT NULL, "owner_end" INTEGER NOT NULL, "slot" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_sig_sign" ON "__delta_sig" ("_sign")`,
+  `CREATE INDEX "__delta_sig_group" ON "__delta_sig" ("path", "owner_start", "owner_end", "slot", "pos", "ty")`,
   `CREATE TEMP TABLE "__frontier_sig" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "owner_start" INTEGER NOT NULL, "owner_end" INTEGER NOT NULL, "slot" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_sig_phase" ON "__frontier_sig" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_sig" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "owner_start" INTEGER NOT NULL, "owner_end" INTEGER NOT NULL, "slot" TEXT NOT NULL, "pos" INTEGER NOT NULL, "ty" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_sig_phase" ON "__next_frontier_sig" ("_phase")`,
   `CREATE TEMP TABLE "__delta_sink_callee" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_sink_callee_sign" ON "__delta_sink_callee" ("_sign")`,
+  `CREATE INDEX "__delta_sink_callee_group" ON "__delta_sink_callee" ("path", "name")`,
   `CREATE TEMP TABLE "__frontier_sink_callee" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_sink_callee_phase" ON "__frontier_sink_callee" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_sink_callee" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_sink_callee_phase" ON "__next_frontier_sink_callee" ("_phase")`,
   `CREATE TEMP TABLE "__delta_type_owner" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_type_owner_sign" ON "__delta_type_owner" ("_sign")`,
+  `CREATE INDEX "__delta_type_owner_group" ON "__delta_type_owner" ("path", "name", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_type_owner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_type_owner_phase" ON "__frontier_type_owner" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_type_owner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,

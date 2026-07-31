@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,17 +88,20 @@ const ddl: readonly string[] = [
   `CREATE TABLE "score" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_mean" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_mean_sign" ON "__delta_mean" ("_sign")`,
+  `CREATE INDEX "__delta_mean_group" ON "__delta_mean" ("group", "value")`,
   `CREATE TEMP TABLE "__frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_mean_phase" ON "__frontier_mean" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__next_frontier_mean_phase" ON "__next_frontier_mean" ("_phase")`,
   `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
+  `CREATE INDEX "__delta_score_group" ON "__delta_score" ("group", "value")`,
   `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__next_frontier_score_phase" ON "__next_frontier_score" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_mean" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__avg_acc_mean" ("__group_1" TEXT NOT NULL, "__sum" REAL NOT NULL, "__count" INTEGER NOT NULL, PRIMARY KEY ("__group_1")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -114,8 +120,10 @@ const boot: readonly IBootStatement[] = [
   { sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["a", 0.5] },
   { sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["a", 1.5] },
   { sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["b", 0.25] },
+  { sql: `DELETE FROM "__avg_acc_mean"`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "__avg_acc_mean" ("__group_1", "__sum", "__count") SELECT "__group_1", sum("__value"), count(*) FROM (SELECT b0."group" AS "__group_1", b0."value" AS "__value" FROM "score" b0) contributions GROUP BY "__group_1"`, params: [] },
   { sql: `DELETE FROM "mean"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
+  { sql: `INSERT OR IGNORE INTO "mean" ("group", "value") SELECT a."__group_1", a."__sum" / a."__count" FROM "__avg_acc_mean" a WHERE a."__count" > 0 RETURNING "group", "value"`, params: [] },
 ];
 
 type Snapshot = {
@@ -171,7 +179,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "mean", headDeltaTableName: "__delta_mean", headColumns: ["group", "value"], insertSql: null, selectSql: `SELECT "group", "value" FROM "mean"`, recomputeSql: `DELETE FROM "mean";
-INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mean"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mean" ("group") SELECT DISTINCT d0."group" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "mean" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`, insertScopedSql: [`INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_mean") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "value"`] } },
+INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mean"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mean" ("group") SELECT DISTINCT d0."group" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)`, `INSERT OR IGNORE INTO "__avg_acc_mean" ("__group_1", "__sum", "__count") SELECT "group", 0.0, 0 FROM "__agg_scope_mean"`, `UPDATE "__avg_acc_mean" AS a SET "__sum" = "__sum" + COALESCE((SELECT sum(contributions."__sign" * contributions."__value") FROM (SELECT d0."group" AS "__group_1", d0."value" AS "__value", d0."_sign" AS "__sign" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)) contributions WHERE contributions."__group_1" = a."__group_1" AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")), 0.0), "__count" = "__count" + COALESCE((SELECT sum(contributions."__sign") FROM (SELECT d0."group" AS "__group_1", d0."value" AS "__value", d0."_sign" AS "__sign" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)) contributions WHERE contributions."__group_1" = a."__group_1" AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")), 0) WHERE ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")`], deleteScopedSql: `DELETE FROM "mean" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`, insertScopedSql: [`INSERT OR IGNORE INTO "mean" ("group", "value") SELECT a."__group_1", a."__sum" / a."__count" FROM "__avg_acc_mean" a WHERE a."__count" > 0 AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`], deltaMaintained: true } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

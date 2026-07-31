@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -111,12 +114,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "source_row" ("item" TEXT NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_closed_at" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_closed_at_sign" ON "__delta_closed_at" ("_sign")`,
+  `CREATE INDEX "__delta_closed_at_group" ON "__delta_closed_at" ("item", "tick")`,
   `CREATE TEMP TABLE "__frontier_closed_at" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_closed_at_phase" ON "__frontier_closed_at" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_closed_at" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_closed_at_phase" ON "__next_frontier_closed_at" ("_phase")`,
   `CREATE TEMP TABLE "__delta_mirror" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_mirror_sign" ON "__delta_mirror" ("_sign")`,
+  `CREATE INDEX "__delta_mirror_group" ON "__delta_mirror" ("item")`,
   `CREATE TEMP TABLE "__frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mirror_phase" ON "__frontier_mirror" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
@@ -125,6 +130,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__departure_frontier_mirror_phase" ON "__departure_frontier_mirror" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_source_row_sign" ON "__delta_source_row" ("_sign")`,
+  `CREATE INDEX "__delta_source_row_group" ON "__delta_source_row" ("item")`,
   `CREATE TEMP TABLE "__frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_row_phase" ON "__frontier_source_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,

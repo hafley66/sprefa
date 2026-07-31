@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "seen" ("value" TEXT NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_derived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_derived_sign" ON "__delta_derived" ("_sign")`,
+  `CREATE INDEX "__delta_derived_group" ON "__delta_derived" ("seen_value")`,
   `CREATE TEMP TABLE "__frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_derived_phase" ON "__frontier_derived" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_derived_phase" ON "__next_frontier_derived" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
+  `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("value")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,

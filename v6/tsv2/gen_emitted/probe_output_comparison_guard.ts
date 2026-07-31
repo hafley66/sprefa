@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -87,24 +90,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "input" ("path" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta___host_demand_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta___host_demand_score_sign" ON "__delta___host_demand_score" ("_sign")`,
+  `CREATE INDEX "__delta___host_demand_score_group" ON "__delta___host_demand_score" ("identity_digest", "witness_digest", "path")`,
   `CREATE TEMP TABLE "__frontier___host_demand_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier___host_demand_score_phase" ON "__frontier___host_demand_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_demand_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_demand_score_phase" ON "__next_frontier___host_demand_score" ("_phase")`,
   `CREATE TEMP TABLE "__delta___host_response_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___host_response_score_sign" ON "__delta___host_response_score" ("_sign")`,
+  `CREATE INDEX "__delta___host_response_score_group" ON "__delta___host_response_score" ("witness_digest", "ordinal", "path", "score")`,
   `CREATE TEMP TABLE "__frontier___host_response_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier___host_response_score_phase" ON "__frontier___host_response_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_response_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_response_score_phase" ON "__next_frontier___host_response_score" ("_phase")`,
   `CREATE TEMP TABLE "__delta_accepted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_accepted_sign" ON "__delta_accepted" ("_sign")`,
+  `CREATE INDEX "__delta_accepted_group" ON "__delta_accepted" ("path", "score")`,
   `CREATE TEMP TABLE "__frontier_accepted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_accepted_phase" ON "__frontier_accepted" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_accepted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "score" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_accepted_phase" ON "__next_frontier_accepted" ("_phase")`,
   `CREATE TEMP TABLE "__delta_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_input_sign" ON "__delta_input" ("_sign")`,
+  `CREATE INDEX "__delta_input_group" ON "__delta_input" ("path")`,
   `CREATE TEMP TABLE "__frontier_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_input_phase" ON "__frontier_input" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,

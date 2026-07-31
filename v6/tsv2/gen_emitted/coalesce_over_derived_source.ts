@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -87,24 +90,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "tree" ("tree_id" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_heavy" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_heavy_sign" ON "__delta_heavy" ("_sign")`,
+  `CREATE INDEX "__delta_heavy_group" ON "__delta_heavy" ("tree_id", "kilos")`,
   `CREATE TEMP TABLE "__frontier_heavy" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_heavy_phase" ON "__frontier_heavy" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_heavy" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_heavy_phase" ON "__next_frontier_heavy" ("_phase")`,
   `CREATE TEMP TABLE "__delta_pick" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pick_sign" ON "__delta_pick" ("_sign")`,
+  `CREATE INDEX "__delta_pick_group" ON "__delta_pick" ("tree_id", "kilos")`,
   `CREATE TEMP TABLE "__frontier_pick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pick_phase" ON "__frontier_pick" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_pick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_pick_phase" ON "__next_frontier_pick" ("_phase")`,
   `CREATE TEMP TABLE "__delta_report" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_report_sign" ON "__delta_report" ("_sign")`,
+  `CREATE INDEX "__delta_report_group" ON "__delta_report" ("tree_id", "kilos")`,
   `CREATE TEMP TABLE "__frontier_report" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_report_phase" ON "__frontier_report" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_report" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_report_phase" ON "__next_frontier_report" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tree" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tree_sign" ON "__delta_tree" ("_sign")`,
+  `CREATE INDEX "__delta_tree_group" ON "__delta_tree" ("tree_id")`,
   `CREATE TEMP TABLE "__frontier_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tree_phase" ON "__frontier_tree" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -121,30 +124,35 @@ const ddl: readonly string[] = [
   `CREATE TABLE "tab_view" ("tab_id" TEXT NOT NULL, "body" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tab_id", "body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_close_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_close_request_sign" ON "__delta_close_request" ("_sign")`,
+  `CREATE INDEX "__delta_close_request_group" ON "__delta_close_request" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_close_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_close_request_phase" ON "__frontier_close_request" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_close_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_close_request_phase" ON "__next_frontier_close_request" ("_phase")`,
   `CREATE TEMP TABLE "__delta_closed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_closed_sign" ON "__delta_closed" ("_sign")`,
+  `CREATE INDEX "__delta_closed_group" ON "__delta_closed" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_closed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_closed_phase" ON "__frontier_closed" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_closed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_closed_phase" ON "__next_frontier_closed" ("_phase")`,
   `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demanded_sign" ON "__delta_demanded" ("_sign")`,
+  `CREATE INDEX "__delta_demanded_group" ON "__delta_demanded" ("col1", "session_id")`,
   `CREATE TEMP TABLE "__frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demanded_phase" ON "__frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_demanded_phase" ON "__next_frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__delta_drained" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_drained_sign" ON "__delta_drained" ("_sign")`,
+  `CREATE INDEX "__delta_drained_group" ON "__delta_drained" ("session_id", "ordinal")`,
   `CREATE TEMP TABLE "__frontier_drained" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_drained_phase" ON "__frontier_drained" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_drained" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_drained_phase" ON "__next_frontier_drained" ("_phase")`,
   `CREATE TEMP TABLE "__delta_live_tab" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_live_tab_sign" ON "__delta_live_tab" ("_sign")`,
+  `CREATE INDEX "__delta_live_tab_group" ON "__delta_live_tab" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_live_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_live_tab_phase" ON "__frontier_live_tab" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_live_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
@@ -153,48 +161,56 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__departure_frontier_live_tab_phase" ON "__departure_frontier_live_tab" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_request_sign" ON "__delta_open_request" ("_sign")`,
+  `CREATE INDEX "__delta_open_request_group" ON "__delta_open_request" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_open_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_request_phase" ON "__frontier_open_request" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_open_request_phase" ON "__next_frontier_open_request" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_tab" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_tab_sign" ON "__delta_open_tab" ("_sign")`,
+  `CREATE INDEX "__delta_open_tab_group" ON "__delta_open_tab" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_open_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_tab_phase" ON "__frontier_open_tab" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_open_tab_phase" ON "__next_frontier_open_tab" ("_phase")`,
   `CREATE TEMP TABLE "__delta_queue_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_queue_head_sign" ON "__delta_queue_head" ("_sign")`,
+  `CREATE INDEX "__delta_queue_head_group" ON "__delta_queue_head" ("session_id", "ordinal")`,
   `CREATE TEMP TABLE "__frontier_queue_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_queue_head_phase" ON "__frontier_queue_head" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_queue_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "ordinal" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_queue_head_phase" ON "__next_frontier_queue_head" ("_phase")`,
   `CREATE TEMP TABLE "__delta_queue_head_tab" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_queue_head_tab_sign" ON "__delta_queue_head_tab" ("_sign")`,
+  `CREATE INDEX "__delta_queue_head_tab_group" ON "__delta_queue_head_tab" ("session_id", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_queue_head_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_queue_head_tab_phase" ON "__frontier_queue_head_tab" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_queue_head_tab" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_queue_head_tab_phase" ON "__next_frontier_queue_head_tab" ("_phase")`,
   `CREATE TEMP TABLE "__delta_queue_next" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_queue_next_sign" ON "__delta_queue_next" ("_sign")`,
+  `CREATE INDEX "__delta_queue_next_group" ON "__delta_queue_next" ("session_id", "next")`,
   `CREATE TEMP TABLE "__frontier_queue_next" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_queue_next_phase" ON "__frontier_queue_next" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_queue_next" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_queue_next_phase" ON "__next_frontier_queue_next" ("_phase")`,
   `CREATE TEMP TABLE "__delta_queue_slot" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_queue_slot_sign" ON "__delta_queue_slot" ("_sign")`,
+  `CREATE INDEX "__delta_queue_slot_group" ON "__delta_queue_slot" ("session_id", "next", "tab_id")`,
   `CREATE TEMP TABLE "__frontier_queue_slot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_queue_slot_phase" ON "__frontier_queue_slot" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_queue_slot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "next" INTEGER NOT NULL, "tab_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_queue_slot_phase" ON "__next_frontier_queue_slot" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tab_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_tab_row_sign" ON "__delta_tab_row" ("_sign")`,
+  `CREATE INDEX "__delta_tab_row_group" ON "__delta_tab_row" ("tab_id", "body")`,
   `CREATE TEMP TABLE "__frontier_tab_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_tab_row_phase" ON "__frontier_tab_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tab_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_tab_row_phase" ON "__next_frontier_tab_row" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tab_view" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_tab_view_sign" ON "__delta_tab_view" ("_sign")`,
+  `CREATE INDEX "__delta_tab_view_group" ON "__delta_tab_view" ("tab_id", "body")`,
   `CREATE TEMP TABLE "__frontier_tab_view" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_tab_view_phase" ON "__frontier_tab_view" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tab_view" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tab_id" TEXT NOT NULL, "body" TEXT NOT NULL)`,
@@ -369,7 +385,7 @@ INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id"
   { headRel: "demanded", headDeltaTableName: "__delta_demanded", headColumns: ["col1", "session_id"], insertSql: `INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT DISTINCT json_object('fn', 'tab', 'args', json_array(d0."tab_id")), d0."session_id" FROM "__frontier_live_tab" d0 WHERE d0."_phase" >= 0 RETURNING "col1", "session_id"`, selectSql: `SELECT "col1", "session_id" FROM "demanded"`, recomputeSql: `DELETE FROM "demanded";
 INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id" FROM "live_tab" b0`, supportSql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("col1", "session_id", "__support_count") SELECT "col1", "session_id", sum("__support_count") FROM (SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")) AS "col1", b0."session_id" AS "session_id", count(*) AS "__support_count" FROM "live_tab" b0 GROUP BY json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id") GROUP BY "col1", "session_id"`, `UPDATE "demanded" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_demanded" n WHERE n."col1" = h."col1" AND n."session_id" = h."session_id"), 0))`, `DELETE FROM "demanded" WHERE "__support_count" <= 0 RETURNING "col1", "session_id"`, `INSERT INTO "demanded" ("col1", "session_id", "__support_count") SELECT "col1", "session_id", n."__support_count" FROM "__support_next_demanded" n WHERE NOT EXISTS (SELECT 1 FROM "demanded" h WHERE n."col1" = h."col1" AND n."session_id" = h."session_id") RETURNING "col1", "session_id"`], aggregateSql: null },
   { headRel: "queue_head", headDeltaTableName: "__delta_queue_head", headColumns: ["session_id", "ordinal"], insertSql: null, selectSql: `SELECT "session_id", "ordinal" FROM "queue_head"`, recomputeSql: `DELETE FROM "queue_head";
-INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_queue_head"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_queue_head" ("session_id") SELECT DISTINCT d0."session_id" FROM "__delta_queue_slot" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "queue_head" WHERE ("session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") RETURNING "session_id", "ordinal"`, insertScopedSql: [`INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") AND (b0."session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") GROUP BY b0."session_id" HAVING count(*) > 0 RETURNING "session_id", "ordinal"`] } },
+INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_queue_head"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_queue_head" ("session_id") SELECT DISTINCT d0."session_id" FROM "__delta_queue_slot" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "queue_head" WHERE ("session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") RETURNING "session_id", "ordinal"`, insertScopedSql: [`INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") AND (b0."session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") GROUP BY b0."session_id" HAVING count(*) > 0 RETURNING "session_id", "ordinal"`], deltaMaintained: false } },
   { headRel: "queue_head_tab", headDeltaTableName: "__delta_queue_head_tab", headColumns: ["session_id", "tab_id"], insertSql: `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT DISTINCT d0."session_id", b0."tab_id" FROM "__frontier_queue_head" d0, "queue_slot" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."next" = d0."ordinal" UNION ALL SELECT DISTINCT d0."session_id", d0."tab_id" FROM "__frontier_queue_slot" d0, "queue_head" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."ordinal" = d0."next" RETURNING "session_id", "tab_id"`, selectSql: `SELECT "session_id", "tab_id" FROM "queue_head_tab"`, recomputeSql: `DELETE FROM "queue_head_tab";
 INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT b0."session_id", b1."tab_id" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal"`, supportSql: [`DELETE FROM "__support_next_queue_head_tab"`, `INSERT INTO "__support_next_queue_head_tab" ("session_id", "tab_id", "__support_count") SELECT "session_id", "tab_id", sum("__support_count") FROM (SELECT b0."session_id" AS "session_id", b1."tab_id" AS "tab_id", count(*) AS "__support_count" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal" GROUP BY b0."session_id", b1."tab_id") GROUP BY "session_id", "tab_id"`, `UPDATE "queue_head_tab" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_queue_head_tab" n WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id"), 0))`, `DELETE FROM "queue_head_tab" WHERE "__support_count" <= 0 RETURNING "session_id", "tab_id"`, `INSERT INTO "queue_head_tab" ("session_id", "tab_id", "__support_count") SELECT "session_id", "tab_id", n."__support_count" FROM "__support_next_queue_head_tab" n WHERE NOT EXISTS (SELECT 1 FROM "queue_head_tab" h WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id") RETURNING "session_id", "tab_id"`], aggregateSql: null },
   { headRel: "tab_view", headDeltaTableName: "__delta_tab_view", headColumns: ["tab_id", "body"], insertSql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT DISTINCT json_extract(d0."col1", '$.args[0]'), b0."body" FROM "__frontier_demanded" d0, "tab_row" b0 WHERE d0."_phase" >= 0 AND json_extract(d0."col1", '$.fn') = 'tab' AND b0."tab_id" = json_extract(d0."col1", '$.args[0]') UNION ALL SELECT DISTINCT d0."tab_id", d0."body" FROM "__frontier_tab_row" d0, "demanded" b0 WHERE d0."_phase" >= 0 AND json_extract(b0."col1", '$.fn') = 'tab' AND json_extract(b0."col1", '$.args[0]') = d0."tab_id" RETURNING "tab_id", "body"`, selectSql: `SELECT "tab_id", "body" FROM "tab_view"`, recomputeSql: `DELETE FROM "tab_view";

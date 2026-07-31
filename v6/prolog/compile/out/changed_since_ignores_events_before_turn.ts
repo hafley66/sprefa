@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -107,30 +110,35 @@ const ddl: readonly string[] = [
   `CREATE TABLE "worktree_edit" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_agent_turn" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_agent_turn_sign" ON "__delta_agent_turn" ("_sign")`,
+  `CREATE INDEX "__delta_agent_turn_group" ON "__delta_agent_turn" ("turn_id", "tick")`,
   `CREATE TEMP TABLE "__frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_agent_turn_phase" ON "__frontier_agent_turn" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_agent_turn_phase" ON "__next_frontier_agent_turn" ("_phase")`,
   `CREATE TEMP TABLE "__delta_change_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_change_event_sign" ON "__delta_change_event" ("_sign")`,
+  `CREATE INDEX "__delta_change_event_group" ON "__delta_change_event" ("path", "digest", "tick")`,
   `CREATE TEMP TABLE "__frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_change_event_phase" ON "__frontier_change_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_change_event_phase" ON "__next_frontier_change_event" ("_phase")`,
   `CREATE TEMP TABLE "__delta_changed_since" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_changed_since_sign" ON "__delta_changed_since" ("_sign")`,
+  `CREATE INDEX "__delta_changed_since_group" ON "__delta_changed_since" ("turn_id", "path")`,
   `CREATE TEMP TABLE "__frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_changed_since_phase" ON "__frontier_changed_since" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_changed_since_phase" ON "__next_frontier_changed_since" ("_phase")`,
   `CREATE TEMP TABLE "__delta_turn_marker" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_turn_marker_sign" ON "__delta_turn_marker" ("_sign")`,
+  `CREATE INDEX "__delta_turn_marker_group" ON "__delta_turn_marker" ("turn_id")`,
   `CREATE TEMP TABLE "__frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_turn_marker_phase" ON "__frontier_turn_marker" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_turn_marker_phase" ON "__next_frontier_turn_marker" ("_phase")`,
   `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_worktree_edit_sign" ON "__delta_worktree_edit" ("_sign")`,
+  `CREATE INDEX "__delta_worktree_edit_group" ON "__delta_worktree_edit" ("path", "digest")`,
   `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,

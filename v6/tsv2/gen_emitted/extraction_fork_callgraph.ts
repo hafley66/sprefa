@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [{ rel: "call_edge", arity:
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -89,36 +92,42 @@ const ddl: readonly string[] = [
   `CREATE TABLE "query_value" ("query_digest" TEXT NOT NULL, PRIMARY KEY ("query_digest")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta___host_demand_sg" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta___host_demand_sg_sign" ON "__delta___host_demand_sg" ("_sign")`,
+  `CREATE INDEX "__delta___host_demand_sg_group" ON "__delta___host_demand_sg" ("identity_digest", "witness_digest", "file_digest", "query_digest")`,
   `CREATE TEMP TABLE "__frontier___host_demand_sg" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier___host_demand_sg_phase" ON "__frontier___host_demand_sg" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_demand_sg" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_demand_sg_phase" ON "__next_frontier___host_demand_sg" ("_phase")`,
   `CREATE TEMP TABLE "__delta___host_response_sg" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start_byte" INTEGER NOT NULL, "end_byte" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___host_response_sg_sign" ON "__delta___host_response_sg" ("_sign")`,
+  `CREATE INDEX "__delta___host_response_sg_group" ON "__delta___host_response_sg" ("witness_digest", "ordinal", "file_digest", "query_digest", "caller", "callee", "start_byte", "end_byte")`,
   `CREATE TEMP TABLE "__frontier___host_response_sg" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start_byte" INTEGER NOT NULL, "end_byte" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier___host_response_sg_phase" ON "__frontier___host_response_sg" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_response_sg" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start_byte" INTEGER NOT NULL, "end_byte" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_response_sg_phase" ON "__next_frontier___host_response_sg" ("_phase")`,
   `CREATE TEMP TABLE "__delta_call_edge" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_call_edge_sign" ON "__delta_call_edge" ("_sign")`,
+  `CREATE INDEX "__delta_call_edge_group" ON "__delta_call_edge" ("file", "caller", "callee", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_call_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_call_edge_phase" ON "__frontier_call_edge" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_call_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_call_edge_phase" ON "__next_frontier_call_edge" ("_phase")`,
   `CREATE TEMP TABLE "__delta_call_site" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_call_site_sign" ON "__delta_call_site" ("_sign")`,
+  `CREATE INDEX "__delta_call_site_group" ON "__delta_call_site" ("file", "caller", "callee")`,
   `CREATE TEMP TABLE "__frontier_call_site" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_call_site_phase" ON "__frontier_call_site" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_call_site" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "caller" TEXT NOT NULL, "callee" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_call_site_phase" ON "__next_frontier_call_site" ("_phase")`,
   `CREATE TEMP TABLE "__delta_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_file_sign" ON "__delta_file" ("_sign")`,
+  `CREATE INDEX "__delta_file_group" ON "__delta_file" ("file", "file_digest")`,
   `CREATE TEMP TABLE "__frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_file_phase" ON "__frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_file_phase" ON "__next_frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_query_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_query_value_sign" ON "__delta_query_value" ("_sign")`,
+  `CREATE INDEX "__delta_query_value_group" ON "__delta_query_value" ("query_digest")`,
   `CREATE TEMP TABLE "__frontier_query_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_query_value_phase" ON "__frontier_query_value" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_query_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,

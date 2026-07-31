@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -86,18 +89,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "resolved_call_edge" ("caller_path" TEXT NOT NULL, "caller_name" TEXT NOT NULL, "callee_path" TEXT NOT NULL, "callee_name" TEXT NOT NULL, PRIMARY KEY ("caller_path", "caller_name", "callee_path", "callee_name")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_flow_edge" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_flow_edge_sign" ON "__delta_flow_edge" ("_sign")`,
+  `CREATE INDEX "__delta_flow_edge_group" ON "__delta_flow_edge" ("from_path", "from_name", "to_path", "to_name")`,
   `CREATE TEMP TABLE "__frontier_flow_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_flow_edge_phase" ON "__frontier_flow_edge" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flow_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_flow_edge_phase" ON "__next_frontier_flow_edge" ("_phase")`,
   `CREATE TEMP TABLE "__delta_flow_reach" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_flow_reach_sign" ON "__delta_flow_reach" ("_sign")`,
+  `CREATE INDEX "__delta_flow_reach_group" ON "__delta_flow_reach" ("from_path", "from_name", "to_path", "to_name")`,
   `CREATE TEMP TABLE "__frontier_flow_reach" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_flow_reach_phase" ON "__frontier_flow_reach" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flow_reach" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_path" TEXT NOT NULL, "from_name" TEXT NOT NULL, "to_path" TEXT NOT NULL, "to_name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_flow_reach_phase" ON "__next_frontier_flow_reach" ("_phase")`,
   `CREATE TEMP TABLE "__delta_resolved_call_edge" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "caller_path" TEXT NOT NULL, "caller_name" TEXT NOT NULL, "callee_path" TEXT NOT NULL, "callee_name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_resolved_call_edge_sign" ON "__delta_resolved_call_edge" ("_sign")`,
+  `CREATE INDEX "__delta_resolved_call_edge_group" ON "__delta_resolved_call_edge" ("caller_path", "caller_name", "callee_path", "callee_name")`,
   `CREATE TEMP TABLE "__frontier_resolved_call_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "caller_path" TEXT NOT NULL, "caller_name" TEXT NOT NULL, "callee_path" TEXT NOT NULL, "callee_name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_resolved_call_edge_phase" ON "__frontier_resolved_call_edge" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_resolved_call_edge" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "caller_path" TEXT NOT NULL, "caller_name" TEXT NOT NULL, "callee_path" TEXT NOT NULL, "callee_name" TEXT NOT NULL)`,

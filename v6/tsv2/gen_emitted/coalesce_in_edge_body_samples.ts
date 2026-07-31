@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -105,18 +108,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "ping" ("tree_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_labelled_sign" ON "__delta_labelled" ("_sign")`,
+  `CREATE INDEX "__delta_labelled_group" ON "__delta_labelled" ("tree_id", "label")`,
   `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_labelled_phase" ON "__frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_labelled_phase" ON "__next_frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__delta_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_name_sign" ON "__delta_name" ("_sign")`,
+  `CREATE INDEX "__delta_name_group" ON "__delta_name" ("tree_id", "label")`,
   `CREATE TEMP TABLE "__frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_name_phase" ON "__frontier_name" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_name_phase" ON "__next_frontier_name" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ping_sign" ON "__delta_ping" ("_sign")`,
+  `CREATE INDEX "__delta_ping_group" ON "__delta_ping" ("tree_id")`,
   `CREATE TEMP TABLE "__frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ping_phase" ON "__frontier_ping" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,

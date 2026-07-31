@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -105,18 +108,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "worktree_file" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_rust_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_rust_file_sign" ON "__delta_rust_file" ("_sign")`,
+  `CREATE INDEX "__delta_rust_file_group" ON "__delta_rust_file" ("path")`,
   `CREATE TEMP TABLE "__frontier_rust_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_rust_file_phase" ON "__frontier_rust_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_rust_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_rust_file_phase" ON "__next_frontier_rust_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_worktree_edit_sign" ON "__delta_worktree_edit" ("_sign")`,
+  `CREATE INDEX "__delta_worktree_edit_group" ON "__delta_worktree_edit" ("path", "digest", "kind")`,
   `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_worktree_edit_phase" ON "__next_frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_worktree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_worktree_file_sign" ON "__delta_worktree_file" ("_sign")`,
+  `CREATE INDEX "__delta_worktree_file_group" ON "__delta_worktree_file" ("path", "digest", "kind")`,
   `CREATE TEMP TABLE "__frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_file_phase" ON "__frontier_worktree_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,

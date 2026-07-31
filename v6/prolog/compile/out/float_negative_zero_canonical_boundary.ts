@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -84,6 +87,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "score" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
+  `CREATE INDEX "__delta_score_group" ON "__delta_score" ("value")`,
   `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,

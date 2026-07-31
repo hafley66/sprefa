@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -90,42 +93,49 @@ const ddl: readonly string[] = [
   `CREATE TABLE "waiver_trailing_comment" ("path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL, PRIMARY KEY ("path", "waiver_line")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_eprintln_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_count_sign" ON "__delta_eprintln_count" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_count_group" ON "__delta_eprintln_count" ("path", "col2")`,
   `CREATE TEMP TABLE "__frontier_eprintln_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_count_phase" ON "__frontier_eprintln_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_count_phase" ON "__next_frontier_eprintln_count" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_counted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_counted_sign" ON "__delta_eprintln_counted" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_counted_group" ON "__delta_eprintln_counted" ("path", "line_no")`,
   `CREATE TEMP TABLE "__frontier_eprintln_counted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_counted_phase" ON "__frontier_eprintln_counted" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_counted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_counted_phase" ON "__next_frontier_eprintln_counted" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_hit_group" ON "__delta_eprintln_hit" ("path", "line_no")`,
   `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_hit_phase" ON "__frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_hit_phase" ON "__next_frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_waived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waived_sign" ON "__delta_eprintln_waived" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_waived_group" ON "__delta_eprintln_waived" ("path", "line_no")`,
   `CREATE TEMP TABLE "__frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waived_phase" ON "__frontier_eprintln_waived" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_waived_phase" ON "__next_frontier_eprintln_waived" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_waiver_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waiver_line_sign" ON "__delta_eprintln_waiver_line" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_waiver_line_group" ON "__delta_eprintln_waiver_line" ("path", "waiver_line")`,
   `CREATE TEMP TABLE "__frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waiver_line_phase" ON "__frontier_eprintln_waiver_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_waiver_line_phase" ON "__next_frontier_eprintln_waiver_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_waiver_block_comment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_waiver_block_comment_sign" ON "__delta_waiver_block_comment" ("_sign")`,
+  `CREATE INDEX "__delta_waiver_block_comment_group" ON "__delta_waiver_block_comment" ("path", "waiver_line")`,
   `CREATE TEMP TABLE "__frontier_waiver_block_comment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_waiver_block_comment_phase" ON "__frontier_waiver_block_comment" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_waiver_block_comment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_waiver_block_comment_phase" ON "__next_frontier_waiver_block_comment" ("_phase")`,
   `CREATE TEMP TABLE "__delta_waiver_trailing_comment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_waiver_trailing_comment_sign" ON "__delta_waiver_trailing_comment" ("_sign")`,
+  `CREATE INDEX "__delta_waiver_trailing_comment_group" ON "__delta_waiver_trailing_comment" ("path", "waiver_line")`,
   `CREATE TEMP TABLE "__frontier_waiver_trailing_comment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_waiver_trailing_comment_phase" ON "__frontier_waiver_trailing_comment" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_waiver_trailing_comment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
@@ -259,7 +269,7 @@ INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_no") SELECT b0."path", b1
   { headRel: "eprintln_counted", headDeltaTableName: "__delta_eprintln_counted", headColumns: ["path", "line_no"], insertSql: `INSERT OR IGNORE INTO "eprintln_counted" ("path", "line_no") SELECT DISTINCT d0."path", d0."line_no" FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = d0."path" AND n0."line_no" = d0."line_no") RETURNING "path", "line_no"`, selectSql: `SELECT "path", "line_no" FROM "eprintln_counted"`, recomputeSql: `DELETE FROM "eprintln_counted";
 INSERT OR IGNORE INTO "eprintln_counted" ("path", "line_no") SELECT b0."path", b0."line_no" FROM "eprintln_hit" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = b0."path" AND n0."line_no" = b0."line_no")`, supportSql: [`DELETE FROM "__support_next_eprintln_counted"`, `INSERT INTO "__support_next_eprintln_counted" ("path", "line_no", "__support_count") SELECT "path", "line_no", sum("__support_count") FROM (SELECT b0."path" AS "path", b0."line_no" AS "line_no", count(*) AS "__support_count" FROM "eprintln_hit" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = b0."path" AND n0."line_no" = b0."line_no") GROUP BY b0."path", b0."line_no") GROUP BY "path", "line_no"`, `UPDATE "eprintln_counted" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_eprintln_counted" n WHERE n."path" = h."path" AND n."line_no" = h."line_no"), 0))`, `DELETE FROM "eprintln_counted" WHERE "__support_count" <= 0 RETURNING "path", "line_no"`, `INSERT INTO "eprintln_counted" ("path", "line_no", "__support_count") SELECT "path", "line_no", n."__support_count" FROM "__support_next_eprintln_counted" n WHERE NOT EXISTS (SELECT 1 FROM "eprintln_counted" h WHERE n."path" = h."path" AND n."line_no" = h."line_no") RETURNING "path", "line_no"`], aggregateSql: null },
   { headRel: "eprintln_count", headDeltaTableName: "__delta_eprintln_count", headColumns: ["path", "col2"], insertSql: null, selectSql: `SELECT "path", "col2" FROM "eprintln_count"`, recomputeSql: `DELETE FROM "eprintln_count";
-INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 GROUP BY b0."path" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_eprintln_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_eprintln_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_eprintln_counted" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "eprintln_count" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_eprintln_count") RETURNING "path", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 WHERE (b0."path") IN (SELECT "path" FROM "__agg_scope_eprintln_count") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "col2"`] } },
+INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 GROUP BY b0."path" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_eprintln_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_eprintln_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_eprintln_counted" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "eprintln_count" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_eprintln_count") RETURNING "path", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 WHERE (b0."path") IN (SELECT "path" FROM "__agg_scope_eprintln_count") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "col2"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -111,54 +114,63 @@ const ddl: readonly string[] = [
   `CREATE TABLE "open_outer" ("outer_id" TEXT NOT NULL, PRIMARY KEY ("outer_id")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_closed_inner" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_closed_inner_sign" ON "__delta_closed_inner" ("_sign")`,
+  `CREATE INDEX "__delta_closed_inner_group" ON "__delta_closed_inner" ("outer_id", "inner_id")`,
   `CREATE TEMP TABLE "__frontier_closed_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_closed_inner_phase" ON "__frontier_closed_inner" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_closed_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_closed_inner_phase" ON "__next_frontier_closed_inner" ("_phase")`,
   `CREATE TEMP TABLE "__delta_closed_outer" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_closed_outer_sign" ON "__delta_closed_outer" ("_sign")`,
+  `CREATE INDEX "__delta_closed_outer_group" ON "__delta_closed_outer" ("outer_id")`,
   `CREATE TEMP TABLE "__frontier_closed_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_closed_outer_phase" ON "__frontier_closed_outer" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_closed_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_closed_outer_phase" ON "__next_frontier_closed_outer" ("_phase")`,
   `CREATE TEMP TABLE "__delta_end_a_signal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_end_a_signal_sign" ON "__delta_end_a_signal" ("_sign")`,
+  `CREATE INDEX "__delta_end_a_signal_group" ON "__delta_end_a_signal" ("outer_id")`,
   `CREATE TEMP TABLE "__frontier_end_a_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_end_a_signal_phase" ON "__frontier_end_a_signal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_end_a_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_end_a_signal_phase" ON "__next_frontier_end_a_signal" ("_phase")`,
   `CREATE TEMP TABLE "__delta_end_b_signal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_end_b_signal_sign" ON "__delta_end_b_signal" ("_sign")`,
+  `CREATE INDEX "__delta_end_b_signal_group" ON "__delta_end_b_signal" ("outer_id")`,
   `CREATE TEMP TABLE "__frontier_end_b_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_end_b_signal_phase" ON "__frontier_end_b_signal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_end_b_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_end_b_signal_phase" ON "__next_frontier_end_b_signal" ("_phase")`,
   `CREATE TEMP TABLE "__delta_end_c_signal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_end_c_signal_sign" ON "__delta_end_c_signal" ("_sign")`,
+  `CREATE INDEX "__delta_end_c_signal_group" ON "__delta_end_c_signal" ("inner_id")`,
   `CREATE TEMP TABLE "__frontier_end_c_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_end_c_signal_phase" ON "__frontier_end_c_signal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_end_c_signal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_end_c_signal_phase" ON "__next_frontier_end_c_signal" ("_phase")`,
   `CREATE TEMP TABLE "__delta_live_inner" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_live_inner_sign" ON "__delta_live_inner" ("_sign")`,
+  `CREATE INDEX "__delta_live_inner_group" ON "__delta_live_inner" ("outer_id", "inner_id")`,
   `CREATE TEMP TABLE "__frontier_live_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_live_inner_phase" ON "__frontier_live_inner" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_live_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_live_inner_phase" ON "__next_frontier_live_inner" ("_phase")`,
   `CREATE TEMP TABLE "__delta_live_outer" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_live_outer_sign" ON "__delta_live_outer" ("_sign")`,
+  `CREATE INDEX "__delta_live_outer_group" ON "__delta_live_outer" ("outer_id")`,
   `CREATE TEMP TABLE "__frontier_live_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_live_outer_phase" ON "__frontier_live_outer" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_live_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_live_outer_phase" ON "__next_frontier_live_outer" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_inner" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_inner_sign" ON "__delta_open_inner" ("_sign")`,
+  `CREATE INDEX "__delta_open_inner_group" ON "__delta_open_inner" ("outer_id", "inner_id")`,
   `CREATE TEMP TABLE "__frontier_open_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_inner_phase" ON "__frontier_open_inner" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_inner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL, "inner_id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_open_inner_phase" ON "__next_frontier_open_inner" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_outer" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_outer_sign" ON "__delta_open_outer" ("_sign")`,
+  `CREATE INDEX "__delta_open_outer_group" ON "__delta_open_outer" ("outer_id")`,
   `CREATE TEMP TABLE "__frontier_open_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_outer_phase" ON "__frontier_open_outer" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_outer" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "outer_id" TEXT NOT NULL)`,

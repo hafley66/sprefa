@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -86,18 +89,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "eprintln_waiver_line" ("path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL, PRIMARY KEY ("path", "waiver_line")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_hit_group" ON "__delta_eprintln_hit" ("path", "line_number")`,
   `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_hit_phase" ON "__frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_hit_phase" ON "__next_frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_waived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waived_sign" ON "__delta_eprintln_waived" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_waived_group" ON "__delta_eprintln_waived" ("path", "line_number")`,
   `CREATE TEMP TABLE "__frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waived_phase" ON "__frontier_eprintln_waived" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_waived_phase" ON "__next_frontier_eprintln_waived" ("_phase")`,
   `CREATE TEMP TABLE "__delta_eprintln_waiver_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waiver_line_sign" ON "__delta_eprintln_waiver_line" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_waiver_line_group" ON "__delta_eprintln_waiver_line" ("path", "waiver_line")`,
   `CREATE TEMP TABLE "__frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waiver_line_phase" ON "__frontier_eprintln_waiver_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,

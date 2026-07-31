@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "rel_catalog" ("relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL, PRIMARY KEY ("relation_name", "group_name", "_column_text", "_documentation_text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_group_rels" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_group_rels_sign" ON "__delta_group_rels" ("_sign")`,
+  `CREATE INDEX "__delta_group_rels_group" ON "__delta_group_rels" ("group_name", "col2")`,
   `CREATE TEMP TABLE "__frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_group_rels_phase" ON "__frontier_group_rels" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__next_frontier_group_rels_phase" ON "__next_frontier_group_rels" ("_phase")`,
   `CREATE TEMP TABLE "__delta_rel_catalog" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_rel_catalog_sign" ON "__delta_rel_catalog" ("_sign")`,
+  `CREATE INDEX "__delta_rel_catalog_group" ON "__delta_rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text")`,
   `CREATE TEMP TABLE "__frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_rel_catalog_phase" ON "__frontier_rel_catalog" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
@@ -171,7 +176,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "group_rels", headDeltaTableName: "__delta_group_rels", headColumns: ["group_name", "col2"], insertSql: null, selectSql: `SELECT "group_name", "col2" FROM "group_rels"`, recomputeSql: `DELETE FROM "group_rels";
-INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_group_rels"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_group_rels" ("group_name") SELECT DISTINCT d0."group_name" FROM "__delta_rel_catalog" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "group_rels" WHERE ("group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") RETURNING "group_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 WHERE (b0."group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") GROUP BY b0."group_name" HAVING count(*) > 0 RETURNING "group_name", "col2"`] } },
+INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_group_rels"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_group_rels" ("group_name") SELECT DISTINCT d0."group_name" FROM "__delta_rel_catalog" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "group_rels" WHERE ("group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") RETURNING "group_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 WHERE (b0."group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") GROUP BY b0."group_name" HAVING count(*) > 0 RETURNING "group_name", "col2"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

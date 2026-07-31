@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -106,24 +109,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "increment" ("name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_counter" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_counter_sign" ON "__delta_counter" ("_sign")`,
+  `CREATE INDEX "__delta_counter_group" ON "__delta_counter" ("name", "next")`,
   `CREATE TEMP TABLE "__frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_counter_phase" ON "__frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_counter_phase" ON "__next_frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__delta_decrement" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_decrement_sign" ON "__delta_decrement" ("_sign")`,
+  `CREATE INDEX "__delta_decrement_group" ON "__delta_decrement" ("name", "col2")`,
   `CREATE TEMP TABLE "__frontier_decrement" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_decrement_phase" ON "__frontier_decrement" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_decrement" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_decrement_phase" ON "__next_frontier_decrement" ("_phase")`,
   `CREATE TEMP TABLE "__delta_hot" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_hot_sign" ON "__delta_hot" ("_sign")`,
+  `CREATE INDEX "__delta_hot_group" ON "__delta_hot" ("name")`,
   `CREATE TEMP TABLE "__frontier_hot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_hot_phase" ON "__frontier_hot" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_hot_phase" ON "__next_frontier_hot" ("_phase")`,
   `CREATE TEMP TABLE "__delta_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_increment_sign" ON "__delta_increment" ("_sign")`,
+  `CREATE INDEX "__delta_increment_group" ON "__delta_increment" ("name", "col2")`,
   `CREATE TEMP TABLE "__frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_increment_phase" ON "__frontier_increment" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,

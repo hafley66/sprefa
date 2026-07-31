@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -87,24 +90,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "payload" ("name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_echoed_sign" ON "__delta_echoed" ("_sign")`,
+  `CREATE INDEX "__delta_echoed_group" ON "__delta_echoed" ("name", "body")`,
   `CREATE TEMP TABLE "__frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_echoed_phase" ON "__frontier_echoed" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__next_frontier_echoed_phase" ON "__next_frontier_echoed" ("_phase")`,
   `CREATE TEMP TABLE "__delta_label" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_label_sign" ON "__delta_label" ("_sign")`,
+  `CREATE INDEX "__delta_label_group" ON "__delta_label" ("name", "body")`,
   `CREATE TEMP TABLE "__frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_label_phase" ON "__frontier_label" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_label_phase" ON "__next_frontier_label" ("_phase")`,
   `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_labelled_sign" ON "__delta_labelled" ("_sign")`,
+  `CREATE INDEX "__delta_labelled_group" ON "__delta_labelled" ("name", "body")`,
   `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_labelled_phase" ON "__frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_labelled_phase" ON "__next_frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__delta_payload" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_payload_sign" ON "__delta_payload" ("_sign")`,
+  `CREATE INDEX "__delta_payload_group" ON "__delta_payload" ("name", "body")`,
   `CREATE TEMP TABLE "__frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_payload_phase" ON "__frontier_payload" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,

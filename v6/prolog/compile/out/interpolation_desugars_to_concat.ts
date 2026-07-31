@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "message" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,
+  `CREATE INDEX "__delta_eprintln_hit_group" ON "__delta_eprintln_hit" ("path", "line_number")`,
   `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_hit_phase" ON "__frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_eprintln_hit_phase" ON "__next_frontier_eprintln_hit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_message" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_message_sign" ON "__delta_message" ("_sign")`,
+  `CREATE INDEX "__delta_message_group" ON "__delta_message" ("path", "line_number", "text")`,
   `CREATE TEMP TABLE "__frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_message_phase" ON "__frontier_message" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,

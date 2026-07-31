@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -105,18 +108,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "total" ("repo" TEXT NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,
+  `CREATE INDEX "__delta_event_group" ON "__delta_event" ("payload")`,
   `CREATE TEMP TABLE "__frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__frontier_event_phase" ON "__frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__next_frontier_event_phase" ON "__next_frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__delta_star_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_event_sign" ON "__delta_star_event" ("_sign")`,
+  `CREATE INDEX "__delta_star_event_group" ON "__delta_star_event" ("repo", "stars")`,
   `CREATE TEMP TABLE "__frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_event_phase" ON "__frontier_star_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_star_event_phase" ON "__next_frontier_star_event" ("_phase")`,
   `CREATE TEMP TABLE "__delta_total" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_total_sign" ON "__delta_total" ("_sign")`,
+  `CREATE INDEX "__delta_total_group" ON "__delta_total" ("repo", "sum")`,
   `CREATE TEMP TABLE "__frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_total_phase" ON "__frontier_total" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "stat" ("repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_star_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_row_sign" ON "__delta_star_row" ("_sign")`,
+  `CREATE INDEX "__delta_star_row_group" ON "__delta_star_row" ("repo", "stars")`,
   `CREATE TEMP TABLE "__frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_row_phase" ON "__frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_star_row_phase" ON "__next_frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stat" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stat_sign" ON "__delta_stat" ("_sign")`,
+  `CREATE INDEX "__delta_stat_group" ON "__delta_stat" ("repo", "col2", "col3", "col4")`,
   `CREATE TEMP TABLE "__frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stat_phase" ON "__frontier_stat" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
@@ -172,7 +177,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "stat", headDeltaTableName: "__delta_stat", headColumns: ["repo", "col2", "col3", "col4"], insertSql: null, selectSql: `SELECT "repo", "col2", "col3", "col4" FROM "stat"`, recomputeSql: `DELETE FROM "stat";
-INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_stat"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_stat" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_star_row" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "stat" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_stat") RETURNING "repo", "col2", "col3", "col4"`, insertScopedSql: [`INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_stat") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2", "col3", "col4"`] } },
+INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_stat"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_stat" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_star_row" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "stat" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_stat") RETURNING "repo", "col2", "col3", "col4"`, insertScopedSql: [`INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_stat") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2", "col3", "col4"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
