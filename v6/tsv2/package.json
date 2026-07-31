@@ -10,7 +10,7 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "node --test --experimental-transform-types",
+    "test": "node --test --experimental-transform-types --test-concurrency=6",
     "check-imports": "bash scripts/check-imports.sh",
     "run-fixture": "node --experimental-transform-types scripts/run-fixture.ts",
     "serve": "node --experimental-transform-types serve/main.ts",
