@@ -499,23 +499,98 @@ bind_args_helper_lines(
       '}'
     ]).
 
+% ═══ the arrival type gate ══════════════════════════════════════════════════
+% The TS mirror of 0_type_plane.pl:world_row_shape_violation/3. Ruling
+% type_gate_widening = arrival_gate_all_types_all_positions: EVERY declared
+% column type is checked, not just the three numeric-ish ones, and the refusal
+% NAME is the oracle's own `type_arrival_shape_mismatch` so the two doors
+% answer the same program with the same word. The one place types are allowed
+% to mix is SQLite affinity's numeric widening: an integer at a REAL column
+% widens to a float and is accepted, which is what the engine now does too.
+%
+% The gate is driven by `relDeclaredColumnTypes`, NOT by `relColumnTypes`.
+% The latter carries analyze.pl's INFERRED types (a bare column with an
+% integer witness types int), and the engine's gate is decl-driven only, so
+% gating on inferred types would refuse programs the reference engine runs.
+% A rel with no declaration, or a partially typed one, gets no per-column
+% check here -- the same all-or-nothing rule as ref_column_names/4.
+%
+% The wide-integer scan (ruling wide_int_fate) runs FIRST and is
+% decl-independent, matching row_column_violation/8's first pass: an integer
+% past Number.MAX_SAFE_INTEGER is refused at whatever column it arrived in,
+% including inside a json document, including a rel with no colon types.
+%
+% NAMED CRACK, and it is a JavaScript one: this side cannot tell the integer
+% 1e20 from the float 1.0e20, because JS has one number type. At a `float`
+% column the declaration settles it and the scan is skipped; inside a json
+% document the SOURCE TEXT settles it and the scan reads number tokens rather
+% than parsed values. At a column with NO declaration neither is available,
+% so an integral float past 2^53 is refused here and accepted by the engine.
+% Declaring the column is the fix; nothing else can be.
 arrival_value_guard_lines(
-    [ 'function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {',
+    [ 'const SAFE_INTEGER_LIMIT = 9007199254740991n;',
+      '',
+      'function wideIntegerWitness(value: unknown): boolean {',
+      '  if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;',
+      '  if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);',
+      '  return false;',
+      '}',
+      '',
+      '/** A json/list column arrives as the document TEXT, and the text is the',
+      ' *  only place the int-versus-float distinction still exists: a JSON',
+      ' *  number token with no `.` and no exponent IS an integer, which is',
+      ' *  exactly how the prolog reader parses it. String contents are blanked',
+      ' *  first so digits inside a string never read as a number. Unparseable',
+      ' *  text is not this scan\'s business (the json arm below names it). */',
+      'const JSON_NUMBER = /-?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?/g;',
+      '',
+      'function wideIntegerInJsonText(value: IRowValue): boolean {',
+      '  if (typeof value !== "string") return wideIntegerWitness(value);',
+      '  const withoutStrings = value.replace(/"(?:\\\\.|[^"\\\\])*"/g, \'""\');',
+      '  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {',
+      '    if (/[.eE]/.test(token)) continue;',
+      '    const parsed = BigInt(token);',
+      '    if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;',
+      '  }',
+      '  return false;',
+      '}',
+      '',
+      'function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {',
       '  return arrivals.map((arrival): IArrivalRow => {',
       '    const types = relColumnTypes[arrival.rel];',
       '    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);',
+      '    const declared = relDeclaredColumnTypes[arrival.rel];',
       '    const row = arrival.row.map((value, index): IRowValue => {',
-      '      const type = types[index];',
+      '      const type = declared === undefined ? undefined : declared[index];',
+      '      const scanned = type === "json" ? wideIntegerInJsonText(value)',
+      '        : type === "float" ? false',
+      '        : wideIntegerWitness(value);',
+      '      if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);',
       '      if (type === "bool") {',
-      '        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);',
+      '        if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);',
       '        return value;',
       '      }',
       '      if (type === "float") {',
-      '        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);',
+      '        // SQLite REAL affinity: an integer widens, everything else is refused.',
+      '        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_finite_float`);',
       '        return Object.is(value, -0) ? 0 : value;',
       '      }',
       '      if (type === "int") {',
-      '        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);',
+      '        if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_int`);',
+      '        return value;',
+      '      }',
+      '      if (type === "text") {',
+      '        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_text`);',
+      '        return value;',
+      '      }',
+      '      if (type === "json") {',
+      '        // The shared reader (compile/scripts/0_json_arrival.pl',
+      '        // json_column_term/4) takes a document TEXT or a bare number,',
+      '        // and refuses everything else. Same two shapes here.',
+      '        if (typeof value === "number") return value;',
+      '        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`);',
+      '        try { JSON.parse(value); } catch { throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`); }',
+      '        return value;',
       '      }',
       '      return value;',
       '    });',
@@ -587,6 +662,48 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
     quoted_string_array_text(BoundaryTypes, TypesText),
     format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
+
+% ═══ the DECLARED column types (ruling type_gate_widening) ═════════════════
+% What the program WROTE DOWN, as opposed to what analyze.pl inferred. The
+% arrival gate reads this map and only this map, because the reference
+% engine's gate is decl-driven: a column with an inferred type but no colon
+% has no gate on either door.
+%
+% Entered all-or-nothing per rel, mirroring 0_type_plane.pl:ref_column_names/4
+% -- a partially typed decl would mis-locate its own positions, and the engine
+% declines to guess there, so this declines too.
+rel_declared_column_types_lines(Decls, RelPlans, Lines) :-
+    findall(EntryLine,
+            ( member(relplan(Ref, _, _, _, _), RelPlans),
+              declared_column_types(Decls, Ref, DeclaredTypes),
+              rel_declared_types_entry_line(Ref, DeclaredTypes, EntryLine) ),
+            EntryLines),
+    append([ ['const relDeclaredColumnTypes: Record<string, readonly string[]> = {'],
+             EntryLines, ['};'] ], Lines).
+
+declared_column_types(Decls, Ref, Types) :-
+    Ref = _/Arity,
+    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
+    length(Types, Arity).
+
+rel_declared_types_entry_line(Ref, DeclaredTypes, Line) :-
+    ref_name(Ref, Name),
+    maplist(gate_column_type, DeclaredTypes, GateTypes),
+    quoted_string_array_text(GateTypes, TypesText),
+    format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
+
+% The five words the emitted guard switches on. Anything else -- a struct
+% type name, or a future column type -- renders as `other` and is left
+% unchecked at this seam, which is what the engine's own
+% column_value_shape_error/4 does with it too (struct shape is checked by
+% compile.pl's check_world_shapes on the static rows).
+gate_column_type(int,   int)   :- !.
+gate_column_type(float, float) :- !.
+gate_column_type(bool,  bool)  :- !.
+gate_column_type(text,  text)  :- !.
+gate_column_type(json,  json)  :- !.
+gate_column_type(list(_), json) :- !.
+gate_column_type(_,     other).
 
 boundary_column_type(ref(_), ref) :- !.
 % A `json` column KEEPS its own name at the driver seam. It used to collapse
@@ -1962,6 +2079,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
+    rel_declared_column_types_lines(PlanDecls, RelPlans, RelDeclaredColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
     snapshot_type_lines(RelPlans, SnapshotTypeLines),
@@ -2016,7 +2134,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       DepartureOccurrencesHelperLines,
       StructPlaneLines,
-      DdlLines, RelColumnsLines, RelColumnTypesLines, ArrivalTargetsLines,
+      DdlLines, RelColumnsLines, RelColumnTypesLines,
+      RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,
       IncrementalRelationLines, IncrementalEdgeStatementLines,
