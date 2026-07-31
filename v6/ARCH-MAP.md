@@ -148,7 +148,7 @@ flowchart TD
 | `time` | 7 | 3 | 0 | 4 |  |
 | `world` | 5 | 4 | 1 | 0 |  |
 ## 3. The build DAG open frontier
-`task/3` in `v6/prolog/ARCH.pl`: 180 tasks, 108 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
+`task/3` in `v6/prolog/ARCH.pl`: 182 tasks, 110 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
 ```mermaid
 flowchart LR
   t_bind_submit_error_arm["bind_submit_error_arm<br/>unbuilt"]
@@ -304,7 +304,7 @@ flowchart LR
 | `active` | 6 |
 | `canonical_plan` | 2 |
 | `closed` | 4 |
-| `done` | 102 |
+| `done` | 104 |
 | `labbed` | 18 |
 | `labbing` | 4 |
 | `parked` | 1 |
