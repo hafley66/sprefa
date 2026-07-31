@@ -1,0 +1,8 @@
+# out/ is ~1700 generated files (one .dl6, one schedule, one emitted module and
+# one oracle log per cell). MATRIX.md and matrix.json at the lab root are the
+# graded artifacts and they ARE committed.
+out/
+# Two relative symlinks into v6/tsv2 so an emitted cell module can resolve its
+# own `../runtime/...` and bare `rxjs` imports from this directory.
+runtime
+node_modules

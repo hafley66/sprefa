@@ -1,0 +1,300 @@
+// gen_cells.mjs -- axis enumeration for the type matrix lab.
+//
+// Writes, per constructible cell, one tiny `.dl6` program and one JSON arrival
+// schedule into out/, plus out/cells.json (the manifest every later stage
+// reads). Nothing here grades: the manifest carries the axes and the predicted
+// n/a reason, and the four verdicts come out of classify.mjs after both doors
+// have actually run.
+//
+// THE CONVENTION, stated once because every template obeys it:
+//
+//   * `probe_in`  is the world-fed relation, `probe_out` carries the COLUMN
+//     UNDER TEST at a fixed index (`columnIndex` in the manifest).
+//   * At the `arrival` and `join_column` positions the column under test IS
+//     the arrival column, declared D on every side, so a mismatch shows at
+//     the world boundary.
+//   * At `level_head`, `edge_head`, `aggregate_head` and `json_capture` the
+//     source column is declared at the NATURAL type of the value and the head
+//     column is declared D, so the mismatch shows at a rule head. That pair is
+//     exactly slot_decl_source_conflict_fate.
+//   * `undeclared` is spelled as a decl with NO colon type (`rel probe_in(value).`),
+//     never as an absent decl: an absent decl would also drop `log`/`key`
+//     modifiers and would conflate "no column type" with "no relation".
+//
+// Run: node v6/prolog/labs/type_matrix/gen_cells.mjs
+
+import { mkdirSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const OUT = join(HERE, "out");
+
+// ── axis D: declared column type ────────────────────────────────────────────
+// The header names int/float/text/json/list(text)/undeclared. `bool` is added
+// because it is a live column type (0_type_plane.pl column_storage/3) and a
+// type matrix that skips a live type has a hole in it.
+const DECLARED = [
+  { name: "int", spell: "int" },
+  { name: "float", spell: "float" },
+  { name: "text", spell: "text" },
+  { name: "bool", spell: "bool" },
+  { name: "json", spell: "json" },
+  { name: "list_text", spell: "list(text)" },
+  { name: "undeclared", spell: null },
+];
+
+// ── axis V: the value actually fed ──────────────────────────────────────────
+// `literal` is written verbatim into the schedule JSON, so a wide int keeps
+// its exact digits on the way to the file (JSON.stringify of a JS number could
+// not). `natural` is the declared type this value would carry if nobody was
+// trying to bend it, and it names the reference cell losslessness is measured
+// against.
+//
+// json objects and arrays arrive as their canonical TEXT, which is the arrival
+// contract on every door (serve/4_http.ts columnProblem, dl6_oracle.pl's json
+// column mapping). A raw object in a schedule row is a separate, already-named
+// seam (the golden json seam brief) and is not re-derived here.
+const VALUES = [
+  { name: "int", literal: "4", natural: "int" },
+  { name: "float", literal: "1.5", natural: "float" },
+  { name: "numeric_text", literal: '"4"', natural: "text" },
+  { name: "plain_text", literal: '"north"', natural: "text" },
+  { name: "json_object", literal: '"{\\"key\\":1}"', natural: "json" },
+  { name: "json_array", literal: '"[1,2]"', natural: "json" },
+  { name: "bool", literal: "true", natural: "bool" },
+  { name: "wide_int", literal: "9007199254740993", natural: "int" },
+  { name: "float_integral", literal: "1.0", natural: "float" },
+  { name: "neg_zero", literal: "-0.0", natural: "float" },
+];
+
+// The json document a json_capture cell feeds, one field deep. The value goes
+// in raw (not as text): inside a document a json object IS an object.
+const CAPTURE_DOCUMENT = {
+  int: '{\\"field\\":4}',
+  float: '{\\"field\\":1.5}',
+  numeric_text: '{\\"field\\":\\"4\\"}',
+  plain_text: '{\\"field\\":\\"north\\"}',
+  json_object: '{\\"field\\":{\\"key\\":1}}',
+  json_array: '{\\"field\\":[1,2]}',
+  bool: '{\\"field\\":true}',
+  wide_int: '{\\"field\\":9007199254740993}',
+  float_integral: '{\\"field\\":1.0}',
+  neg_zero: '{\\"field\\":-0.0}',
+};
+
+const POSITIONS = [
+  "arrival",
+  "level_head",
+  "edge_head",
+  "json_capture",
+  "aggregate_head",
+  "join_column",
+];
+
+/** `value: int` when the type is declared, bare `value` when it is not. */
+function column(name, spell) {
+  return spell === null ? name : `${name}: ${spell}`;
+}
+
+function spellOf(typeName) {
+  const found = DECLARED.find((entry) => entry.name === typeName);
+  return found === undefined ? typeName : found.spell;
+}
+
+function arrivalBatch(rel, row) {
+  return `{"rel":"${rel}","sign":"add","row":[${row.join(",")}]}`;
+}
+
+/** One cell: the program text, the schedule text, and where the graded value sits. */
+function buildCell(position, declared, value) {
+  const declaredSpell = declared.spell;
+  const naturalSpell = spellOf(value.natural);
+  const header =
+    `# type-matrix cell: position=${position} declared=${declared.name} value=${value.name}\n` +
+    `# GENERATED by gen_cells.mjs; the lab dies on landing, do not hand-edit.\n\n`;
+
+  switch (position) {
+    case "arrival": {
+      const program =
+        `${header}` +
+        `rel probe_in(${column("value", declaredSpell)}).\n` +
+        `rel probe_out(${column("value", declaredSpell)}).\n\n` +
+        `probe_out(value) <- probe_in(value).\n`;
+      return {
+        program,
+        schedule: `[[${arrivalBatch("probe_in", [value.literal])}]]\n`,
+        columnIndex: 0,
+      };
+    }
+    case "level_head": {
+      const program =
+        `${header}` +
+        `rel probe_in(${column("value", naturalSpell)}).\n` +
+        `rel probe_out(${column("value", declaredSpell)}).\n\n` +
+        `probe_out(value) <- probe_in(value).\n`;
+      return {
+        program,
+        schedule: `[[${arrivalBatch("probe_in", [value.literal])}]]\n`,
+        columnIndex: 0,
+      };
+    }
+    case "edge_head": {
+      // `log keep(all)` because an edge head into an unkeyed set is the
+      // standing refusal edge_into_unkeyed_set; the retention word is a
+      // constant across every cell at this position, so it cannot be what a
+      // per-cell verdict is reading.
+      const program =
+        `${header}` +
+        `rel probe_in(${column("value", naturalSpell)}).\n` +
+        `rel probe_out(${column("value", declaredSpell)}) log keep(all).\n\n` +
+        `probe_out(value) <+ probe_in(value).\n`;
+      return {
+        program,
+        schedule: `[[${arrivalBatch("probe_in", [value.literal])}]]\n`,
+        columnIndex: 0,
+      };
+    }
+    case "json_capture": {
+      // The capture type is the declared type under test, one level down
+      // (SYNTAX.md "`Var : Type` as a VALUE"). An undeclared cell spells the
+      // bare hole, which lower.pl types `text`.
+      const capture =
+        declaredSpell === null ? "captured" : `captured: ${declaredSpell}`;
+      const program =
+        `${header}` +
+        `rel probe_in(payload: json).\n` +
+        `rel probe_out(${column("value", declaredSpell)}).\n\n` +
+        `probe_out(captured) <- probe_in(payload), decode(payload, {field: ${capture}}).\n`;
+      return {
+        program,
+        schedule: `[[${arrivalBatch("probe_in", [`"${CAPTURE_DOCUMENT[value.name]}"`])}]]\n`,
+        columnIndex: 0,
+      };
+    }
+    case "aggregate_head": {
+      // min/1 rather than sum/1: over a single input row min returns the value
+      // itself for EVERY type, so losslessness stays gradeable off the same
+      // reference-cell rule the other positions use. A sum family over the
+      // numeric types is a separate supplementary run.
+      const program =
+        `${header}` +
+        `rel probe_in(group_id: int, ${column("value", naturalSpell)}).\n` +
+        `rel probe_out(group_id: int, ${column("value", declaredSpell)}).\n\n` +
+        `probe_out(group_id, min(value)) <- probe_in(group_id, value).\n`;
+      return {
+        program,
+        schedule: `[[${arrivalBatch("probe_in", ["1", value.literal])}]]\n`,
+        columnIndex: 1,
+      };
+    }
+    case "join_column": {
+      const program =
+        `${header}` +
+        `rel probe_left(${column("value", declaredSpell)}, tag: text).\n` +
+        `rel probe_right(${column("value", declaredSpell)}, note: text).\n` +
+        `rel probe_out(${column("value", declaredSpell)}).\n\n` +
+        `probe_out(value) <- probe_left(value, _tag), probe_right(value, _note).\n`;
+      return {
+        program,
+        schedule:
+          `[[${arrivalBatch("probe_left", [value.literal, '"left"'])},` +
+          `${arrivalBatch("probe_right", [value.literal, '"right"'])}]]\n`,
+        columnIndex: 0,
+      };
+    }
+    default:
+      throw new Error(`unknown position ${position}`);
+  }
+}
+
+// ── supplementary seeds ─────────────────────────────────────────────────────
+// Two shapes the (position x declared x value) product cannot express, both
+// named in the lab header's "known seeds to re-confirm at HEAD" list. They ride
+// the same pipeline so the one regenerating command covers them.
+const SEEDS = [
+  {
+    id: "cell_seed__join_cross_type__int",
+    declared: "int_vs_text",
+    value: "int",
+    natural: "int",
+    columnIndex: 0,
+    program:
+      "# seed: the two sides of one join declared DIFFERENT types (the\n" +
+      "# join_column_type_mismatch refusal the expression-lift arc added).\n\n" +
+      "rel probe_left(value: int, tag: text).\n" +
+      "rel probe_right(value: text, note: text).\n" +
+      "rel probe_out(value: int).\n\n" +
+      "probe_out(value) <- probe_left(value, _tag), probe_right(value, _note).\n",
+    schedule:
+      '[[{"rel":"probe_left","sign":"add","row":[4,"left"]},' +
+      '{"rel":"probe_right","sign":"add","row":["4","right"]}]]\n',
+  },
+  {
+    id: "cell_seed__decl_vs_witness__plain_text",
+    declared: "int",
+    value: "plain_text",
+    natural: "text",
+    columnIndex: 0,
+    program:
+      "# seed: a text LITERAL sitting at a column the decl types int, which is\n" +
+      "# the decl_type_conflicts_witness contradiction (decl is authority over\n" +
+      "# C2a inference).\n\n" +
+      "rel probe_in(value: int).\n" +
+      "rel probe_out(value: int).\n\n" +
+      "probe_out(value) <- probe_in(value), probe_in('north').\n",
+    schedule: '[[{"rel":"probe_in","sign":"add","row":[4]}]]\n',
+  },
+];
+
+function main() {
+  mkdirSync(OUT, { recursive: true });
+  for (const name of readdirSync(OUT)) {
+    if (/^cell_/.test(name) || name === "cells.json") unlinkSync(join(OUT, name));
+  }
+
+  const cells = [];
+  for (const position of POSITIONS) {
+    for (const declared of DECLARED) {
+      for (const value of VALUES) {
+        const id = `cell_${position}__${declared.name}__${value.name}`;
+        const built = buildCell(position, declared, value);
+        writeFileSync(join(OUT, `${id}.dl6`), built.program);
+        writeFileSync(join(OUT, `${id}.schedule.json`), built.schedule);
+        cells.push({
+          id,
+          position,
+          declared: declared.name,
+          value: value.name,
+          natural: value.natural,
+          columnIndex: built.columnIndex,
+          // Every cell in this enumeration is constructible as TEXT. A cell
+          // that cannot be constructed would carry `na` with a reason; the
+          // enumeration currently produces none, and that is itself a
+          // finding: the surface accepts every corner, which is why the
+          // refusals have to come from the doors rather than the grammar.
+          na: null,
+        });
+      }
+    }
+  }
+
+  for (const seed of SEEDS) {
+    writeFileSync(join(OUT, `${seed.id}.dl6`), seed.program);
+    writeFileSync(join(OUT, `${seed.id}.schedule.json`), seed.schedule);
+    cells.push({
+      id: seed.id,
+      position: "seed",
+      declared: seed.declared,
+      value: seed.value,
+      natural: seed.natural,
+      columnIndex: seed.columnIndex,
+      na: null,
+    });
+  }
+
+  writeFileSync(join(OUT, "cells.json"), `${JSON.stringify(cells, null, 1)}\n`);
+  process.stdout.write(`gen_cells: ${cells.length} cells written to out/\n`);
+}
+
+main();
