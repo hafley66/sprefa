@@ -1363,6 +1363,28 @@ sites but not against new code. **missing** = nothing.
   parser's OTHER convention (one row per line) is not what fires by
   default -- check which one actually applies before trusting either.
 
+## 37. Green gate that cannot fail (grader printed `fail` and exited 0)
+
+- WHAT IT LOOKS LIKE: a battery leg prints per-check `PASS`/`fail` lines and
+  the recipe exits 0 either way. Every consumer that trusts the exit code
+  (`&&` chains, `just green`, coordinator battery tails) reports green over a
+  red fixture. The red is visible ONLY to a reader who greps the full log.
+- HOW IT BIT US 2026-07-31: v6/prolog/src/grader.pl run/1 wrapped every check
+  in `forall(..., (Goal -> PASS ; print fail))` -- forall cannot fail, `go`
+  succeeded, `-g go -g halt` exited 0. Fixture float_shortest_round_trip_wire
+  landed RED (malformed expectation: two deltas/2 terms for one rel where the
+  contract is one term carrying the full tick list) and shipped through the
+  landing battery, the merge battery, and two coordinator re-runs, all
+  reading exit codes or output tails. Found by a docs lane running the full
+  log visibly.
+- LAW: a grading loop must ACCUMULATE failures and fail its goal when the
+  count is nonzero; `swipl -g` then exits 1. A checker whose exit code cannot
+  go red is not a gate, whatever it prints.
+- RAIL: grader.pl run/1 counts failures, prints `FAILURES N`, and fails
+  (fail-pre-fix receipt 2026-07-31: exit 1 + `FAILURES 1` on the red fixture,
+  exit 0 after the fixture fix). Every runner riding run/1 (conformance,
+  arch, labs) inherits the rail.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
