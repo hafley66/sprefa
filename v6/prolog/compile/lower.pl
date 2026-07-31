@@ -2118,10 +2118,19 @@ support_group_exprs(Head, Bound, GroupExprs) :-
 
 group_expr(Bound, Arg, GroupExpr) :-
     compile_expr(Arg, Bound, Sql, _Type),
-    ( integer(Arg)
+    ( sql_bare_integer(Sql)
     -> format(atom(GroupExpr), '(~w + 0)', [Sql])
     ;  GroupExpr = Sql
     ).
+
+% The guard must read the COMPILED SQL, not the head term: a variable bound
+% by `:= 0` compiles to the bare literal and dodged the integer(Arg) check
+% (first hit by a coalesce default clause -- GROUP BY ..., 0 read as the
+% positional 4th-column reference and SQLITE_ERROR'd out of range).
+sql_bare_integer(Sql) :-
+    atom(Sql),
+    atom_number(Sql, Number),
+    integer(Number).
 
 qualified_equalities([], _, _, []).
 qualified_equalities([Column | Rest], LeftAlias, RightAlias,

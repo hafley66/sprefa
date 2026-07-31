@@ -1,8 +1,10 @@
 # self-map.dl6 -- THE SYSTEM DESCRIBING ITSELF, in its own language.
 #
 # Four sources the repo already maintains become rels; ordinary dl6 rules
-# derive the structure worth drawing; v6/tsv2/scripts/self-map.sh reads the
-# derived rows back and renders v6/ARCH-MAP.md with mermaid fences.
+# derive the structure worth drawing, render Mermaid lines, fold sections with
+# ordered group_concat, and assemble the complete v6/ARCH-MAP.md document.
+# v6/tsv2/scripts/self-map.sh only boots the served engine and waits for the
+# write-out host to finish.
 #
 #   watch(glob, path, digest)     the four sources, tracked, digest-addressed
 #     -> source(path, digest)
@@ -44,16 +46,11 @@
 #
 #   combineLatest([task$, taskDep$]).pipe(...)    // the delta joins below
 #
-# ── WHERE THE LANGUAGE STOPS, stated because half the value is the finding ───
+# ── the two I/O hosts ─────────────────────────────────────────────────────────
 #
-# The mermaid TEXT is assembled in the script, not here, and that is a real
-# gap and not a preference: dl6 has no string aggregate. `group_concat` is
-# refused, `concat/1` folds a FIXED list of expressions into one value, and
-# there is no construct that folds N rows into one string. So a rel can hold
-# "one mermaid line per row" at best, and the join into a document is a fold
-# over rows that only the host can do. Everything ABOVE that line -- which
-# nodes exist, which edges exist, which are roots, which are blocked, the
-# counts -- is derived here.
+# sm_* reads source facts. write_arch_map performs the sole output effect. All
+# text between those two boundaries is a relational value: Mermaid escaping,
+# line construction, section folds, and the final document concat.
 #
 # The second gap is smaller and also real: a guard over a probe OUTPUT variable
 # is refused (`unsupported_construct(unbound_head_var(_))`, flagship-callgraph
@@ -117,6 +114,9 @@ sh sm_rel(path: text, digest: text)
 sh sm_rel_edge(path: text, digest: text)
   -> (record: text, program: text, from_rel: text, to_rel: text, sign: text, arrow: text) =
   `: {digest}; swipl -q -l "$SELF_MAP_FACTS" -g main -t halt -- {path}`.
+
+sh write_arch_map(path: text, document: text) -> (status: text) =
+  `printf '%s' "$document" > "$path"; printf '%s' written`.
 
 # ═════════════════════════════════════════════════════════════════════════════
 # DIAGRAM 1 -- the expansion phase order (1_expansion.pl:expansion_phase/3)
@@ -292,3 +292,404 @@ program_negated_edge(program, from_rel, to_rel) <-
 
 ? task_ready(task_name, state).
 ? program_sink(program, rel_name).
+
+# ═════════════════════════════════════════════════════════════════════════════
+# DOCUMENT RENDERING -- the output plane is ordinary dl6 data
+# ═════════════════════════════════════════════════════════════════════════════
+
+# One seed row supplies the fixed prose lines without introducing a top-level
+# fact. The watched self-map source is itself the seed's world witness.
+rel map_seed(token: text).
+map_seed('self-map') <- source('v6/dl/fixtures/self-map.dl6', _).
+
+rel map_line(section: text, ordinal: int, line_text: text).
+
+# ── shared Mermaid tokens ────────────────────────────────────────────────────
+
+rel special_functor(functor: text).
+special_functor(':=') <- map_seed(_).
+special_functor(';') <- map_seed(_).
+special_functor('<') <- map_seed(_).
+special_functor('=<') <- map_seed(_).
+special_functor('>') <- map_seed(_).
+special_functor('>=') <- map_seed(_).
+special_functor('==') <- map_seed(_).
+special_functor('\\==') <- map_seed(_).
+special_functor('$') <- map_seed(_).
+special_functor('**') <- map_seed(_).
+special_functor('{}') <- map_seed(_).
+
+rel functor_label(functor: text, label_text: text).
+functor_label(':=', ':=') <- map_seed(_).
+functor_label(';', ';') <- map_seed(_).
+functor_label('<', '#lt;') <- map_seed(_).
+functor_label('=<', '=#lt;') <- map_seed(_).
+functor_label('>', '#gt;') <- map_seed(_).
+functor_label('>=', '#gt;=') <- map_seed(_).
+functor_label('==', '==') <- map_seed(_).
+functor_label('\\==', '\\==') <- map_seed(_).
+functor_label('$', '$') <- map_seed(_).
+functor_label('**', '**') <- map_seed(_).
+functor_label('{}', '#123;#125;') <- map_seed(_).
+functor_label(functor, functor) <- construct(functor, _, _, _), not(special_functor(functor)).
+
+rel functor_ident(functor: text, identifier: text).
+functor_ident(':=', 'x3ax3d') <- map_seed(_).
+functor_ident(';', 'x3b') <- map_seed(_).
+functor_ident('<', 'x3c') <- map_seed(_).
+functor_ident('=<', 'x3dx3c') <- map_seed(_).
+functor_ident('>', 'x3e') <- map_seed(_).
+functor_ident('>=', 'x3ex3d') <- map_seed(_).
+functor_ident('==', 'x3dx3d') <- map_seed(_).
+functor_ident('\\==', 'x5cx3dx3d') <- map_seed(_).
+functor_ident('$', 'x24') <- map_seed(_).
+functor_ident('**', 'x2ax2a') <- map_seed(_).
+functor_ident('{}', 'x7bx7d') <- map_seed(_).
+functor_ident(functor, identifier) <-
+  construct(functor, _, _, _), not(special_functor(functor)), identifier := norm(functor).
+
+rel task_label(task_name: text, label_text: text).
+task_label(task_name, task_name) <- task(task_name, _).
+
+rel rel_label(rel_name: text, label_text: text).
+rel_label(rel_name, rel_name) <- program_rel(_, rel_name, _, _).
+
+# ── document header ──────────────────────────────────────────────────────────
+
+map_line('header', 10, '# v6 architecture map') <- map_seed(_).
+map_line('header', 20,
+  'GENERATED by `just self-map` (`v6/tsv2/scripts/self-map.sh`). Do not edit: the next run overwrites it, byte for byte.') <- map_seed(_).
+map_line('header', 30,
+  'Every fact below travelled through the served tsv2 engine. `v6/dl/fixtures/self-map.dl6` declares the sources as `bind watch` globs and one `sh` host with six projections; the derivations -- ready vs blocked, wired vs unwired, all-live axis, sink rel, every count -- are ordinary dl6 rules in that file. The document is assembled by ordered `group_concat` folds in the same file.') <- map_seed(_).
+map_line('header', 40, '| watched source | authority | what it says |') <- map_seed(_).
+map_line('header', 50, '|---|---|---|') <- map_seed(_).
+map_line('header', 60, '| `v6/prolog/compile/registry.pl` | `surface/5` | the construct inventory |') <- map_seed(_).
+map_line('header', 70, '| `v6/prolog/1_expansion.pl` | `expansion_phase/3` | the declared sugar order |') <- map_seed(_).
+map_line('header', 80, '| `v6/prolog/ARCH.pl` | `task/3` | the build DAG |') <- map_seed(_).
+map_line('header', 90, "| `v6/dl/fixtures/self-map.dl6` | `analyze.pl` | this program own rel graph |") <- map_seed(_).
+
+# ── diagram 1: expansion phases ─────────────────────────────────────────────
+
+rel phase_first_text(text: text).
+phase_first_text(text) <- phase_first(_, name), text := concat(['`', name, '`']).
+
+rel phase_first_join(text: text).
+phase_first_join(group_concat(text, ', ')) <- phase_first_text(text).
+
+rel phase_last_text(text: text).
+phase_last_text(text) <- phase_last(_, name), text := concat(['`', name, '`']).
+
+rel phase_last_join(text: text).
+phase_last_join(group_concat(text, ', ')) <- phase_last_text(text).
+
+rel phase_unwired_text(text: text).
+phase_unwired_text(text) <- phase_unwired(_, name), text := concat(['`', name, '`']).
+
+rel phase_unwired_join(text: text).
+phase_unwired_join(group_concat(text, ', ')) <- phase_unwired_text(text).
+
+map_line('phases', 10, '## 1. Surface sugar expands in a declared order') <- map_seed(_).
+map_line('phases', 20,
+  '`expansion_phase/3` in `v6/prolog/1_expansion.pl`, read by the compiler and the oracle both. Arrows are the computed successor (the smallest order strictly greater), not the literal numbers, so a phase landing between two existing ones redraws correctly. Dashed = declared slot with no expander.') <- map_seed(_).
+map_line('phases', 30, '```mermaid') <- map_seed(_).
+map_line('phases', 40, 'flowchart LR') <- map_seed(_).
+
+map_line('phases', 100 + order,
+  line_text) <- phase_wired(order, name, expander),
+  line_text := concat(['  ph_', name, '["', order, ' ', name, '<br/>', expander, '"]']).
+map_line('phases', 100 + order,
+  line_text) <- phase_unwired(order, name),
+  line_text := concat(['  ph_', name, '["', order, ' ', name, '"]']).
+
+map_line('phases', 1000 + from_order,
+  line_text) <- phase_step(from_name, to_name), phase(from_order, from_name, _),
+  line_text := concat(['  ph_', from_name, ' --> ph_', to_name]).
+map_line('phases', 2000, '  classDef slot stroke-dasharray: 4 3') <- map_seed(_).
+rel phase_unwired_classes(text: text).
+phase_unwired_classes(group_concat(line_text, '\n')) <- phase_unwired(_, name),
+  line_text := concat(['  class ph_', name, ' slot']).
+map_line('phases', 2010, text) <- phase_unwired_classes(text).
+map_line('phases', 2020, '```') <- map_seed(_).
+
+map_line('phases', 2030, line_text) <- phase_first_join(first), phase_last_join(last),
+  phase_unwired_join(unwired),
+  line_text := concat(['First phase: ', first, '. Last phase: ', last, '. Unwired slots: ', unwired, '.']).
+
+# ── diagram 2: construct registry ───────────────────────────────────────────
+
+rel registry_construct_line(axis: text, line_text: text).
+registry_construct_line(axis, line_text) <-
+  construct(functor, arity, axis, status), functor_label(functor, label), functor_ident(functor, ident),
+  if_status(status, suffix),
+  line_text := concat(['    c_', ident, 'x2f', arity, '["', label, '/', arity,
+                       suffix, '"]']).
+
+rel if_status(status: text, suffix: text).
+if_status('live', '') <- map_seed(_).
+if_status(status, suffix) <- construct(_, _, _, status), status != 'live',
+  suffix := concat(['<br/>', status]).
+
+rel registry_axis_body(axis: text, text: text).
+registry_axis_body(axis, group_concat(line_text, '\n')) <- registry_construct_line(axis, line_text).
+
+rel registry_axis_fragment(axis: text, fragment: text).
+registry_axis_fragment(axis, fragment) <- registry_axis_body(axis, body),
+  fragment := concat(['  subgraph ax_', axis, '["', axis, '"]\n    direction TB\n', body, '\n  end']).
+
+rel registry_axes_text(text: text).
+registry_axes_text(group_concat(fragment, '\n')) <- registry_axis_fragment(_, fragment).
+
+rel registry_class_line(line_text: text).
+registry_class_line(line_text) <- axis(axis), not(axis_all_live(axis)),
+  line_text := concat(['  class ax_', axis, ' moving']).
+
+rel registry_classes_text(text: text).
+registry_classes_text(group_concat(line_text, '\n')) <- registry_class_line(line_text).
+
+rel axis_live_count(axis: text, constructs: int).
+axis_live_count(axis, constructs) <- axis_status_total(axis, 'live', constructs).
+axis_live_count(axis, 0) <- axis(axis), not(axis_status_total(axis, 'live', _)).
+
+rel axis_refused_count(axis: text, constructs: int).
+axis_refused_count(axis, constructs) <- axis_status_total(axis, 'refused', constructs).
+axis_refused_count(axis, 0) <- axis(axis), not(axis_status_total(axis, 'refused', _)).
+
+rel axis_reserved_count(axis: text, constructs: int).
+axis_reserved_count(axis, constructs) <- axis_status_total(axis, 'reserved', constructs).
+axis_reserved_count(axis, 0) <- axis(axis), not(axis_status_total(axis, 'reserved', _)).
+
+rel registry_table_row(line_text: text).
+registry_table_row(line_text) <- axis_total(axis, total), axis_live_count(axis, live),
+  axis_refused_count(axis, refused), axis_reserved_count(axis, reserved),
+  axis_all_live(axis), line_text := concat(['| `', axis, '` | ', total, ' | ', live, ' | ', refused, ' | ', reserved, ' | yes |']).
+registry_table_row(line_text) <- axis_total(axis, total), axis_live_count(axis, live),
+  axis_refused_count(axis, refused), axis_reserved_count(axis, reserved),
+  not(axis_all_live(axis)), line_text := concat(['| `', axis, '` | ', total, ' | ', live, ' | ', refused, ' | ', reserved, ' |  |']).
+
+rel registry_table_rows(text: text).
+registry_table_rows(group_concat(line_text, '\n')) <- registry_table_row(line_text).
+
+map_line('registry', 10, '## 2. The writable surface, by axis') <- map_seed(_).
+map_line('registry', 20,
+  '`surface/5` in `v6/prolog/compile/registry.pl` is the single inventory the parser, printer, analyzer and supported-subset gate all project from, so this is the whole writable language and not a selection from it. An axis whose every row is `live` is drawn solid; an axis still carrying a reserved or refused row is dashed.') <- map_seed(_).
+map_line('registry', 30, '```mermaid') <- map_seed(_).
+map_line('registry', 40, 'flowchart TD') <- map_seed(_).
+map_line('registry', 50, text) <- registry_axes_text(text).
+map_line('registry', 60, '  classDef moving stroke-dasharray: 4 3') <- map_seed(_).
+map_line('registry', 70, text) <- registry_classes_text(text).
+map_line('registry', 80, '```') <- map_seed(_).
+map_line('registry', 90, '| axis | constructs | live | refused | reserved | all live |') <- map_seed(_).
+map_line('registry', 100, '|---|---|---|---|---|---|') <- map_seed(_).
+map_line('registry', 110, text) <- registry_table_rows(text).
+
+# ── diagram 3: ARCH frontier ─────────────────────────────────────────────────
+
+rel frontier_states(task_name: text, text: text).
+frontier_states(task_name, group_concat(state, ' / ')) <- frontier_node(task_name, state).
+
+rel frontier_node_line(line_text: text).
+frontier_node_line(line_text) <- frontier_states(name, states), task_label(name, label),
+  line_text := concat(['  t_', name, '["', label, '<br/>', states, '"]']).
+
+rel frontier_nodes_text(text: text).
+frontier_nodes_text(group_concat(line_text, '\n')) <- frontier_node_line(line_text).
+
+rel frontier_edge_line(line_text: text).
+frontier_edge_line(line_text) <- frontier_edge(dep, task),
+  line_text := concat(['  t_', dep, ' --> t_', task]).
+
+rel frontier_edges_text(text: text).
+frontier_edges_text(group_concat(line_text, '\n')) <- frontier_edge_line(line_text).
+
+rel frontier_blocked_line(line_text: text).
+frontier_blocked_line(line_text) <- task_blocked(name, _),
+  line_text := concat(['  class t_', name, ' blocked']).
+
+rel frontier_blocked_text(text: text).
+frontier_blocked_text(group_concat(line_text, '\n')) <- frontier_blocked_line(line_text).
+
+rel frontier_state_row(line_text: text).
+frontier_state_row(line_text) <- state_total(state, tasks),
+  line_text := concat(['| `', state, '` | ', tasks, ' |']).
+
+rel frontier_state_rows(text: text).
+frontier_state_rows(group_concat(line_text, '\n')) <- frontier_state_row(line_text).
+
+rel task_total(tasks: int).
+task_total(count(task_name)) <- task(task_name, _).
+
+rel dependency_total(edges: int).
+dependency_total(count(task_name)) <- task_dep(task_name, _).
+
+rel ready_name(task_name: text).
+ready_name(task_name) <- task_ready(task_name, _).
+
+rel ready_name_text(text: text).
+ready_name_text(text) <- ready_name(name), text := concat(['`', name, '`']).
+
+rel ready_names_text(text: text).
+ready_names_text(group_concat(text, ', ')) <- ready_name_text(text).
+
+rel ready_total(tasks: int).
+ready_total(count(task_name)) <- ready_name(task_name).
+
+rel blocked_name(task_name: text).
+blocked_name(task_name) <- task_blocked(task_name, _).
+
+rel blocked_total(tasks: int).
+blocked_total(count(task_name)) <- blocked_name(task_name).
+
+rel conflict_states(task_name: text, text: text).
+conflict_states(task_name, group_concat(state, ', ')) <- task_state_conflict(task_name, state).
+
+rel conflict_row(line_text: text).
+conflict_row(line_text) <- conflict_states(name, states),
+  line_text := concat(['| `', name, '` | ', states, ' |']).
+
+rel conflict_rows(text: text).
+conflict_rows(group_concat(line_text, '\n')) <- conflict_row(line_text).
+
+map_line('frontier', 10, "## 3. The build DAG open frontier") <- map_seed(_).
+map_line('frontier', 20, line_text) <- task_total(tasks), dependency_total(edges),
+  line_text := concat(['`task/3` in `v6/prolog/ARCH.pl`: ', tasks, ' tasks, ', edges, ' dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.']).
+map_line('frontier', 30, '```mermaid') <- map_seed(_).
+map_line('frontier', 40, 'flowchart LR') <- map_seed(_).
+map_line('frontier', 50, text) <- frontier_nodes_text(text).
+map_line('frontier', 60, text) <- frontier_edges_text(text).
+map_line('frontier', 70, '  classDef blocked stroke-width:3px') <- map_seed(_).
+map_line('frontier', 80, text) <- frontier_blocked_text(text).
+map_line('frontier', 90, '```') <- map_seed(_).
+map_line('frontier', 100, '| state | tasks |') <- map_seed(_).
+map_line('frontier', 110, '|---|---|') <- map_seed(_).
+map_line('frontier', 120, text) <- frontier_state_rows(text).
+map_line('frontier', 130, line_text) <- ready_total(ready), blocked_total(blocked),
+  line_text := concat(['**Ready** (open, every dependency done): ', ready, ' tasks. **Blocked**: ', blocked, ' tasks.']).
+map_line('frontier', 140, '<details><summary>the ready set</summary>') <- map_seed(_).
+map_line('frontier', 150, '') <- map_seed(_).
+map_line('frontier', 160, text) <- ready_names_text(text).
+map_line('frontier', 170, '') <- map_seed(_).
+map_line('frontier', 180, '</details>') <- map_seed(_).
+map_line('frontier', 190,
+  '**`task/3` state contradictions.** `task_state_conflict` counts states per task name; a name with more than one is a row that was appended when its state changed instead of rewritten. the `just arch` `go` check does not catch this -- it checks the dependency graph is acyclic and total, which a duplicated row does not break.') <- map_seed(_).
+map_line('frontier', 200, '') <- map_seed(_).
+map_line('frontier', 210, '| task | states |') <- map_seed(_).
+map_line('frontier', 220, '|---|---|') <- map_seed(_).
+map_line('frontier', 230, text) <- conflict_rows(text).
+
+# ── diagram 4: the program's analyzed rel graph ─────────────────────────────
+
+rel program_origin_rel_line(program: text, origin: text, line_text: text).
+program_origin_rel_line(program, origin, line_text) <-
+  program_rel(program, rel_name, _, origin), rel_label(rel_name, label),
+  program_sink(program, rel_name), line_text := concat(['    r_', rel_name, '["', label, ' *"]']).
+program_origin_rel_line(program, origin, line_text) <-
+  program_rel(program, rel_name, _, origin), rel_label(rel_name, label),
+  not(program_sink(program, rel_name)), line_text := concat(['    r_', rel_name, '["', label, '"]']).
+
+rel program_origin_rels_text(program: text, origin: text, text: text).
+program_origin_rels_text(program, origin, group_concat(line_text, '\n')) <- program_origin_rel_line(program, origin, line_text).
+
+rel program_origin_fragment(program: text, origin: text, fragment: text).
+program_origin_fragment(program, origin, fragment) <- program_origin_rels_text(program, origin, body),
+  fragment := concat(['  subgraph og_', origin, '["', origin, '"]\n    direction TB\n', body, '\n  end']).
+
+rel program_graph_body(program: text, text: text).
+program_graph_body(program, group_concat(fragment, '\n')) <- program_origin_fragment(program, _, fragment).
+
+rel program_edge_line(program: text, line_text: text).
+program_edge_line(program, line_text) <- program_edge(program, from_rel, to_rel, _, _),
+  program_negated_edge(program, from_rel, to_rel),
+  line_text := concat(['  r_', from_rel, ' -.-> r_', to_rel]).
+program_edge_line(program, line_text) <- program_edge(program, from_rel, to_rel, _, _),
+  not(program_negated_edge(program, from_rel, to_rel)),
+  line_text := concat(['  r_', from_rel, ' --> r_', to_rel]).
+
+rel program_edges_text(program: text, text: text).
+program_edges_text(program, group_concat(line_text, '\n')) <- program_edge_line(program, line_text).
+
+rel sink_text(program: text, text: text).
+sink_text(program, text) <- program_sink(program, rel_name), text := concat(['`', rel_name, '`']).
+
+rel sinks_text(program: text, text: text).
+sinks_text(program, group_concat(text, ', ')) <- sink_text(program, text).
+
+rel fan_in_before(program: text, rel_name: text, before_rel: text).
+fan_in_before(program, rel_name, before_rel) <-
+  program_fan_in(program, rel_name, writers), program_fan_in(program, before_rel, before_writers), before_writers > writers.
+# No text ordering in the language (comparison_operand_not_number): ties
+# share a rank; top-5 may hold more than 5 rows.
+
+rel fan_in_rank(program: text, rel_name: text, rank: int).
+fan_in_rank(program, rel_name, count(before_rel)) <- fan_in_before(program, rel_name, before_rel).
+# rank 0 comes from coalesce at the reader (null_design ruling);
+# an aggregate head cannot mix with a plain clause.
+
+rel fan_out_before(program: text, rel_name: text, before_rel: text).
+fan_out_before(program, rel_name, before_rel) <-
+  program_fan_out(program, rel_name, readers), program_fan_out(program, before_rel, before_readers), before_readers > readers.
+
+rel fan_out_rank(program: text, rel_name: text, rank: int).
+fan_out_rank(program, rel_name, count(before_rel)) <- fan_out_before(program, rel_name, before_rel).
+
+# coalesce's output var may appear only in the coalesce atom and the head
+# (coalesce_no_output otherwise): the rank reads stage into their own rels
+# and the join + top-5 filter happens downstream.
+rel fan_in_row(program: text, in_rel: text, writers: int, rank: int).
+fan_in_row(program, in_rel, writers, rank) <-
+  program_fan_in(program, in_rel, writers),
+  coalesce(fan_in_rank(program, in_rel, rank), 0).
+
+rel fan_out_row(program: text, out_rel: text, readers: int, rank: int).
+fan_out_row(program, out_rel, readers, rank) <-
+  program_fan_out(program, out_rel, readers),
+  coalesce(fan_out_rank(program, out_rel, rank), 0).
+
+rel fan_row(rank: int, line_text: text).
+fan_row(rank, line_text) <-
+  fan_in_row(program, in_rel, writers, rank), rank < 5,
+  fan_out_row(program, out_rel, readers, rank),
+  line_text := concat(['| `', in_rel, '` | ', writers, ' | `', out_rel, '` | ', readers, ' |']).
+
+rel fan_rows_text(text: text).
+fan_rows_text(group_concat(line_text, '\n', rank)) <- fan_row(rank, line_text).
+
+rel program_total(program: text, rels: int).
+program_total(program, count(rel_name)) <- program_rel(program, rel_name, _, _).
+
+rel program_edge_total(program: text, edges: int).
+program_edge_total(program, count(from_rel)) <- program_edge(program, from_rel, _, _, _).
+
+map_line('dataflow', 10, "## 4. A compiled program rel dataflow: this program own") <- map_seed(_).
+map_line('dataflow', 20,
+  "Read out of `analyze.pl` by `v6/prolog/tools/self_map_facts.pl`, through the same two-step `program_plan/2` runs: the host pre-pass first (which is why `__host_demand_*` and `__host_response_*` appear -- the demand/answer round trip the `sh` surface hides), then the declared sugar phases. `origin` is the analyzer own partition: `world` = headed by no rule, `level` = headed by a `<-` rule, `edge` = headed by a `<+` rule. Dashed edges are negated bodies, which are the reason this program has strata.") <- map_seed(_).
+map_line('dataflow', 30,
+  'A `*` marks a rel no RULE reads. Two different things wear that mark: a real answer rel meant to be read from outside, and a `__host_demand_*` rel, which the host RUNTIME consumes rather than any rule. The map draws the set and does not guess which is which.') <- map_seed(_).
+map_line('dataflow', 40, '```mermaid') <- map_seed(_).
+map_line('dataflow', 50, 'flowchart LR') <- map_seed(_).
+map_line('dataflow', 60, text) <- program_graph_body('self-map', text).
+map_line('dataflow', 70, text) <- program_edges_text('self-map', text).
+map_line('dataflow', 80, '```') <- map_seed(_).
+map_line('dataflow', 90, line_text) <- program_total('self-map', rels), program_edge_total('self-map', edges), sinks_text('self-map', sinks),
+  line_text := concat(['`self-map`: ', rels, ' rels, ', edges, ' edges. Sinks (`*`, nothing reads them): ', sinks, '.']).
+map_line('dataflow', 100, '| widest fan-in | writers | widest fan-out | readers |') <- map_seed(_).
+map_line('dataflow', 110, '|---|---|---|---|') <- map_seed(_).
+map_line('dataflow', 120, text) <- fan_rows_text(text).
+
+# ── section and document folds ───────────────────────────────────────────────
+
+rel section_text(section: text, text: text).
+section_text(section, group_concat(line_text, '\n', ordinal)) <- map_line(section, ordinal, line_text).
+
+rel map_document(document: text).
+map_document(document) <-
+  section_text('header', header), section_text('phases', phases),
+  section_text('registry', registry), section_text('frontier', frontier),
+  section_text('dataflow', dataflow),
+  document := concat([header, '\n', phases, '\n', registry, '\n', frontier, '\n', dataflow, '\n']).
+
+rel write_receipt(status: text).
+write_receipt(status) <-
+  map_document(document), write_arch_map('v6/ARCH-MAP.md', document, status).
+
+? map_document(document).
+? write_receipt(status).
