@@ -34,7 +34,11 @@ RECORDS="$OUT/records.jsonl"
 : > "$RECORDS"
 
 RUNS="${BENCH_RUNS:-5}"
-TIMEOUT="${BENCH_TIMEOUT:-600}"
+# 180s, not the house rig's 600s. The only case expected to reach it is s3,
+# which is carried to RECORD a wall rather than to produce a number
+# (CONTRACT.md section 6), and a 600s wall costs 10 minutes to learn the same
+# fact. Raise it if a real case starts timing out.
+TIMEOUT="${BENCH_TIMEOUT:-180}"
 ONLY="${BENCH_CASES:-}"
 
 # hyperfine is the right tool for the EXTERNAL wall column and the wrong one
@@ -126,17 +130,37 @@ for index in $(seq 0 $((case_count - 1))); do
     WALLS=""
     PEAK_RSS_KB=0
     STATUS=0
+    # Explicit, because `set -u` plus the `unset VERDICT` at the end of this
+    # loop makes any read-before-assignment a hard error -- which is how the
+    # no_reference branch was caught the first time it ran.
+    VERDICT=""
 
     if [ "$ENGINE" = "oracle" ]; then
-      if [ "$ORACLE_STATUS" -ne 0 ]; then
-        VERDICT="error"
-      else
-        VERDICT="reference"
-      fi
+      if [ "$ORACLE_STATUS" -ne 0 ]; then VERDICT="error"; else VERDICT="reference"; fi
+    elif [ "$ORACLE_STATUS" -ne 0 ]; then
+      # No reference log means NOTHING can be graded on this case, and that is
+      # a fact about the ORACLE, not about this engine. Calling it `wrong`
+      # would blame the engine for the reference engine's ceiling -- the exact
+      # misattribution the verdict vocabulary exists to prevent. Skip the runs
+      # entirely; a timing whose correctness cannot be established is a number
+      # this contract does not print.
+      VERDICT="no_reference"
     fi
 
-    for run in $(seq 1 "$RUNS"); do
+    # The oracle is the REFERENCE and is sampled once, not RUNS times. Two
+    # reasons, both stated so this does not read as a corner cut: (a) its
+    # wall_ms is wrapper-measured and carries swipl's startup floor, so
+    # CONTRACT.md section 6 already rules it not comparable head to head with
+    # tsv2's -- a tighter median buys a number nothing may be ranked on;
+    # (b) the reference leg above has already run it once for the log, so
+    # RUNS more is 5x redundant reference work, and on s1/10k that measured
+    # 65s+ per invocation.
+    ENGINE_RUNS="$RUNS"
+    [ "$ENGINE" = "oracle" ] && ENGINE_RUNS=1
+
+    for run in $(seq 1 "$ENGINE_RUNS"); do
       [ "$ENGINE" = "oracle" ] && [ "$VERDICT" = "error" ] && break
+      [ "$VERDICT" = "no_reference" ] && break
       TSV2_ENV=""
       [ "$ENGINE" = "tsv2" ] && TSV2_ENV="NODE_OPTIONS=--max-old-space-size=${TSV2_HEAP_MB:-512}"
       env $TSV2_ENV /usr/bin/time -l \

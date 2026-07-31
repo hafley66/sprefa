@@ -133,6 +133,12 @@ function reasons(records: readonly IRecord[]): string {
     if (r.verdict === "wrong") {
       seen.set(`${r.engine}.${r.case}.wrong`, `- \`${r.engine}\` on **${r.case}** — log differs from the oracle; **not timed** (the v1 asymmetry rule).`);
     }
+    if (r.verdict === "no_reference") {
+      seen.set(
+        `${r.engine}.${r.case}.no_reference`,
+        `- \`${r.engine}\` on **${r.case}** — the ORACLE produced no reference log here, so nothing on this case can be graded. This is a ceiling of the reference engine, not a finding about \`${r.engine}\`; the engine was not run.`,
+      );
+    }
   }
   return [...seen.values()].sort().join("\n");
 }

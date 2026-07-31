@@ -1,0 +1,11 @@
+{
+  "name": "sprefa-bench-cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Language-agnostic CLI bench contract, harness and adapters (v6/bench-cli/CONTRACT.md). Phase 0 of plans/2026-07-31-rust-course.md: the gate that precedes any rust lowering. Dependencies resolve through the ./node_modules symlink to ../tsv2/node_modules; nothing is installed here.",
+  "scripts": {
+    "typecheck": "tsgo --noEmit -p tsconfig.json",
+    "bench": "bash bench.sh"
+  }
+}

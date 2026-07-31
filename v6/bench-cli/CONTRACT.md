@@ -334,6 +334,22 @@ touched.
 `v6/bench-cli/node_modules` is the same trick for dependency resolution and is
 gitignored.
 
+**Receipt that this bench times the graded engine.** The adapter compiles
+`dl_view/<name>.dl6` through the TEXT door; the sweep compiles the fixture
+TERM. The module that comes out is byte-identical:
+
+```
+$ cmp v6/bench-cli/out/match_classify_response.ts \
+      v6/prolog/compile/out/match_classify_response.ts
+$ echo $?
+0
+```
+
+So the thing being timed here is the same module `just sweep` grades, not a
+variant compiled down a bench-only path. (That the two doors agree is itself
+the standing `TEXT_DOOR` receipt; this is that property being leaned on
+rather than re-proven.)
+
 ---
 
 ## 4. Cases
