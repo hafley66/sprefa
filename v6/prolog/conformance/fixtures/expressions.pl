@@ -270,11 +270,20 @@ fixture(typed_int_without_literal_witness,
   [],
   []).
 
-% A declaration type that disagrees with a concrete witness is a compiler
-% refusal. The reference engine still treats the bare relation as a set.
+% A declaration type that disagrees with a concrete witness. The compiler
+% refused this as decl_type_conflicts_witness while the reference engine
+% happily seeded the row as a bare set member -- one program, two answers.
+%
+% MOVED 2026-07-31 by ruling type_gate_widening: the arrival gate now covers
+% `text` and `int` and not just the numeric trio, so the engine refuses the
+% same program at the same boundary. The two doors keep their own vocabulary
+% (the compiler's refusal is about the DECLARATION contradicting a witness,
+% this one is about the VALUE contradicting the declaration), and this fixture
+% pins the engine's half.
 fixture(typed_int_contradicts_text_witness,
   prog([ col_type(typed_conflict/1, value, int) ],
        []),
   [ typed_conflict(text_value) ],
   [],
-  []).
+  [ throws(type_arrival_shape_mismatch(typed_conflict/1, value, int,
+                                       field_not_int(text_value))) ]).

@@ -323,12 +323,17 @@ json_object_value(Value, Pairs) :-
 % membership, and tick-log render downstream sees a single term per value.
 % Rows of partially-typed refs pass through untouched -- the same named
 % crack as the shape check below, same reason.
+%
+% It ALSO applies SQLite's REAL affinity (ruling type_gate_widening): an
+% integer landing in a `float` column becomes a float here, once, so the
+% reference engine stores exactly what a REAL column stores and every later
+% read -- sum, avg, comparison, tick log -- sees a double on both doors. This
+% is why the Types == [] short circuit is gone: the widening is a property of
+% the column type, not of the value plane, and a program with no struct types
+% at all still has float columns.
 canonicalize_world_rows(Decls, Rows0, Rows) :-
     type_definitions(Decls, Types),
-    (   Types == []
-    ->  Rows = Rows0
-    ;   maplist(canonicalize_signed_row(Decls, Types), Rows0, Rows)
-    ).
+    maplist(canonicalize_signed_row(Decls, Types), Rows0, Rows).
 
 % A nested relation row on ingress is shorthand for two ordinary arrivals:
 % the target row first, then the parent row carrying its resolved endpoint.
@@ -423,6 +428,10 @@ canonicalize_column(Decls, Types, Ref, Column, Value0, Value) :-
         memberchk(col_type(Ref, Column, TypeName), Decls),
         declared_type_name(Types, TypeName)
     ->  canonical_struct_value(Types, TypeName, Value0, Value)
+    ;   nonvar(Value0),
+        memberchk(col_type(Ref, Column, float), Decls),
+        integer(Value0)
+    ->  Value is float(Value0)
     ;   Value = Value0
     ).
 
@@ -459,27 +468,132 @@ world_row_shape_violation(Decls, Rows, mismatch(Ref, Column, TypeName, Reason)) 
     compound(Row),
     functor(Row, Name, Arity),
     Ref = Name/Arity,
+    row_column_violation(Decls, Types, Ref, Arity, Row, Column, TypeName, Reason),
+    !.
+
+% Two passes over one row, in this order.
+%
+% 1. The WIDE-INTEGER pass, which is decl-INDEPENDENT (ruling wide_int_fate =
+%    refuse_everywhere_with_todo). An integer outside the IEEE-754 safe range
+%    reaches SQLite through whatever column it was written to, and the
+%    JavaScript side of every emitted program answers three different things
+%    for it depending on which column type it crossed and which emitter mode
+%    ran. So the value is refused wherever it appears, including inside a json
+%    document, and including a rel with no colon types at all -- which is why
+%    this pass does not go through ref_column_names/4.
+%
+%    ONE exception, and it is the other ruling: a `float` column. REAL affinity
+%    widens an integer to a double BEFORE anything asks how big it was, so
+%    there is no integer left to be out of range -- 9007199254740993 at a float
+%    column is the double 9007199254740992.0, approximate by construction, on
+%    both doors. Skipping the column here is also what keeps the two doors
+%    equal: the emitted guard cannot tell integer 1e20 from float 1.0e20 and
+%    reads the declaration for the answer, exactly as this does.
+% 2. The DECLARED-TYPE pass, which needs the column's declared type and so
+%    needs full col_type/3 coverage.
+row_column_violation(Decls, _, Ref, Arity, Row, Column, none, int_out_of_range(Value)) :-
+    between(1, Arity, Position),
+    arg(Position, Row, Argument),
+    nonvar(Argument),
+    wide_integer_witness(Argument, Value),
+    position_column_name(Decls, Ref, Position, Column),
+    \+ memberchk(col_type(Ref, Column, float), Decls).
+row_column_violation(Decls, Types, Ref, Arity, Row, Column, TypeName, Reason) :-
     ref_column_names(Decls, Ref, Arity, Columns),
     nth1(Position, Columns, Column),
     memberchk(col_type(Ref, Column, TypeName), Decls),
     arg(Position, Row, Value),
     nonvar(Value),
-    column_value_shape_error(Types, TypeName, Value, Reason),
-    !.
+    column_value_shape_error(Types, TypeName, Value, Reason).
 
+% The declared column name where the decl carries one, the bare position
+% otherwise. The wide-int pass runs on undeclared rels too, and a refusal that
+% cannot say WHERE is worse than one that says "column 2".
+position_column_name(Decls, Ref, Position, Column) :-
+    (   findall(Name, member(col_type(Ref, Name, _), Decls), Names),
+        nth1(Position, Names, Named)
+    ->  Column = Named
+    ;   Column = Position
+    ).
+
+% An integer beyond Number.MAX_SAFE_INTEGER, anywhere in a world value:
+% bare, inside a json object, or inside a json array. Floats are NOT
+% inspected: a float is already inexact and crosses the seam as a double on
+% both sides.
+%
+% TODO(bigint): this is the REFUSAL half of wide_int_fate. The other half --
+% carrying arbitrary-precision integers end to end -- needs a bigint column
+% type, an @libsql intMode decision, and a tick-log encoding for values JSON
+% numbers cannot hold. Ruled out for now (user 2026-07-31: "not finance yet");
+% the matching seam-side TODO is in v6/tsv2/runtime/rows.ts.
+wide_integer_witness(Value, Value) :-
+    integer(Value),
+    ( Value < -9007199254740991 ; Value > 9007199254740991 ),
+    !.
+wide_integer_witness(obj(Pairs), Witness) :-
+    is_list(Pairs), !,
+    member(_-Child, Pairs),
+    wide_integer_witness(Child, Witness).
+wide_integer_witness(List, Witness) :-
+    is_list(List), !,
+    member(Child, List),
+    wide_integer_witness(Child, Witness).
+wide_integer_witness({}(Body), Witness) :-
+    !,
+    json_canon({}(Body), Canonical),
+    Canonical = obj(Pairs),
+    member(_-Child, Pairs),
+    wide_integer_witness(Child, Witness).
+
+% RULING type_gate_widening = arrival_gate_all_types_all_positions
+% (user 2026-07-31, "widen yes, do what sql would do"). Every declared column
+% type answers here, not just the three the float/avg arc reached, and the
+% answer for a type mix is SQLite's own affinity rule:
+%
+%   int column    integer, or a REAL with an exact integer value (INTEGER
+%                 affinity converts a lossless real). Anything else refused.
+%   float column  finite float, or an INTEGER, which WIDENS -- REAL affinity
+%                 converts an integer to a double. This is the one direction
+%                 the ruling names explicitly.
+%   bool column   the two bool literals, nothing else. A bool column is a
+%                 CHECK-constrained integer in storage, so a non-boolean was
+%                 previously either dropped by the CHECK or coerced by it,
+%                 depending on which door and which head position; the ruling
+%                 kills both silences by name.
+%   text column   an atom or a string. A number at a TEXT column used to be
+%                 the biggest divergence family in the matrix (the engine kept
+%                 the number, the emitter's TEXT affinity stringified it).
+%
+% json / list(_) columns are NOT checked here: their arrival value has already
+% been through compile/scripts/0_json_arrival.pl, which is the shared reader
+% both .dl6 doors use and which already refuses a non-document. The wide-int
+% pass above still reaches inside them.
 column_value_shape_error(_, bool, Value, field_not_bool(Value)) :-
     \+ bool_value(Value), !.
 column_value_shape_error(_, float, Value, field_not_finite_float(Value)) :-
-    \+ finite_float(Value), !.
+    \+ float_column_value(Value), !.
 column_value_shape_error(_, int, Value, int_out_of_range(Value)) :-
     integer(Value),
     ( Value < -9007199254740991
     ; Value > 9007199254740991
     ),
     !.
+column_value_shape_error(_, int, Value, field_not_int(Value)) :-
+    \+ int_column_value(Value), !.
+column_value_shape_error(_, text, Value, field_not_text(Value)) :-
+    \+ text_column_value(Value), !.
 column_value_shape_error(Types, TypeName, Value, Reason) :-
     declared_type_name(Types, TypeName),
     type_shape_error(Types, TypeName, Value, Reason).
+
+int_column_value(Value) :- integer(Value), !.
+int_column_value(Value) :- finite_float(Value), Value =:= truncate(Value).
+
+float_column_value(Value) :- finite_float(Value), !.
+float_column_value(Value) :- integer(Value).
+
+text_column_value(Value) :- atom(Value), !.
+text_column_value(Value) :- string(Value).
 
 bool_value(bool_lit(true)).
 bool_value(bool_lit(false)).

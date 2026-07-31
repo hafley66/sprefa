@@ -146,6 +146,13 @@ engine_check_order([ key_position_out_of_range,
                      % Straight after the concrete-argument class it extends:
                      % the same law where the offending value is a variable.
                      relation_column_type_conflict,
+                     % Ruling type_gate_widening. Straight after the ref-column
+                     % conflict class, whose statement it generalizes from ref
+                     % types to every declared column type and narrows to the
+                     % head direction; that class stays ahead of it so a
+                     % program contradicting a STRUCT type still reports the
+                     % ref-flavoured name it always did.
+                     head_column_type_conflict,
                      % Burrs B3/B4: shapes the compiler refused and this engine
                      % ran. Refused here too so the two doors answer the same
                      % program the same way (0_program_check.pl states why).
@@ -204,6 +211,13 @@ engine_refusal(relation_column_type_conflict,
                conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                relation_column_type_conflict(Ref, Column, TypeName,
                                              OtherRef, OtherColumn, OtherType)).
+% Same term at both doors. The payload reads head-first, because the head is
+% the column the author has to change.
+engine_refusal(head_column_type_conflict,
+               conflict(HeadRef, HeadColumn, HeadType,
+                        BodyRef, BodyColumn, BodyType),
+               head_column_type_conflict(HeadRef, HeadColumn, HeadType,
+                                         BodyRef, BodyColumn, BodyType)).
 engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
 engine_refusal(key_position_out_of_range, Payload, Payload).
 engine_refusal(key_position_duplicate,    Payload, Payload).

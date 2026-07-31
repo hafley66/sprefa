@@ -1,0 +1,4 @@
+rel source(items: list(text)).
+rel copied(items: json).
+
+copied(Items) <- source(Items).

@@ -5,7 +5,7 @@
  * gen/*.ts, this only unwraps the QueryResult.
  */
 
-import { map, type Observable } from "rxjs";
+import { catchError, map, type Observable } from "rxjs";
 
 import type {
   IRow,
@@ -51,6 +51,28 @@ export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefin
   return value as IRowValue;
 };
 
+/** The driver's own answer to an integer past 2^53-1. @libsql/client runs with
+ *  the default `intMode: "number"`, so a SQLite INTEGER it cannot represent
+ *  makes the CONVERSION throw, before any value reaches `rowValueFromSql`.
+ *  A raw `RangeError` names no rel, no column and no statement, which is the
+ *  one unnamed emitter failure the type matrix still measured.
+ *
+ *  Ruling wide_int_fate = refuse_everywhere_with_todo (user 2026-07-31): the
+ *  answer is the SAME named refusal the arrival gate gives, at every reach
+ *  point, including this read-back one. An arrival can no longer carry such an
+ *  integer in; what still arrives here is an integer SQL COMPUTED (a sum, a
+ *  json_extract out of a document, a bigint bind), so the statement text is
+ *  what says where it came from.
+ *
+ *  TODO(bigint): the other half of the ruling is not taken. Carrying
+ *  arbitrary-precision integers end to end needs `intMode: "bigint"` (reverted
+ *  once already: a global bigint leaks into JSON.stringify at every raw row
+ *  projection), a bigint column type, and a tick-log encoding for values a
+ *  JSON number cannot hold. User: "not finance yet". The prolog-side twin of
+ *  this comment is at 0_type_plane.pl:wide_integer_witness/2. */
+const isWideIntegerRangeError = (error: unknown): boolean =>
+  error instanceof RangeError && /safely represented|out of range/i.test(error.message);
+
 /** Bound to `ISelectRows` rather than folded into a namespace object: emitted
  *  modules import this name directly (137 of them), and the import text comes
  *  from the prolog emitter. The annotation is what buys the compiler check. */
@@ -61,6 +83,10 @@ export const selectRows: ISelectRows = (
   columnTypes: readonly IRowColumnType[] = [],
 ): Observable<IRow[]> => {
   return seam.runner.execute(seam.db, sql).pipe(
+    catchError((error: unknown) => {
+      if (!isWideIntegerRangeError(error)) throw error;
+      throw new Error(`int_out_of_range reading ${sql}`);
+    }),
     map((result) =>
       result.rows.map(
         (row): IRow =>

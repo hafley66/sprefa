@@ -60,22 +60,69 @@ function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
+const SAFE_INTEGER_LIMIT = 9007199254740991n;
+
+function wideIntegerWitness(value: unknown): boolean {
+  if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
+  if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
+  return false;
+}
+
+/** A json/list column arrives as the document TEXT, and the text is the
+ *  only place the int-versus-float distinction still exists: a JSON
+ *  number token with no `.` and no exponent IS an integer, which is
+ *  exactly how the prolog reader parses it. String contents are blanked
+ *  first so digits inside a string never read as a number. Unparseable
+ *  text is not this scan's business (the json arm below names it). */
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+function wideIntegerInJsonText(value: IRowValue): boolean {
+  if (typeof value !== "string") return wideIntegerWitness(value);
+  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
+    if (/[.eE]/.test(token)) continue;
+    const parsed = BigInt(token);
+    if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
+  }
+  return false;
+}
+
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
     const types = relColumnTypes[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const declared = relDeclaredColumnTypes[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
-      const type = types[index];
+      const type = declared === undefined ? undefined : declared[index];
+      const scanned = type === "json" ? wideIntegerInJsonText(value)
+        : type === "float" ? false
+        : wideIntegerWitness(value);
+      if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
-        if (typeof value !== "boolean") throw new Error(`bool arrival ${arrival.rel}[${index}] requires true or false`);
+        if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
         return value;
       }
       if (type === "float") {
-        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
+        // SQLite REAL affinity: an integer widens, everything else is refused.
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_finite_float`);
         return Object.is(value, -0) ? 0 : value;
       }
       if (type === "int") {
-        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+        if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_int`);
+        return value;
+      }
+      if (type === "text") {
+        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_text`);
+        return value;
+      }
+      if (type === "json") {
+        // The shared reader (compile/scripts/0_json_arrival.pl
+        // json_column_term/4) takes a document TEXT or a bare number,
+        // and refuses everything else. Same two shapes here.
+        if (typeof value === "number") return value;
+        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`);
+        try { JSON.parse(value); } catch { throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`); }
+        return value;
       }
       return value;
     });
@@ -128,6 +175,13 @@ const relColumns: Record<string, readonly string[]> = {
 };
 
 const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  echoed: ["text", "json"],
+  label: ["text", "text"],
+  labelled: ["text", "text"],
+  payload: ["text", "json"],
+};
+
+const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   echoed: ["text", "json"],
   label: ["text", "text"],
   labelled: ["text", "text"],

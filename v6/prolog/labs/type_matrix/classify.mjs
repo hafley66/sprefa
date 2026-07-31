@@ -96,6 +96,12 @@ function refusalName(detail) {
 const RUNTIME_REFUSALS = [
   // emit_ts.pl -- the arrival gate written into every generated module.
   { probe: /\bint_out_of_range\b/, name: "int_out_of_range" },
+  // The widened gate (ruling type_gate_widening) answers in the ORACLE's
+  // vocabulary, so this probe carries the functor and the two sides can grade
+  // `both` rather than `name_mismatch`. The three prose probes below it are
+  // the pre-widening messages, kept so a stale generated module still reads
+  // as a refusal rather than a crash.
+  { probe: /\btype_arrival_shape_mismatch\b/, name: "type_arrival_shape_mismatch" },
   { probe: /^\w*Error: float arrival .* requires a finite number$/, name: "" },
   { probe: /^\w*Error: bool arrival .* requires true or false$/, name: "" },
   { probe: /^\w*Error: arrival shape mismatch for /, name: "" },
