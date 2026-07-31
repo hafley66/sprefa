@@ -3,7 +3,7 @@
 #   bash scripts/1_compile_speed.sh --write-baseline
 # Gate bands: fail above baseline*1.10, fail below
 # baseline*0.75 (bank the win deliberately).
-# Written 2026-07-30T23:54:05Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
+# Written 2026-07-31T00:56:03Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
 # program	phase	inferences
 flagship-flow	parse	230537
 flagship-flow	plan	1372799
@@ -11,11 +11,11 @@ flagship-flow	lower	164181
 flagship-flow	boot	1447
 flagship-flow	emit	397595
 flagship-flow	write	90
-golden-flex	parse	150177
-golden-flex	plan	433698
-golden-flex	lower	62105
-golden-flex	boot	1232
-golden-flex	emit	154232
+golden-flex	parse	181537
+golden-flex	plan	644888
+golden-flex	lower	84372
+golden-flex	boot	1560
+golden-flex	emit	204441
 golden-flex	write	90
 flagship-callgraph	parse	76057
 flagship-callgraph	plan	92930

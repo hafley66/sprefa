@@ -53,25 +53,13 @@
 #                                  -- seven fixtures in conformance/fixtures/
 #                                  json_arm.pl, sweep 140 compiled / 138
 #                                  identical / 0 wrong on BOTH the tick log and
-#                                  the final state, both emitter modes. Absent
-#                                  from THIS file for one measured reason: the
-#                                  json arrival seam not wired on the golden path.
-#                                  The sweep feeds a json column through
-#                                  sweep.pl, which canonicalizes the value to
-#                                  TEXT in prolog before it is written, and the
-#                                  oracle reads the obj(...) straight out of the
-#                                  fixture term. The golden's path has neither
-#                                  half: golden-schedules.ts would bind a JS
-#                                  object into a TEXT column, and
-#                                  golden_oracle.pl's schedule_value/2 maps a
-#                                  JSON STRING to an ATOM, so a canonical-text
-#                                  payload would derive nothing on the oracle
-#                                  side while the emitter derived rows. Closing
-#                                  it is one change on each door (canonicalize
-#                                  an object/array arrival for a json column in
-#                                  the TS seam; parse a string arriving into a
-#                                  json column at the oracle door) and it is the
-#                                  named follow-up, not a workaround.
+#                                  the final state, both emitter modes. This
+#                                  golden now exercises the axis below after
+#                                  the two arrival doors were closed:
+#                                  golden-schedules.ts uses the existing tsv2
+#                                  canonicalizer for object/array JSON columns,
+#                                  and the shared oracle arrival mapper parses
+#                                  that canonical text into obj/list terms.
 #   tagged_brace/1                 reserved. `_{...}` and `Tag{...}` are SWI
 #                                  DICT syntax (measured: term_to_atom gives a
 #                                  dict, not `{}`/1), so the term door could
@@ -163,11 +151,9 @@
 #                                                     REMAINING half is the
 #                                                     witness-digest concat
 #                                                     (concat_non_display_piece)
-#   JSON schedule cannot carry an object value        compile/scripts/
-#                                                     golden_oracle.pl header;
-#                                                     dl6_oracle.pl's own
-#                                                     schedule_value/2 is the
-#                                                     one-clause site
+#   JSON schedule cannot carry an object value        CLOSED in this lane:
+#                                                     the TS schedule seam and
+#                                                     shared oracle arrival mapper
 #   .dl6 text has no final-state oracle leg           same header
 #   one ITickOutcome renders a struct column TWO      tsv2/tests/
 #   ways: outcome.line canonical, outcome.deltas      goldenFlexServed.test.ts
@@ -196,6 +182,63 @@ rel pick_event(tree_id: int, picker: text, kilos: float, sugar: int).
 rel retire_event(tree_id: int).
 rel quarantined(species: text).
 rel sensor(tree_id: int, healthy: bool).
+
+# ═══ json value and pattern axis ════════════════════════════════════════════
+# JSON object pattern `{k: v}` over a decoded object.
+rel orchard_json(tree_id: int, payload: json).
+rel orchard_card(tree_id: int, species: text).
+orchard_card(TreeId, Species) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {species: Species}).
+
+# Open object pattern with a typed capture `{stars: Stars: int}`.
+rel orchard_stars(tree_id: int, stars: int).
+orchard_stars(TreeId, Stars) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {stars: Stars: int}).
+
+# `$key` capture over the dynamic tag object, with an integer value capture.
+rel orchard_tag(tree_id: int, tag: text, value: int).
+orchard_tag(TreeId, TagKey, TagValue) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {tags: {$TagKey: TagValue: int}}).
+
+# `**` descent reaches the nested leaf at any object depth.
+rel orchard_leaf(tree_id: int, leaf: int).
+orchard_leaf(TreeId, Leaf) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {'**': {leaf: Leaf: int}}).
+
+# Array spread `[... {…}]` fans out correlated item fields.
+rel orchard_item(tree_id: int, fruit: text, item_stars: int).
+orchard_item(TreeId, Fruit, ItemStars) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {items: spread({fruit: Fruit, stars: ItemStars: int})}).
+
+# `{}` empty-object match accepts the empty object and excludes arrays/scalars.
+rel orchard_has_empty(tree_id: int).
+orchard_has_empty(TreeId) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {empty: {}}).
+
+# An arriving list(T) carrier fans out through spread.
+rel orchard_list(tree_id: int, tags: list(text)).
+rel orchard_list_tag(tree_id: int, tag: text).
+orchard_list_tag(TreeId, Tag) <-
+  orchard_list(TreeId, Tags),
+  decode(Tags, spread(Tag)).
+
+# Rows -> json_group_array -> decode(spread) -> rows, with list(T) as the
+# aggregate carrier type.
+rel orchard_tag_source(tree_id: int, tag: text).
+rel orchard_tag_list(tree_id: int, tags: list(text)).
+orchard_tag_list(TreeId, json_group_array(Tag)) <-
+  orchard_tag_source(TreeId, Tag).
+
+rel orchard_tag_roundtrip(tree_id: int, tag: text).
+orchard_tag_roundtrip(TreeId, Tag) <-
+  orchard_tag_list(TreeId, Tags),
+  decode(Tags, spread(Tag)).
 
 # `log` + `keep(all)`: the append-only picking journal, nothing pruned.
 rel pick_log(tree_id: int, picker: text) log keep(all).
