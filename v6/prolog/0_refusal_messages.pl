@@ -11,7 +11,8 @@
 
 :- module(refusal_messages,
           [ refusal_inventory/1,
-            refusal_message_clause_count/1
+            refusal_message_clause_count/1,
+            refusal_renderer_counts/2
           ]).
 
 :- use_module('compile/registry', [surface/5]).
@@ -21,11 +22,73 @@
 
 prolog:message(unsupported_construct(WrappedReason)) -->
     { refusal_context(WrappedReason, Reason, Location),
-      reason_name(Reason, ReasonName)
+      refusal_reason_text(Reason, ReasonText)
     },
-    [ 'compiler refusal unsupported_construct(~q); reason=~w; location=~w'-
-      [Reason, ReasonName, Location]
+    [ '~w: unsupported_construct: ~w'-
+      [Location, ReasonText]
     ].
+
+% The text is deliberately assembled from names and typed payload categories.
+% Payload terms never pass through ~q, so a refusal remains one readable line.
+% Inventory members use the specific renderer; a reason outside the inventory
+% keeps the generic fallback and still preserves its functor in parentheses.
+refusal_reason_text(Reason, Text) :-
+    reason_name(Reason, ReasonName),
+    ( ( refusal_inventory_name(ReasonName)
+      ; Reason = registered_surface(Signature),
+        refusal_inventory_signature(Signature)
+      )
+    -> specific_reason_text(ReasonName, Reason, Text)
+    ;  fallback_reason_text(ReasonName, Text)
+    ).
+
+specific_reason_text(ReasonName, Reason, Text) :-
+    Reason = registered_surface(Signature),
+    !,
+    format(atom(Text), "compiler refused surface '~w' (~w)",
+           [Signature, ReasonName]).
+specific_reason_text(ReasonName, Reason, Text) :-
+    reason_subject_text(Reason, Subject),
+    ( Subject == ''
+    -> format(atom(Text), "compiler refused rule '~w' (~w)",
+               [ReasonName, ReasonName])
+    ;  format(atom(Text), "compiler refused rule '~w'~w (~w)",
+               [ReasonName, Subject, ReasonName])
+    ).
+
+fallback_reason_text(ReasonName, Text) :-
+    format(atom(Text), "compiler refused rule '~w' (~w)",
+           [ReasonName, ReasonName]).
+
+refusal_inventory_name(Name) :-
+    refusal_inventory(Inventory),
+    member(Name/_Arity-_, Inventory),
+    !.
+
+refusal_inventory_signature(Signature) :-
+    refusal_inventory(Inventory),
+    member(Signature-_, Inventory),
+    !.
+
+reason_subject_text(Reason, Subject) :-
+    findall(Rel,
+            reason_relation_reference(Reason, Rel),
+            Relations0),
+    sort(Relations0, Relations),
+    ( Relations == []
+    -> Subject = ''
+    ;  maplist(reason_relation_text, Relations, RelationTexts),
+       atomic_list_concat(RelationTexts, ', ', RelationList),
+       format(atom(Subject), " for rel ~w", [RelationList])
+    ).
+
+reason_relation_reference(Reason, Name/Arity) :-
+    sub_term(Name/Arity, Reason),
+    atom(Name),
+    integer(Arity).
+
+reason_relation_text(Name/Arity, Text) :-
+    format(atom(Text), "'~w/~w'", [Name, Arity]).
 
 refusal_context(at(File, Line, Reason), Reason, Location) :-
     !,
@@ -69,6 +132,7 @@ refusal_inventory_entry(Signature, Example) :-
     sub_term(unsupported_construct(Reason), Body),
     nonvar(Reason),
     reason_signature(Reason, Signature),
+    Signature \== at/3,
     copy_term(Reason, Example).
 refusal_inventory_entry(Signature, Example) :-
     refusal_reason_producer(Example),
@@ -114,3 +178,14 @@ refusal_message_clause_count(Count) :-
             ),
             Clauses),
     length(Clauses, Count).
+
+refusal_renderer_counts(Specific, Fallback) :-
+    refusal_inventory(Inventory),
+    findall(Name/Arity,
+            ( member(Name/Arity-_, Inventory),
+              refusal_inventory_name(Name) ),
+            SpecificSignatures0),
+    sort(SpecificSignatures0, SpecificSignatures),
+    length(SpecificSignatures, Specific),
+    length(Inventory, InventoryCount),
+    Fallback is InventoryCount - Specific.

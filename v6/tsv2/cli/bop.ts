@@ -91,7 +91,14 @@ const NAMED_REASON_FUNCTORS = [
 ] as const;
 
 function classifyCompileFailureText(text: string): 1 | 2 {
-  return NAMED_REASON_FUNCTORS.some((functor) => text.includes(`${functor}(`)) ? 2 : 1;
+  // Three shapes: raw term `functor(...)`, rendered trailer `(functor)`,
+  // rendered heading `functor: ...` (0_refusal_messages.pl one-liners).
+  return NAMED_REASON_FUNCTORS.some(
+    (functor) =>
+      text.includes(`${functor}(`) ||
+      text.includes(`(${functor})`) ||
+      text.includes(`${functor}:`),
+  ) ? 2 : 1;
 }
 
 function writeErrorLine(text: string): void {

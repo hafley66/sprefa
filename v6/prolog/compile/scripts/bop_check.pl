@@ -97,14 +97,18 @@ compile_pure(File, Prog, Bindings) :-
 
 result_code(clean, 0).
 result_code(findings(Findings), 2) :-
-    forall(member(Finding, Findings), format(user_error, "finding: ~q~n", [Finding])).
+    forall(member(Finding, Findings), print_rendered_error("finding", Finding)).
 result_code(broken(Reason), 1) :-
-    format(user_error, "broken: ~q~n", [Reason]).
+    print_rendered_error("broken", Reason).
 result_code(from_error(Error), Code) :-
     ( compound(Error), functor(Error, Functor, _), named_reason_functor(Functor)
-    -> format(user_error, "refusal: ~q~n", [Error]), Code = 2
-    ;  format(user_error, "broken: ~q~n", [Error]), Code = 1
+    -> print_rendered_error("refusal", Error), Code = 2
+    ;  print_rendered_error("broken", Error), Code = 1
     ).
+
+print_rendered_error(Prefix, Error) :-
+    message_to_string(Error, Text),
+    format(user_error, "~w: ~w~n", [Prefix, Text]).
 
 % Every throw shape the compile pipeline (analyze.pl / lower.pl / 1_host_expand.pl
 % / compile.pl) uses to name one specific refused construct. Kept as a flat
