@@ -855,6 +855,16 @@ export interface IWatchRootOf {
   (root: string, glob: string): string;
 }
 
+/** Does this worktree-relative path belong to this glob? The ONE membership
+ *  test the `watch` bind has, called by its boot half and its live half alike
+ *  (ruling `glob_dialect = node_matcher_both_halves`, `serve/2_binds.ts`).
+ *  It is an interface and not a bare helper precisely so the two halves are
+ *  bound to one contract: git pathspec used to answer this question at boot and
+ *  disagreed with the live answer on 170 of 242 corpus globs. */
+export interface IMatchesWatchGlob {
+  (relativePath: string, glob: string): boolean;
+}
+
 /** The bind plans one executor owns, refusing any plan naming an executor that
  *  does not exist (`serve/2_binds.ts`). */
 export interface IBindPlansFor {
