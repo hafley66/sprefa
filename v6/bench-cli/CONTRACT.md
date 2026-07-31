@@ -278,22 +278,31 @@ is not conformant.
 
 ### 2.5 Correctness referee
 
-For every case, the **oracle adapter's stdout is the reference**. Every other
-engine's stdout is `cmp`-ed against it byte for byte.
+For every case there is exactly one **referee**, and its stdout is the
+reference log every engine on that case is `cmp`-ed against byte for byte.
+Which engine refereed is recorded per cell in the `referee` column and again in
+the verdict spelling; a reader never has to infer it. Section 7 states when the
+referee is allowed to be something other than swipl.
 
-| verdict | meaning |
-|---|---|
-| `identical` | byte-equal to the oracle. **Only an `identical` engine is timed.** |
-| `wrong` | ran, produced a log, log differs |
-| `refused` | exit 2, named construct unsupported |
-| `error` | exit anything else |
-| `no_reference` | the ORACLE produced no log for this case, so nothing here can be graded |
+| verdict | referee | meaning |
+|---|---|---|
+| `identical` | `oracle` | byte-equal to the **swipl oracle**, the semantic authority |
+| `identical_vs_reference` | `tsv2(proven)` | byte-equal to the **proven reference engine**, used only where swipl exceeded its budget and only under section 7's proof |
+| `wrong` | either | ran, produced a log, log or final-state hash differs from the referee's |
+| `refused` | either | exit 2, named construct unsupported |
+| `error` | either | exit anything else |
+| `over_budget` | `none` | this is the ORACLE's own row on a case where it exceeded the reference budget |
+| `no_reference` | `none` | nothing graded this cell; the reason names whose ceiling it was |
+
+**Only an engine that reproduced its referee is timed.** Both passing verdicts
+are timed and they are not otherwise ranked differently; the distinction is
+about the strength of the claim, not the quality of the number.
 
 `no_reference` exists because the alternative is a lie. When the reference leg
-fails or times out, `cmp` against a missing or truncated reference calls every
-other engine `wrong` — reporting an engine defect where the real fact is that
-the reference engine did not reach that cell. Under `no_reference` the engine
-is not run at all and the reason line names whose ceiling it is.
+fails and no proven referee is available, `cmp` against a missing or truncated
+reference calls every other engine `wrong` — reporting an engine defect where
+the real fact is that no referee reached that cell. Under `no_reference` the
+engine is not timed and the reason line names whose ceiling it is.
 
 **An engine without a matching log is never timed.** This is the v1 asymmetry
 lesson made structural: `SCALE.md` recorded v1 as ~10x faster than tsv2 on
@@ -304,18 +313,53 @@ does not produce a number.
 ### 2.6 Standings CSV
 
 ```
-case,engine,verdict,wall_ms,external_wall_ms,compile_ms,ticks,statements,peak_rss_mb,db_bytes,input_hash,notes
+case,family,engine,verdict,referee,wall_ms,compile_ms,ticks,statements,peak_rss_mb,db_bytes,final_hash,input_hash,note
 ```
 
 - `input_hash` = sha256 of `program bytes || 0x00 || schedule bytes`, first
   16 hex chars. **All engines on one case must show the same hash**, the
   PERF-REPORT "all engines must match" convention.
+- `referee` = which engine graded this cell: `oracle`, `tsv2(proven)`, `none`.
 - `wall_ms` is the engine-reported median over `BENCH_RUNS` runs (default 5).
-- `external_wall_ms` is hyperfine's mean when hyperfine is present, otherwise
-  the repeat loop's median of `/usr/bin/time` wall. Carries the startup floor;
-  read it as a sanity check, never as the ranking.
 - `peak_rss_mb` from `/usr/bin/time -l maximum resident set size`.
-- Any `N/A` cell has its reason in `notes`.
+- `final_hash` = the third check, section 2.7.
+- Any `N/A` cell has its reason in the standings' reason list.
+
+The external-wall column is priced in section 1 and not currently emitted: with
+hyperfine absent the repeat loop's `/usr/bin/time` median carries the ~30 ms
+startup floor unequally across engines, which is the exact number this contract
+refuses to rank on. It returns as a column the day hyperfine is installed.
+
+### 2.7 Final-state hash — the third check
+
+Every cell carries `final_hash` at every scale: the first 16 hex of the sha256
+of one canonical final-state line, `{"final":{"<rel>":[[row],...]}}` with rel
+names sorted, row texts sorted, empty rels dropped, and every value encoded by
+the SAME `TickLogEmitter.valueText` the tick log uses.
+
+This is the sweep's own final-state leg (`oracle_final/2` writes
+`<name>.oracle.final.jsonl`; `v6/tsv2/scripts/sweep.ts` diffs it) brought into
+the bench, and it is a check, not a decoration:
+
+- On a **program case** the check is CROSS-ENGINE. The oracle's side is the
+  committed `<name>.oracle.final.jsonl` artifact for the same fixture and the
+  same schedule bytes; tsv2's side is computed live from the database at the
+  end of the run. The two matching is a second, independent agreement beside
+  the tick-log diff.
+- On a **scale case** there is no fixture and so no swept oracle final state;
+  the oracle row's `final_hash` is `N/A`. What the column checks there is
+  cross-RUN: the reference invocation's hash against each of the timed repeats.
+- Either way, a cell whose tick log matches and whose final-state hash does not
+  is **`wrong`**. Sabotage receipt (c) in `bench.sh`'s header is exactly that
+  case: tick logs agreed, one byte of the reference final-state line changed,
+  cell flipped `wrong`, exit 1.
+
+Why it earns its place: the tick-log diff is a statement about the *sequence*
+of deltas, and the ruling keeps final state as a third check precisely because
+a divergence that cancels out by the last tick and a divergence that never
+shows in a delta are different failure shapes. It is also the only check that
+says anything at all about an EMPTY-schedule case, which the tick-log diff
+calls identical on no evidence (`SCOREBOARD.md` Finding 2's vacuous-pass class).
 
 ---
 
@@ -357,6 +401,28 @@ variant compiled down a bench-only path. (That the two doors agree is itself
 the standing `TEXT_DOOR` receipt; this is that property being leaned on
 rather than re-proven.)
 
+**Measured, because the reference tier leans harder on this than one `cmp`
+supports.** Compiling every one of the 190 tick-log-identical fixtures through
+the text door and `cmp`-ing against the sweep's own module: **96 byte-identical,
+94 differ.** Every difference measured is the same one — `Initial` fixture
+facts, which a `.dl6` text file has no spelling for, so they are present as
+`boot` statements in the term-door module and absent from the text-door one:
+
+```
+$ diff out/mod_filter_map_is_a_level_rule.ts \
+       ../prolog/compile/out/filter_map_is_a_level_rule.ts
+118a119,120
+>   { sql: `INSERT OR IGNORE INTO "reading" (...) VALUES (?, ?)`, params: ["cpu", 12] },
+>   { sql: `INSERT OR IGNORE INTO "reading" (...) VALUES (?, ?)`, params: ["disk", 4] },
+```
+
+That is a limit of the .dl6 SURFACE, not a compiler divergence, and it is the
+same one `schedule-gen.ts`'s header records for s2's link rows. **All nine
+program cases in `cases.json` are in the byte-identical 96**, which is what the
+claim above needs; a case that was not would be timing a program with a
+different starting world than the sweep graded, and should be moved or seeded
+through its schedule.
+
 ---
 
 ## 4. Cases
@@ -378,8 +444,14 @@ shapes `SCALE.md` already uses. See §6 for what was and was not taken.
 ```
 cd v6 && just bench-cli              # full run, writes STANDINGS.md + standings.csv
 BENCH_RUNS=9 just bench-cli          # more repeats
-BENCH_CASES=match_classify_response just bench-cli   # one case
+BENCH_CASES=match_classify just bench-cli            # one case (writes into out/)
+BENCH_ORACLE_BUDGET=180 just bench-cli               # give swipl longer before deferring
 ```
+
+`just sweep` is the upstream of the reference tier: it writes the artifacts
+`proof.ts` reads. A tree whose sweep has never run grades everything swipl
+reaches and refuses the rest, loudly (exit 1). Full run ~5 min on the machine
+above, of which ~2.5 min is the five cases where swipl runs out its budget.
 
 ---
 
@@ -415,7 +487,101 @@ Recorded here rather than silently skipped.
   `statistics/2` pair around `print_ticklog/3` plus a perf-JSON write, small,
   but it is compiler-side surface and wants its own review.**
 
-## 7. THE PHASE-0 FINDING: the referee has a scale ceiling
+## 7. The referee at scale: the ruling, the promotion rule, the risk
+
+Phase 0 recorded a finding (section 7.1 below, kept verbatim): the reference
+engine that produces the left-hand side of every diff does not reach 10k rows,
+so a rust engine could not be graded at competition scale. That is now ruled
+and implemented.
+
+### 7.0.1 The ruling
+
+> `bench_reference = proven_engine_reference` — user 2026-07-31, `rulings.pl`.
+> The big-scale referee is a pinned engine (tsv2 first) that EARNS reference
+> status: byte-proven against the swipl oracle over the entire oracle-reachable
+> corpus on every sweep; final-state hash retained as a third check at all
+> scales. swipl stays the semantic authority where it reaches; rust is graded
+> tick-log byte-diff against the proven reference beyond.
+
+This is exit (1) of the two the phase-0 finding priced ("a reference that
+scales"), and it keeps exit (2)'s final-state hash as a check rather than as a
+substitute for the log diff.
+
+### 7.0.2 The promotion rule, exactly as implemented
+
+A cell is graded `identical_vs_reference` against the tsv2 adapter's log **only
+when all three hold**. Any one missing and the cell is `no_reference` and the
+run exits 1.
+
+1. **The oracle exceeded its BUDGET on this cell** — exit 124 from the
+   process-group timeout, and only 124. `BENCH_ORACLE_BUDGET` defaults to 30s;
+   the slowest case swipl actually reaches is s2/1k at ~2.3s and the fastest it
+   does not was still running past 183s, so every budget on that plateau defers
+   the same five cells. Any OTHER non-zero oracle exit is `error` +
+   `no_reference`: an unexplained reference failure is the moment when grading
+   past the reference is least defensible, and a crash must not buy a promotion
+   that a timeout buys.
+2. **BREADTH: the sweep's artifacts record total oracle agreement.** `proof.ts`
+   reads `v6/prolog/compile/out/manifest.json` and `out/run-results.json` —
+   the files `just sweep` writes — and requires: zero `wrong`, zero
+   `emitted_crash`, zero `no_oracle_log`, zero `final_wrong`, zero compiler
+   crashes, `identical > 0`, `run-results` covering exactly the set the
+   manifest calls compiled, and `identical + rejection` accounting for every
+   run record. The artifacts are consumed, not recomputed: re-running 191
+   fixtures inside a bench run is a second, slower copy of `just sweep`. The
+   standings record the `sweep_sha` (sha256 over both artifacts, first 16 hex)
+   and every bucket count, so the exact proof a table leaned on is nameable.
+3. **CURRENCY: this run re-proves the referee where swipl reaches.** Artifacts
+   are a claim about the tree at sweep time and cannot know whether the
+   compiler or runtime moved since. So pass 1 grades every case swipl DOES
+   reach against swipl, using the same adapter that would referee at scale, and
+   a single failure there refuses the whole tier. Today that is 11 cells, nine
+   of them real programs. Breadth from the artifacts, currency from the run;
+   neither alone is the rule.
+
+The reference log for a promoted cell is a **separate invocation** from the
+timed repeats. With one engine in the field, diffing an engine against its own
+single run would be vacuous; diffing five runs against a sixth is a real
+repeatability check, and it is the exact seam a rust adapter plugs into with no
+change to the harness.
+
+**Gate.** `report.ts` exits 1 on: a promoted cell with no valid proof behind it;
+any cell left ungraded because the proof is missing or invalid (the message
+names the reason and says `run just sweep`); any cell that failed its referee;
+input-hash disagreement. `bench.sh`'s floor gate — a run that timed nothing is
+a broken rig, not a slow one — still runs after it, now reading the CSV that
+run actually wrote.
+
+### 7.0.3 The residual risk, stated rather than papered over
+
+**A bug shared by tsv2 and a future rust engine passes the tick-log diff at big
+scale.** The proven referee is proven against swipl only where swipl reaches;
+beyond that budget, two engines that are wrong in the same way agree with each
+other and the diff is silent. Nothing in this tier can close that, because
+there is no third opinion out there to ask.
+
+The two mitigations are the ones the ruling names, and they are mitigations,
+not a fix:
+
+- **the small-scale swipl proof**, which is where the semantics actually live.
+  A shared bug has to be scale-dependent to survive it: it must not fire on any
+  of the 190 corpus fixtures nor on any of the 11 cells swipl referees in the
+  run itself. That is a narrow shape, and it is exactly the shape (arithmetic
+  that overflows only past some row count, an index the planner abandons at
+  size, a cache that only fills at scale) worth naming as the thing this bench
+  cannot see.
+- **the final-state hash**, which is a second reading of the same run taken
+  through a different path — a SELECT over the final tables rather than the
+  per-tick delta stream. It catches a divergence the delta log cancels out; it
+  does not catch a divergence both readings share.
+
+The honest summary: at s1/1k the standings assert equality with the language's
+specification. At s1/100k they assert equality with an engine that was equal to
+the specification everywhere the specification could be run. Those are different
+claims, and the `identical` / `identical_vs_reference` split exists so that no
+reader has to remember which is which.
+
+## 7.1 THE PHASE-0 FINDING (kept verbatim; the ruling above is its answer)
 
 The result phase 1 most needs, and it is about the ORACLE rather than tsv2.
 
@@ -450,3 +616,20 @@ harness work:
 
 Recorded rather than worked around: a bench that quietly stopped grading at
 scale would be exactly the v1 asymmetry wearing a different hat.
+
+**What the ruling changed, cell by cell.** The three `no_reference` rows above
+are graded now, and two cells the finding could not even list were added
+because the referee reaches them:
+
+| cell | phase 0 | now | tsv2 wall ms |
+|---|---|---|---:|
+| s1/10k | `no_reference` | `identical_vs_reference` | 280.0 |
+| s1/100k | not benched | `identical_vs_reference` | 2610.4 |
+| s2/10k | `no_reference` | `identical_vs_reference` | 153.9 |
+| s2/100k | not benched | `identical_vs_reference` | 1420.7 |
+| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 9928.2 |
+
+s3 stays at 1k: its shape is a 2-atom cross join, quadratic on purpose, and
+1000x1000 already produces the 1M combined rows the memory column is there to
+watch (929.7 MB peak RSS against a 512 MB V8 old-space cap — most of that is
+sqlite, outside the heap the flag bounds).
