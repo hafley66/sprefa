@@ -1,7 +1,0 @@
-# Q4 probe: is the head-last spelling reachable at all today? `|->` is the
-# match-arm arrow, already in the grammar; this asks whether it is usable
-# OUTSIDE a match block as a top-level rule terminator.
-rel reading(sensor: text, raw: int).
-rel tripled(sensor: text, value: int).
-
-reading(Sensor, Raw), Value := Raw * 3 |-> tripled(Sensor, Value).

@@ -1,7 +1,0 @@
-[
-  [ {"rel":"failure","sign":"add","row":["sync"]} ],
-  [ {"rel":"failure","sign":"del","row":["sync"]} ],
-  [ {"rel":"failure","sign":"add","row":["sync"]} ],
-  [ {"rel":"failure","sign":"del","row":["sync"]},
-    {"rel":"failure","sign":"add","row":["fetch"]} ]
-]

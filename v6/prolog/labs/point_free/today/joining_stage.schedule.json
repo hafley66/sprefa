@@ -1,7 +1,0 @@
-[
-  [ {"rel":"reading","sign":"add","row":["north",4]} ],
-  [ {"rel":"label","sign":"add","row":["north","roof"]} ],
-  [ {"rel":"reading","sign":"add","row":["south",6]},
-    {"rel":"label","sign":"add","row":["south","yard"]} ],
-  [ {"rel":"label","sign":"del","row":["north","roof"]} ]
-]

@@ -510,3 +510,15 @@ construct.
 5. **`merge_family.pl:111` is an oracle-only fixture** (receipt 5d): its
    `not(pre(counter(Name, _)))` base arm is `edge_body_with_negation` on the
    compiler.
+
+## Coordinator addendum (landing)
+
+Re-verified on merged main (post affinity-fix): receipts 29/29, conformance
+258/0. The pre-drift finding reproduced by the coordinator's own probe: a
+pre-in-edge-body program compiles exit 0 through `bop check` while
+registry.pl:76 still reads `refused` — filed as ARCH `pre_registry_drift`
+(which arc opened the path, whether the compiled semantics is the
+measured-wrong sampled reading on chained occurrences, and why the sweep's
+13 edge_body_needs_pre fixtures still refuse while this probe compiles are
+the three questions). Lab files died on landing; last full copy at commit
+`89ccaccf` (`git show 89ccaccf:v6/prolog/labs/point_free/receipts.sh`).

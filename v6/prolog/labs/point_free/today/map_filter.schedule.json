@@ -1,5 +1,0 @@
-[
-  [ {"rel":"reading","sign":"add","row":["north",4]} ],
-  [ {"rel":"reading","sign":"add","row":["south",0]},
-    {"rel":"reading","sign":"add","row":["east",9]} ]
-]

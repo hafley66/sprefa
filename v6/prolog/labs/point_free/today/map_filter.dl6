@@ -1,9 +1,0 @@
-# Q1 row: rx `map` and `filter` = ordinary body items, no operator at all.
-# rx: reading$.pipe(filter(r => r.raw > 0), map(r => r.raw * 3))
-#
-# `:=` is the map and the comparison is the filter. Both are already
-# point-free in the sense that matters: neither names an intermediate rel.
-rel reading(sensor: text, raw: int).
-rel tripled(sensor: text, value: int).
-
-tripled(Sensor, Value) <- reading(Sensor, Raw), Raw > 0, Value := Raw * 3.

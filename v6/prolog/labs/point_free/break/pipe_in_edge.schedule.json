@@ -1,5 +1,0 @@
-[
-  [ {"rel":"ping","sign":"add","row":["cli",4]} ],
-  [ {"rel":"ping","sign":"del","row":["cli",4]} ],
-  [ {"rel":"ping","sign":"add","row":["cli",4]} ]
-]

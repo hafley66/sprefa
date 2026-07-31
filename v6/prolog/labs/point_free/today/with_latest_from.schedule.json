@@ -1,6 +1,0 @@
-[
-  [ {"rel":"draft","sign":"add","row":["signup","a"]} ],
-  [ {"rel":"draft","sign":"add","row":["signup","ab"]} ],
-  [ {"rel":"submit","sign":"add","row":["signup"]} ],
-  [ {"rel":"draft","sign":"add","row":["signup","abc"]} ]
-]

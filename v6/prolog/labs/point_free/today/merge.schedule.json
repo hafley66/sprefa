@@ -1,5 +1,0 @@
-[
-  [ {"rel":"click_left","sign":"add","row":[1]} ],
-  [ {"rel":"click_right","sign":"add","row":[2]},
-    {"rel":"click_left","sign":"add","row":[3]} ]
-]

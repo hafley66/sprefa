@@ -54,7 +54,6 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 346 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/point_free/README.md](prolog/labs/point_free/README.md) | 34 | point_free lab |
 | [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 496 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -804,13 +803,6 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
-```
-
-### prolog/labs/point_free/README.md
-```
-1:# point_free lab
-15:## What each file is
-29:## The one thing to read first
 ```
 
 ### prolog/labs/type_matrix/MATRIX.md

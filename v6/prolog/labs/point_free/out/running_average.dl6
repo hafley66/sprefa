@@ -1,7 +1,0 @@
-rel sample(sensor: text, value: int).
-rel running(sensor: text, total: int, seen: int) key(1).
-rel mean(sensor: text, average: int).
-
-running(Sensor, Total, Seen) <+ sample(Sensor, Value), not(running(Sensor, _, _)), Total := 0 + Value, Seen := 0 + 1.
-running(Sensor, Total, Seen) <+ sample(Sensor, Value), pre(running(Sensor, CarriedTotal, CarriedSeen)), Total := CarriedTotal + Value, Seen := CarriedSeen + 1.
-mean(Sensor, Average) <- running(Sensor, Total, Seen), Average := Total / Seen.

@@ -1,6 +1,0 @@
-rel reading(sensor: text, raw: int).
-rel alert(sensor: text, value: int).
-
-stage_alert_2_1(Sensor, Doubled) <- reading(Sensor, Raw), Doubled := Raw * 2.
-stage_alert_2_2(Sensor, Shifted) <- stage_alert_2_1(Sensor, Doubled), Shifted := Doubled + 10.
-alert(Sensor, Value) <- stage_alert_2_2(Sensor, Shifted), Shifted > 50, Value := Shifted.

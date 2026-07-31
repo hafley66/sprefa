@@ -1,9 +1,0 @@
-# corpus 9 -- TO ARRAY / GROUP. rx: item$.pipe(groupBy(i => i.list_id),
-#   mergeMap(g => g.pipe(toArray())))
-#
-# One rule and no move. `json_group_array` is the aggregate head and the group
-# key is the head's other column, so grouping needs no operator either.
-rel item(list_id: int, value: text).
-rel gathered(list_id: int, values: json).
-
-gathered(ListId, json_group_array(Value)) <- item(ListId, Value).

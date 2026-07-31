@@ -1,8 +1,0 @@
-rel increment(name: text).
-rel decrement(name: text).
-rel counter(name: text, total: int) key(1).
-
-counter(Name, Total) <+ increment(Name), not(counter(Name, _)), Total := 0 + 1.
-counter(Name, Total) <+ increment(Name), pre(counter(Name, Carried)), Total := Carried + 1.
-counter(Name, Total) <+ decrement(Name), not(counter(Name, _)), Total := 0 - 1.
-counter(Name, Total) <+ decrement(Name), pre(counter(Name, Carried)), Total := Carried - 1.
