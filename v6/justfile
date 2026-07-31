@@ -247,6 +247,14 @@ scale-floor:
 bench:
 	cd {{v6}}/sprefa-store/bench && bash run.sh
 
+# the language-agnostic CLI bench: one contract any engine implementation can
+# satisfy, tick-log byte-diff vs the oracle as the referee, standings over the
+# real programs + the s1/s2/s3 shapes. Gates the rust lowering (phase 0 of
+# plans/2026-07-31-rust-course.md). Contract + buy-verdict: v6/bench-cli/CONTRACT.md
+# (expect: BENCH-CLI timed=13 disqualified=1 hash-agreement=OK, exit 0)
+bench-cli:
+	cd {{v6}}/bench-cli && bash bench.sh
+
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass

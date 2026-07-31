@@ -1,0 +1,72 @@
+[
+  {
+    "case": "callgraph_derivation",
+    "family": "program",
+    "note": "the alpha flagship rail: def/call/calls derivation over extracted facts",
+    "program": "../prolog/compile/dl_view/callgraph_derivation_over_extraction.dl6",
+    "schedule": "../prolog/compile/out/callgraph_derivation_over_extraction.schedule.json"
+  },
+  {
+    "case": "callgraph_unused",
+    "family": "program",
+    "note": "flagship anti-monotone leg: unused inverts with the call set",
+    "program": "../prolog/compile/dl_view/callgraph_unused_inverts_with_the_call_set.dl6",
+    "schedule": "../prolog/compile/out/callgraph_unused_inverts_with_the_call_set.schedule.json"
+  },
+  {
+    "case": "flow_reach_recursive",
+    "family": "program",
+    "note": "recursive transitive closure over resolved edges -- the DAG-reach shape PERF-REPORT benches in rust",
+    "program": "../prolog/compile/dl_view/flagship_flow_reach_over_resolved_edges.dl6",
+    "schedule": "../prolog/compile/out/flagship_flow_reach_over_resolved_edges.schedule.json"
+  },
+  {
+    "case": "flow_sig_owner_join",
+    "family": "program",
+    "note": "dataflow: signature-owner join types the resolved callee",
+    "program": "../prolog/compile/dl_view/flow_sig_owner_join_types_the_resolved_callee.dl6",
+    "schedule": "../prolog/compile/out/flow_sig_owner_join_types_the_resolved_callee.schedule.json"
+  },
+  {
+    "case": "diag_seven_ticks",
+    "family": "program",
+    "note": "the LSP diag rail end to end, seven ticks",
+    "program": "../prolog/compile/dl_view/diag_scenario_seven_ticks_end_to_end.dl6",
+    "schedule": "../prolog/compile/out/diag_scenario_seven_ticks_end_to_end.schedule.json"
+  },
+  {
+    "case": "clock_rel_join_storms",
+    "family": "program",
+    "note": "largest schedule in the identical corpus; the tick-phase-alignment case",
+    "program": "../prolog/compile/dl_view/clock_rel_join_storms.dl6",
+    "schedule": "../prolog/compile/out/clock_rel_join_storms.schedule.json"
+  },
+  {
+    "case": "match_classify",
+    "family": "program",
+    "note": "match block sugar through the shared expansion",
+    "program": "../prolog/compile/dl_view/match_classify_response.dl6",
+    "schedule": "../prolog/compile/out/match_classify_response.schedule.json"
+  },
+  {
+    "case": "aggregate_retraction",
+    "family": "program",
+    "note": "count/min/max under arrivals AND retraction",
+    "program": "../prolog/compile/dl_view/aggregate_count_min_max_track_arrivals_and_retraction.dl6",
+    "schedule": "../prolog/compile/out/aggregate_count_min_max_track_arrivals_and_retraction.schedule.json"
+  },
+  {
+    "case": "enum_tag_view",
+    "family": "program",
+    "note": "enum variant rels round-trip through the derived tag view",
+    "program": "../prolog/compile/dl_view/enum_decl_variant_rows_round_trip_through_tag_view.dl6",
+    "schedule": "../prolog/compile/out/enum_decl_variant_rows_round_trip_through_tag_view.schedule.json"
+  },
+
+  { "case": "s1/1k",  "family": "scale", "shape": "s1", "rows": 1000,  "program": "programs/s1_keyed_replace.dl6" },
+  { "case": "s1/10k", "family": "scale", "shape": "s1", "rows": 10000, "program": "programs/s1_keyed_replace.dl6" },
+  { "case": "s2/1k",  "family": "scale", "shape": "s2", "rows": 1000,  "program": "programs/s2_two_hop_join.dl6" },
+  { "case": "s2/10k", "family": "scale", "shape": "s2", "rows": 10000, "program": "programs/s2_two_hop_join.dl6" },
+  { "case": "s3/1k",  "family": "scale", "shape": "s3", "rows": 1000,  "program": "programs/s3_cross_join.dl6",
+    "note": "the memory-wall cell: 1000x1000 = 1M combined rows; SCALE.md records tsv2 DNF here" }
+]
