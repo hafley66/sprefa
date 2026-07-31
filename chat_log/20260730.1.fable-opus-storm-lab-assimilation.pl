@@ -487,3 +487,7 @@ lane_landed(point_free_lab, 'merge of lab tip 89ccaccf, lab-death 1b17a7ea (last
 answered(pre_registry_drift, 'coordinator scout 2026-07-30 night: NOT a semantics bug. pre_occurrence_loop LANDED today (7f086fd3, ARCH row done): ordered occurrence execution via __pre_<rel> snapshots, 13 former edge_body_needs_pre fixtures compile, orderedPre.test.ts 123 lines, run-results has ZERO edge_body_needs_pre. The drift is DOC-ONLY: registry.pl:76 still refused, SYNTAX/SCOREBOARD stale, golden absence entry now states a false reason. Fix folded into the seq wiring lane (same files).').
 
 directive(night_ruling_round, 'user: seq APPROVED (M2 only, explain it); release GATED on arch-from-single-dl6 (dogfood, python renderer dies); pre = "just look" (scouted, resolved); devlog = YES dogfood hard.').
+
+in_flight(seq_wire, 'codex luna high, worktree ../sprefa-codex-seqwire, base 5e78b196, brief plans/2026-07-30-seq-wire-brief.md', 'M2 seq per user approval + pre doc truth folded in (registry live flip, golden exercised, SYNTAX/SCOREBOARD refresh)').
+in_flight(selfmap_dogfood, 'codex luna high, worktree ../sprefa-codex-selfmap, base 5e78b196, brief plans/2026-07-30-selfmap-dogfood-brief.md', 'RELEASE GATE: ARCH-MAP.md from ONE dl6 file, group_concat assembly, python renderer deleted').
+in_flight(devlog_rail, 'codex luna high, worktree ../sprefa-codex-devlog, base 5e78b196, brief plans/2026-07-30-devlog-rail-brief.md', 'dogfood docs: dl6 reads chat_log/*.pl ledgers, emits DEVLOG.md').
