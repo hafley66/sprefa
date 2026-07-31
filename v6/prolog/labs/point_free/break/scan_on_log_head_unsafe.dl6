@@ -1,0 +1,5 @@
+rel hit(page: text, weight: int).
+rel trail(page: text, score: int) log keep(all).
+
+trail(Page, Score) <+ hit(Page, Weight), not(trail(Page, _)), Score := 0 + Weight.
+trail(Page, Score) <+ hit(Page, Weight), pre(trail(Page, Carried)), Score := Carried + Weight.

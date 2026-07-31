@@ -1,0 +1,13 @@
+# BREAK M3-1, the SILENT half. What the `|>` expansion produces when every cut
+# becomes a level rule: the head stops being occurrence-driven and becomes
+# state-derived, so the row RETRACTS when the ping departs.
+#
+# Hand-transcribed from the expander's own output for the log-headed twin
+# (break/pipe_in_edge_unsafe.dl6), with the head rel swapped for a keyed one so
+# that nothing refuses it.
+rel ping(client: text, size: int).
+rel seen(client: text, scaled: int).
+
+stage_seen_2_1(Client, Size) <- ping(Client, Size).
+stage_seen_2_2(Client, Doubled) <- stage_seen_2_1(Client, Size), Doubled := Size * 2.
+seen(Client, Scaled) <- stage_seen_2_2(Client, Doubled), Scaled := Doubled + 1.

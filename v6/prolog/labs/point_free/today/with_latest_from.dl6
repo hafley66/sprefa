@@ -1,0 +1,12 @@
+# Q1 row: rx `withLatestFrom` = `latest/1` in an edge body.
+# rx: submit$.pipe(withLatestFrom(form$))
+#
+# `submit` is the trigger and fires the rule; `latest(draft(...))` SAMPLES the
+# current draft without becoming a second trigger, which is exactly
+# withLatestFrom's asymmetry. A bare `draft(...)` atom here would make every
+# draft edit fire a submission.
+rel submit(form: text).
+rel draft(form: text, body: text) key(1).
+rel submission(form: text, body: text) log keep(all).
+
+submission(Form, Body) <+ submit(Form), latest(draft(Form, Body)).

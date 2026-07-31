@@ -1,0 +1,10 @@
+# corpus 3 -- PAIRWISE. rx: reading$.pipe(pairwise())
+#
+# One rule, and no candidate move touches it. The update-arm verdict already
+# established this shape: the minus delta of the keyed rel IS the old value,
+# so `finalize` plus the read is the pair, with no fold and no cursor.
+rel reading(sensor: text, value: int) key(1).
+rel step(sensor: text, previous: int, current: int) log keep(all).
+
+step(Sensor, Previous, Current) <+ finalize(reading(Sensor, Previous)),
+                                   reading(Sensor, Current).

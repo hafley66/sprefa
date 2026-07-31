@@ -1,0 +1,6 @@
+[
+  [ {"rel":"drag_start","sign":"add","row":["mouse",0]} ],
+  [ {"rel":"drag_move","sign":"add","row":["mouse",7]} ],
+  [ {"rel":"drag_move","sign":"add","row":["mouse",12]},
+    {"rel":"drag_start","sign":"add","row":["pen",0]} ]
+]
