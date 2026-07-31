@@ -503,3 +503,23 @@ about what `text` does to an integer.
   1,700 generated files out of `v6/tsv2/gen_emitted/`.
 - `out/` is gitignored (about 1,700 files); `MATRIX.md` and `matrix.json` at
   the lab root are the committed artifacts.
+
+## Coordinator addendum: merged-main re-run (post golden-json-seam merge)
+
+The golden seam lane landed while this lab ran and changed exactly the door
+this verdict warned about (golden_oracle.pl schedule_value now rides the
+shared 0_json_arrival.pl). Coordinator re-ran `matrix.sh` on merged main
+(f91e1d5d-era tree): 422 cells = 79 IDENTICAL / 156 DIVERGENT / 71
+SILENT_COERCION / 116 NAMED_REFUSAL (was 73/168/65/116 at base 5ce31a24) —
+the shared arrival module healed 12 divergent cells, nothing worsened. The
+headline defect REPRODUCES at merged main:
+`cell_arrival__int__numeric_text  incremental "ABSENT" vs naive "4" vs
+oracle "\"4\""` — the DEFAULT emitter path drops affinity-rewritten arrival
+deltas (v6/tsv2/runtime/1_incremental.ts, post-affinity RETURNING text vs
+wire value under JSON.stringify comparison). Fix lane dispatched.
+
+Two lab symlinks (`runtime`, `node_modules` -> ../../../tsv2/...) did not
+survive the merge and 266 cells read emitter_run_error until the coordinator
+recreated them; they are now committed so `matrix.sh` regenerates anywhere.
+Lab dir stays alive pending the fix wave (the matrix is the fix lanes'
+verification tool); protocol debt accepted, same as csp/extract-t2.

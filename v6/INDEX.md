@@ -54,7 +54,7 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 346 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 576 | Type matrix -- generated, do not hand-edit |
+| [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 497 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-extract/tests/fixtures/deps/README.md](sprefa-extract/tests/fixtures/deps/README.md) | 16 |  |
@@ -810,10 +810,10 @@
 1:# Type matrix -- generated, do not hand-edit
 7:## Verdict counts
 21:## The two `.dl6` oracle doors
-110:## Per position
-122:## Per declared type
-135:## Per fed value
-150:## Every cell
+31:## Per position
+43:## Per declared type
+56:## Per fed value
+71:## Every cell
 ```
 
 ### skills/mermaid-living-map.md
