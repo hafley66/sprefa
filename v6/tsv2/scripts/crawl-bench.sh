@@ -118,19 +118,48 @@ EOF
 dir = "$CORPUS"
 EOF
 
+  # ONE PROGRAM FOR THE WHOLE CORPUS.
+  #
+  # Until 2026-07-31 this program had no repo column at all: it read the
+  # repository root out of `$DL_CRAWL_REPO`, which meant one served process,
+  # one sqlite database and one program load PER REPOSITORY, driven by a shell
+  # loop in run_v6_leg. Ruling repo_column_spelling = distinct_name_hosts made
+  # the root an ordinary demand column on distinct-named hosts, so the loop is
+  # gone: the repository set arrives as `want_repo` rows in ONE /arrivals post
+  # and every fan-out below it is rows, not processes.
+  #
+  # Same hosts as v6/dl/fixtures/crawl_org.dl6, minus the `repos` host: the
+  # bench needs `--max-repos` to select its corpus slice, so the repository set
+  # is posted rather than discovered. crawl_org.dl6 is where the discovery leg
+  # (repos on an interval bind) is graded.
+  #
+  # `repo_extract` mentions `{repo}/{path}`, which is what selects the
+  # sprefa_extract_repo executor (registry.pl host_execution) and keeps the
+  # applicative fold. The old `$DL_CRAWL_REPO/$path` spelling used shell
+  # variable references, so it fell to the generic shell executor and folded
+  # nothing.
+  #
+  # `>/dev/null && printf` IS DELIBERATE AND IS THE OLD PROGRAM'S SHAPE: this
+  # host answers ONE row per extracted file, not the extractor's whole JSONL.
+  # Measured, because the first draft did the latter: capturing every cst/type/
+  # call/df record as an EDB arrival took the same 779-file corpus from 20.26s
+  # to 62.97s and the database from 1.0MB to 595MB. That is a real and
+  # interesting number about the extraction seam, and it is NOT this bench's
+  # question -- the before/after here isolates the REPOSITORY LOOP, so the
+  # extraction leg has to stay byte-for-byte the work it was.
   cat >"$V6_PROGRAM" <<'EOF'
-sh files(glob: text) -> (path: text, digest: text) =
-  `git -C "$DL_CRAWL_REPO" ls-files -- '{glob}' | while IFS= read -r entry; do printf '{"path":"%s","digest":"%s"}\n' "$entry" "$(git -C "$DL_CRAWL_REPO" hash-object -- "$entry")"; done`.
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
 
-sh extract(path: text, digest: text) -> (done: text) =
-  `"$DL_EXTRACT_BIN" --family cst,type,call,df "$DL_CRAWL_REPO/$path" >/dev/null && printf '%s\n' "$path"`.
+sh repo_extract(repo: text, path: text, digest: text) -> (done: text) =
+  `"$DL_EXTRACT_BIN" --family cst,type,call,df {repo}/{path} >/dev/null && printf '%s\n' '{path}'`.
 
-rel want(glob: text).
-rel file(path: text, digest: text).
-file(path, digest) <- want(glob), files(glob, path, digest).
+rel want_repo(repo: text, glob: text).
+rel repo_file(repo: text, path: text, digest: text).
+repo_file(repo, path, digest) <- want_repo(repo, glob), repo_files(repo, glob, path, digest).
 
-rel extracted(path: text).
-extracted(path) <- file(path, digest), extract(path, digest, done).
+rel extracted(repo: text, path: text).
+extracted(repo, path) <- repo_file(repo, path, digest), repo_extract(repo, path, digest, done).
 EOF
 }
 
@@ -219,32 +248,49 @@ json_rows() {
   curl -fsS "$1" | python3 -c 'import json, sys; print(len(json.load(sys.stdin)["rows"]))'
 }
 
+# Settle on repo_file reaching the corpus's own file count, then on `extracted`
+# holding still. The two are separate conditions because they are separate
+# claims: repo_file == expected says the ENUMERATION fan-out reached every
+# repository, and a quiet `extracted` says the EXTRACTION fan-out drained. They
+# are not equal counts -- `extracted` is a projection of a multi-row extractor
+# answer, and a file the extractor reports nothing for contributes no row --
+# so requiring equality (as the per-repository version did, with its
+# `&& printf` guaranteeing one line per file) would hang on the first such file.
 wait_for_rows() {
-  local base="$1" expected="$2" deadline=$((SECONDS + 600)) file_rows extracted_rows
+  local base="$1" expected="$2" deadline=$((SECONDS + 1800))
+  local file_rows=0 extracted_rows=0 previous=-1 quiet=0
   while [ "$SECONDS" -lt "$deadline" ]; do
-    file_rows="$(json_rows "$base/idb/file")"
+    file_rows="$(json_rows "$base/idb/repo_file")"
     extracted_rows="$(json_rows "$base/idb/extracted")"
-    if [ "$file_rows" -eq "$expected" ] && [ "$extracted_rows" -eq "$expected" ]; then
-      printf '%s\t%s\n' "$file_rows" "$extracted_rows"
-      return 0
+    if [ "$file_rows" -eq "$expected" ]; then
+      if [ "$extracted_rows" -eq "$previous" ]; then
+        quiet=$((quiet + 1))
+        if [ "$quiet" -ge 3 ]; then
+          printf '%s\t%s\n' "$file_rows" "$extracted_rows"
+          return 0
+        fi
+      else
+        quiet=0
+      fi
+      previous="$extracted_rows"
     fi
-    sleep 0.25
+    sleep 0.5
   done
-  printf 'v6 did not settle: expected=%s file=%s extracted=%s\n' \
+  printf 'v6 did not settle: expected=%s repo_file=%s extracted=%s\n' \
     "$expected" "$file_rows" "$extracted_rows" >&2
   return 1
 }
 
 start_server() {
-  local repo="$1" db="$2" port="$3" perf="$4" log="$5"
+  local db="$1" port="$2" perf="$3" log="$4"
   (
     cd "$TSV2_DIR"
-    DL_NO_FETCH=1 DL_PERF_LOG="$perf" DL_EXTRACT_BIN="$EXTRACT_BIN" DL_CRAWL_REPO="$repo" \
-      TSV2_DB="file:$db" TSV2_PORT="$port" TSV2_WATCH_ROOT="$repo" TSV2_WATCH_COALESCE_MS=50 \
+    DL_NO_FETCH=1 DL_PERF_LOG="$perf" DL_EXTRACT_BIN="$EXTRACT_BIN" \
+      TSV2_DB="file:$db" TSV2_PORT="$port" \
       node --experimental-transform-types "$SERVE_MAIN"
   ) >"$log" 2>&1 &
   SERVER_PID=$!
-  for _ in $(seq 1 100); do
+  for _ in $(seq 1 200); do
     if curl -s -o /dev/null "http://127.0.0.1:$port/ticks"; then return 0; fi
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
       tail -20 "$log" >&2
@@ -263,51 +309,95 @@ stop_server() {
   fi
 }
 
+# THE LEG THAT USED TO BE A LOOP.
+#
+# One server, one sqlite database, one program load, one /arrivals post. The
+# repository set is DATA -- one `want_repo(root, glob)` row per repository per
+# glob -- and every fan-out below it (per repository, then per file) is rows
+# through the incremental emitter, not processes through bash.
+#
+# What died with the loop, and it is not only the process spawns: N program
+# compilations, N sqlite files, N boot demand scans, N witness caches that
+# could not share an answer, and a per-repository settle barrier that made the
+# whole corpus as slow as the sum of its serial parts. The remaining serial
+# step is `collect_repos`, which is the bench's own corpus SELECTION and not
+# part of what is being measured.
 run_v6_leg() {
   local result_file="$1" cap="$2" log_file="$WORK/v6.log"
   local selected=0 skipped=0 cap_excluded=0 total_files=0 total_repos=0 total_statements=0 total_ticks=0
-  local repo expected repo_name index=0 port db perf server_log base status
+  local repo db perf server_log base status port settled
   local started_at ended_at
   started_at="$(date +%s.%N)"
   : >"$log_file"
-  : >"$WORK/v6-skips"
+  : >"$WORK/v6-selected"
+  # Idempotent, and it is what makes `crawl-bench.sh --v6-leg <result> <cap>`
+  # runnable on its own against a prepared WORK directory -- the shape used to
+  # measure this leg before and after the loop was removed.
+  write_programs
+
   while IFS= read -r repo; do
     if [ "$cap" -ne 0 ] && [ "$selected" -ge "$cap" ]; then
       cap_excluded=$((cap_excluded + 1))
       continue
     fi
     selected=$((selected + 1))
-    repo_name="$(basename "$repo")"
-    expected="$(git -C "$repo" ls-files -- '**/*.go' '**/*.ts' '**/*.tsx' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
-    index=$((index + 1))
-    port=$((18000 + index))
-    db="$WORK/v6-dbs/$index.sqlite"
-    perf="$WORK/v6-perf/$index.jsonl"
-    server_log="$WORK/v6-perf/$index.server.log"
-    rm -f "$db" "$db-wal" "$db-shm" "$perf" "$server_log"
-    if ! start_server "$repo" "$db" "$port" "$perf" "$server_log"; then
-      stop_server
-      fail "v6 server failed for $repo"
-    fi
-    base="http://127.0.0.1:$port"
-    status="$(curl -fsS -o "$WORK/load-$index.json" -w '%{http_code}' \
-      -X POST --data-binary @"$V6_PROGRAM" "$base/program")"
-    [ "$status" = 200 ] || { tail -20 "$server_log" >&2; stop_server; fail "v6 program load failed for $repo"; }
-    curl -fsS -X POST -H 'content-type: application/json' --data-binary \
-      '{"batch":[{"rel":"want","sign":"add","row":["**/*.go"]},{"rel":"want","sign":"add","row":["**/*.ts"]},{"rel":"want","sign":"add","row":["**/*.tsx"]}]}' \
-      "$base/arrivals" >/dev/null
-    wait_for_rows "$base" "$expected" >>"$log_file"
-    total_files=$((total_files + expected))
-    total_repos=$((total_repos + 1))
-    if [ -s "$perf" ]; then
-      while IFS=$'\t' read -r statements ticks; do
-        total_statements=$((total_statements + statements))
-        total_ticks=$((total_ticks + ticks))
-      done < <(jq -r 'select(.statements != null) | [.statements, 1] | @tsv' "$perf")
-    fi
-    printf 'v6 repo %s: files=%s\n' "$repo_name" "$expected" >>"$log_file"
-    stop_server
+    printf '%s\n' "$repo" >>"$WORK/v6-selected"
   done <"$WORK/usable-repos"
+  total_repos="$selected"
+
+  # The expected file count is the union across the whole selected corpus, so
+  # a repository whose rows never arrived shows up as a settle failure rather
+  # than as a quietly smaller number.
+  total_files=0
+  while IFS= read -r repo; do
+    local repo_files
+    repo_files="$(git -C "$repo" ls-files -- '**/*.go' '**/*.ts' '**/*.tsx' | LC_ALL=C sort -u | wc -l | tr -d ' ')"
+    total_files=$((total_files + repo_files))
+    printf 'v6 repo %s: files=%s\n' "$(basename "$repo")" "$repo_files" >>"$log_file"
+  done <"$WORK/v6-selected"
+
+  port=18001
+  db="$WORK/v6-dbs/crawl.sqlite"
+  perf="$WORK/v6-perf/crawl.jsonl"
+  server_log="$WORK/v6-perf/crawl.server.log"
+  rm -f "$db" "$db-wal" "$db-shm" "$perf" "$server_log"
+  if ! start_server "$db" "$port" "$perf" "$server_log"; then
+    stop_server
+    fail "v6 server failed to boot"
+  fi
+  base="http://127.0.0.1:$port"
+  status="$(curl -fsS -o "$WORK/load.json" -w '%{http_code}' \
+    -X POST --data-binary @"$V6_PROGRAM" "$base/program")"
+  [ "$status" = 200 ] || { tail -20 "$server_log" >&2; stop_server; fail "v6 program load failed"; }
+
+  # One batch, every repository, every glob. This single post is what the loop
+  # was.
+  python3 - "$WORK/v6-selected" >"$WORK/v6-arrivals.json" <<'PY'
+import json, sys
+roots = [line.strip() for line in open(sys.argv[1]) if line.strip()]
+globs = ["**/*.go", "**/*.ts", "**/*.tsx"]
+batch = [{"rel": "want_repo", "sign": "add", "row": [root, glob]}
+         for root in roots for glob in globs]
+json.dump({"batch": batch}, sys.stdout)
+PY
+  curl -fsS -X POST -H 'content-type: application/json' \
+    --data-binary @"$WORK/v6-arrivals.json" "$base/arrivals" >/dev/null
+
+  if ! settled="$(wait_for_rows "$base" "$total_files")"; then
+    tail -20 "$server_log" >&2
+    stop_server
+    fail "v6 crawl did not settle"
+  fi
+  printf 'v6 settled: repo_file=%s extracted=%s\n' \
+    "$(printf '%s' "$settled" | cut -f1)" "$(printf '%s' "$settled" | cut -f2)" >>"$log_file"
+
+  if [ -s "$perf" ]; then
+    while IFS=$'\t' read -r statements ticks; do
+      total_statements=$((total_statements + statements))
+      total_ticks=$((total_ticks + ticks))
+    done < <(jq -r 'select(.statements != null) | [.statements, 1] | @tsv' "$perf")
+  fi
+  stop_server
 
   skipped="$(wc -l <"$WORK/skips" | tr -d ' ')"
   cap_excluded="${cap_excluded:-0}"
@@ -332,6 +422,41 @@ run_v6_leg() {
   printf 'v6 skips: unusable=%s cap-excluded=%s\n' "$skipped" "$cap_excluded"
   printf '%s\n' "$skipped" >"$WORK/v6-skip-count"
   printf '%s\n' "$cap_excluded" >"$WORK/v6-cap-excluded"
+}
+
+# BEFORE / AFTER for the change that removed the per-repository loop.
+#
+# The "before" is a real run of the previous v6 leg, recorded in
+# scripts/crawl-bench-loop-baseline.tsv with the command that produced it. It
+# is a pinned MEASUREMENT, not a target: the loop it came from no longer exists
+# in this file, so it cannot be re-derived by running this script, and printing
+# it beside today's number is the honest way to keep the comparison alive.
+#
+# The comparison is only meaningful at the SAME scope, so it is skipped, by
+# name, whenever the cap or corpus differs from the baseline's.
+report_loop_delta() {
+  local result_file="$1" baseline="$SCRIPT_DIR/crawl-bench-loop-baseline.tsv"
+  [ -f "$baseline" ] || return 0
+  local now_scope now_wall now_fps now_db now_files
+  IFS=$'\t' read -r _ now_files _ now_wall now_fps _ now_db now_scope _ <"$result_file"
+  local base_row
+  base_row="$(awk -F '\t' -v scope="$now_scope" \
+    '$1 == "v6-loop" && $8 == scope { print; exit }' "$baseline")"
+  if [ -z "$base_row" ]; then
+    printf 'loop delta: N/A -- no v6-loop baseline row for scope %s (baseline scopes: %s)\n' \
+      "$now_scope" \
+      "$(awk -F '\t' '$1 == "v6-loop" { printf "%s ", $8 }' "$baseline")"
+    return 0
+  fi
+  local base_wall base_fps base_db
+  IFS=$'\t' read -r _ _ _ base_wall base_fps _ base_db _ _ <<<"$base_row"
+  printf 'loop delta (%s, %s files):\n' "$now_scope" "$now_files"
+  printf '  before (one served process per repository)  wall=%ss  %s files/s  db=%s bytes\n' \
+    "$base_wall" "$base_fps" "$base_db"
+  printf '  after  (ONE program, repo as a column)      wall=%ss  %s files/s  db=%s bytes\n' \
+    "$now_wall" "$now_fps" "$now_db"
+  awk -v b="$base_wall" -v a="$now_wall" \
+    'BEGIN { if (a > 0) printf "  speedup %.2fx\n", b / a }'
 }
 
 main() {
@@ -371,6 +496,7 @@ main() {
   replace_rss "$WORK/v6-result" "$WORK/v6-time"
   cat "$WORK/v6-run.log"
   cat "$WORK/v5-result" "$WORK/v6-result"
+  report_loop_delta "$WORK/v6-result"
   printf 'skip counts: v5/v6 unusable=%s, v6 cap-excluded=%s\n' \
     "$skip_count" "$(cat "$WORK/v6-cap-excluded")"
   bench_ended="$(date +%s.%N)"

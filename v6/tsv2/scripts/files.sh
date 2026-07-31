@@ -21,6 +21,20 @@
 #      -- read out of the object database, never hashed from a file, which is
 #      what makes the pinned witness cacheable forever
 #
+# SABOTAGE RECEIPT for the repo-scoped legs (run 2026-07-31, reverted):
+# dropping `-C '{repo}'` from repo_files's `ls-files` while leaving it on the
+# per-file `hash-object` -- the half-edit a hurried author actually makes --
+#
+#   FAIL  repo_files produced 606 rows for a two-file repository;
+#         git -C is not routing
+#
+# 606 = this repository's 285 tracked .ts paths under both want_repo clauses
+# plus the pinned rows, every one of them carrying the OTHER repository's name
+# in its repo column and an EMPTY digest (hash-object in the scratch repo cannot
+# see a path that is not in it). Both halves of the sabotage are visible in one
+# assertion, which is why the count is asserted against the two-file corpus
+# rather than against "more than zero".
+#
 # SABOTAGE RECEIPT (run 2026-07-29, reverted), and it went red EARLIER than
 # predicted: swapping the files template's `git ls-files -- '{glob}'` for
 # `find . -name '*.ts'` never reaches assertion 2, because the program stops
@@ -114,6 +128,49 @@ pinned_oid="$(git rev-parse "$head_rev:$pinned_path")"
 rows_json file | grep -q "\"$pinned_path\",\"$pinned_oid\"" \
   || fail "files_at did not report $pinned_path at its blob oid $pinned_oid"
 say "PASS  files_at($head_rev) reports git's own blob oids ($tree_paths tracked paths at that rev)"
+
+# ── 5+6: the REPO-SCOPED pair, against a repository that is not the cwd ──────
+#
+# The point of these two is routing, so the target must be a tree the server
+# would answer differently if `git -C` were dropped: a scratch repository with
+# exactly two tracked files, none of which exist here. If the repo column were
+# ignored the answer would be this repository's thousands of paths, and both
+# assertions below would fail on the row count alone.
+#
+# The pinned leg is sharper than a count. The scratch worktree is EDITED after
+# the commit, so the two hosts disagree BY CONSTRUCTION on the same path:
+# repo_files reports the working tree's `git hash-object`, repo_files_at reports
+# the committed blob oid. Equal digests would mean the rev is not pinning
+# anything, which is the failure a paths-only assertion cannot see.
+OTHER="$WORK/other-repo"
+mkdir -p "$OTHER"
+git -C "$OTHER" init -q
+git -C "$OTHER" config user.email files-receipt@example.invalid
+git -C "$OTHER" config user.name 'files receipt'
+printf 'committed alpha\n' >"$OTHER/alpha.ts"
+printf 'committed beta\n' >"$OTHER/beta.ts"
+git -C "$OTHER" add alpha.ts beta.ts
+git -C "$OTHER" commit -qm 'scratch corpus'
+other_rev="$(git -C "$OTHER" rev-parse HEAD)"
+committed_alpha="$(git -C "$OTHER" rev-parse "$other_rev:alpha.ts")"
+printf 'edited alpha\n' >"$OTHER/alpha.ts"
+worktree_alpha="$(git -C "$OTHER" hash-object -- alpha.ts)"
+[ "$committed_alpha" != "$worktree_alpha" ] \
+  || fail "the receipt's own setup is broken: committed and edited alpha.ts hash the same"
+
+post_arrival "{\"batch\":[{\"rel\":\"want_repo\",\"sign\":\"add\",\"row\":[\"$OTHER\",\"*.ts\"]}]}"
+await_rows repo_file 2 || fail "repo_files never produced 2 rows (got $(rows_json repo_file | head -c 300))"
+scoped="$(rows_json repo_file | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["rows"]))')"
+[ "$scoped" = "2" ] || fail "repo_files produced $scoped rows for a two-file repository; git -C is not routing"
+rows_json repo_file | grep -q "\"alpha.ts\",\"$worktree_alpha\"" \
+  || fail "repo_files did not report the OTHER repository's working-tree digest for alpha.ts"
+say "PASS  repo_files('$OTHER') = that repository's 2 tracked files, at its working-tree digests"
+
+post_arrival "{\"batch\":[{\"rel\":\"want_repo_at\",\"sign\":\"add\",\"row\":[\"$OTHER\",\"$other_rev\",\"*.ts\"]}]}"
+await_rows repo_file 3 || fail "repo_files_at produced nothing (got $(rows_json repo_file | head -c 300))"
+rows_json repo_file | grep -q "\"alpha.ts\",\"$committed_alpha\"" \
+  || fail "repo_files_at did not pin alpha.ts to its committed blob oid $committed_alpha"
+say "PASS  repo_files_at($other_rev) pins alpha.ts to $committed_alpha, not the edited $worktree_alpha"
 
 stop_server
 say "FILES HOSTS HOLD"

@@ -285,3 +285,52 @@ fixture(host_input_column_shadows_runtime_witness,
   [],
   [],
   [ throws(host_column_shadows_runtime(peek, input, witness_digest)) ]).
+
+% ── the name IS the key ─────────────────────────────────────────────────────
+%
+% Two `sh` declarations under one name. FAIL-FIRST: before
+% 1_host_expand.pl:no_duplicate_host_names/1 this program compiled CLEAN on
+% both doors (ARCH row host_arity_overload_miscompile) -- host_relation_refs/3
+% derives __host_demand_look and __host_response_look from the NAME, so the two
+% plans share one demand relation and one response relation, and the second
+% declaration's `repo` column has nowhere to live at all.
+%
+% This is the enforcement half of ruling repo_column_spelling =
+% distinct_name_hosts: the repo-scoped case gets its own NAME (repo_files,
+% repo_files_at, repo_extract), and an author who reaches for the overload
+% instead is told why rather than handed a silently merged relation.
+fixture(duplicate_host_name_is_refused,
+  program(
+    [ sh_decl(look, [col(path, text)], [col(line, text)],
+              template("head -1 {path}")),
+      sh_decl(look, [col(repo, text), col(path, text)], [col(line, text)],
+              template("head -1 {repo}/{path}"))
+    ],
+    [ (first(Path, Line) <- probe(look, [Path], [Line], [])) ],
+    []),
+  [],
+  [],
+  [ throws(duplicate_host_decl(look)) ]).
+
+% ── `repo` is not a bind column ─────────────────────────────────────────────
+%
+% The obvious next thought once the repo-scoped file hosts exist: watch N
+% repositories by putting the repo on the watcher. Refused by name, with the
+% four reasons written at validate_bind_decl/3 -- the deciding one being that a
+% crawl ENUMERATES and does not react, so the repo set is data (rows the
+% `repos` host answers on a clock) while a bind's configuration column is read
+% from the program's own literals.
+%
+% Before this clause the same declaration threw the generic
+% bind_mismatch(watch, [...]), which answers "those are not watch's columns"
+% and says nothing about why the shape is refused rather than unimplemented.
+fixture(repo_on_bind_watch_is_refused,
+  program(
+    [ bind_decl(watch, [col(repo, text), col(glob, text), col(path, text),
+                        col(digest, text)]) ],
+    [ (file(Repo, Path, Digest) <-
+         watch(Repo, '**/*.ts', Path, Digest)) ],
+    []),
+  [],
+  [],
+  [ throws(bind_repo_column(watch)) ]).

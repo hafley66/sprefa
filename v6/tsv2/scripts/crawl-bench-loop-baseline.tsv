@@ -1,0 +1,21 @@
+# crawl-bench-loop-baseline.tsv -- the v6 leg BEFORE the per-repository loop
+# was removed, so the after/before comparison survives the loop's deletion.
+#
+# These rows cannot be re-derived by running crawl-bench.sh: the code that
+# produced them (one served process, one sqlite database and one program load
+# per repository) is gone from that script. They are a pinned MEASUREMENT, not
+# a target, and report_loop_delta prints them beside today's run.
+#
+# Measured 2026-07-31 on the ~/orgs/grafana corpus (389 checkouts, 250 usable),
+# extractor = the v6/sprefa-extract release build, nice -n 19, by running the
+# previous script's v6 leg directly against a prepared WORK directory:
+#
+#   bash crawl-bench.sh --v6-leg <result> <cap>     # at git 61f75b0e
+#
+# The extraction leg is identical on both sides of the comparison (one row per
+# extracted file, `--family cst,type,call,df ... >/dev/null && printf`), so the
+# only variable is the loop. The row counts agreed exactly: repo_file 2890 and
+# extracted 2890 at cap 32, both before and after.
+leg	files	repos	wall_s	files_per_s	rss	db_bytes	scope	stmts_per_tick
+v6-loop	779	8	20.26	38.45	n/a	1064960	first-8-usable-of-389-cap-8	54.03
+v6-loop	2890	32	72.19	40.03	n/a	4046848	first-32-usable-of-389-cap-32	54.03

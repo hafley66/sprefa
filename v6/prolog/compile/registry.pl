@@ -313,6 +313,40 @@ host_executor(_,       shell).
 % `extract` row remains for compatibility, while every fixed
 % `$DL_EXTRACT_BIN ... {path}` declaration uses the same target-neutral
 % executor regardless of which named projection receives its stdout.
+%
+% REPO-SCOPED EXTRACTION (ruling repo_column_spelling = distinct_name_hosts,
+% applied one level down). A crawl runs the extractor against files in ANOTHER
+% working tree, so its template reads `{repo}/{path}` and its input list is
+% three columns wide. That is a different contract, and it gets a DIFFERENT
+% EXECUTOR NAME rather than a widened `sprefa_extract` row: the contract's
+% exact positional list is what pins which declarations the batching below is
+% allowed to fold, and loosening it to "two or three columns" would silently
+% admit a two-column declaration whose first column happened to be named repo.
+%
+% The clause order is the whole selection: a repo template ALSO ends in
+% `{path}` when it ends in the file at all, and would otherwise be claimed by
+% the unscoped row and then thrown out by its contract (measured:
+% `host_executor_mismatch`, which is what a cold author saw before this row
+% existed).
+%
+% CONTAINS, not ends-with, and the difference is a real declaration: the crawl
+% bench's extraction host writes
+% `"$DL_EXTRACT_BIN" ... {repo}/{path} >/dev/null && printf '%s\n' '{path}'`
+% so that it answers ONE row per file rather than the extractor's whole JSONL.
+% That is still the extractor run against `{repo}/{path}`; requiring the file
+% to be the last thing on the line would have refused it for punctuation.
+%
+% THE ALTERNATIVE, priced and not taken: let the repo-scoped declaration fall
+% to the generic `shell` executor. That needs no row at all -- writing the
+% template as `'{repo}/{path}'` already fails the suffix test -- and it costs
+% the applicative fold, so N named projections over one file become N
+% subprocesses instead of one. It also makes a QUOTING CHARACTER decide which
+% executor runs, which is the kind of silence this repo files as a defect.
+host_execution(_, Template, sprefa_extract_repo) :-
+    string(Template),
+    sub_string(Template, 0, _, _, "\"$DL_EXTRACT_BIN\" "),
+    sub_string(Template, _, 13, 0, "{repo}/{path}"),
+    !.
 host_execution(Name, Template, sprefa_extract) :-
     ( Name == extract
     ; string(Template),
@@ -324,6 +358,8 @@ host_execution(_, _, shell).
 
 host_executor_contract(sprefa_extract,
                        [col(path, text), col(digest, text)]).
+host_executor_contract(sprefa_extract_repo,
+                       [col(repo, text), col(path, text), col(digest, text)]).
 host_executor_contract(shell, _).
 
 % Ordinary `sh` inputs can serve two existing internal host roles. Identity
@@ -333,6 +369,26 @@ host_executor_contract(shell, _).
 % list; these exact, positional contracts are compiler metadata.
 host_input_contract(extract,
                     [col(path, text), col(digest, text)],
+                    [identity, freshness]).
+% The repo-scoped twin. `repo` is identity for the same reason `path` is: it is
+% part of what the answer is about and it returns on the response row. `digest`
+% stays freshness, so the same content under two repositories is still two
+% witnesses (the repo column is in the identity digest) while an unchanged file
+% re-asked is still a cache hit.
+host_input_contract(repo_extract,
+                    [col(repo, text), col(path, text), col(digest, text)],
+                    [identity, identity, freshness]).
+% The org fan-out source (ruling org_fanout = repos_host_on_clock). `bucket` is
+% the interval bind's column and it is FRESHNESS: it must not return on the
+% response row (the answer is a repository name, not a name-and-a-clock-tick)
+% and the template must not have to mention it. What it does is extend the
+% witness, so each tick of the cadence re-asks and an unchanged org answer is
+% absorbed as zero delta.
+host_input_contract(repos,
+                    [col(org, text), col(bucket, int)],
+                    [identity, freshness]).
+host_input_contract(gh_repos,
+                    [col(org, text), col(bucket, int)],
                     [identity, freshness]).
 host_input_contract(call_node,
                     [col(path, text), col(digest, text)],
