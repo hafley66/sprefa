@@ -11,11 +11,16 @@
 | [.agents/skills/v6-deps/SKILL.md](.agents/skills/v6-deps/SKILL.md) | 145 | V6 dependency dossier (researched 2026-07-19) |
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
 | [AGENTS.md](AGENTS.md) | 103 | v6 — AGENTS.md (start here; stay out of everything else) |
-| [ARCH-MAP.md](ARCH-MAP.md) | 649 | v6 architecture map |
+| [ARCH-MAP.md](ARCH-MAP.md) | 666 | v6 architecture map |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
+| [DATAFLOW-ATLAS.md](DATAFLOW-ATLAS.md) | 110 | The v6 dataflow atlas |
 | [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
+| [GETTING-STARTED.md](GETTING-STARTED.md) | 397 | Getting started with v6 |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
+| [READINESS.md](READINESS.md) | 189 | v5 golden use-cases: readiness |
 | [README.md](README.md) | 110 | V6 |
+| [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
+| [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -50,19 +55,18 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 520 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 354 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
-| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 555 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 377 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 204 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 496 | Type matrix -- generated, do not hand-edit |
+| [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 495 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-extract/tests/fixtures/deps/README.md](sprefa-extract/tests/fixtures/deps/README.md) | 16 |  |
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
-| [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
+| [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
 | [tsv2/goldens/multirepo_crawl/README.md](tsv2/goldens/multirepo_crawl/README.md) | 74 | multirepo_crawl — stopping-point program #5, graded against v5 |
@@ -110,8 +114,8 @@
 1:# v6 architecture map
 10:## 1. Surface sugar expands in a declared order
 32:## 2. The writable surface, by axis
-150:## 3. The build DAG open frontier
-323:## 4. A compiled program rel dataflow: this program own
+152:## 3. The build DAG open frontier
+335:## 4. A compiled program rel dataflow: this program own
 ```
 
 ### ARCHITECTURE.md
@@ -123,6 +127,18 @@
 119:## Why each algorithm, tied to the goal
 134:## How the oracles map to this (the running proof)
 150:## What ships vs what is a teacher
+```
+
+### DATAFLOW-ATLAS.md
+```
+1:# The v6 dataflow atlas
+4:## The five views
+18:## Nodes per plane
+29:## Edges per kind
+47:## Edges between planes
+61:## The longest path, hop by hop
+88:## `bop run` to an executed SQLite statement
+108:## Fact volume behind the picture
 ```
 
 ### DECISIONS.md
@@ -142,6 +158,20 @@
 175:# decision docs live in plans/ and v6/plans/ (dated YYYY-MM-DD-topic.md)
 ```
 
+### GETTING-STARTED.md
+```
+1:# Getting started with v6
+25:## 1. Setup
+71:## 2. Your first program
+127:## 3. Making it react to files
+144:# plan
+202:# notes
+223:# notes
+254:## 4. Reading relations
+314:## 5. Reading an error
+378:## 6. Where to go next
+```
+
 ### MAP.md
 ```
 1:# v6 — the living map (algorithms · unification · exploration · DONE)
@@ -154,6 +184,15 @@
 217:## Definition of DONE — the contract (living checklist)
 ```
 
+### READINESS.md
+```
+1:# v5 golden use-cases: readiness
+24:## The rows
+75:## Fixed in this lane
+115:## Priced gaps
+177:## Two notes for whoever runs this next
+```
+
 ### README.md
 ```
 1:# V6
@@ -162,6 +201,64 @@
 71:## Crate map
 88:## Docs
 101:## Agent skills
+```
+
+### bench-cli/CONTRACT.md
+```
+1:# Language-agnostic CLI bench contract
+15:## 1. Build-vs-buy: the timing leg
+20:### What has to be measured
+30:### Candidate 1 — hyperfine 1.20.0
+74:### Candidate 2 — `/usr/bin/time -l` (macOS BSD time)
+98:### Candidate 3 — engine-internal wall clock (`--perf-out`)
+117:### Candidate 4 — criterion / divan / bencher (Rust in-process)
+134:### Candidate 5 — tinybench / mitata (JS in-process)
+143:### Candidate 6 — the in-tree engines rig, `v6/sprefa-store/bench/run.sh`
+162:### Candidate 7 — the correctness referee
+174:### Summary table
+191:## 2. The contract
+193:### 2.1 An engine is one executable
+222:### 2.2 Tick-log format
+238:### 2.3 Schedule format
+250:### 2.4 Perf JSON (`--perf-out`)
+279:### 2.5 Correctness referee
+313:### 2.6 Standings CSV
+333:### 2.7 Final-state hash — the third check
+366:## 3. Adapters at contract birth
+374:### How the tsv2 adapter avoids touching fenced code
+428:## 4. Cases
+442:## 5. Running it
+458:## 6. Priced and not taken
+490:## 7. The referee at scale: the ruling, the promotion rule, the risk
+497:### 7.0.1 The ruling
+510:### 7.0.2 The promotion rule, exactly as implemented
+555:### 7.0.3 The residual risk, stated rather than papered over
+584:## 7.1 THE PHASE-0 FINDING (kept verbatim; the ruling above is its answer)
+```
+
+### bench-cli/STANDINGS.md
+```
+1:# bench-cli standings
+17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
+50:## Real programs
+52:### callgraph_derivation
+62:### callgraph_unused
+72:### flow_reach_recursive
+82:### flow_sig_owner_join
+92:### diag_seven_ticks
+102:### clock_rel_join_storms
+112:### match_classify
+122:### aggregate_retraction
+132:### enum_tag_view
+142:## Scale shapes
+144:### keyed_replace/1k
+153:### keyed_replace/10k
+163:### keyed_replace/100k
+173:### two_hop_join/1k
+182:### two_hop_join/10k
+192:### two_hop_join/100k
+202:### cross_join/1k
+212:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -750,21 +847,22 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-43:### What the seq/pre lane moved
-51:### What the json-pothole lane moved
-106:### What the json-flex lane moved
-120:### What the coalesce lane moved
-146:### What the json-wiring lane moved
-175:### What the struct-as-rows arc moved
-198:### Named gap found by the flagship arc, unowned
-212:### The UNSUPPORTED bucket, by named reason (74)
-238:### The three fixtures this arc moved
-252:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
-275:### the departure frontier (`edge_body_needs_finalize`, removed)
-299:### `pre/1`: occurrence-ordered edge fold
-327:### The final-state leg (new, and it changes how to read this table)
-391:## Historical per-fixture excerpt: compiled (85)
-485:## Per-construct blocked tally (UNSUPPORTED, ranked)
+51:### The run_error bucket is split (fork_join_malformed_json arc)
+73:### What the seq/pre lane moved
+81:### What the json-pothole lane moved
+136:### What the json-flex lane moved
+150:### What the coalesce lane moved
+176:### What the json-wiring lane moved
+205:### What the struct-as-rows arc moved
+228:### Named gap found by the flagship arc, unowned
+242:### The UNSUPPORTED bucket, by named reason (74)
+268:### The three fixtures this arc moved
+282:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
+305:### the departure frontier (`edge_body_needs_finalize`, removed)
+329:### `pre/1`: occurrence-ordered edge fold
+357:### The final-state leg (new, and it changes how to read this table)
+427:## Historical per-fixture excerpt: compiled (85)
+520:## Per-construct blocked tally (UNSUPPORTED, ranked)
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -773,27 +871,27 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-142:## CLI ("the bop")
-167:### Context status
-178:### Core grammar and input aliases
-220:### The json plane
-288:### Legacy surface: parsed, then refused
-299:### World term lowering rows
-319:## Round-trip design note (why decl lines are exact, not fallback-merged)
-334:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-345:## What `dl_view/*.dl6` is
+165:## CLI ("the bop")
+190:### Context status
+201:### Core grammar and input aliases
+243:### The json plane
+311:### Legacy surface: parsed, then refused
+322:### World term lowering rows
+342:## Round-trip design note (why decl lines are exact, not fallback-merged)
+357:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+368:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
 ```
 1:# TICK MODEL: the semiring/grading semantics behind the clock checker
-10:## 1. Objects: three semirings
-26:## 2. The derivative reading (lifecycle = sign decomposition)
-56:## 3. Grading: what tick a thing is on
-74:## 4. Coercions between rings (the A2 analysis)
-90:## 5. Theorems already shipped (each = a ring error made a refusal)
-109:### 5.1 R7 restated: storage rows are not occurrences
-163:## 6. What the checker does (phase 5 spec)
+32:## 1. Objects: three semirings
+48:## 2. The derivative reading (lifecycle = sign decomposition)
+83:## 3. Grading: what tick a thing is on
+101:## 4. Coercions between rings (the A2 analysis)
+117:## 5. Theorems already shipped (each = a ring error made a refusal)
+136:### 5.1 R7 restated: storage rows are not occurrences
+190:## 6. What the checker does (phase 5 spec)
 ```
 
 ### prolog/conformance/FIXTURES.md
@@ -810,11 +908,11 @@
 ```
 1:# Type matrix -- generated, do not hand-edit
 7:## Verdict counts
-20:## The two `.dl6` oracle doors
-30:## Per position
-42:## Per declared type
-55:## Per fed value
-70:## Every cell
+19:## The two `.dl6` oracle doors
+29:## Per position
+41:## Per declared type
+54:## Per fed value
+69:## Every cell
 ```
 
 ### skills/mermaid-living-map.md
@@ -870,23 +968,16 @@
 156:## Breakpoint ramp — tight gun 700 MB
 ```
 
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
-```
-
 ### tsv2/CRAWL-BENCH.md
 ```
 1:# Grafana crawl bench
 9:## Scope
 27:## Exact v5 program
 45:## v6 leg
-62:## Parity table
-84:## Gaps
-108:## Skips and validation
+76:### Before / after, same corpus, same extraction leg
+99:## Parity table
+135:## Gaps
+164:## Skips and validation
 ```
 
 ### tsv2/SCALE.md

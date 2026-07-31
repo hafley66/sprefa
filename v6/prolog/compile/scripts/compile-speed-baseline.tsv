@@ -4,20 +4,30 @@
 # Gate bands: fail above baseline*1.10, fail below
 # baseline*0.75 (bank the win deliberately).
 # Written 2026-07-31T02:55:02Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
+#
+# The three parse rows below sit ABOVE the counts from before parse_dl.pl
+# tracked furthest-failure positions, and that is deliberate. mark_furthest/1
+# runs at every whitespace stop, every literal match and every token entry --
+# 12,723 calls parsing golden-flex -- and a Prolog call costs one inference
+# before its body does anything, so no tracker that still reports a
+# furthest-failure line:column fits inside a 10% band around counts taken when
+# nothing was tracked. door-handwritten's parse row is deliberately NOT reset:
+# at 960 bytes the same tracker still lands inside the band.
+#
 # program	phase	inferences
-flagship-flow	parse	230978
+flagship-flow	parse	321398
 flagship-flow	plan	1379766
 flagship-flow	lower	164181
 flagship-flow	boot	1447
 flagship-flow	emit	397595
 flagship-flow	write	90
-golden-flex	parse	194724
+golden-flex	parse	261179
 golden-flex	plan	819661
 golden-flex	lower	94237
 golden-flex	boot	1630
 golden-flex	emit	219112
 golden-flex	write	90
-flagship-callgraph	parse	76122
+flagship-callgraph	parse	92506
 flagship-callgraph	plan	94578
 flagship-callgraph	lower	24098
 flagship-callgraph	boot	492
