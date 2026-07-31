@@ -141,7 +141,10 @@ function classify(cell, result) {
     goldenRefusal: oracle.goldenStatus === "ok" ? "" : refusalName(oracle.goldenDetail),
     gradedVia,
     doorGap: !dl6Ran && goldenRan ? refusalName(oracle.detail) : "",
-    doorLogsDisagree: dl6Ran && goldenRan && result.oracleLog !== result.goldenLog,
+    // goldenRanClean, not goldenRan: this axis asks whether the two doors
+    // answer the same when BOTH accept the arrival, which is exactly the case
+    // the narrow fallback excludes.
+    doorLogsDisagree: dl6Ran && goldenRanClean && result.oracleLog !== result.goldenLog,
     graded: "",
     survives: SURVIVES[cell.value],
     verdict: "",

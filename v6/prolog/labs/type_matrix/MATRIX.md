@@ -2,13 +2,13 @@
 
 Regenerate: `bash v6/prolog/labs/type_matrix/matrix.sh`
 
-Cells: 420 constructible / 0 not run / 0 n-a
+Cells: 422 constructible / 0 not run / 0 n-a
 
 ## Verdict counts
 
 | verdict / label | cells |
 |---|---|
-| NAMED_REFUSAL/compiler_only | 84 |
+| NAMED_REFUSAL/compiler_only | 86 |
 | IDENTICAL/lossless | 73 |
 | DIVERGENT/doors_disagree | 63 |
 | DIVERGENT/emitter_modes_disagree | 50 |
@@ -20,7 +20,7 @@ Cells: 420 constructible / 0 not run / 0 n-a
 
 ## The two `.dl6` oracle doors
 
-dl6_oracle.pl accepted the arrival in 262 cells, golden_oracle.pl carried 92 more that dl6_oracle refused outright, and 0 cells ran on BOTH doors and produced DIFFERENT tick logs.
+dl6_oracle.pl accepted the arrival in 264 cells, golden_oracle.pl carried 92 more that dl6_oracle refused outright, and 120 cells ran on BOTH doors and produced DIFFERENT tick logs.
 
 | dl6_oracle refuses, golden_oracle accepts | cells |
 |---|---|
@@ -55,6 +55,57 @@ dl6_oracle.pl accepted the arrival in 262 cells, golden_oracle.pl carried 92 mor
 
 | both doors ran, logs differ | cells |
 |---|---|
+| json <- json_object | 5 |
+| json <- json_array | 5 |
+| int <- json_object | 4 |
+| int <- json_array | 4 |
+| float <- json_object | 4 |
+| float <- json_array | 4 |
+| text <- json_object | 4 |
+| text <- json_array | 4 |
+| undeclared <- json_object | 4 |
+| undeclared <- json_array | 4 |
+| int <- float | 3 |
+| int <- bool | 3 |
+| int <- float_integral | 3 |
+| int <- neg_zero | 3 |
+| text <- float | 3 |
+| text <- bool | 3 |
+| text <- float_integral | 3 |
+| text <- neg_zero | 3 |
+| undeclared <- float | 3 |
+| undeclared <- bool | 3 |
+| undeclared <- float_integral | 3 |
+| undeclared <- neg_zero | 3 |
+| bool <- json_object | 3 |
+| bool <- json_array | 3 |
+| list_text <- json_object | 3 |
+| list_text <- json_array | 3 |
+| json <- numeric_text | 2 |
+| list_text <- float | 2 |
+| list_text <- bool | 2 |
+| list_text <- float_integral | 2 |
+| list_text <- neg_zero | 2 |
+| int <- int | 1 |
+| int <- numeric_text | 1 |
+| int <- plain_text | 1 |
+| int <- wide_int | 1 |
+| float <- int | 1 |
+| float <- float | 1 |
+| float <- numeric_text | 1 |
+| float <- plain_text | 1 |
+| float <- bool | 1 |
+| float <- wide_int | 1 |
+| float <- float_integral | 1 |
+| float <- neg_zero | 1 |
+| text <- int | 1 |
+| text <- numeric_text | 1 |
+| text <- plain_text | 1 |
+| text <- wide_int | 1 |
+| undeclared <- int | 1 |
+| undeclared <- numeric_text | 1 |
+| undeclared <- plain_text | 1 |
+| undeclared <- wide_int | 1 |
 
 ## Per position
 
@@ -66,27 +117,29 @@ dl6_oracle.pl accepted the arrival in 262 cells, golden_oracle.pl carried 92 mor
 | json_capture | 6 | 23 | 11 | 30 |
 | aggregate_head | 10 | 10 | 15 | 35 |
 | join_column | 10 | 9 | 51 | 0 |
+| seed | 0 | 0 | 0 | 2 |
 
 ## Per declared type
 
 | declared | IDENTICAL | SILENT_COERCION | DIVERGENT | NAMED_REFUSAL |
 |---|---|---|---|---|
-| int | 11 | 16 | 20 | 13 |
+| int | 11 | 16 | 20 | 14 |
 | float | 8 | 18 | 22 | 12 |
 | text | 10 | 11 | 26 | 13 |
 | bool | 4 | 0 | 32 | 24 |
 | json | 12 | 6 | 19 | 23 |
 | list_text | 8 | 4 | 25 | 23 |
 | undeclared | 20 | 10 | 24 | 6 |
+| int_vs_text | 0 | 0 | 0 | 1 |
 
 ## Per fed value
 
 | value | IDENTICAL | SILENT_COERCION | DIVERGENT | NAMED_REFUSAL |
 |---|---|---|---|---|
-| int | 15 | 2 | 17 | 8 |
+| int | 15 | 2 | 17 | 9 |
 | float | 15 | 2 | 17 | 8 |
 | numeric_text | 10 | 4 | 13 | 15 |
-| plain_text | 13 | 2 | 12 | 15 |
+| plain_text | 13 | 2 | 12 | 16 |
 | json_object | 8 | 9 | 11 | 14 |
 | json_array | 8 | 9 | 11 | 14 |
 | bool | 4 | 3 | 19 | 16 |
@@ -518,4 +571,6 @@ dl6_oracle.pl accepted the arrival in 262 cells, golden_oracle.pl carried 92 mor
 | join_column | undeclared | wide_int | DIVERGENT | emitter_modes_disagree | incremental "ABSENT" vs naive "\"9007199254740992\"" vs oracle "9007199254740992" |
 | join_column | undeclared | float_integral | DIVERGENT | emitter_modes_disagree | incremental "ABSENT" vs naive "\"1\"" vs oracle "\"1.0\"" |
 | join_column | undeclared | neg_zero | DIVERGENT | emitter_modes_disagree | incremental "ABSENT" vs naive "\"0\"" vs oracle "\"-0.0\"" |
+| seed | int_vs_text | int | NAMED_REFUSAL | compiler_only | join_column_type_mismatch |
+| seed | int | plain_text | NAMED_REFUSAL | compiler_only | decl_type_conflicts_witness |
 
