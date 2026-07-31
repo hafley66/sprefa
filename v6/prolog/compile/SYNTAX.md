@@ -55,6 +55,28 @@ sampled atom reads the current base table and never becomes a trigger.
 Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 `edge_body_with_latest`.
 
+`finalize/1` is live in an edge body only, and the update arm plus the
+pairwise idiom are both spelled with it:
+
+    changed(Key, Old, New) <+ finalize(reading(Key, Old)), reading(Key, New).
+
+WHAT IT PAIRS, stated because the answer is cadence-dependent and both doors
+agree on it: a departure is a next-tick occurrence, so the second atom reads
+the relation as it stands ONE TICK AFTER the replace that produced the
+departure. `TICK-MODEL.md` section 2 writes the arm as `(dS)- at t JOIN S at
+t` and section 3 grades `finalize` at +1; those two lines together are this
+behavior. Values 10, 14, 9 arriving on consecutive ticks pair as (10, 9) and
+(14, 9); the same program over a source that idles for one tick after each
+change pairs adjacent values, (10, 14) and (14, 9). Fixtures
+`pairwise_reads_state_at_the_departure_tick` and
+`pairwise_pairs_adjacent_values_when_the_source_idles` pin both cadences, and
+`engine_core.pl` records the two probes taken while grading them: `latest(...)`
+around the second atom changes nothing, and the one same-tick candidate,
+`pre(...)` beside a bare arrival trigger, pairs every value with itself. rx
+`pairwise()` keeps the previous value inside the operator, so it has no
+equivalent cadence sensitivity; this idiom keeps it in a delta that has to
+survive a tick before anything reads it.
+
 `seq/1` is live in an edge-body value bind. An atom argument gives one global
 ordinal stream; a variable argument gives one stream per value. The shared
 expander mints a keyed cursor relation and emits the four-rule cursor block

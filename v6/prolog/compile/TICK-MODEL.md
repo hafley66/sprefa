@@ -56,6 +56,11 @@ dS : Tick -> Z-Rel          its per-tick derivative (the tick log)
 bare trigger atom  == subscribe (dS)+     the positive part
 finalize(atom)     == subscribe (dS)-     the negative part
 update arm         == (dS)- at t  JOIN  S at t     (update-arm lab U1: pairwise)
+                      t is the DEPARTURE's tick, one past the replace (grade
+                      +1 below), so the joined S is a tick later than the row
+                      that departed: pairwise_reads_state_at_the_departure_tick
+                      and pairwise_pairs_adjacent_values_when_the_source_idles
+                      are the two cadences of this one line
 complete           == the scope rel's own (dS)-
 ```
 

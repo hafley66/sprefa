@@ -335,6 +335,82 @@ fixture(keyed_replace_departs_the_old_row,
   [ final(replaced_value/2, [ replaced_value(cli, v1) ]),
     final(latest/2, [ latest(cli, v2) ]) ]).
 
+% PAIRWISE, and what it actually pairs. The rx `pairwise()` mapping in the
+% point-free verdict (plans/2026-07-30-point-free-verdict.md, receipt Q1e)
+% is spelled finalize + read:
+%
+%   step(Sensor, Previous, Current) <+ finalize(reading(Sensor, Previous)),
+%                                      reading(Sensor, Current).
+%
+% DEFINED, not a defect, and the two fixtures below pin both cadences so no
+% lowering can drift to the other reading. TICK-MODEL.md section 2 states the
+% shape the departure arm has: `(dS)- at t JOIN S at t`. The departure carries
+% grade +1 (departed_fires_next_tick_on_retraction, q4), so the state the
+% second atom reads is the state ONE TICK AFTER the replace that produced the
+% departure, not the state that replaced it.
+%
+% With values 10, 14, 9 arriving on consecutive ticks the pairs are therefore
+% (10, 9) and (14, 9): when the departure of 10 fires at tick 3, `reading`
+% already holds 9. Insert one idle tick after each change and the same program
+% pairs adjacent values, because the state the departure reads has not moved
+% yet. Both doors produce these logs byte for byte (oracle through
+% compile/scripts/dl6_oracle.pl, emitter through the sweep), so the answer is
+% the composition of two ruled properties rather than one door's lowering:
+% keyed_replace_departs_the_old_row and departed_fires_next_tick_on_retraction.
+%
+% Two probes measured while grading this, both recorded so the reading is not
+% relitigated: writing the second atom as `latest(reading(Sensor, Current))`
+% produces the IDENTICAL log (the read-vs-trigger axis is not what decides the
+% pair), and the one same-tick candidate spelling
+% `step(S, C, P) <+ reading(S, C), pre(reading(S, P))` pairs every value with
+% ITSELF, because the arrival is absorbed before edge rules run. rx holds the
+% previous value inside the operator; this idiom holds it in a delta that has
+% to survive a tick before anything can read it, and that is the difference.
+%
+% Distinct from the update-arm lab's U4 (same-tick v1 -> v2 -> v3 collapsing to
+% one endpoint pair). This is the across-consecutive-ticks case.
+fixture(pairwise_reads_state_at_the_departure_tick,
+  prog([ keyed(reading/2, [1]),
+         kind(step/3, log), keep(step/3, all) ],
+       [ (step(Sensor, Previous, Current) <+ finalize(reading(Sensor, Previous)),
+                                             reading(Sensor, Current)) ]),
+  [],
+  [ [ +reading(north, 10) ],
+    [ +reading(north, 14) ],
+    [ +reading(north, 9) ] ],
+  [ deltas(reading/2, [ [ +reading(north, 10) ],
+                        [ -reading(north, 10), +reading(north, 14) ],
+                        [ -reading(north, 14), +reading(north, 9) ],
+                        [], [] ]),
+    deltas(step/3, [ [], [],
+                     [ +step(north, 10, 9) ],
+                     [ +step(north, 14, 9) ],
+                     [] ]),
+    final(step/3, [ step(north, 10, 9), step(north, 14, 9) ]),
+    ticks(5) ]).
+
+% The same program, one idle tick after each change: now the state the
+% departure reads is still the value that replaced it, and the pairs are
+% adjacent. The cadence is the whole difference between this log and the one
+% above, which is why the spelling is pairwise only for a source that idles.
+fixture(pairwise_pairs_adjacent_values_when_the_source_idles,
+  prog([ keyed(reading/2, [1]),
+         kind(step/3, log), keep(step/3, all) ],
+       [ (step(Sensor, Previous, Current) <+ finalize(reading(Sensor, Previous)),
+                                             reading(Sensor, Current)) ]),
+  [],
+  [ [ +reading(north, 10) ],
+    [ +reading(north, 14) ],
+    [],
+    [ +reading(north, 9) ] ],
+  [ deltas(step/3, [ [], [],
+                     [ +step(north, 10, 14) ],
+                     [],
+                     [ +step(north, 14, 9) ],
+                     [] ]),
+    final(step/3, [ step(north, 10, 14), step(north, 14, 9) ]),
+    ticks(6) ]).
+
 % Set arrivals dedup (q2: identical content is the same thing) while Log
 % arrivals stack: the same row delivered twice is one occurrence vs two.
 fixture(set_dedups_log_stacks,

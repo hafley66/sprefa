@@ -1,0 +1,4 @@
+rel reading(sensor: text, previous: int) key(1).
+rel step(sensor, previous, current) log keep(all).
+
+step(Sensor, Previous, Current) <+ finalize(reading(Sensor, Previous)), reading(Sensor, Current).

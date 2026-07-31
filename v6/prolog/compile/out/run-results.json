@@ -714,6 +714,20 @@
     "finalDetail": ""
   },
   {
+    "name": "pairwise_reads_state_at_the_departure_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pairwise_pairs_adjacent_values_when_the_source_idles",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "set_dedups_log_stacks",
     "bucket": "identical",
     "detail": "",

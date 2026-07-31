@@ -331,20 +331,21 @@ beat(bucket) <- interval(1, bucket).
 <!-- gs:run -->
 ```console
 $ "$BOP" check broken.dl6; echo "exit $?"
-refusal: rule-index unavailable: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
+refusal: <workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```
 
 `log` declares an append-only relation, and `beat` is also the head of a
 derived rule (`<-`). Those two cannot both be true: a derived view is
 recomputed from its inputs, so there is no append for the log plane to record.
-The refusal names the rule (`log_on_level_headed_rel`), the relation
-(`beat/1`), and the functor you can grep the compiler for — that check lives in
-`v6/prolog/0_program_check.pl` with the one-sentence reason above it.
+The refusal names the file and the line (`broken.dl6:4`, the rule), the check
+(`log_on_level_headed_rel`), the relation (`beat/1`), and the functor you can
+grep the compiler for — that check lives in `v6/prolog/0_program_check.pl`
+with the one-sentence reason above it. Dropping `log keep(all)` from line 3 is
+the fix.
 
-What it does not name here is the line. `bop check` prints
-`rule-index unavailable` where a location belongs. The compile door itself does
-render one, and it is worth knowing about when a refusal has you hunting:
+The location comes from the compile door itself, so running the same file
+through the compile script directly reports the same line:
 
 <!-- gs:run -->
 ```console
@@ -353,10 +354,9 @@ ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): broken.dl6:4: un
 exit 2
 ```
 
-`broken.dl6:4` is the rule, and dropping `log keep(all)` from line 3 is the fix.
-Two paths to the same refusal, one of which currently threads the location and
-one of which does not; that asymmetry is a known gap, not a rule you need to
-learn.
+The two spellings of the path are the two callers, not two answers: `bop check`
+resolves what you type to a full path before handing it to the compiler, and
+the script passes it through as typed.
 
 ---
 

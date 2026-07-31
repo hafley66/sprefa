@@ -49,10 +49,20 @@
 % v6/tsv2/tests/bopCheck.test.ts's findings-fixture assertion goes red
 % against that mutant and green again once reverted, so the exit-code
 % mapping is a receipt, not an assumption.
+%
+% SECOND SABOTAGE RECEIPT (cold-author defect D3, run 2026-07-31, reverted):
+% deleting compile_pure/3's catch/3 wrapper below put the CLI back on the
+% unlocated refusal it shipped with:
+%   refusal: rule-index unavailable: unsupported_construct: compiler refused
+%            rule 'log_on_level_headed_rel' for rel 'beat/1' (...)
+% bopCheck.test.ts's located-refusal test goes red on exactly the FILE:LINE
+% match against that mutant (it asserts the path and the line together, so a
+% refusal naming neither, or naming a wrong line, both fail) and green again
+% once the wrapper is back.
 
 :- module(bop_check, [bop_check/1, bop_check_env/0]).
 
-:- use_module('../compile', [compile_program/6]).
+:- use_module('../compile', [compile_program/6, throw_text_door_error/2]).
 :- use_module('../parse_dl', [parse_dl_file/4]).
 :- use_module(library(lists)).
 
@@ -85,14 +95,27 @@ check_result(File, Result) :-
 % itself prints `wrote <path>` to current_output on success; `with_output_to`
 % swallows that (the temp path is not information a caller of `check` wants),
 % leaving stderr as the only channel this script writes on purpose.
+%
+% The catch/3 around compile_program/6 is what gives a refusal its FILE:LINE
+% (cold-author defect D3). compile_dl6/2 wraps its own compile in exactly this
+% call; this script cannot reuse compile_dl6/2 wholesale because it owns the
+% temp output file and needs parse findings as a SEPARATE result from a thrown
+% refusal, so it reuses the wrapper instead. Rethrowing keeps the term shape
+% every branch below reads: `unsupported_construct(at(File, Line, Reason))` has
+% the same functor as the unlocated form, so result_code/2's named-reason test
+% and its exit code are untouched, and 0_refusal_messages.pl's at/3 arm renders
+% the location that was already sitting in its message clause unused.
 compile_pure(File, Prog, Bindings) :-
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
     tmp_file_stream(text, TmpFile, TmpStream), close(TmpStream),
     setup_call_cleanup(
         true,
-        with_output_to(string(_),
-            compile_program(Name, fixture(Name, Prog, [], [], []), Bindings, [], TmpFile, emit_ts:emit_program)),
+        catch(
+            with_output_to(string(_),
+                compile_program(Name, fixture(Name, Prog, [], [], []), Bindings, [], TmpFile, emit_ts:emit_program)),
+            Error,
+            throw_text_door_error(File, Error)),
         catch(delete_file(TmpFile), _, true)).
 
 result_code(clean, 0).
