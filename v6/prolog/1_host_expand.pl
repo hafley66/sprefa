@@ -72,8 +72,10 @@ prepare_program(Input, prog(Decls, Rules), HostPlans, BindPlans, QueryPlans) :-
     maplist(compile_query, Queries, QueryPlans),
     expand_probe_rules(NormalizedRules, HostPlans, RawDecls,
                        ExpandedRules, GeneratedDecls),
+    unprobed_host_decls(HostPlans, GeneratedDecls, UnprobedDecls),
     bind_column_decls(BindPlans, BindColumnDecls),
-    append([RawDecls, Queries, GeneratedDecls, BindColumnDecls], Decls0),
+    append([RawDecls, Queries, GeneratedDecls, UnprobedDecls, BindColumnDecls],
+           Decls0),
     dedupe_terms(Decls0, Decls),
     append(ExpandedRules, [], Rules).
 
@@ -100,6 +102,52 @@ program_parts(program(Decls, Rules, Queries), Decls, Rules, Queries).
 % fixtures/files-hosts.dl6 spells instead, and this refusal is the other half of
 % ruling repo_column_spelling = distinct_name_hosts: the ruling says the repo
 % case gets its own name, and this says the language will not let it not.
+% A DECLARED HOST DECLARES ITS RELATIONS, probe or no probe.
+%
+% `generated_host_decls/7` is reached from `expand_probe_rules/5`, so until
+% 2026-07-31 a host that no rule probed produced a host PLAN naming
+% __host_demand_<name> and __host_response_<name> and no DECLARATION of either.
+%
+% FAIL-FIRST RECEIPT, found by the files/repos lane writing exactly the shape
+% the org_fanout ruling asks for -- a gh-shaped `repos` template declared
+% alongside the local one, written but not yet consumed:
+%
+%   POST /program -> 200 {"loaded":true, ..., "hosts":[...,"gh_repos",...]}
+%   Error: unknown rel '__host_demand_gh_repos' in program '44a6494405...'
+%     at serve/3_engine.ts:143
+%
+% and the served process DIED. The load answered success, the boot demand scan
+% then asked the engine for a relation the compiler never declared, and the
+% error tore the whole subscription down -- a 200 followed by a dead server,
+% which is the self-diagnosis law's exact complaint.
+%
+% The fix is the reading that matches `rel`: an undemanded declaration is an
+% EMPTY relation, not an absent one (ruling edb_definition says the same thing
+% about an unheaded relation atom). So a host with no probe gets its demand and
+% response relations at their base arity -- no salts, because a salt only exists
+% at a probe -- and they simply stay empty. That is what lets a program stage a
+% declaration it does not use yet, which is what the gh variant of `repos` is.
+%
+% The arity guard matters and is why this is not "always emit base decls":
+% salts widen the demand relation, so emitting a base-arity twin beside a
+% probed host would declare a SECOND relation under the same name at a
+% different arity. Hosts already declared by a probe are skipped.
+unprobed_host_decls(HostPlans, GeneratedDecls, UnprobedDecls) :-
+    findall(Decls,
+            ( member(host_plan(_, Inputs, Outputs, _,
+                               demand_ref(DemandName), response_ref(ResponseName), _),
+                     HostPlans),
+              \+ already_declared(DemandName, GeneratedDecls),
+              generated_host_decls(DemandName, ResponseName, Inputs, Outputs,
+                                   [], [], Decls)
+            ),
+            DeclLists),
+    append(DeclLists, UnprobedDecls).
+
+already_declared(DemandName, Decls) :-
+    member(col_type(DemandName/_, _, _), Decls),
+    !.
+
 no_duplicate_host_names(HostPlans) :-
     findall(Name, member(host_plan(Name, _, _, _, _, _, _), HostPlans), Names),
     ( duplicate(Names, Name)

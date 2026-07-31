@@ -1778,6 +1778,41 @@ test(every_reserved_host_column_refuses_by_name) :-
              OutputThrown ==
                  host_column_shadows_runtime(probe_host, output, Column) )).
 
+% A DECLARED HOST DECLARES ITS RELATIONS even when no rule probes it.
+%
+% FAIL-FIRST: before 1_host_expand.pl:unprobed_host_decls/3 this program
+% produced a host PLAN for `staged` naming __host_demand_staged and
+% __host_response_staged, and ZERO col_type/3 decls for either -- the plan
+% pointed at relations the compiler never declared. Served, that was a 200 on
+% POST /program followed by a dead process:
+% `unknown rel '__host_demand_staged'` out of HostRunner's boot demand scan
+% (serve/3_engine.ts). The load said yes and the server died, which is the
+% self-diagnosis law's exact complaint.
+%
+% The probed control is in the same program on purpose: the fix must not
+% change what a probed host emits, and it must not emit a base-arity twin
+% beside one (a salted probe widens the demand relation, so a twin would
+% declare a SECOND relation under the same name at a different arity).
+test(unprobed_host_still_declares_its_relations) :-
+    Program = program(
+                [ sh_decl(probed, [col(path, text)], [col(line, text)],
+                          template("echo {path}")),
+                  sh_decl(staged, [col(org, text)], [col(slug, text)],
+                          template("echo {org}"))
+                ],
+                [ (found(Path, Line) <- probe(probed, [Path], [Line], [])) ],
+                []),
+    prepare_program(Program, prog(Decls, _), _, _, _),
+    % demand = identity_digest, witness_digest, org ; response = witness_digest,
+    % ordinal, org, slug.
+    memberchk(col_type('__host_demand_staged'/3, org, text), Decls),
+    memberchk(col_type('__host_response_staged'/4, slug, text), Decls),
+    memberchk(keyed('__host_response_staged'/4, [1, 2]), Decls),
+    % the probed host is untouched, and declared exactly once
+    findall(Arity, member(col_type('__host_demand_probed'/Arity, path, _), Decls),
+            ProbedArities),
+    ProbedArities == [3].
+
 :- end_tests(hosts_wiring).
 
 % ═══════════════════════════════════════════════════════════════════════════
