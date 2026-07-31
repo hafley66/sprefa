@@ -606,6 +606,85 @@ test(rejects_self_reading_aggregate_head,
     Prog = prog([], [ (total(count(X)) <- total(X)) ]),
     check_supported_subset(Prog).
 
+% ═══ compound pattern against a WORLD-FED rel (the two encodings) ══════════
+%
+% FAIL-FIRST RECEIPT (fork_join_malformed_json arc, brief
+% plans/2026-07-31-forkjoin-defect-brief.md). Before the refusal existed both
+% tests below were RED, and the second one is the one that mattered:
+%   RED (rejects_compound_pattern_on_arrival_rel): no_exception -- the program
+%        compiled clean and the emitted module then died at run time with
+%        `SQLITE_ERROR: malformed JSON`, measured on the real statement
+%        INSERT OR IGNORE INTO "any_failed" ("status")
+%          SELECT DISTINCT json_extract(d0."col1", '$.args[0]')
+%          FROM "__frontier_outcome_a" d0
+%          WHERE d0."_phase" >= 0 AND json_extract(d0."col1", '$.fn') = 'error'
+%        because d0."col1" holds the ARRIVAL encoding `ok(body_one)` (canonical
+%        term text, sweep.pl:term_text/2) while compile_pattern_arg/7's
+%        compound branch destructures the json1 tagged encoding
+%        `{"fn":"ok","args":["body_one"]}` that a HEAD expression writes
+%        (lower.pl:compile_expr's json_object branch). json_extract over
+%        non-JSON text is an ERROR in sqlite, not NULL:
+%          sqlite> SELECT json_extract('ok(body_one)', '$.fn');
+%          Error: stepping, malformed JSON
+%   GREEN: the refusal below, and the accept case still accepting.
+%
+% The oracle deliberately keeps EXECUTING this program (operators.pl's
+% fork_join_error_arm_is_a_value has a complete two-tick log): unifying
+% `outcome_a(ok(BodyA))` against a stored compound is ordinary prolog. This is
+% a compiler capability gap named precisely, in the same slot and for the same
+% reason as now_in_level_rule -- NOT mirrored into 0_program_check.pl or
+% engine.pl, which would delete a language capability to hide a lowering hole.
+test(rejects_compound_pattern_on_arrival_rel,
+     [throws(unsupported_construct(
+                 compound_pattern_on_arrival_rel(outcome_a/1, 1, ok(_))))]) :-
+    Prog = prog([], [ (both_ok(BodyA) <- outcome_a(ok(BodyA))) ]),
+    check_supported_subset(Prog).
+
+% The SAME pattern against a DERIVED rel keeps compiling, because a derived
+% column is written by the head expression that produced it and therefore
+% carries the json1 tagged encoding the destructure reads. This is
+% scopes.pl:switch_as_keyed_replace's shape (`demanded(route_data(RouteId), _)`
+% over a level-headed `demanded`), the fixture the refusal must not touch.
+test(accepts_compound_pattern_on_derived_rel) :-
+    Prog = prog([ keyed(open_scope/2, [1]) ],
+                [ (open_scope(SessionId, route_data(RouteId)) <+
+                       route_change(SessionId, RouteId)),
+                  (demanded(Target, SessionId) <- open_scope(SessionId, Target)),
+                  (route_view(RouteId, Body) <-
+                       demanded(route_data(RouteId), _), route_row(RouteId, Body)) ]),
+    check_supported_subset(Prog).
+
+% An EDGE trigger argument is already refused, and more precisely, as
+% trigger_arg_not_var: a trigger position must be a plain variable, full stop.
+% The first draft of the refusal above walked edge bodies too and silently
+% restated state_machine.pl:async_state_machine_with_pattern_scan and
+% same_tick_error_then_fresh_chains_arms as the new class, rewriting their
+% dl_view along with it. This pins the split of ownership, not just the fact
+% that something refuses.
+% trigger_arg_not_var is thrown by lower.pl:compile_trigger_bound/4, LATER than
+% check_supported_subset/1, so the gate has to stay silent here for the
+% lowering to reach its own sharper refusal at all.
+test(edge_trigger_compound_keeps_its_own_refusal,
+     [throws(unsupported_construct(trigger_arg_not_var(error(_))))]) :-
+    Prog = prog([ kind(fetch_result/2, log), keep(fetch_result/2, all),
+                  keyed(phase/2, [1]) ],
+                [ (phase(Endpoint, idle) <+ fetch_result(Endpoint, error(_))) ]),
+    check_supported_subset(Prog),
+    Term = fixture(edge_trigger_compound, Prog, [], [], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
+% bool_lit/1 is compound and is NOT a destructure: compile_pattern_arg/7 has
+% its own branch for it, ahead of the compound branch, and emits a plain
+% column literal with no json1 anywhere. bool_relation_negation_is_two_valued
+% reads a world-fed `disabled(Name, bool_lit(true))` and compiles today; the
+% refusal must exclude it by the same test the lowering uses.
+test(accepts_bool_literal_pattern_on_arrival_rel) :-
+    Prog = prog([ col_type(disabled/2, name, text),
+                  col_type(disabled/2, flag, bool) ],
+                [ (blocked(Name) <- disabled(Name, bool_lit(true))) ]),
+    check_supported_subset(Prog).
+
 % A comparison under not/1 would be silently dropped: compile_negative_uses/4
 % renders a negated atom as a bare NOT EXISTS over rel columns and never sees
 % the conjunction's other goals.

@@ -23,22 +23,44 @@ from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 260 |
-| UNSUPPORTED (compiler refuses, named construct) | 74 |
-| compiler crashes | 1 |
-| compiled (lowering + emission succeeded) | 185 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 183 |
+| fixtures swept | 265 |
+| UNSUPPORTED (compiler refuses, named construct) | 76 |
+| compiler crashes | 0 |
+| compiled (lowering + emission succeeded) | 189 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 188 |
 | — of which WRONG (diff vs oracle) | 0 |
-| — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
+| — of which EMITTED_CRASH (emitted module died, oracle completed) | 0 |
+| — of which REJECTION (oracle throws on this schedule too) | 1 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED + crashes = 183 + 2 + 74 + 1 = 260.
+IDENTICAL + rejection + UNSUPPORTED + crashes = 188 + 1 + 76 + 0 = 265.
 
 Both emitter modes agree row for row for compiled fixtures: the incremental
-default and `SPREFA_TSV2_EMITTER_MODE=naive` produce the same 183/0/2. The
-final-state grading leg reports `final_identical=183`, `final_wrong=2` for the
-two rejection-path fixtures. The one compiler crash is
-`json_nfc_and_nfd_keys_stay_distinct`, an existing locale encoding failure in
-the Prolog writer.
+default and `SPREFA_TSV2_EMITTER_MODE=naive` produce the same 188/0/0/1. The
+final-state grading leg reports `final_identical=188`, `final_wrong=0`,
+`no_oracle_final=1` (the one rejection-path fixture, which has no oracle final
+state to diff).
+
+### The run_error bucket is split (fork_join_malformed_json arc)
+
+`run_error` used to hold two unrelated things and the summary line could not
+tell them apart. `log_retraction_rejected` is a fixture whose whole point is
+that its schedule is illegal (`throws(retract_from_log(event/1))`) — the
+ORACLE throws too, so the emitted module throwing is the two doors agreeing.
+`fork_join_error_arm_is_a_value` had a complete two-tick oracle log and the
+emitted module died on `SQLITE_ERROR: malformed JSON`; that is an emitter
+defect, and it read as one more expected line beside the rejection fixture for
+three arcs.
+
+`scripts/sweep.ts` now reports them as `rejection` and `emitted_crash`,
+discriminated by whether `out/<name>.oracle.jsonl` exists, and **exits 1 when
+`emitted_crash` is non-zero**. `wrong` stays ungated, as before.
+
+`fork_join_error_arm_is_a_value` itself moved out of the compiled set:
+compound patterns against a world-fed rel are now the named refusal
+`compound_pattern_on_arrival_rel` (analyze.pl), because the arrival encoding
+is canonical term text and `compile_pattern_arg/7` destructures the json1
+tagged form a head expression writes. The encoding decision belongs to
+struct_as_rows; see the analyze.pl comment for the two measured receipts.
 
 ### What the seq/pre lane moved
 
@@ -349,6 +371,12 @@ before a final state exists (`log_retraction_rejected`,
 `fork_join_error_arm_is_a_value`). The third, `retention_count_prunes_oldest`,
 was closed when keep(count) was lowered.
 
+(Superseded by the bucket split at the top of this file: neither of those two
+is `final_wrong` any more. `log_retraction_rejected` grades `no_oracle_final`,
+which is what a fixture with no oracle final state has always deserved, and
+`fork_join_error_arm_is_a_value` is a named refusal and no longer compiled.
+Current counts are `final_identical=188 final_wrong=0 no_oracle_final=1`.)
+
 The leg earned its keep a second time in the edge-body arc: with edge heads
 inheriting body column types, `xref_rev_is_pin_data_not_live_head` compiled
 and graded IDENTICAL on the tick log while dropping `known_repo(2)` from its
@@ -408,7 +436,7 @@ final-state grade.
 | diag_scenario_seven_ticks_end_to_end | check_eventing.pl | identical | final_identical |
 | clock_rel_join_storms | check_eventing.pl | identical | final_identical |
 | retention_count_prunes_oldest | engine_core.pl | identical | final_identical |
-| log_retraction_rejected | engine_core.pl | run_error | final_wrong |
+| log_retraction_rejected | engine_core.pl | rejection | no_oracle_final |
 | world_fed_keyed_arrival_replaces | engine_core.pl | identical | final_identical |
 | now_reads_the_tick | engine_core.pl | identical | final_identical |
 | edge_chain_hops_tick_per_stage | engine_core.pl | identical | final_identical |
@@ -443,7 +471,6 @@ final-state grade.
 | filter_map_is_a_level_rule | operators.pl | identical | final_identical |
 | repeat_is_a_self_carry_chain | operators.pl | identical | final_identical |
 | fork_join_is_a_conjunctive_body | operators.pl | identical | final_identical |
-| fork_join_error_arm_is_a_value | operators.pl | run_error | final_wrong |
 | switch_as_keyed_replace | scopes.pl | identical | final_identical |
 | merge_policy | scopes.pl | identical | final_identical |
 | exhaust_policy | scopes.pl | identical | final_identical |

@@ -18,7 +18,8 @@ default:
 
 # ── prolog side ──
 
-# the fixture corpus vs the oracle engine (expect: 231 PASS, nothing else)
+# the fixture corpus vs the oracle engine (expect: 264 PASS + 1 pre-existing
+# fail, float_shortest_round_trip_wire; go.pl exits 0 either way)
 conformance:
 	cd {{v6}}/prolog/conformance && swipl -q -l go.pl -g go -g halt
 
@@ -26,11 +27,11 @@ conformance:
 roundtrip:
 	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
 
-# term door vs .dl6 text door, byte-identical emitted modules (expect: 182/182/0)
+# term door vs .dl6 text door, byte-identical emitted modules (expect: 189/189/0)
 text-door:
 	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
 
-# compiler unit tests (expect: 246/246 and growing)
+# compiler unit tests (expect: 267/267 and growing)
 plunit:
 	cd {{v6}}/prolog/compile && swipl -q -l test/plunit_tests.pl -g run_tests -g halt
 
@@ -57,7 +58,9 @@ compile-speed:
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
 # full corpus sweep: compile every fixture, replay vs oracle tick logs
-# (expect: RUN total=182 identical=180 wrong=0; slow, minutes)
+# (expect: RUN total=189 identical=188 wrong=0 emitted_crash=0 rejection=1;
+#  exits 1 if emitted_crash is non-zero -- an emitted module that died on a
+#  schedule the oracle completed; slow, minutes)
 sweep:
 	cd {{v6}}/tsv2 && bash scripts/sweep.sh
 
