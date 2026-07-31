@@ -24,6 +24,21 @@
  * Writes v6/prolog/compile/out/run-results.json (one record per compiled
  * fixture: bucket + a short diff/error detail) and prints a summary line.
  *
+ * EXIT CODE: 0, except when any fixture lands in `emitted_crash` -- an
+ * emitted module that died on a schedule the ORACLE completed. See the
+ * RunBucket comment for why that one bucket gates and `wrong` does not.
+ *
+ * SABOTAGE RECEIPT for that gate (fork_join_malformed_json arc): splicing
+ * `AND json_extract(d0."value_a", '$.fn') = 'x'` into
+ * gen_emitted/fork_join_is_a_conjunctive_body.ts's insertSql -- the exact
+ * shape of the defect this split was written for -- moved that fixture
+ * identical -> emitted_crash and turned the script red:
+ *   RUN total=189 identical=187 wrong=0 emitted_crash=1 rejection=1 ...
+ *   SWEEP GATE: 1 emitted module(s) crashed on a schedule the oracle
+ *   completed: fork_join_is_a_conjunctive_body
+ *   EXIT=1
+ * Reverted; clean run is emitted_crash=0 rejection=1, EXIT=0.
+ *
  * Usage: node --experimental-transform-types scripts/sweep.ts
  */
 
@@ -59,7 +74,22 @@ type EmittedProgram = IGenProgram & {
   readonly finalSelect: Record<string, string>;
 };
 
-type RunBucket = "identical" | "wrong" | "run_error" | "no_oracle_log";
+/** A compiled fixture whose replay THREW used to land in one `run_error`
+ *  bucket, and that bucket held two unrelated things. `log_retraction_rejected`
+ *  is a fixture whose whole point is that the schedule is illegal
+ *  (`throws(retract_from_log(event/1))`): the ORACLE throws too, so the
+ *  emitted module throwing is the two doors agreeing. `fork_join_error_arm_
+ *  is_a_value` had a complete two-tick oracle log and the emitted module died
+ *  on `SQLITE_ERROR: malformed JSON` -- a real emitter defect, and it sat next
+ *  to the rejection fixture reading as one more expected line for three arcs
+ *  (ARCH fork_join_malformed_json).
+ *
+ *  The discriminator is already on disk and needs no new bookkeeping: an
+ *  oracle tick log EXISTS exactly when the oracle completed the schedule.
+ *    rejection     -> no oracle log; both doors refuse the same schedule.
+ *    emitted_crash -> oracle log present; only the emitted module died. This
+ *                     bucket must read as a DEFECT, never as expected. */
+type RunBucket = "identical" | "wrong" | "rejection" | "emitted_crash" | "no_oracle_log";
 
 /** Final-state leg (EXPRESSION + AGGREGATE LIFT arc). Reported ALONGSIDE the
  *  tick-log bucket, never folded into it: the tick-log diff stays the gate
@@ -220,21 +250,27 @@ function runFixture(name: string): Observable<IFixtureRunResult> {
       );
     }),
     map(({ lines, finalLine }) => gradeAgainstOracle(name, lines, gradeFinalState(name, finalLine))),
-    catchError((error: unknown) =>
-      of<IFixtureRunResult>({
+    catchError((error: unknown) => {
+      // Same split on the final leg, same discriminator: a rejection fixture
+      // has no oracle FINAL line either, so calling its missing final state
+      // `final_wrong` was the identical noise one column over.
+      const rejection = readOracleLines(name) === null;
+      return of<IFixtureRunResult>({
         name,
-        bucket: "run_error",
+        bucket: rejection ? "rejection" : "emitted_crash",
         detail: error instanceof Error ? error.message : String(error),
-        finalBucket: "final_wrong",
-        finalDetail: "run threw before the final state could be read",
-      }),
-    ),
+        finalBucket: rejection ? "no_oracle_final" : "final_wrong",
+        finalDetail: rejection
+          ? "oracle threw on this schedule too; no final state to diff"
+          : "run threw before the final state could be read",
+      });
+    }),
   );
 }
 
 function summaryLine(results: readonly IFixtureRunResult[]): string {
   const countOf = (bucket: RunBucket): number => results.filter((result) => result.bucket === bucket).length;
-  return `RUN total=${results.length} identical=${countOf("identical")} wrong=${countOf("wrong")} run_error=${countOf("run_error")} no_oracle_log=${countOf("no_oracle_log")}`;
+  return `RUN total=${results.length} identical=${countOf("identical")} wrong=${countOf("wrong")} emitted_crash=${countOf("emitted_crash")} rejection=${countOf("rejection")} no_oracle_log=${countOf("no_oracle_log")}`;
 }
 
 function finalSummaryLine(results: readonly IFixtureRunResult[]): string {
@@ -259,6 +295,19 @@ function main(): void {
           if (result.finalBucket !== "final_identical") {
             process.stdout.write(`  ${result.finalBucket.toUpperCase()} ${result.name} ${result.finalDetail}\n`);
           }
+        }
+        // The ratchet the split exists for. `emitted_crash` is zero today and
+        // an emitted module dying where the oracle completed the schedule is
+        // never an acceptable outcome -- the compiler owes that program a
+        // named refusal instead. Gating it here is what stops the next one
+        // reading as one more expected line in a summary nobody diffs.
+        // `wrong` stays ungated, as it has been for every earlier arc.
+        const crashes = results.filter((result) => result.bucket === "emitted_crash");
+        if (crashes.length > 0) {
+          process.stderr.write(
+            `SWEEP GATE: ${crashes.length} emitted module(s) crashed on a schedule the oracle completed: ${crashes.map((result) => result.name).join(", ")}\n`,
+          );
+          process.exitCode = 1;
         }
       },
       error: (failure) => {
