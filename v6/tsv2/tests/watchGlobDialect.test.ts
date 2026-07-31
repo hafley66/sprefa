@@ -49,13 +49,18 @@
  * nothing and every row in that leg came through `batchFor` — which is exactly
  * the isolation the property needs.
  *
- * SABOTAGE RECEIPT (run 2026-07-31, reverted; tree clean after): reverting
- * `bootBatch` to `trackedPaths(root, glob)` with the pathspec argument turned
- * tests 1, 2 and 3 RED with the missing path named, and test 4 RED on
- * `src/**\/*.rs` with `boot is missing src/lib.rs`. Widening the shared matcher
- * to `() => true` instead turns test 4 RED the other way, on the exact-path and
- * `src/*.rs` shapes, because live then accepts files boot's own answer does not
- * contain.
+ * SABOTAGE RECEIPTS (run 2026-07-31, both reverted; tree clean after):
+ *
+ *   1. the pre-fix boot half itself — `trackedPaths(root, glob)` selecting by
+ *      pathspec — is RED 4/4, quoted per shape in the commit that added this
+ *      file before the fix landed.
+ *   2. widening the shared matcher to `true || path.matchesGlob(...)` is also
+ *      RED 4/4, and test 4 fails with `'src/**\/*.rs' hashed a decoy file, so
+ *      the filter ran after the digest`. That is worth stating precisely,
+ *      because it is NOT the boot-vs-live comparison that catches it: a matcher
+ *      that accepts everything makes both halves agree, and the equality
+ *      assertion passes. The decoy files are what make test 4 discriminating in
+ *      that direction, which is why they are in the tree.
  */
 
 import assert from "node:assert/strict";

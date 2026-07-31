@@ -62,6 +62,18 @@
  * paths from the watch source, sign from digest comparison, and `bufferTime`
  * coalescing.
  *
+ * ONE GLOB DIALECT, both halves (ruling `glob_dialect =
+ * node_matcher_both_halves`, user 2026-07-31). `git ls-files` supplies the
+ * tracked SET and nothing else -- it is called with no pathspec -- and
+ * membership is decided for boot and for live by the same `matchesWatchGlob`
+ * call. This was a live defect until that ruling: boot selected with git
+ * pathspec, live with `path.matchesGlob`, and the two disagreed on 170 of the
+ * 242 globs in the v5 corpus (plans/2026-07-31-scan-spelling-card.md §2). The
+ * disagreement was silent and self-erasing -- a file boot dropped appeared on
+ * its first edit and was reconciled away again on the next restart. The
+ * boot==live property is now a test (tests/watchGlobDialect.test.ts), not a
+ * comment.
+ *
  * COALESCE WINDOW = 100ms by default (`IServeConfig.watchCoalesceMs`), on the
  * injected scheduler so a test drives it on virtual time. `bufferTime` and not
  * `debounceTime`: a debounce never emits while a large `git checkout` keeps
@@ -105,6 +117,7 @@ import type {
   IBindPlansFor,
   IIntervalBindRunner,
   ILiveEngine,
+  IMatchesWatchGlob,
   IRowValue,
   IRow,
   IWatchBindRunner,
@@ -239,14 +252,41 @@ function digestOf(absolutePath: string): string | null {
   }
 }
 
-/** The enumerate host's standing file-set decision, used here at boot without
- *  introducing another walker or ignore vocabulary: tracked worktree paths
- *  selected by the glob as a git pathspec. NUL framing preserves every path
- *  git permits. A non-repository root has the empty tracked set, which keeps
- *  injected filesystem tests independent of git while retaining the same
- *  tracked-only contract. */
-function trackedPaths(root: string, glob: string): readonly string[] {
-  const result = spawnSync("git", ["ls-files", "-z", "--", glob], {
+/**
+ * THE glob matcher, and the only one: ruling `glob_dialect =
+ * node_matcher_both_halves` (rulings.pl, user 2026-07-31). Both halves of the
+ * watch bind call THIS function, which is the whole point of it existing --
+ * `bootBatch` and `batchFor` cannot drift into two dialects again without
+ * deleting a call site, and the boot==live property test
+ * (tests/watchGlobDialect.test.ts) fails the moment one of them does.
+ *
+ * WHY NODE'S MATCHER rather than git's pathspec, from the census in
+ * plans/2026-07-31-scan-spelling-card.md §2: the two dialects disagreed on 170
+ * of the v5 corpus's 242 globs, and `matchesGlob` is the one that agrees with
+ * v5's globset on every measured case. Pathspec's `*` crosses `/`, its `**`
+ * demands at least one directory (so `src/**\/*.rs` silently drops every direct
+ * child of `src/` and `**\/*.md` drops every repo-root file), and it has no
+ * brace alternation at all (`*.{rs,ts}` selects nothing). The matcher gets all
+ * four right, so every v5 glob ports byte-unmodified.
+ */
+export const matchesWatchGlob: IMatchesWatchGlob = (relativePath: string, glob: string): boolean =>
+  path.matchesGlob(relativePath, glob);
+
+/** The tracked worktree, WHOLE: `git ls-files` with no pathspec, because the
+ *  glob is not git's business any more (ruling above). Enumerating everything
+ *  and filtering in JS keeps the enumerate host's standing ignore decision --
+ *  tracked-only, so an untracked `node_modules` is never walked, never listed
+ *  and never hashed -- while leaving membership entirely to `matchesWatchGlob`.
+ *  NUL framing preserves every path git permits. A non-repository root has the
+ *  empty tracked set, which keeps injected filesystem tests independent of git
+ *  while retaining the same tracked-only contract.
+ *
+ *  COST: one subprocess per watched glob at subscribe, unchanged from the
+ *  pathspec call it replaces; what grows is the string list it returns (this
+ *  repo: 3,906 tracked paths). Filtering happens BEFORE `digestOf`, so the
+ *  number of files READ and hashed is still only the number the glob selects. */
+function trackedPaths(root: string): readonly string[] {
+  const result = spawnSync("git", ["ls-files", "-z"], {
     cwd: root,
     encoding: "utf8",
   });
@@ -278,7 +318,8 @@ class GlobWatch {
     }
 
     const disk = new Map<string, string>();
-    for (const relativePath of trackedPaths(this.root, this.glob)) {
+    for (const relativePath of trackedPaths(this.root)) {
+      if (!matchesWatchGlob(relativePath, this.glob)) continue;
       const digest = digestOf(path.resolve(this.root, relativePath));
       if (digest !== null) disk.set(relativePath, digest);
     }
@@ -313,7 +354,7 @@ class GlobWatch {
     for (const absolutePath of new Set(paths)) {
       const relativePath = path.relative(this.root, absolutePath);
       if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
-      if (!path.matchesGlob(relativePath, this.glob)) continue;
+      if (!matchesWatchGlob(relativePath, this.glob)) continue;
       const previous = this.lastDigest.get(relativePath);
       const current = digestOf(absolutePath);
       if (current === previous) continue;
