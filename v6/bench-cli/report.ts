@@ -184,6 +184,13 @@ wrapper-measured and includes swipl startup. They are NOT comparable head to
 head; see CONTRACT.md section 6. What is comparable across engines today is
 the *verdict*, \`ticks\`, \`statements\`, and \`peak_rss_mb\`.
 
+Where that caveat bites hardest is the small program cases, whose engine work
+(4-30 ms) is the same order as the ~30 ms floor separating the two engines'
+measurement spans. On the scale rows the floor is a rounding error against the
+numbers, so the ordering there is the robust part of this table. Closing the
+gap properly means timing inside the oracle rather than around it, which edits
+a file this lane is fenced out of — priced in CONTRACT.md section 6.
+
 **Only a byte-identical engine is timed.** A \`wrong\`, \`refused\` or \`error\`
 row carries N/A timings on purpose — the v1 asymmetry from SCALE.md (ranked
 ~10x faster while emitting no delta log) cannot recur under this harness.

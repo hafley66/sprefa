@@ -34,11 +34,13 @@ RECORDS="$OUT/records.jsonl"
 : > "$RECORDS"
 
 RUNS="${BENCH_RUNS:-5}"
-# 180s, not the house rig's 600s. The only case expected to reach it is s3,
-# which is carried to RECORD a wall rather than to produce a number
-# (CONTRACT.md section 6), and a 600s wall costs 10 minutes to learn the same
-# fact. Raise it if a real case starts timing out.
-TIMEOUT="${BENCH_TIMEOUT:-180}"
+# 60s, not the house rig's 600s. Every case that clears the reference engine
+# at all clears it in under 2s here; the cases that do not clear it do not
+# clear 180s either -- s1/10k's oracle was measured at 173.58s killed, then
+# again still running past 183s. So the cap only decides how long the harness
+# waits to learn a fact it learns either way, and 60s keeps `just bench-cli`
+# usable as a gate. Raise it if a case that SHOULD pass starts timing out.
+TIMEOUT="${BENCH_TIMEOUT:-60}"
 ONLY="${BENCH_CASES:-}"
 
 # hyperfine is the right tool for the EXTERNAL wall column and the wrong one
@@ -55,10 +57,33 @@ echo "   external timer   $EXTERNAL_TIMER"
 echo "   peak rss         /usr/bin/time -l"
 echo ""
 
-# `perl -e alarm` is the house timeout (v6/sprefa-store/bench/engines/tsv2_gen.sh
-# uses exactly this); macOS has no coreutils `timeout` by default.
+# Timeout that kills the whole PROCESS GROUP, not just the wrapper.
+#
+# The house one-liner (`perl -e "alarm shift; exec @ARGV"`, used by
+# v6/sprefa-store/bench/engines/tsv2_gen.sh; macOS ships no coreutils
+# `timeout`) execs the command in the SAME process, so SIGALRM terminates the
+# adapter shell -- and orphans the engine it spawned. Measured here, not
+# assumed: at the s1/10k timeout the harness moved on to s2/1k while the
+# timed-out swipl kept running,
+#
+#     03:03 swipl      <- s1/10k oracle, orphaned, past its 180s cap
+#     00:01 swipl      <- s2/1k oracle, being measured beside it
+#
+# so every subsequent cell was timed against a stolen core. That is the same
+# contamination class as the two-concurrent-runs defect, arriving by a
+# different door. fork + setpgrp + `kill -KILL -$pid` takes the engine down
+# with the wrapper. Exit 124 on timeout, the coreutils convention.
 run_capped() {
-  perl -e "alarm shift; exec @ARGV" "$TIMEOUT" "$@"
+  perl -e '
+    my $limit = shift;
+    my $pid = fork();
+    if ($pid == 0) { setpgrp(0, 0); exec @ARGV; exit 127; }
+    $SIG{ALRM} = sub { kill("KILL", -$pid); waitpid($pid, 0); exit 124; };
+    alarm $limit;
+    waitpid($pid, 0);
+    alarm 0;
+    exit($? >> 8);
+  ' "$TIMEOUT" "$@"
 }
 
 engine_cmd() {
@@ -163,7 +188,10 @@ for index in $(seq 0 $((case_count - 1))); do
       [ "$VERDICT" = "no_reference" ] && break
       TSV2_ENV=""
       [ "$ENGINE" = "tsv2" ] && TSV2_ENV="NODE_OPTIONS=--max-old-space-size=${TSV2_HEAP_MB:-512}"
-      env $TSV2_ENV /usr/bin/time -l \
+      # run_capped here too, not just on the reference leg: the TIMED loop is
+      # where a non-oracle engine runs for the first time, so without this
+      # tsv2 had no timeout at all and s3 could hang the whole harness.
+      run_capped env $TSV2_ENV /usr/bin/time -l \
         "$(engine_cmd "$ENGINE")" \
           --program "$CASE_PROGRAM" --schedule "$CASE_SCHEDULE" \
           --db ":memory:" --perf-out "$PERF" \

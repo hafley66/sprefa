@@ -287,6 +287,13 @@ engine's stdout is `cmp`-ed against it byte for byte.
 | `wrong` | ran, produced a log, log differs |
 | `refused` | exit 2, named construct unsupported |
 | `error` | exit anything else |
+| `no_reference` | the ORACLE produced no log for this case, so nothing here can be graded |
+
+`no_reference` exists because the alternative is a lie. When the reference leg
+fails or times out, `cmp` against a missing or truncated reference calls every
+other engine `wrong` — reporting an engine defect where the real fact is that
+the reference engine did not reach that cell. Under `no_reference` the engine
+is not run at all and the reason line names whose ceiling it is.
 
 **An engine without a matching log is never timed.** This is the v1 asymmetry
 lesson made structural: `SCALE.md` recorded v1 as ~10x faster than tsv2 on
