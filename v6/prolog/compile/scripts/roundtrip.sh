@@ -233,10 +233,12 @@ echo ""
 echo "=== G3 conformance suite (no-regression sanity) ==="
 CONFORMANCE_OUTPUT="$(swipl -q -l "$CONFORMANCE_GO" -g go -g halt 2>&1)"
 PASS_COUNT="$(printf '%s\n' "$CONFORMANCE_OUTPUT" | grep -c '^PASS' || true)"
-FAIL_COUNT="$(printf '%s\n' "$CONFORMANCE_OUTPUT" | grep -c '^FAIL' || true)"
+# grader.pl prints lowercase `fail  `; '^FAIL' matched nothing and this leg
+# was blind to red fixtures (class 37's sibling, found by the fork_join lane).
+FAIL_COUNT="$(printf '%s\n' "$CONFORMANCE_OUTPUT" | grep -ci '^fail' || true)"
 echo "conformance: $PASS_COUNT pass / $FAIL_COUNT fail"
 if [ "$FAIL_COUNT" != "0" ]; then
-  printf '%s\n' "$CONFORMANCE_OUTPUT" | grep '^FAIL' || true
+  printf '%s\n' "$CONFORMANCE_OUTPUT" | grep -i '^fail' || true
   G3_STATUS=1
 else
   G3_STATUS=0
