@@ -1234,6 +1234,12 @@ check_supported_subset_expanded(Program) :-
     forall(( member(Rule, Rules), rule_is_edge(Rule) ), check_edge_rule_shape(Rule)),
     forall(( member(Rule, Rules), rule_is_level(Rule) ), check_level_rule_shape(Rule)),
     check_no_edge_head_conflict_risk(Decls, Rules),
+    % LAST of the per-rule capability checks on purpose. Every shape this could
+    % name is already named by an earlier class in the corpus
+    % (trigger_arg_not_var on the two edge fixtures, dynamic_relation_name on
+    % higher_order_call_over_atom_rejected), and running after them keeps those
+    % diagnostics exactly where they are.
+    check_no_compound_pattern_on_arrival_rel(Decls, Rules),
     shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
 
 shared_refusal(Program, Order) :-
@@ -1392,6 +1398,89 @@ check_no_edge_head_conflict_risk(Decls, Rules) :-
              nth0(IndexB, AllRefsForHead, RefsB), IndexA < IndexB,
              intersection(RefsA, RefsB, Shared), Shared \== [] ),
            throw(unsupported_construct(edge_head_conflict_risk(HeadRef, Shared)))).
+
+% ═══ the two compound encodings (fork_join_malformed_json) ═════════════════
+%
+% A compound column value reaches storage by exactly two roads, and they do
+% not spell it the same way:
+%
+%   HEAD EXPRESSION  lower.pl:compile_expr's compound branch writes the json1
+%                    tagged form, json_object('fn', ok, 'args',
+%                    json_array('body_one')) -> {"fn":"ok","args":["body_one"]}.
+%   ARRIVAL          sweep.pl:term_text/2 (mirroring ticklog.pl's own
+%                    value_json/2) writes canonical TERM TEXT, `ok(body_one)`.
+%
+% compile_pattern_arg/7's compound branch destructures the FIRST spelling:
+% json_extract(col,'$.fn') for the functor tag and json_extract(col,
+% '$.args[N]') per sub-argument. Pointed at a column the world writes, every
+% one of those extracts runs against text that is not JSON, and sqlite treats
+% that as an ERROR rather than NULL -- measured, sqlite3 3.45.1:
+%   sqlite> SELECT json_extract('ok(body_one)', '$.fn');
+%   Error: stepping, malformed JSON
+% so the emitted module does not answer wrong, it dies mid-tick.
+%
+% This is the crack SCOREBOARD.md has carried since phase C as "compound
+% arrival text vs json1 match", stated there for the EDGE arm
+% (edge_body_needs_json_destructure). The level arm had no refusal at all: it
+% compiled, and fork_join_error_arm_is_a_value sat in the sweep's run_error
+% bucket next to a genuine rejection fixture.
+%
+% WHY A REFUSAL AND NOT A FIX. Making the two encodings agree is a choice
+% about how a compound value is stored, and that choice is RULED: rulings.pl
+% compound_storage = struct_as_rows (a struct value is a dictionary row plus a
+% content id, see plans/2026-07-29-struct-as-rows-header.md). Teaching the
+% arrival path to write json1 would pre-empt it, and it would not even close
+% this fixture: `outcome_b(error(502))` destructures to a sub-argument that
+% compile_sub_args/7 types `text` by the inline-flat compound punt (PHASE C2
+% RULING 1), so the 502 lands in a TEXT column -- measured, same sqlite:
+%   INSERT INTO t(status) SELECT json_extract('{"fn":"error","args":[502]}',
+%                                             '$.args[0]');
+%   SELECT status, typeof(status) FROM t;  ->  502|text
+% and the tick log would print "502" where the oracle prints 502. Typing a
+% destructured sub-argument IS the struct plane. So the honest shape today is
+% a name, and the arc that deletes this refusal is struct_as_rows.
+%
+% COMPILER-ONLY, in the same slot and for the same reason as
+% now_in_level_rule: the oracle keeps executing these programs (unifying
+% `outcome_a(ok(BodyA))` against a stored compound is ordinary prolog, and
+% operators.pl:fork_join_error_arm_is_a_value has a complete two-tick log).
+% Mirroring this into 0_program_check.pl would delete a language capability to
+% hide a lowering hole.
+%
+% NAMED RESIDUE, uncovered on purpose: the test is one hop, "is this ref an
+% arrival target". A compound that arrives into a world-fed rel, is copied
+% whole into a DERIVED rel by a plain variable, and is destructured THERE
+% carries the same term text and would crash the same way. Covering it needs a
+% per-column encoding dataflow, which is the struct plane's own answer; no
+% corpus program has the shape (measured over all 265 fixtures), and the
+% one-hop test is what keeps switch_as_keyed_replace compiling.
+check_no_compound_pattern_on_arrival_rel(Decls, Rules) :-
+    arrival_target_refs(Rules, ArrivalRefs),
+    type_definitions(Decls, Types),
+    forall(( member(Rule, Rules),
+             rule_body(Rule, Body),
+             body_ref_uses(Body, Uses),
+             member(use(Ref, Args, _Sign, _Marking), Uses),
+             memberchk(Ref, ArrivalRefs),
+             nth1(Position, Args, Argument),
+             destructuring_pattern(Types, Argument) ),
+           throw(unsupported_construct(
+                     compound_pattern_on_arrival_rel(Ref, Position, Argument)))).
+
+% What compile_pattern_arg/7's compound branch actually claims, and nothing
+% else. bool_lit/1 is compound and has its OWN branch ahead of it (a plain
+% column literal, no json1 anywhere), so a world-fed
+% `disabled(Name, bool_lit(true))` stays legal. A relation-shaped term over a
+% DECLARED type never reaches that branch either: lower.pl's
+% expand_relation_pattern_rules/4 rewrites it into dictionary atoms first, and
+% what the rewrite cannot reach is already refused by name
+% (relation_pattern_not_a_relation_value and friends, 0_program_check.pl).
+destructuring_pattern(Types, Argument) :-
+    nonvar(Argument),
+    compound(Argument),
+    Argument \= bool_lit(_),
+    functor(Argument, Functor, _),
+    \+ declared_type_name(Types, Functor).
 
 check_level_rule_shape((Head <- Body)) :-
     ( refused_aggregate_head_shape(Head, RefusedAgg)
