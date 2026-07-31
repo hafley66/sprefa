@@ -1,17 +1,12 @@
 #!/usr/bin/env bash
-# devlog.sh -- served production rail for v6/dl/fixtures/devlog.dl6.
+# devlog.sh -- served rail for v6/dl/fixtures/devlog.dl6.
 #
 # The DL6 program owns fact selection, joins, markdown construction, ordinal
 # assignment, and group_concat document assembly. This script owns process
 # lifecycle, the HTTP load/read bridge, and no document text construction.
 # The final write is the write_devlog host declared in the program.
 
-# BUDGET (timeout-gun lane, 2026-07-31). THIS RAIL IS THE INCIDENT: a devlog
-# run hung for 35 minutes with nothing on stdout and no budget to name it.
-# Measured wall now: 2s. Default 600s is 300x that -- deliberately loose,
-# because the honest wall is small and the claim the number encodes is not "2s
-# plus slack" but "a devlog still running after ten minutes is the 35-minute
-# hang again". Override with DEVLOG_BUDGET_S.
+# Whole-script budget; override with DEVLOG_BUDGET_S.
 #
 # The cap is on the WHOLE script: the cost is a backgrounded node server, the
 # ledger hosts it spawns and two poll loops, none of which this script waits

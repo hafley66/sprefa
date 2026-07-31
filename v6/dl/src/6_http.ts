@@ -1,9 +1,9 @@
 /**
- * 6_http.ts — the http front. curl is the CLI. node:http, localhost, no auth, no
+ * HTTP front. curl is the CLI; node:http handles the literal routes.
  * framework (routing here is six literal path shapes; a router library would be
  * more machinery than the problem).
  *
- * Contract (plan M6, tasks.d.ts HttpSurface):
+ * Routes:
  *   POST /edb/program        text/plain .dl -> bridge -> runtime (re)boot
  *                             200 {loaded,rels,minted} | 400 {diags}
  *   POST /edb/file_changed   {path} -> ingestFile -> TickReport | 409 (no program)
@@ -18,7 +18,7 @@
  * socket close (refCount honesty — a dropped curl unsubscribes, proven by
  * activeSubscribeCount() returning to baseline in tests/6_http.test.ts).
  *
- * THE APP IS ONE COLD OBSERVABLE (`serveDl`), subscribed exactly once, at the bottom of
+ * `serveDl` is one cold observable subscribed exactly once at the bottom of
  * main.ts. Shape:
  *
  *   httpServer$ -> mergeMap(node =>
@@ -34,14 +34,14 @@
  * the server, so nothing pushes into a Subject to get into the graph, and every branch
  * emits a DlAppEvent rather than throwing its values away.
  *
- * Server state: ONE mutable slot (ServerState below), empty until a program loads via
+ * ServerState has one mutable program slot, empty until a program loads via
  * POST /edb/program — the request branch and the program branch are siblings under the
  * merge, so the slot is how a request finds the program currently loaded. A re-POST
  * disposes the previous runtime + side db connection, then boots fresh — no two-worlds
  * split, no partial-reload machinery. The previous HostRunner needs no disposal: it is
  * pure composition over the runtime's deltas$, and the switch unsubscribes it.
  *
- * Second SQLite connection (sideDb): per the owner's own pinned resolution for
+ * `sideDb` is a second SQLite connection for
  * HostRunner's cacheDb (1_hosts.ts header: "the same db the runtime booted with...
  * or a fresh open_db() on the same file path; both are documented as
  * acceptable"), this file opens ONE extra libsql connection per program load and

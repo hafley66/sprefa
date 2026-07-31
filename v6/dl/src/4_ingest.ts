@@ -1,7 +1,7 @@
 /**
- * 4_ingest.ts — extract subprocess stdout -> spine EDB rels -> per-file re-ingest DIFF.
+ * Extract subprocess stdout into spine EDB relations and diff per-file re-ingest.
  *
- * Contract (plan M3, tasks.d.ts): `extractFile(path)` spawns DL_EXTRACT_BIN and yields
+ * `extractFile(path)` spawns DL_EXTRACT_BIN and yields
  * ExtractRecords; `toFactLines(recs, path)` is the pure-ish F2 mapping (record=node|edge|
  * sig|site|const -> spine rel rows, plus computed span_line(path, start, line, col)
  * rows from file bytes, plus one file(path, content_hash) row); `ingestFile` diffs the
@@ -9,7 +9,7 @@
  * the diff, no diag-specific code). extract is CONSUME-ONLY: never touch its crate or
  * worktree.
  *
- * Spine rel schemas (ORCHESTRATOR PIN, tasks.d.ts): file(path, content_hash); content_hash
+ * Spine rel schemas: file(path, content_hash); content_hash
  * is the sha-256 hex digest of the file's raw bytes (M8-alpha, IdentityWitnessLaw,
  * tasks.d.ts: the witness half of identity-vs-witness). A file row retracts+inserts on
  * ANY content edit, even a same-mtime rewrite, so a downstream salted probe (e.g. sg?
@@ -23,7 +23,7 @@
  * the ingested file exactly once per ingestFile() call (content_hash reuses that SAME
  * read: one IO, no second pass over the file).
  *
- * `spineDeclsLocal` below is THIS PACKAGE's own decl builder, used only by its tests
+ * `spineDeclsLocal` is this package's decl builder, used by its tests
  * (fakeBridgeOk needs a Program built from RelDecl[]). Integration wiring point: package
  * M5 (src/5_diag.ts, owned by a parallel arc) exports `spineDecls`/`builtinDecls` built
  * the same way (edbRel(name, columns) per the schema above); once that lands, the http

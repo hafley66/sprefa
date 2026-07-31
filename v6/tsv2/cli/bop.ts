@@ -1,19 +1,15 @@
 #!/usr/bin/env -S node --experimental-transform-types
 /**
- * cli/bop.ts — "the bop": v6's CLI (registry.pl `cli_command/3` is the
- * inventory this file mirrors; `tests/bopCommandInventory.test.ts` asserts
- * the two agree on verb names). Five verbs: serve / run / check / load / q.
- * commander is the bought dependency (user directive 2026-07-29 late); clap
- * derive on the rust side is a later arc, not this one.
+ * CLI entry point for serve, run, check, load, and q.
  *
- * NO DAEMON CONCEPT (same directive): `run` and `check` each boot the served
+ * `run` and `check` each boot the served
  * tsv2 engine IN-PROCESS -- the server calls itself -- use it for exactly one
  * job, and tear it down. `serve` is the only long-running verb; `load`/`q`
  * are plain HTTP clients against a `bop serve` (or a `run`/`check`, though
  * those own their server for their own lifetime, not for another process to
  * reach) that is already listening.
  *
- * ONE-SUBSCRIBE LAW EXEMPTION, stated up front because `serve()` below calls
+ * `serve()` below is an explicit entry-point subscription. The
  * `.subscribe()` and a reviewer's first question is "why does this file get
  * to do that when tsv2/serve/main.ts is supposed to be the only one":
  * `v6/tools/one-subscribe.sh` scans exactly two directories by name, `dl/src`
@@ -24,7 +20,7 @@
  * an app that already has one. `bop run`'s own `.subscribe()` (in its own
  * function below) is the same case again, one more standalone process.
  *
- * ASYNC AT THE CLI RIM ONLY: commander's action handlers are callback/async
+ * Commander's action handlers and HTTP clients are async at the CLI boundary;
  * by its own design, and everything below them that talks over HTTP
  * (`fetch`, node's own global, no client library) or spawns swipl is async
  * too. This is exactly the exemption "async becomes rxjs; sync stays sync"
@@ -34,7 +30,7 @@
  * `serveTsv2` unchanged and this file's only job is the one terminal
  * `.subscribe()` plus a couple of `fetch` calls around it.
  *
- * NO SECOND HTTP CLIENT LAYER: `fetch` is node's own global (same choice
+ * `fetch` is node's own global;
  * `tests/serveHelpers.ts` makes with `node:http` directly); no axios/got/
  * undici-wrapper is added for this.
  */

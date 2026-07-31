@@ -1,11 +1,11 @@
 /**
- * 0_types.ts — the entire v6/dl type system in one file, C-header style. Every
+ * The v6/dl cross-file type system. Every
  * other src file imports its cross-file types from here (numbering law: 0 is
  * the base — nothing this file imports may be package-local). Sections below
  * mirror the pipeline order: values/rows -> decls/retention -> bridge ->
  * schema/tick -> ingest -> hosts -> diag -> http -> runtime interface.
  *
- * tasks.d.ts (the plan ledger) re-exports most of the types below rather than
+ * tasks.d.ts re-exports most of the types below rather than
  * declaring them, so external importers of tasks.d.ts keep working. Four
  * items stay declared ONLY in tasks.d.ts and are NOT duplicated here, by
  * owner ruling (M7 recomposition): the two pure-prose law types NamedArgLaw
@@ -16,20 +16,13 @@
  * the "every src file imports from 0_types.ts" rule, documented at each of
  * those two import sites).
  *
- * This file is types/interfaces/type-aliases ONLY — no runtime code, no
- * classes with bodies, no functions. Doc comments below were moved verbatim
- * from tasks.d.ts (and, for CacheDb/DlServer, from src/1_hosts.ts and
- * src/6_http.ts) — not rewritten, except where a comment referenced its old
- * location.
+ * This file contains types/interfaces/type-aliases only: no runtime code,
+ * classes with bodies, or functions.
  */
 
 import type { Observable, SchedulerLike } from "rxjs";
 import type { Program, RelDecl, RelRef } from "sprefa-store-engine/src/lower/ast.ts";
 import type { FactLine } from "sprefa-store-engine/src/engine/ingest.ts";
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Values / rows — the shared scalar + record shapes every later section builds on.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export type Value = string | number | boolean | null;
 export type Row = Record<string, Value>;

@@ -9,16 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 TSV2_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$TSV2_DIR/../.." && pwd)"
 
-# BUDGET (timeout-gun lane, 2026-07-31). Measured walls over two runs on this
-# machine: 84s and 138s -- and the spread is the point, because BOTH legs are
-# crawls over a corpus whose size is an argument. Default 3600s (1h) is ~26x
-# the slower measurement, deliberately loose: the default corpus here is
-# ~/orgs/grafana and a bigger one is a supported use, so a tight cap would turn
-# a legitimate large run into a fake timeout. Override with
-# CRAWL_BENCH_BUDGET_S; each HTTP call also carries CRAWL_HTTP_BUDGET_S.
+# Budgeted whole-script crawl; each HTTP call also carries CRAWL_HTTP_BUDGET_S.
 #
-# The cap sits AFTER the nice re-exec above, so the capped process group is the
-# niced one that does the work rather than the shell that stepped aside.
+# The cap follows the nice re-exec so the capped group performs the work.
 . "$TSV2_DIR/../tools/run-capped.sh"
 cap_self "${CRAWL_BENCH_BUDGET_S:-3600}" crawl_bench "$@"
 CORPUS="${CRAWL_BENCH_CORPUS:-$HOME/orgs/grafana}"

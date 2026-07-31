@@ -1,20 +1,4 @@
-/**
- * report.ts — turns out/records.jsonl into standings.csv + STANDINGS.md.
- *
- * Same split the house rig uses (bench/run.sh collects, bench/report.sh
- * renders): the harness measures and this file only formats, so a formatting
- * change never invalidates a measurement. The ONE thing it decides rather than
- * formats is the exit code, because the gate has to see the whole table at
- * once (CONTRACT.md section 7, the promotion gate).
- *
- * Column vocabulary extends v6/sprefa-store/PERF-REPORT.md's -- per-case input
- * hash with the "all engines must match" check, `verdict` where PERF-REPORT
- * has `correct`, memory column, and the rule that no N/A ships without a
- * reason. This lane adds two: `referee` (WHICH engine graded the cell) and
- * `final_hash` (the third check).
- *
- * Usage: node --experimental-transform-types report.ts <records.jsonl> [reference-proof.json]
- */
+/** Renders bench records and applies the reference and timing gates. */
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

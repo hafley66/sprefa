@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zero-code interim LSP bridge: v5's `dl --lsp --diag-db <path>` mode boots NO
+# LSP bridge: v5's `dl --lsp --diag-db <path>` mode polls
 # engine, it just polls the `diag_v5` view (PRAGMA data_version, 500ms cadence,
 # src/lsp.rs run_diag_db_mode) and republishes textDocument/publishDiagnostics.
 # The v6 dl server (v6/dl) already creates that exact view in its own db
@@ -7,14 +7,8 @@
 # --diag-db at the v6 server's db file is the whole bridge. No new code in
 # either side; this script only resolves the v5 binary and execs it.
 #
-# Receipt (raw publishDiagnostics exchange, end to end, no editor): 2026-07-27.
-# See docs/lsp.md "M5.3 --diag-db mode" for the wire contract.
-#
-# Editor wiring one-liner (VS Code, or any generic-LSP client): set the
-# language server command to `v6/tools/lsp-v5-bridge.sh [db-path]` and the
-# workspace's cwd to the SAME directory the v6 `dl serve` process runs from —
-# diag_v5.path is relative-to-that-cwd unless absolute (see GOTCHA below); do
-# not touch editors/ from here, this is a comment, not a wiring change.
+# The v5 and v6 processes must use the same working directory because relative
+# diagnostic paths are resolved against each process's cwd.
 #
 # GOTCHA: the v6 server normalizes every `path` column relative to ITS OWN
 # process.cwd() (DL_ROOT in v6/dl/src/4_ingest.ts) before writing rel_diag, so

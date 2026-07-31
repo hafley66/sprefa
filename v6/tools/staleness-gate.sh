@@ -1,47 +1,12 @@
 #!/usr/bin/env bash
-# staleness-gate.sh — ARCH.pl task row `gen_staleness_gate`. Two silent-
-# staleness defect classes, both real incidents, neither previously gated:
+# staleness-gate.sh — reject stale generated modules and binaries.
+# Gen-module provenance is checked against manifest and fixture inputs.
+# Existing binaries are checked for staleness; missing binaries remain the
+# responsibility of the receipt scripts that build them.
 #
-#   (a) GEN-MODULE HALF: v6/tsv2/gen_emitted/*.ts is normally compiler
-#       OUTPUT, rewritten every run by v6/tsv2/scripts/sweep.sh for every
-#       fixture named "compiled" in v6/prolog/compile/out/manifest.json.
-#       door-handwritten.ts is checked in but is NOT a fixture (no manifest
-#       row), so sweep.sh never touches it (by design -- it only removes and
-#       rewrites the fixture module it is about to regenerate). Nothing else
-#       regenerates or diffs it either, so it went silently stale TWICE:
-#       once when latest-in-level became a load-time refusal, once when the
-#       periods->literals parser rename landed (tick-phase-alignment arc,
-#       2026-07-29). Both times a human noticed by hand.
-#   (b) BINARY HALF: target/release/dl and
-#       v6/sprefa-extract/target/release/extract are built by receipt
-#       scripts (flagship-callgraph.sh, extraction-live.sh, lsp-diags.sh)
-#       ONLY IF MISSING (`test -x ... || cargo build`). A stale EXISTING
-#       binary is never rebuilt automatically: a Jul-20 `dl` binary sat
-#       untouched through several landings and silently broke the
-#       lsp-diags receipt on an otherwise-current tree until a human
-#       rebuilt it by hand (2026-07-29 night close-out, "stale-binary
-#       flavor" of this same defect class).
+# This script is read-only against the tree. It names stale artifacts and the
+# command owned by the receipt scripts that can refresh them.
 #
-# This script is read-only against the tree: it never regenerates a gen
-# module or rebuilds a binary itself (the receipt scripts already own that);
-# it only refuses to pass silently over a stale artifact, naming the exact
-# file and the exact command to fix it.
-#
-# SABOTAGE RECEIPTS (run by hand against a real green tree, reverted before
-# landing -- see the coordinator's task report for the literal exit codes):
-#   (a) appended a comment line to the checked-in
-#       v6/tsv2/gen_emitted/door-handwritten.ts -> gate exits 1, prints
-#       `STALENESS_GATE_FAIL door-handwritten.ts is STALE vs its .dl6
-#       source` plus the regen command and a diff. `git checkout --
-#       v6/tsv2/gen_emitted/door-handwritten.ts` reverted it, gate green
-#       again.
-#   (b) `touch src/main.rs` (source newer than the built binary) -> gate
-#       exits 1, prints `STALENESS_GATE_FAIL <repo>/target/release/dl is
-#       STALE` plus the exact `cargo build --release --bin dl` fix. The
-#       binary itself was never touched by the sabotage (only its source),
-#       so no rebuild was needed to clear it -- restoring main.rs's mtime
-#       with `touch -r` against an unrelated untouched file put the tree
-#       back to its pre-sabotage state without paying for a rebuild.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -67,13 +32,8 @@ if [ ! -f "$MANIFEST" ]; then
 elif [ ! -d "$GEN_DIR" ]; then
   fail "gen_emitted dir missing: $GEN_DIR"
 else
-  # An associative-array lookup, not `printf ... | grep -qxF`: under
-  # `set -o pipefail`, grep closing its read end early (as soon as it finds
-  # a match) can SIGPIPE printf before it finishes writing, and pipefail
-  # then reports PRINTF's non-zero SIGPIPE status instead of grep's success
-  # -- an intermittent false "not found" that bit this exact script during
-  # development (module_name near the front of the list, quiet on a later
-  # rerun of the identical script). The array sidesteps the pipe entirely.
+  # Use an associative-array lookup so pipefail cannot turn grep's early exit
+  # into a false missing-module result.
   declare -A COMPILED_SET=()
   while IFS= read -r name; do
     [ -n "$name" ] && COMPILED_SET["$name"]=1

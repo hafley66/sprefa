@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check-imports.sh — the tsv2 import-gate law (plan header MECHANICAL GATE):
+# check-imports.sh — tsv2 import gate:
 # every gen/*.ts file imports ONLY from ../runtime/ and rxjs; runtime/
 # imports the named store symbols (SqlRunner, open_db, ISqlRunner) instead
 # of declaring parallel machinery.
@@ -8,9 +8,7 @@ cd "$(dirname "$0")/.."
 
 fail=0
 
-# Both generated trees are gated, not just the hand-carved one: gen_emitted/ is what
-# the prolog emitter actually writes, so leaving it unscanned left the emitter free to
-# import anything it liked (audit 2026-07-28).
+# Both generated trees are gated.
 for file in gen/*.ts gen_emitted/*.ts; do
   [ -e "$file" ] || continue
   specifiers=$(grep -oE 'from "[^"]+"' "$file" | sed -E 's/from "(.*)"/\1/' || true)

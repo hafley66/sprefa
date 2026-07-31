@@ -1,5 +1,5 @@
 /**
- * .dl text -> ast.ts Program + HostDecl[] + minted stage rels.
+ * Convert .dl text into a store Program, host declarations, and stage relations.
  *
  * `bridge(dlText, builtinRels) -> BridgeOk | BridgeErr`. Langium parses; this file
  * maps the Langium AST onto the store's ast.ts constructors, mints the probe
@@ -10,13 +10,13 @@
  * severity:="warn", code:=null when unbound). Pure: a fresh LangiumDocument per
  * call, discarded after.
  *
- * Parser services (module-level, built once): Langium's default core modules
+ * Parser services are built once from Langium's default and generated modules.
  * (createDefaultCoreModule/createDefaultSharedCoreModule) plus the generated
  * grammar module, wired with EmptyFileSystem: no LSP services, no cross-reference/
  * scope services, since the grammar has no [Type] references and every name is a
  * plain string the bridge resolves itself against the decl tables built below.
  *
- * The four rewrites (processRuleBody / buildHeadTerms):
+ * The bridge performs four rewrites:
  *   1. literal-binding: a bare literal in a head/probe-input position, or an `eq`
  *      comparison (either textual order) whose var operand is not otherwise bound,
  *      mints a single-row constant rel `__lit_<n>(value)` and a body atom referencing

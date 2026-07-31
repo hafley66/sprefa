@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# memory-soak.sh -- NEW DIRECTIVE (user, 2026-07-29 late): prove node memory
+# memory-soak.sh -- prove node memory
 # pressure stays CONSTANT under sustained assert/retract churn on one served
 # tsv2 program. Entry point for scripts/memory-soak.ts (that file's header
 # carries the churn-program design and the sabotage receipt).
@@ -11,8 +11,8 @@
 # reading process.memoryUsage() (scripts/memory-soak.ts's `sample`), cutting
 # GC-timing noise out of the RSS/heapUsed comparison; the assertions do not
 # depend on it (global.gc is optional there too).
-# BUDGET (timeout-gun lane, 2026-07-31). THE ONLY DERIVED BUDGET IN THE SWEEP,
-# and it has to be: this script's honest wall is an ARGUMENT
+# Budget is derived from the selected duration:
+# this script's wall time is an argument
 # (TSV2_SOAK_DURATION_S, 100s short / 28800s long), so a constant would be
 # either a fake timeout on the overnight run or no cap at all on the short one.
 # Budget = 2 x duration + 120s of boot/teardown slack. Measured: the short mode

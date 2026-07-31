@@ -1,8 +1,5 @@
 /**
- * serveStats.ts -- the served engine's self-diagnosis surface for storage +
- * process memory (NEW DIRECTIVE 2026-07-29 late: memory-soak + sqlite
- * stats). Read src/db.rs and src/cli/health.rs FIRST, per the standing law,
- * before writing a line of this file:
+ * Read process memory and SQLite page statistics through the driver seam.
  *
  *   - src/db.rs `Db::rel_stats` (~line 1216): row count + `PRAGMA
  *     table_info` for columns/pk, plus one `SELECT sum(pgsize) FROM dbstat
@@ -12,7 +9,7 @@
  *     grouped dbstat pass (`SELECT name, sum(pgsize) FROM dbstat GROUP BY
  *     name`) joined to `sqlite_master`, bucketed by object kind.
  *
- * This module mirrors those CONCEPTS -- PRAGMA file stats + dbstat page
+ * This module mirrors PRAGMA file stats + dbstat page
  * bytes -- not new categories: grepped `src/db.rs` for `sqlite3_status`,
  * `memory_used`, `highwater`; none exist. PRAGMA + one dbstat pass is the
  * whole of what v5 exposes, so it is the whole of what this file adds.
@@ -24,7 +21,7 @@
  * @libsql/client 0.17.4 in this worktree (`SELECT name, sum(pgsize) FROM
  * dbstat GROUP BY name` against a live `:memory:` connection returned real
  * per-object byte counts; every PRAGMA used here returned real scalars too
- * -- memory-soak arc report carries the receipt). `dbstatAvailable` still
+ * . `dbstatAvailable` still
  * guards every call site rather than assuming a future driver build keeps
  * the vtab compiled in.
  *
@@ -33,8 +30,7 @@
  * bound JSON array, the same dynamic-list idiom `runtime/1_incremental.ts`
  * already uses for arrival batches. The four reads (three PRAGMAs + the
  * dbstat pass) run concurrently over the one connection via `forkJoin`, the
- * same pattern `runtime/1_incremental.ts`'s `readBoundary` already uses for
- * concurrent per-relation reads -- not a new concurrency shape.
+ * concurrent per-relation reads.
  */
 
 import { type Observable, catchError, forkJoin, map, of } from "rxjs";
@@ -78,9 +74,7 @@ function objectBytes(seam: ISqlSeam, tableNames: readonly string[]): Observable<
           ),
         }),
       ),
-      // `dbstat` absent (or any other reason this one statement fails) is a
-      // finding, not a fatal read: the PRAGMA numbers alongside it still
-      // answer the caller (the fallback the arc's brief names).
+      // dbstat is optional; PRAGMA statistics remain available when it fails.
       catchError(() => of<DbstatRead>({ available: false, objects: [] })),
     );
 }

@@ -1,5 +1,5 @@
 /**
- * decl -> SQLite DDL: rel_* current tables, delta log, effect_cache, store_meta.
+ * Build SQLite DDL for current relation tables, the delta log, effect cache, and metadata.
  *
  * `ddl(decls, retention) -> string[]`.
  *   rel_<name>(cols..., PRIMARY KEY(all cols))  -- set semantics

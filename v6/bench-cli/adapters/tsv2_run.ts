@@ -1,27 +1,5 @@
-/**
- * tsv2_run.ts — the tsv2 engine as a CONTRACT.md-conformant executable.
- *
- * Seam is deliberately the SAME chain v6/tsv2/scripts/golden-run.ts and
- * scripts/sweep.ts already use -- ScratchStore.open -> ScratchStore.boot(ddl)
- * -> BootRunner.run(boot) -> TickFold.run(program, seam, schedule) -- so this
- * adapter measures the graded engine and not a second one written beside it.
- * It is a separate file rather than a flag on golden-run.ts because
- * golden-run.ts resolves its module out of v6/tsv2/gen_emitted/, which this
- * lane is fenced out of; here the compiled module lives in ../out/ and reaches
- * the runtime through the committed ../runtime symlink, byte-untouched.
- *
- * The one manual `.subscribe()` in THIS script, same standing as every other
- * one-shot CLI entry point under v6/tsv2/scripts (v6/tools/one-subscribe.sh
- * scans dl/src and tsv2/serve, neither of which this is).
- *
- * Usage:
- *   node --experimental-transform-types adapters/tsv2_run.ts \
- *     --program <compiled.ts> --schedule <s.json> --db <path> --perf-out <p.json>
- *
- * `--program` here is the COMPILED module (adapters/tsv2.sh runs compile_dl6.sh
- * first and passes the result); the .dl6 text never reaches this file. Compile
- * time is measured by the shell wrapper and reported as `compile_ms`, because
- * CONTRACT.md section 2.4 puts compile outside `wall_ms` on purpose.
+/** tsv2 bench adapter using the committed runtime chain.
+ * The shell wrapper compiles the module and supplies `compile_ms`.
  *
  * SABOTAGE RECEIPT (bench.sh's referee is real, not decorative). Changing the
  * stdout loop below to `lines.slice(0, -1)` -- one tick short, everything else

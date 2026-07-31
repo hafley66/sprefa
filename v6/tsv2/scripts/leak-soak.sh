@@ -1,20 +1,9 @@
 #!/usr/bin/env bash
-# leak-soak.sh — the served tsv2 engine's no-leak gate (receipt (c) of
-# plans/2026-07-29-runtime-bridge-header.md). The assertions live in the test so
+# leak-soak.sh — served tsv2 engine leak gate. Assertions live in the test so
 # the server process can inspect its own active resources; this only supplies
 # the tracing log the statements-per-tick assertion reads.
 #
-# SABOTAGE RECEIPT: dropping `bumpActive(-1)` from 4_http.ts's SSE finalize
-# fails at "timeout waiting for SSE teardown (iteration 0)"; merging each bind's
-# timers twice fails at "timeout waiting for the interval timer to be the only
-# one". The test header records the one sabotage that does NOT flip it.
-#
-# BUDGET (timeout-gun lane, 2026-07-31). Measured wall: 5s at the default 20
-# iterations. Default 900s, because TSV2_LEAK_ITERATIONS is an argument and a
-# soak exists to be raised; the number encodes "still running after fifteen
-# minutes" rather than a multiple of five seconds. Whole-script cap: the work
-# is a node test process that starts and swaps servers 20 times, so an
-# orphaned generation is exactly what the process-group kill is for.
+# Whole-script budget; override with TSV2_LEAK_BUDGET_S.
 # Override with TSV2_LEAK_BUDGET_S.
 set -euo pipefail
 

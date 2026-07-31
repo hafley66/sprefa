@@ -1,31 +1,9 @@
-/**
- * types.ts — the tsv2 runtime surface, C-header style (mirrors v6/dl's
- * 0_types.ts / v6/sprefa-store's engine/types.ts). Every class/namespace
- * object in runtime/ binds to an interface declared here first; nothing in
- * this file has a body.
- *
- * PINNED SEAM (plan 2026-07-27-tsv2-compile-target-header.md, coordinator
- * addendum): `IGenProgram` is the contract every gen/*.ts file implements and
- * the only thing the tick fold consumes. Its five fields (name, ddl,
- * relColumns, arrivalTargets, tick) are frozen — extend by adding fields,
- * never by renaming these. A future prolog emitter's output runs on this
- * runtime unchanged.
- *
- * Reuse law (plan header "the reuse law"): this file imports its connection
- * and driver-seam types from sprefa-store-engine's own header
- * (engine/types.ts) rather than re-declaring them.
- */
+/** Runtime contracts shared by the hand-written and emitted tsv2 modules. */
 
 import type { Observable, SchedulerLike } from "rxjs";
 import type { ISqlRunner, QueryResult, SqliteDb, SqlStatement, TraceStatement } from "sprefa-store-engine/src/engine/types.ts";
 
-// re-exported so runtime/gen files can name the connection and statement
-// types without a second import line into the store package
 export type { QueryResult, SqliteDb, SqlStatement, TraceStatement };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Values / rows.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * One SQLite column value as it crosses the driver seam. Prolog integers
@@ -74,10 +52,6 @@ export interface IArrivalRow {
  */
 export type IArrivalBatch = readonly IArrivalRow[];
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The driver seam.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
  * The one way a gen/*.ts tick chain touches SQLite: `runner` is the store's
  * existing `SqlRunner`, `db` the scratch connection it runs against.
@@ -88,10 +62,6 @@ export interface ISqlSeam {
   readonly db: SqliteDb;
   readonly runner: ISqlRunner;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Per-tick deltas.
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * One rel's boundary delta for one tick: rows added / removed at the
@@ -117,10 +87,6 @@ export interface ITickDeltas {
   readonly rels: readonly IRelDelta[];
   readonly carryPending: boolean;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Incremental generated-program execution.
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface IIncrementalRelationPlan {
   readonly rel: string;
@@ -276,10 +242,6 @@ export interface IIncrementalRuntime {
   ): Observable<boolean>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Relation-reference ingress normalization over ordinary target rels.
-// ─────────────────────────────────────────────────────────────────────────────
-
 /**
  * One referenced target rel's storage plan, emitted by
  * lower.pl:struct_type_plans/2 in TOPOLOGICAL order (children before parents),
@@ -327,10 +289,7 @@ export interface IStructPlane {
   canonicalText(value: unknown): string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PINNED: the generated-program contract (do not rename these five fields).
-// ─────────────────────────────────────────────────────────────────────────────
-
+/** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
   readonly ddl: readonly string[];
@@ -339,14 +298,6 @@ export interface IGenProgram {
   readonly arrivalTargets: readonly string[];
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas>;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The scratch store (boot the seam, run a program's DDL once).
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Boot statements (seeding Initial rows before tick 1).
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * One emitted boot statement: SQL plus the row values it binds. `boot` is an
@@ -380,10 +331,6 @@ export interface IScratchStore {
   boot(seam: ISqlSeam, ddl: readonly string[]): Observable<void>;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The tick fold (generic: folds an arrival schedule over any IGenProgram).
-// ─────────────────────────────────────────────────────────────────────────────
-
 /** One line of the shared oracle/tsv2 log envelope (both sides agree on
  *  this exact text; see plan header item 9 + ticklog.pl). */
 export type ITickLogLine = string;
@@ -397,10 +344,6 @@ export interface ITickFold {
    */
   run(program: IGenProgram, seam: ISqlSeam, schedule: readonly IArrivalBatch[], drainCap?: number): Observable<ITickLogLine>;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The log emitter (formats one tick's deltas into the envelope line).
-// ─────────────────────────────────────────────────────────────────────────────
 
 export interface ITickLogEmitter {
   /** Format `deltas` for `tick` into the canonical envelope line: rel names
@@ -657,8 +600,6 @@ export interface IServeTsv2 {
   (config: IServeConfig): Observable<IServeEvent>;
 }
 
-// ── Self-diagnosis (serve/0_trace.ts, on the shared sprefa: channel spine) ────
-
 export interface IServeTickEvent {
   readonly tick: number;
   readonly rels: number;
@@ -716,17 +657,6 @@ export interface IServeTrace {
   installFromEnv(): void;
 }
 
-// ── Serve-side stats (NEW DIRECTIVE 2026-07-29 late: memory-soak + sqlite
-// stats; scripts/memory-soak.ts, tests/serveStats.test.ts). Mirrors the rust
-// daemon's own dbstat surface (src/db.rs `Db::rel_stats`, src/cli/health.rs
-// `report_db`'s one dbstat pass): PRAGMA-level file stats always available,
-// per-object page bytes only when `dbstat` is queryable through THIS driver
-// (verified empirically against @libsql/client 0.17.4, never assumed --
-// runtime/serveStats.ts header carries the receipt). No sqlite3_status()
-// wrapper exists on the rust side either (grepped, absent), so none is
-// invented here -- PRAGMA + one dbstat pass is the whole of what v5 exposes
-// and the whole of what this surface adds. ────────────────────────────────
-
 export interface IProcessMemorySnapshot {
   readonly rssBytes: number;
   readonly heapUsedBytes: number;
@@ -766,31 +696,7 @@ export interface IServeStats {
   processMemory(): IProcessMemorySnapshot;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Contract-carrying functions that are NOT members of a namespace object.
-//
-// The law: an important function binds to an I-prefixed header interface,
-// because TypeScript cannot conformance-check a standalone `export function`
-// against anything and a bare one can drift from its documented signature in
-// silence. Review finding 7 listed eight such functions in this package with
-// zero header coverage between them.
-//
-// FOUR OF THE EIGHT CANNOT BECOME NAMESPACE MEMBERS at this sha: `multisetDiff`,
-// `selectRows`, `rowValueFromSql` and `stageOrderedFrontiers` are imported BY
-// NAME by emitted modules (137, 137, 137 and 11 of them respectively), and the
-// import names come from `v6/prolog/compile/emit_ts.pl`, prolog, owned by
-// another lane. Renaming them to `Something.method` is an emitter change and an
-// import-gate change.
-//
-// So the binding is done the other way round: the header declares the SIGNATURE
-// as an interface with a call signature, and each module annotates its export
-// against it. The exported name is unchanged, no call site moves, no emitted
-// import breaks -- and the compiler now checks the function against a contract
-// declared exactly once, which is the whole point of the law. `just typecheck`
-// runs in `just green` as of this arc, so the check is live rather than
-// notional.
-// ─────────────────────────────────────────────────────────────────────────────
-
+/** Interfaces for standalone exports whose names are fixed by emitted imports. */
 /** Boundary add/del rows for one rel: the result of one multiset diff. A plain
  *  data shape, declared here rather than in diff.ts so the header holds it
  *  once (review finding 7 named its absence alongside the eight functions). */

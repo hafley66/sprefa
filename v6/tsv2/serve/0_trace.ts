@@ -1,21 +1,6 @@
-/**
- * 0_trace.ts — the served engine's self-diagnosis, on the EXISTING P0 spine.
- *
- * Class-34 law: no parallel telemetry pipeline. `node:diagnostics_channel` is
- * a PROCESS-GLOBAL registry keyed by name, so publishing on `sprefa:effect` and
- * `sprefa:bind` here is publishing on the very same channels v6/dl's
- * `0_trace.ts` publishes on -- same spine, one more producer, not a second
- * pipeline. `sprefa:tick` is this arc's one new channel name (the served tick
- * loop has no counterpart in v6/dl, whose tick spans ride `sprefa:sql`).
- *
- * Off by default: DL_PERF_LOG unset means nothing subscribes, and every publish
- * site checks `hasSubscribers` first.
- *
- * Aggregation: exactly ONE line per tick, never one per statement or per
- * effect (the N+1 law applies to this module's own output too). Effects and
- * bind firings that land between two ticks are folded into the next tick's
- * line. pino is the emit layer, the same buy v6/dl's spine made
- * (plans/2026-07-27-perf-tracing-buy-verdict.md).
+/** Served-engine tracing on the shared diagnostics-channel spine.
+ * It is off unless `DL_PERF_LOG` is set and emits one aggregated line per
+ * tick. Effects and bind firings are folded into the next tick line.
  */
 
 import diagnostics_channel from "node:diagnostics_channel";

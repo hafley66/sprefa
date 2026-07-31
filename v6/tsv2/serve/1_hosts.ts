@@ -1,21 +1,16 @@
-/**
- * 1_hosts.ts — LIVE `sh` host execution for the served engine (hosts phase 2,
- * plans/2026-07-29-runtime-bridge-header.md scope 2). RX-H1 from
- * plans/2026-07-29-hosts-extraction-verdict.md, made real.
+/** Live `sh` host execution for the served engine.
  *
- * The shape the compiler already built (1_host_expand.pl):
+ * The compiler provides demand and response relations:
  *
  *   __host_demand_<name>(identity_digest, witness_digest, inputs..., salts...)
  *   __host_response_<name>(witness_digest, inputs..., outputs...)
  *
- * The demand rel is a DERIVED level rel: rules put rows in it. The response
+ * The demand rel is a derived level rel. The response
  * rel is an arrival target. So a live host is exactly one loop: read the
  * demand rel's +deltas, group compatible extractor projections inside that
  * frontier, spawn once per invocation key, decode stdout into each declared
  * output shape, and submit the results as ordinary arrivals on response rels.
- * Nothing in the engine learns the word "host".
- *
- * FIRE ONCE PER WITNESS, two dedupes, both needed:
+ * Witnesses are deduplicated in process and across restarts:
  *   - in process, a Set of claimed witnesses. RX-H1 spells this
  *     `groupBy(witness) -> take(1)`; a groupBy over an endless tick stream
  *     retains one group object per witness forever, and the Set is the same
@@ -24,16 +19,13 @@
  *     alone cannot serve as that cache: a host that legitimately answers with
  *     ZERO rows leaves no response row behind and would refire on every boot.
  *
- * BOOT REPLAY (endurance law, scope 5): demand rows are durable, deltas are
- * not, so at subscribe time every live demand row is replayed through the same
+ * Demand rows are durable while deltas are not, so at subscribe time every
+ * live demand row is replayed through the same
  * pipeline. The durable cache turns already-answered witnesses into no-ops, so
  * "replay everything" is correct without a separate unanswered-demand query --
- * the same reasoning v6/dl's HostRunner records for its own boot branch.
+ * replays through the same pipeline.
  *
- * OUTPUT DECODE is the F7-hardened shape (docs/failure-modes.md class 36) with
- * one improvement the compiled path affords: the output columns carry DECLARED
- * types, so an int column is parsed as an int and rejected by name when the
- * text is not finite, instead of a per-column guess from the first row's text.
+ * Output columns carry declared types, so invalid values are rejected by name.
  */
 
 import { spawn } from "node:child_process";
@@ -70,9 +62,7 @@ import { ServeTrace } from "./0_trace.ts";
 
 const WITNESS_TABLE = "__host_witness";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// The durable witness cache.
-// ─────────────────────────────────────────────────────────────────────────────
+// Durable witness cache.
 
 export const WitnessCache: IWitnessCache = {
   ddl(): readonly string[] {

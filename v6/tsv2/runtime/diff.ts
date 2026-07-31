@@ -1,5 +1,5 @@
 /**
- * diff.ts — the multiset row diff every gen/*.ts tick uses to turn a
+ * Multiset row diff for generated tick boundaries. It turns a
  * before/after table snapshot into boundary add/del deltas.
  *
  * One algorithm covers both rel kinds in engine.pl's r7 boundary rule: Set
@@ -9,19 +9,7 @@
  * value is exactly "new stamps this tick" without any separate stamp
  * column — see gen/switch_as_keyed_replace.ts's route_change handling.
  *
- * NOT A LEAF-HELPER EXEMPTION, and this header used to claim it was. The old
- * text read "small pure leaf transform (no per-instance state): stays a bare
- * function, the same exemption the rxjs law gives `.map` callbacks". Review
- * finding 7 disagreed and is right: purity and statelessness are not the test.
- * The test is whether the function carries a contract worth checking, and this
- * one is THE boundary-diff algorithm, imported by name from 137 emitted
- * modules. It is now annotated against `IMultisetDiff` in the header, which is
- * what buys the compiler check. The exported NAME is unchanged, because the
- * emitted imports are written by the prolog emitter and moving them is another
- * lane's change.
- *
- * `RowDiff` moved to the header too, as `IRowDiff`. It had no reader outside
- * this file, so nothing depended on the old name.
+ * The exported name and call signature are fixed by emitted imports.
  */
 
 import type { IMultisetDiff, IRow, IRowDiff } from "./types.ts";

@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# tests/golden/curl-session.sh — the M6 epic-of-epics gate. Runs the full sg-rail curl
-# session (plan M5's golden transcript, http-fronted) against a REAL live server started
-# by `node src/main.ts`, curl as the only client. Compares a normalized transcript
+# tests/golden/curl-session.sh — runs the sg-rail curl session against a live server.
+# Compares a normalized transcript
 # against fixtures/golden/curl-session.txt; REGEN_GOLDEN=1 rewrites it instead.
 #
 # Runnable standalone from the repo root OR from v6/dl (paths resolve from this
 # script's own dirname, never the caller's cwd).
 #
-# TWO EMPIRICAL FINDINGS this script's steps are shaped around (found by actually
-# running the demo, not assumed from the plan doc — "doubt yourself, verify against
-# the code" is a standing law in this repo):
+# The edit sequence preserves byte-offset and witness-retraction constraints:
 #
 #  1. Plain single-line `sed -i '' '/console.log/d'` deletion does NOT reliably
 #     retract `diag`. Deleting a whole line of length L shifts every later byte
@@ -26,7 +23,7 @@
 #     empirically: with only the deletion, `diag` never empties (delta log shows a
 #     lone +1, no -1); with the added rename, it retracts cleanly (+1 then -1).
 #
-#  2. `console_hit` DOES retract after the fix (M8-beta, IdentityWitnessLaw +
+#  2. `console_hit` retracts after the fix because the
 #     supersession, tasks.d.ts) — this used to NOT happen (a real bug, not a
 #     design choice: HostRunner's effect_cache digest was keyed on (host,
 #     requestCols) = (sg, pattern, path) ONLY, never on file content, so `sg`
