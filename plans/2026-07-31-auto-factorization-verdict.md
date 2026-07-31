@@ -1070,3 +1070,7 @@ bought, and buying it is the standing law's own answer.
 
 The rename table itself is a user decision and a separate arc, because renaming
 touches every importer.
+
+## Lab death
+
+Lab files deleted on landing per protocol. Last full copy at merge commit 7e4a8c62 (`git show 7e4a8c62:v6/prolog/labs/auto_factorization/<file>` recovers any file; six lab commits on the merged branch hold history).

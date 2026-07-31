@@ -1,4 +1,0 @@
-rel item(group: text, tag: text).
-
-rel lowest(group: text, tag: text).
-lowest(group, min(tag)) <- item(group, tag).

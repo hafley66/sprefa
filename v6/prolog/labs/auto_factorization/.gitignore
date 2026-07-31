@@ -1,6 +1,0 @@
-out/*.ticklog.jsonl
-out/*.schedule.json
-out/reversed.dot
-out/sabotage_*.dl6
-out/sabotage_*.jsonl
-out/min_text_repro.ts
