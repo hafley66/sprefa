@@ -1,0 +1,7 @@
+rel reading(sensor: text, raw: int).
+rel label(sensor: text, label: text).
+rel enriched(sensor: text, label: text, value: int).
+
+stage_enriched_3_1(Sensor, Doubled) <- reading(Sensor, Raw), Doubled := Raw * 2.
+stage_enriched_3_2(Sensor, Doubled, Label) <- stage_enriched_3_1(Sensor, Doubled), label(Sensor, Label).
+enriched(Sensor, Label, Value) <- stage_enriched_3_2(Sensor, Doubled, Label), Value := Doubled + 1.

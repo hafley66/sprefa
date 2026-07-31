@@ -1,0 +1,7 @@
+# Q4/slot_pipe_word probe: what does the CURRENT parser do with a bare `|>`
+# in a rule body? Nothing in the grammar claims it, so this measures whether
+# the glyph is free or already taken by something.
+rel reading(sensor: text, raw: int).
+rel tripled(sensor: text, value: int).
+
+tripled(Sensor, Value) <- reading(Sensor, Raw) |> Value := Raw * 3.
