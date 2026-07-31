@@ -1,0 +1,26 @@
+{
+  "arrivals": 185,
+  "cohesion_mismatch": [],
+  "cycle_files": [],
+  "depth_mismatch": [],
+  "depth_rows": 62,
+  "prefix_mismatch": [],
+  "prefix_rows": 62,
+  "reach_rows": 388,
+  "rels_derived": [
+    "crossing_edge",
+    "crossing_total",
+    "dep",
+    "edge_pair",
+    "file_depth",
+    "file_folder",
+    "file_prefix",
+    "folder_depth_seen",
+    "internal_edge",
+    "internal_total",
+    "lower_depth",
+    "onward_positive",
+    "prefix_positive",
+    "reach"
+  ]
+}

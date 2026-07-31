@@ -1,0 +1,19 @@
+# Label propagation as a per-round fixpoint, the one community algorithm whose
+# update rule is bulk-read then bulk-write. Louvain and Leiden are not written
+# here at all: their inner loop reads the assignments left by earlier moves in
+# the same pass, which no set-oriented rule can express.
+
+rel neighbor(node: text, other: text).
+
+rel label(round: int, node: text, tag: text).
+label(0, node, node) <- neighbor(node, _).
+
+rel candidate_tag(round: int, node: text, tag: text).
+candidate_tag(round, node, tag) <-
+  label(round, node, _), neighbor(node, other), label(round, other, tag).
+
+rel picked_tag(round: int, node: text, tag: text).
+picked_tag(round, node, min(tag)) <- candidate_tag(round, node, tag).
+
+label(next_round, node, tag) <-
+  picked_tag(round, node, tag), round < 8, next_round := round + 1.

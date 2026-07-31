@@ -1,0 +1,32 @@
+# What the language CAN express of question 3: connected components by
+# min-label over an already-closed reachability rel. The aggregate sits OUTSIDE
+# the recursion, so it stratifies; the majority-vote update of real label
+# propagation does not, and lpa.dl6 records that refusal.
+#
+# The label is an INT index rather than the path itself because min/max over a
+# text column crashes the reference engine (min_text_repro.dl6).
+
+rel file_folder(path: text, folder: text).
+rel node_index(path: text, idx: int).
+rel dep(tail: text, head: text).
+
+rel link(node: text, other: text).
+link(tail, head) <- dep(tail, head).
+link(head, tail) <- dep(tail, head).
+
+rel linked(node: text, other: text).
+linked(node, other) <- link(node, other).
+linked(node, other) <- linked(node, mid), link(mid, other).
+linked(node, node) <- file_folder(node, _).
+
+rel linked_index(node: text, other_idx: int).
+linked_index(node, other_idx) <- linked(node, other), node_index(other, other_idx).
+
+rel component_index(node: text, idx: int).
+component_index(node, min(other_idx)) <- linked_index(node, other_idx).
+
+rel component(node: text, tag: text).
+component(node, tag) <- component_index(node, idx), node_index(tag, idx).
+
+rel component_size(tag: text, members: int).
+component_size(tag, count(node)) <- component(node, tag).
