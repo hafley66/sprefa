@@ -1183,6 +1183,16 @@ test(match_surface_allows_first_arm_without_prefix_semicolon) :-
             Text,
             "match source(Key, Value) (\n  ; Value >= 10 |-> accepted(Key)\n  ; true |+> latest(Key, Value)\n).\n")).
 
+test(seq_surface_round_trips_through_parser_and_printer) :-
+    string_codes(
+        "rel arrival(payload: text).\nrel numbered(ordinal: int, payload: text) log keep(all).\nnumbered(Ordinal, Payload) <+ arrival(Payload), Ordinal := seq('q').\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, RoundTripped, _, []),
+    Program =@= RoundTripped.
+
 test(match_surface_rejects_old_head_first_arm_spelling,
      [throws(dl_parse_error(statement, _))]) :-
     string_codes(
@@ -1915,7 +1925,7 @@ walk_golden(pre_only,
     goal_rel_refs-([]-[]),
     body_atoms-[],
     reserved_constructs-[],
-    forbidden_goals-[pre(a(1))],
+    forbidden_goals-[],
     host_body_goals-[pre(a(1))]
   ]).
 
@@ -2011,7 +2021,7 @@ walk_golden(mixed,
     goal_rel_refs-([a/1,d/1,e/1,f/1]-[b/1,c/1]),
     body_atoms-[a(1)],
     reserved_constructs-[],
-    forbidden_goals-[pre(h(11))],
+    forbidden_goals-[],
     host_body_goals-[a(1),not((b(2),latest(c(3)))),next(d(4)),combine(e(5),f(6)),zz:=7,8<9,finalize(g(10)),pre(h(11))]
   ]).
 
@@ -2530,11 +2540,38 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                45-coalesce, 50-relation_edge].
+                42-seq, 45-coalesce, 50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
     expansion_phase(30, row_spread, unwired).
+
+test(seq_expands_to_the_shared_four_rule_cursor_block) :-
+    Program = prog(
+        [],
+        [ (numbered(Ordinal, Payload) <+
+              (arrival(Payload), Ordinal := seq('q'))) ]),
+    expand_program(Program, prog(Decls, Expanded), _),
+    memberchk(col_type(seq_numbered_1/2, partition, text), Decls),
+    memberchk(col_type(seq_numbered_1/2, at, int), Decls),
+    memberchk(keyed(seq_numbered_1/2, [1]), Decls),
+    Expanded =@=
+        [ (seq_numbered_1('q', 1) <+
+              (arrival(Payload), not(seq_numbered_1('q', _)))),
+          (seq_numbered_1('q', CursorAdvanced) <+
+              (arrival(Payload), pre(seq_numbered_1('q', CursorAt)),
+               CursorAdvanced := CursorAt + 1)),
+          (numbered(1, Payload) <+
+              (arrival(Payload), not(seq_numbered_1('q', _)))),
+          (numbered(HeadAdvanced, Payload) <+
+              (arrival(Payload), pre(seq_numbered_1('q', HeadAt)),
+               HeadAdvanced := HeadAt + 1)) ].
+
+test(seq_in_level_rule_is_refused) :-
+    Program = prog([], [ (numbered(Ordinal) <-
+                            (arrival(_Payload), Ordinal := seq('q'))) ]),
+    catch(( expand_program(Program, _, _), Thrown = none ), Thrown, true),
+    Thrown == unsupported_construct(seq_in_level_rule).
 
 % ── coalesce/2 (ruling null_design) ──────────────────────────────────────────
 % The conformance fixtures grade the BEHAVIOUR; these three pin the emitted

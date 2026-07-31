@@ -43,7 +43,6 @@
 % Every live-or-registered construct the golden deliberately does NOT contain,
 % with the reason that must also be written in the golden's own header.
 
-expected_absent(pre/1,          'registry status `refused`').
 expected_absent(json_each/2,    'registry status `refused`').
 expected_absent(json_array/1,   'registry status `refused`').
 expected_absent(json_object/2,  'registry status `refused`').

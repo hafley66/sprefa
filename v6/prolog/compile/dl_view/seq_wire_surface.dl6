@@ -1,0 +1,4 @@
+rel arrival(payload: text).
+rel numbered(ordinal: int, payload: text) log keep(all).
+
+numbered(Ordinal, Payload) <+ arrival(Payload), Ordinal := seq('q').

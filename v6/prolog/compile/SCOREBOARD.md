@@ -14,32 +14,39 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the JSON-POTHOLE lane (2026-07-30), which added typed json
-captures and five fixtures. Its own baseline, MEASURED in-worktree rather than
-read off this file, was 226 / 64 / 162 / 160 -- this table had been left at
-221 / 64 / 157 / 155 by the JSON-FLEX lane and one wave has landed since
-without refreshing it. Arcs before that, most recent first: JSON-FLEX (from
-209 / 64 / 145 / 143), COALESCE (201 / 60 / 141 / 139), JSON-WIRING (from
-155 / 61 / 94 / 92), STRUCT-AS-ROWS, FLAGSHIP CALLGRAPH, TICK PHASE ALIGNMENT.
+Refreshed by the SEQ WIRING + PRE DOC TRUTH lane (2026-07-30) from the
+in-worktree sweep artifacts. The sweep includes the two seq wiring fixtures;
+the pre edge-body bucket is now live through the occurrence-ordered fold.
 The prose sections below this one are historical and were written against the
 110-fixture corpus; the numbers here and in the two tables that follow come
 from `out/manifest.json` + `out/run-results.json`.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 231 |
-| UNSUPPORTED (compiler refuses, named construct) | 66 |
-| compiled (lowering + emission succeeded) | 165 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 163 |
+| fixtures swept | 260 |
+| UNSUPPORTED (compiler refuses, named construct) | 74 |
+| compiler crashes | 1 |
+| compiled (lowering + emission succeeded) | 185 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 183 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which run_error / no_oracle_log (rejection-path fixtures) | 2 |
 
-IDENTICAL + run_error/no_oracle + UNSUPPORTED = 163 + 2 + 66 = 231.
+IDENTICAL + run_error/no_oracle + UNSUPPORTED + crashes = 183 + 2 + 74 + 1 = 260.
 
-Both emitter modes agree row for row: the incremental default and
-`SPREFA_TSV2_EMITTER_MODE=naive` produce the same 163/0/2. The final-state
-grading leg agrees too: `final_identical=163`, `final_wrong=2` (the same two
-rejection-path fixtures).
+Both emitter modes agree row for row for compiled fixtures: the incremental
+default and `SPREFA_TSV2_EMITTER_MODE=naive` produce the same 183/0/2. The
+final-state grading leg reports `final_identical=183`, `final_wrong=2` for the
+two rejection-path fixtures. The one compiler crash is
+`json_nfc_and_nfd_keys_stay_distinct`, an existing locale encoding failure in
+the Prolog writer.
+
+### What the seq/pre lane moved
+
+The two seq fixtures, `seq_wire_surface` and `seq_wire_hand`, compile and run
+IDENTICAL in both emitter modes, with final-state parity. The prior
+`edge_body_needs_pre` bucket of 13 fixtures is absent from the current
+manifest; `pre/1` is live for the occurrence-ordered edge fold. The separate
+`pre_in_level_rule` refusal remains one fixture.
 
 ### What the json-pothole lane moved
 
@@ -202,22 +209,27 @@ and the three-tick prefix of this one is identical. Repro: truncate this
 fixture's schedule to four ticks. Owner: the arc that owns
 `v6/tsv2/runtime/1_incremental.ts`.
 
-### The UNSUPPORTED bucket, by named reason (61)
+### The UNSUPPORTED bucket, by named reason (74)
 
 | reason | count |
 |---|---:|
-| `edge_body_needs_pre` | 13 |
 | `edge_body_needs_json_destructure` | 9 |
-| `type_arrival_shape_mismatch` (the value plane's boundary refusal) | 5 |
+| `type_arrival_shape_mismatch` (the value plane's boundary refusal) | 6 |
 | `level_body_goal` (json_each in a level body) | 4 |
 | `aggregate_head` (json_array / json_object) | 4 |
-| `type_cycle` | 2 |
-| `json_value_expression` | 2 |
+| `lifecycle_arm` | 4 |
+| `relation_pattern_not_a_relation_value` | 3 |
+| `trigger_arg_not_var` | 3 |
+| `column_type_unknown` | 2 |
 | `decode_source_not_struct` | 2 |
-| 20 more, one each (see `out/manifest.json`) | 20 |
+| `dynamic_relation_name` | 2 |
+| `host_column_shadows_runtime` | 2 |
+| `json_capture_type_unknown` | 2 |
+| `json_value_expression` | 2 |
+| `type_cycle` | 2 |
+| 26 more named reasons | 26 |
 
-`edge_body_needs_pre` and the json family are what remain of the phase-3
-edge-body list. `edge_body_with_latest`, `edge_body_needs_negation`,
+The json family is what remains of the phase-3 edge-body list. `edge_body_with_latest`, `edge_body_needs_negation`,
 `edge_body_needs_bind`, `edge_body_needs_comparison`, `edge_body_needs_now`
 and `edge_head_column_type_mismatch` went in the edge-body arc;
 `edge_body_needs_finalize` (2) and `edge_body_joins_arrival_fed_level` (1)
@@ -284,10 +296,9 @@ DURABILITY: the departure frontier is a `CREATE TEMP TABLE` beside
 closing it. `v6/tsv2/tests/departureFrontier.test.ts` measures the inheritance
 against a file-backed db: a new connection sees neither carry table.
 
-### `edge_body_needs_pre`: why it is not a widening
+### `pre/1`: occurrence-ordered edge fold
 
-The other edge-body buckets were arm-local: one more join, one more WHERE
-term, one more bound expression. `pre` is not. engine.pl processes
+engine.pl processes
 occurrences ONE AT A TIME (`process_occurrences/7`) and `pre(Atom)` reads the
 store as the writes SO FAR THIS TICK left it (step 4: "First occurrence
 therefore reads T-1; later occurrences chain"). Every one of the 13 fixtures
@@ -310,8 +321,8 @@ Two arrivals, one increment. The fold is also CROSS-ARM
 decrement rule in arrival order, and each rule is a separate emitted
 statement), so no single recursive CTE per arm expresses it either. The
 faithful lowering is an ordered occurrence loop with writes applied between
-occurrences -- a new execution shape in the runtime, not a wider arm. The
-refusal stays until that shape exists.
+occurrences. The compiler now uses that lowering for this edge shape. Level
+rule use remains refused as `pre_in_level_rule(Ref)`.
 
 ### The final-state leg (new, and it changes how to read this table)
 
@@ -377,10 +388,11 @@ fixtures now REACH those checks since their earlier-in-program unmarked
 edge rule no longer blocks them first — not new gaps, existing ones now
 visible under a precise name instead of a blanket `edge_body_shape`).
 
-## Per-fixture table: compiled (85)
+## Historical per-fixture excerpt: compiled (85)
 
-Regenerated from `out/manifest.json` + `out/run-results.json`. `run bucket` is
-the tick-log grade, `final bucket` the final-state grade (see above).
+This excerpt is retained from the earlier 85-fixture corpus. Current totals
+are the tables above; `run bucket` is the tick-log grade and `final bucket` the
+final-state grade.
 
 | fixture | file | run bucket | final bucket |
 |---|---|---|---|
@@ -478,14 +490,14 @@ table through phase C are lowered; the `latest` / `negation` / `now` /
 `edge_trigger_is_derived` / `edge_head_column_type_mismatch` rows went in the
 edge-body arc; `edge_body_needs_finalize` and
 `edge_body_joins_arrival_fed_level` went in this one. What is left is the
-`pre` occurrence-loop family, the json/decode family, and one-off refusals
-each pinned by its own fixture.
+json/decode family and one-off refusals each pinned by its own fixture. The
+pre occurrence-loop family is compiled.
 
 | construct | fixtures blocked |
 |---|---:|
-| `edge_body_needs_pre` | 13 |
 | `edge_body_needs_json_destructure` | 9 |
-| `level_body_goal` | 6 |
+| `type_arrival_shape_mismatch` | 6 |
+| `level_body_goal` | 4 |
 | `aggregate_head` | 4 |
 | `json_value_expression` | 2 |
 | `aggregate_in_edge_head` | 1 |

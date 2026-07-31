@@ -422,6 +422,7 @@ function runOrderedTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITi
     concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),
     concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
     concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),
+  ).pipe(
     concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),
     concatMap(({ mid, after, written, deltas }) => stageOrderedFrontiers(seam, INCREMENTAL_RELATIONS, orderedCarryAdditions(mid, after, deltas, written)).pipe(
       map((postWriteCarry): ITickDeltas => ({ rels: deltas.rels, carryPending: deltas.carryPending || postWriteCarry })),

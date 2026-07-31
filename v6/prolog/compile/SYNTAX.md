@@ -55,6 +55,12 @@ sampled atom reads the current base table and never becomes a trigger.
 Level-rule use remains `latest_in_level_rule`; wider edge arguments remain
 `edge_body_with_latest`.
 
+`seq/1` is live in an edge-body value bind. An atom argument gives one global
+ordinal stream; a variable argument gives one stream per value. The shared
+expander mints a keyed cursor relation and emits the four-rule cursor block
+used by both doors. The cursor rows remain visible in the tick log. Level-rule
+use remains `seq_in_level_rule`.
+
 `coalesce(rel_atom(Bound..., Out), Default)` is the TOTAL read (ruling
 `null_design = get_else_use_site_never_storage`). `Out` binds from the matching
 row when one exists and from `Default` when none does, so the tuple survives
@@ -87,7 +93,8 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `error/1` | `time` | `refs_of_arg(1,pos,trigger)` | `wrapper(rel_atom,refuse(lifecycle))` | `reserved` |
 | `not/1` | `sign` | `arm(neg)` | `wrapper(body_item,lower)` | `live` |
 | `coalesce/2` | `sugar` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom_default,expand(coalesce))` | `live` |
-| `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,refuse(goal))` | `refused` |
+| `pre/1` | `sample` | `refs_of_arg(1,pos,sampled)` | `wrapper(rel_atom,lower)` | `live` |
+| `seq/1` | `sugar` | `no_refs` | `wrapper(expr,expand(seq))` | `live` |
 | `now/1` | `time` | `no_refs` | `wrapper(expr,lower)` | `live` |
 | `decode/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |
 | `json_each/2` | `guard` | `no_refs` | `wrapper(expr_pair,refuse(goal))` | `refused` |
@@ -164,7 +171,8 @@ sibling throw shapes -- see `scripts/bop_check.pl`'s own header), 1 broken
 | `latest/1` | refused as `latest_in_level_rule(Ref)` | live around ONE plain relation atom (sampled base-table read, never a trigger); wider arguments refused as `edge_body_with_latest(Body)` |
 | `not/1` | live (NOT EXISTS), a guard nested inside it refused as `negated_guard_goal(Head, Goal)` | live around ONE plain relation atom; wider arguments refused as `edge_body_with_negation(Body)` |
 | `now/1` | refused as `now_in_level_rule(Head, Goal)` -- compiler-only, the oracle solves it there | live around a plain VARIABLE (reads the emitted `__tick` counter); a non-variable argument refused as `edge_body_with_now(Body)` |
-| `pre/1` | refused as `pre_in_level_rule(Ref)` | refused as `edge_body_needs_pre(Body)` -- the fold is occurrence-ordered and cross-arm; see the "pre" note in SCOREBOARD.md |
+| `pre/1` | refused as `pre_in_level_rule(Ref)` | live around one plain relation atom; the occurrence-ordered keyed fold reads the evolving row between edge occurrences |
+| `seq/1` | refused as `seq_in_level_rule` | live only as the ordinal value bind in an edge rule; other placements are refused |
 | comparisons, `:=`, `is` | live (WHERE / SELECT expressions) | live, same three compilers, folded after the positive atoms |
 
 ### Core grammar and input aliases

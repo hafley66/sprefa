@@ -50,8 +50,8 @@
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
-| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 508 | TSV2 Phase C scoreboard |
-| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 346 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
+| [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 520 | TSV2 Phase C scoreboard |
+| [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 354 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 175 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
 | [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 496 | Type matrix -- generated, do not hand-edit |
@@ -61,7 +61,6 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -750,20 +749,21 @@
 ```
 1:# TSV2 Phase C scoreboard
 15:## Totals (current)
-44:### What the json-pothole lane moved
-99:### What the json-flex lane moved
-113:### What the coalesce lane moved
-139:### What the json-wiring lane moved
-168:### What the struct-as-rows arc moved
-191:### Named gap found by the flagship arc, unowned
-205:### The UNSUPPORTED bucket, by named reason (61)
-226:### The three fixtures this arc moved
-240:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
-263:### the departure frontier (`edge_body_needs_finalize`, removed)
-287:### `edge_body_needs_pre`: why it is not a widening
-316:### The final-state leg (new, and it changes how to read this table)
-380:## Per-fixture table: compiled (85)
-473:## Per-construct blocked tally (UNSUPPORTED, ranked)
+43:### What the seq/pre lane moved
+51:### What the json-pothole lane moved
+106:### What the json-flex lane moved
+120:### What the coalesce lane moved
+146:### What the json-wiring lane moved
+175:### What the struct-as-rows arc moved
+198:### Named gap found by the flagship arc, unowned
+212:### The UNSUPPORTED bucket, by named reason (74)
+238:### The three fixtures this arc moved
+252:### the mid-tick level freeze (`edge_body_joins_arrival_fed_level`, removed)
+275:### the departure frontier (`edge_body_needs_finalize`, removed)
+299:### `pre/1`: occurrence-ordered edge fold
+327:### The final-state leg (new, and it changes how to read this table)
+391:## Historical per-fixture excerpt: compiled (85)
+485:## Per-construct blocked tally (UNSUPPORTED, ranked)
 ```
 
 ### prolog/compile/SYNTAX.md
@@ -772,15 +772,15 @@
 7:## Ruling that reframes this whole document (relayed mid-flight)
 21:## The central superseding decision: bare identifier = variable, always
 45:## Construct table
-135:## CLI ("the bop")
-160:### Context status
-170:### Core grammar and input aliases
-212:### The json plane
-280:### Legacy surface: parsed, then refused
-291:### World term lowering rows
-311:## Round-trip design note (why decl lines are exact, not fallback-merged)
-326:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
-337:## What `dl_view/*.dl6` is
+142:## CLI ("the bop")
+167:### Context status
+178:### Core grammar and input aliases
+220:### The json plane
+288:### Legacy surface: parsed, then refused
+299:### World term lowering rows
+319:## Round-trip design note (why decl lines are exact, not fallback-merged)
+334:## Grades (from `scripts/roundtrip.sh`, regenerate to reproduce)
+345:## What `dl_view/*.dl6` is
 ```
 
 ### prolog/compile/TICK-MODEL.md
@@ -867,14 +867,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
