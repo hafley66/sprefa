@@ -528,3 +528,7 @@ ruling(release_gate_v620, arch_from_single_dl6_file, user,
        'user: "no release till u give me arch from single dl6 file mate, dogfood". The self-map rail must emit ARCH-MAP.md from ONE dl6 program; the python renderer must go. Push+tag gated on this.').
 ruling(devlog_rail, approved_dogfood, user,
        'user: "docs YES DOGFOOD DOCS". A dl6 program reads the session ledgers and emits DEVLOG.md.').
+ruling(glob_dialect, node_matcher_both_halves, user,
+       'user 2026-07-31: "1->a". bind watch boot and live halves both use the node path.matchesGlob dialect (agrees with v5 globset on every measured corpus case); boot = enumerate-all + JS filter, git pathspec leaves the glob path. Fixes glob_dialect_split (170/242 corpus disagreement).').
+ruling(bench_reference, proven_engine_reference, user,
+       'user 2026-07-31: "2->b?". Big-scale referee = a pinned engine (tsv2 first) that EARNS reference status: byte-proven against the swipl oracle over the entire oracle-reachable corpus on every sweep; final-state hash retained as a third check at all scales. swipl stays the semantic authority where it reaches; rust graded tick-log byte-diff vs the proven reference beyond.').
