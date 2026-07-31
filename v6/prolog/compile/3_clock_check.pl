@@ -420,18 +420,20 @@ delayed_recurrence_nodes(Program, Dependencies, DelayedNodes) :-
 %
 %   | k  |   old inferences | old ms |  new inferences | new ms |
 %   |----|-----------------:|-------:|----------------:|-------:|
-%   |  4 |           15,030 |    1.5 |          13,691 |    1.3 |
-%   |  8 |          140,478 |    6.9 |          24,253 |    1.5 |
-%   | 12 |        2,888,484 |    153 |          37,374 |    2.4 |
-%   | 16 |       60,464,486 |  3,283 |          51,044 |    3.3 |
-%   | 20 |    1,201,719,860 | 51,103 |          65,538 |    4.1 |
+%   |  4 |           15,030 |    1.5 |          12,191 |    1.1 |
+%   |  8 |          140,478 |    6.9 |          21,178 |    1.4 |
+%   | 12 |        2,888,484 |    153 |          32,616 |    2.1 |
+%   | 16 |       60,464,486 |  3,283 |          44,557 |    2.9 |
+%   | 20 |    1,201,719,860 | 51,103 |          57,188 |    3.5 |
 %
-% The old column doubles per k; the new one adds ~3,300 inferences per
+% The old column doubles per k; the new one adds ~2,800 inferences per
 % diamond. dataflow-atlas.dl6 is that shape in the wild:
 % a sixteen-rel filesystem fold that four different file depths enter, and its
 % compile went 30 s to 9 m 40 s at an 8 GB stack, dying with `Stack limit
 % (1.0Gb) exceeded` inside this predicate's setof at the served compiler's
-% default (ARCH clock_check_path_blowup).
+% default (ARCH clock_check_path_blowup). Measured end to end on that file,
+% same rig: 284.80 s at an 8 GB stack becomes 14.66 s at the DEFAULT 1 GB
+% stack, emitted module byte-identical (sha256 32b868c6).
 %
 % What replaces it is Lustre's own shape: propagate one offset per edge and
 % read the answer off the NODES. A node holding two offsets IS the conflict,

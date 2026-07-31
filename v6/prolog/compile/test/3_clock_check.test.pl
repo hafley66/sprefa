@@ -180,16 +180,17 @@ clock_check_inferences(Program, Count) :-
 %
 %   | k  | shipped (offset propagation) | sabotage (simple-path enumeration) |
 %   |----|-----------------------------:|-----------------------------------:|
-%   |  4 |                       13,691 |                             15,030 |
-%   | 12 |                       37,374 |                          2,888,484 |
-%   | 16 |                       51,044 |                         60,464,486 |
-%   | 20 |                       65,538 |                      1,201,719,860 |
+%   |  4 |                       11,881 |                             14,876 |
+%   | 12 |                       32,614 |                          2,888,482 |
+%   | 16 |                       44,555 |                         60,464,484 |
+%   | 20 |                       57,186 |                      1,201,719,858 |
 %
-% Exponent is log(count12/count4) / log(12/4): 0.91 shipped, 4.79 sabotaged.
-% SABOTAGE RECEIPT: restore recurrence_free_clock/6 to clock_path/7 over the
-% dependency list and this test goes RED on both pins, at 4.79 against a 1.5
-% threshold and 2,888,484 against a 150,000 ceiling. The chain rail beside it
-% stays green through that same sabotage, which is why both exist.
+% Exponent is log(count12/count4) / log(12/4): 0.92 shipped, 4.81 sabotaged.
+% SABOTAGE RECEIPT, run: restore recurrence_free_clock/6 to clock_path/7 over
+% the dependency list and this test goes RED on both pins, at diamonds^4.892
+% against a 1.5 threshold and 2,888,482 against a 150,000 ceiling. The chain
+% rail beside it stays GREEN through that same sabotage, which is the whole
+% reason both exist.
 test(clock_check_cost_stays_near_linear_in_parallel_routes) :-
     SmallRoutes = 4,
     LargeRoutes = 12,
