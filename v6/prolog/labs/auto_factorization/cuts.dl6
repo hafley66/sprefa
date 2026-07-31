@@ -1,0 +1,46 @@
+# Questions 4 and 5 in the language: the counterfactual cut is plain rel algebra
+# over the edge facts plus a union, and the candidate set arrives as world rows
+# so the search is exhaustive rather than guided.
+
+rel dep(tail: text, head: text).
+rel cut_edge(cut_name: text, tail: text, head: text).
+rel cut_iface(cut_name: text, iface: text).
+
+rel dep_after(cut_name: text, tail: text, head: text).
+dep_after(cut_name, tail, head) <-
+  cut_iface(cut_name, _), dep(tail, head), not(cut_edge(cut_name, tail, head)).
+dep_after(cut_name, tail, iface) <-
+  cut_edge(cut_name, tail, _), cut_iface(cut_name, iface).
+dep_after(cut_name, iface, head) <-
+  cut_edge(cut_name, _, head), cut_iface(cut_name, iface).
+
+rel edges_before(edges: int).
+edges_before(count(tail)) <- dep(tail, _).
+
+rel edges_after(cut_name: text, edges: int).
+edges_after(cut_name, count(tail)) <- dep_after(cut_name, tail, _).
+
+rel spliced_total(cut_name: text, edges: int).
+spliced_total(cut_name, count(tail)) <- cut_edge(cut_name, tail, _).
+
+# Depth after each cut. Every rel carries cut_name because the counterfactual
+# graphs are one rel, not one graph per run.
+rel reach_after(cut_name: text, tail: text, head: text, hops: int).
+reach_after(cut_name, tail, head, 1) <- dep_after(cut_name, tail, head).
+reach_after(cut_name, tail, head, hops) <-
+  reach_after(cut_name, tail, mid, prior), dep_after(cut_name, mid, head),
+  prior < 64, hops := prior + 1.
+
+# Splicing an interface into an acyclic graph can still make a cycle: any file
+# that is a TAIL of one spliced edge and reachable FROM a head of another closes
+# a loop through the interface node. When that happens the depth below is the
+# hop floor rather than an answer, and this rel is what says so instead of the
+# number lying quietly.
+rel cycle_after(cut_name: text, node: text).
+cycle_after(cut_name, node) <- reach_after(cut_name, node, node, _).
+
+rel depth_after(cut_name: text, tail: text, depth: int).
+depth_after(cut_name, tail, max(hops)) <- reach_after(cut_name, tail, _, hops).
+
+rel max_depth_after(cut_name: text, depth: int).
+max_depth_after(cut_name, max(depth)) <- depth_after(cut_name, _, depth).

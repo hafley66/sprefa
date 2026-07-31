@@ -1,0 +1,89 @@
+{
+  "component_arrivals": 247,
+  "component_count_referee": 4,
+  "component_mismatch": [],
+  "cut_arrivals": 173,
+  "cuts": 6,
+  "depth_mismatch": [
+    [
+      "v6/prolog=>v6/prolog/compile",
+      5,
+      64
+    ]
+  ],
+  "edge_mismatch": [],
+  "engine_component_sizes": [
+    [
+      1,
+      "v6/prolog/compile/oracle_dump.pl"
+    ],
+    [
+      16,
+      "v6/dl/src/0_ast_bridge.ts"
+    ],
+    [
+      19,
+      "v6/tsv2/cli/0_inventory.ts"
+    ],
+    [
+      26,
+      "v6/prolog/0_body_walk.pl"
+    ]
+  ],
+  "ranked": [
+    {
+      "cut": "v6/prolog/compile=>v6/prolog",
+      "depth_after": 7,
+      "depth_before": 6,
+      "edge_delta": -6,
+      "edges_after": 117,
+      "edges_before": 123,
+      "spliced": 21
+    },
+    {
+      "cut": "v6/tsv2/serve=>v6/tsv2/runtime",
+      "depth_after": 7,
+      "depth_before": 6,
+      "edge_delta": 0,
+      "edges_after": 123,
+      "edges_before": 123,
+      "spliced": 12
+    },
+    {
+      "cut": "v6/prolog=>v6/prolog/compile",
+      "depth_after": 5,
+      "depth_before": 6,
+      "edge_delta": 1,
+      "edges_after": 124,
+      "edges_before": 123,
+      "spliced": 7
+    },
+    {
+      "cut": "v6/dl/src=>v6/dl/src/0_generated",
+      "depth_after": 6,
+      "depth_before": 6,
+      "edge_delta": 1,
+      "edges_after": 124,
+      "edges_before": 123,
+      "spliced": 2
+    },
+    {
+      "cut": "v6/tsv2/cli=>v6/tsv2/runtime",
+      "depth_after": 6,
+      "depth_before": 6,
+      "edge_delta": 1,
+      "edges_after": 124,
+      "edges_before": 123,
+      "spliced": 1
+    },
+    {
+      "cut": "v6/tsv2/cli=>v6/tsv2/serve",
+      "depth_after": 6,
+      "depth_before": 6,
+      "edge_delta": 1,
+      "edges_after": 124,
+      "edges_before": 123,
+      "spliced": 1
+    }
+  ]
+}
