@@ -392,7 +392,7 @@ map_line('phases', 10, '## 1. Surface sugar expands in a declared order') <- map
 map_line('phases', 20,
   '`expansion_phase/3` in `v6/prolog/1_expansion.pl`, read by the compiler and the oracle both. Arrows are the computed successor (the smallest order strictly greater), not the literal numbers, so a phase landing between two existing ones redraws correctly. Dashed = declared slot with no expander.') <- map_seed(_).
 map_line('phases', 30, '```mermaid') <- map_seed(_).
-map_line('phases', 40, 'flowchart LR') <- map_seed(_).
+map_line('phases', 40, 'flowchart TD') <- map_seed(_).
 
 map_line('phases', 100 + order,
   line_text) <- phase_wired(order, name, expander),
@@ -439,6 +439,16 @@ registry_axis_fragment(axis, fragment) <- registry_axis_body(axis, body),
 rel registry_axes_text(text: text).
 registry_axes_text(group_concat(fragment, '\n')) <- registry_axis_fragment(_, fragment).
 
+# Disconnected subgraphs render side by side -- 14 axes made a strip wider
+# than any screen. One chain of `~~~` invisible links stacks them
+# vertically; group_concat order is the one the fragments already use.
+rel registry_axis_node(node: text).
+registry_axis_node(node) <- registry_axis_fragment(axis, _),
+  node := concat(['ax_', axis]).
+
+rel registry_axis_chain_text(text: text).
+registry_axis_chain_text(group_concat(node, ' ~~~ ')) <- registry_axis_node(node).
+
 rel registry_class_line(line_text: text).
 registry_class_line(line_text) <- axis(axis), not(axis_all_live(axis)),
   line_text := concat(['  class ax_', axis, ' moving']).
@@ -475,6 +485,8 @@ map_line('registry', 20,
 map_line('registry', 30, '```mermaid') <- map_seed(_).
 map_line('registry', 40, 'flowchart TD') <- map_seed(_).
 map_line('registry', 50, text) <- registry_axes_text(text).
+map_line('registry', 55, line_text) <- registry_axis_chain_text(chain),
+  line_text := concat(['  ', chain]).
 map_line('registry', 60, '  classDef moving stroke-dasharray: 4 3') <- map_seed(_).
 map_line('registry', 70, text) <- registry_classes_text(text).
 map_line('registry', 80, '```') <- map_seed(_).
@@ -553,7 +565,7 @@ map_line('frontier', 10, "## 3. The build DAG open frontier") <- map_seed(_).
 map_line('frontier', 20, line_text) <- task_total(tasks), dependency_total(edges),
   line_text := concat(['`task/3` in `v6/prolog/ARCH.pl`: ', tasks, ' tasks, ', edges, ' dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.']).
 map_line('frontier', 30, '```mermaid') <- map_seed(_).
-map_line('frontier', 40, 'flowchart LR') <- map_seed(_).
+map_line('frontier', 40, 'flowchart TD') <- map_seed(_).
 map_line('frontier', 50, text) <- frontier_nodes_text(text).
 map_line('frontier', 60, text) <- frontier_edges_text(text).
 map_line('frontier', 70, '  classDef blocked stroke-width:3px') <- map_seed(_).
@@ -665,7 +677,7 @@ map_line('dataflow', 20,
 map_line('dataflow', 30,
   'A `*` marks a rel no RULE reads. Two different things wear that mark: a real answer rel meant to be read from outside, and a `__host_demand_*` rel, which the host RUNTIME consumes rather than any rule. The map draws the set and does not guess which is which.') <- map_seed(_).
 map_line('dataflow', 40, '```mermaid') <- map_seed(_).
-map_line('dataflow', 50, 'flowchart LR') <- map_seed(_).
+map_line('dataflow', 50, 'flowchart TD') <- map_seed(_).
 map_line('dataflow', 60, text) <- program_graph_body('self-map', text).
 map_line('dataflow', 70, text) <- program_edges_text('self-map', text).
 map_line('dataflow', 80, '```') <- map_seed(_).

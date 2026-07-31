@@ -10,7 +10,7 @@ Every fact below travelled through the served tsv2 engine. `v6/dl/fixtures/self-
 ## 1. Surface sugar expands in a declared order
 `expansion_phase/3` in `v6/prolog/1_expansion.pl`, read by the compiler and the oracle both. Arrows are the computed successor (the smallest order strictly greater), not the literal numbers, so a phase landing between two existing ones redraws correctly. Dashed = declared slot with no expander.
 ```mermaid
-flowchart LR
+flowchart TD
   ph_enum["10 enum<br/>enum_expand:expand_enum_in_context"]
   ph_decl_spread["20 decl_spread"]
   ph_row_spread["30 row_spread"]
@@ -124,6 +124,7 @@ flowchart TD
     c_shdeclx2f4["sh_decl/4"]
     c_tsqueryx2f1["ts_query/1"]
   end
+  ax_aggregate ~~~ ax_bind ~~~ ax_decl ~~~ ax_guard ~~~ ax_join ~~~ ax_json ~~~ ax_read ~~~ ax_sample ~~~ ax_sign ~~~ ax_sugar ~~~ ax_time ~~~ ax_world
   classDef moving stroke-dasharray: 4 3
   class ax_aggregate moving
   class ax_decl moving
@@ -148,9 +149,9 @@ flowchart TD
 | `time` | 7 | 3 | 0 | 4 |  |
 | `world` | 5 | 4 | 1 | 0 |  |
 ## 3. The build DAG open frontier
-`task/3` in `v6/prolog/ARCH.pl`: 197 tasks, 118 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
+`task/3` in `v6/prolog/ARCH.pl`: 202 tasks, 120 dependency edges. Drawing all of them is noise, so the rel `frontier_edge` keeps only the edges touching a task that is not `done` -- a done task appears exactly when something open still waits behind it. `task_blocked` and `task_ready` are the two antijoins that split the open set.
 ```mermaid
-flowchart LR
+flowchart TD
   t_bench_cli["bench_cli<br/>done"]
   t_bigint_seam_normalize["bigint_seam_normalize<br/>unbuilt"]
   t_bind_submit_error_arm["bind_submit_error_arm<br/>unbuilt"]
@@ -176,6 +177,7 @@ flowchart LR
   t_float_avg_arc["float_avg_arc<br/>done"]
   t_flow_parity_residue["flow_parity_residue<br/>active"]
   t_flow_parity_upgrade["flow_parity_upgrade<br/>done"]
+  t_gen_templating_card["gen_templating_card<br/>labbed"]
   t_getting_started["getting_started<br/>done"]
   t_golden_flex_e2e["golden_flex_e2e<br/>done"]
   t_higher_order_rel_scan["higher_order_rel_scan<br/>superseded"]
@@ -204,6 +206,7 @@ flowchart LR
   t_scan_instantiation_generics_lab["scan_instantiation_generics_lab<br/>closed"]
   t_scan_match_reconciliation["scan_match_reconciliation<br/>labbed"]
   t_scan_match_value_lab["scan_match_value_lab<br/>superseded"]
+  t_scan_spelling_card["scan_spelling_card<br/>labbed"]
   t_scan_surface_composition_lab["scan_surface_composition_lab<br/>labbed"]
   t_scope_cover_check["scope_cover_check<br/>unbuilt"]
   t_select_scan_cache_lab["select_scan_cache_lab<br/>canonical_plan"]
@@ -217,7 +220,6 @@ flowchart LR
   t_tick_phase_alignment["tick_phase_alignment<br/>done"]
   t_ts_critical_fixes["ts_critical_fixes<br/>done"]
   t_type_matrix_lab["type_matrix_lab<br/>labbed"]
-  t_type_ruling_round["type_ruling_round<br/>unbuilt"]
   t_v6_2_host_contract_cleanup["v6_2_host_contract_cleanup<br/>done"]
   t_v6_2_lab_reconciliation["v6_2_lab_reconciliation<br/>active"]
   t_v6_2_ts_closeout["v6_2_ts_closeout<br/>active"]
@@ -264,6 +266,7 @@ flowchart LR
   t_rw_sets --> t_thread_schedule
   t_scan_match_reconciliation --> t_scan_surface_composition_lab
   t_scan_match_value_lab --> t_select_scan_cache_lab
+  t_scan_spelling_card --> t_gen_templating_card
   t_single_rel_type_system_audit --> t_json_interop_lab
   t_struct_as_rows --> t_rel_value_unification_lab
   t_struct_as_rows --> t_struct_dictionary_gc
@@ -272,7 +275,6 @@ flowchart LR
   t_tick_phase_alignment --> t_c7_durable_carry
   t_tick_phase_alignment --> t_pre_registry_drift
   t_ts_critical_fixes --> t_bind_submit_error_arm
-  t_type_matrix_lab --> t_type_ruling_round
   t_v6_2_host_contract_cleanup --> t_extraction_host_batching_lab
   t_v6_2_lab_reconciliation --> t_receipt_folding
   t_v6_2_ts_closeout --> t_v6_2_lab_reconciliation
@@ -286,6 +288,7 @@ flowchart LR
   class t_existing_target_identity_prototype blocked
   class t_file_span_kernel_host_boundary_lab blocked
   class t_file_span_storage_lab blocked
+  class t_gen_templating_card blocked
   class t_higher_order_rel_scan blocked
   class t_island_partition blocked
   class t_key_edge_case_census blocked
@@ -300,7 +303,6 @@ flowchart LR
   class t_scope_cover_check blocked
   class t_select_scan_cache_lab blocked
   class t_thread_schedule blocked
-  class t_type_ruling_round blocked
   class t_v6_2_lab_reconciliation blocked
   class t_v6_2_ts_closeout blocked
   class t_v6_completion_drive blocked
@@ -310,16 +312,16 @@ flowchart LR
 | `active` | 6 |
 | `canonical_plan` | 2 |
 | `closed` | 4 |
-| `done` | 116 |
-| `labbed` | 19 |
+| `done` | 119 |
+| `labbed` | 21 |
 | `labbing` | 4 |
 | `parked` | 1 |
 | `superseded` | 2 |
 | `unbuilt` | 43 |
-**Ready** (open, every dependency done): 55 tasks. **Blocked**: 26 tasks.
+**Ready** (open, every dependency done): 57 tasks. **Blocked**: 26 tasks.
 <details><summary>the ready set</summary>
 
-`amplification_sensors`, `analysis_oracle_exam`, `bigint_seam_normalize`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `cold_author_defects`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `ghost_forest_view`, `glob_dialect_split`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `json_pattern_expand`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `oracle_scale_ceiling`, `ordered_aggregate_lab`, `per_row_consumption`, `perl_alarm_orphan`, `point_free_lab`, `pre_registry_drift`, `purity_split`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `scan_spelling_card`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `type_matrix_lab`, `v5_lsp_exit_hang`
+`amplification_sensors`, `analysis_oracle_exam`, `bigint_seam_normalize`, `bind_submit_error_arm`, `c7_durable_carry`, `causality_check`, `clock_check`, `cold_author_defects`, `compile_speed_regression`, `count_ivm_port`, `decode_arc`, `demand_clocking`, `dep_ver_minmax_reversed`, `design_archaeology`, `doc_format_extraction`, `effect_abort`, `envelope_types`, `equals_refusal_by_name`, `extract_spelunk`, `extraction_host_batching_lab`, `file_span_redesign`, `flow_parity_residue`, `flow_residue_partial`, `ghost_forest_view`, `golden_flex_residue`, `group_concat_silent_miscompile`, `host_column_shadows_runtime`, `init_retention`, `json_edge_body_unblock`, `json_interop_lab`, `json_pattern_expand`, `mode_lab`, `norm_oracle_emitter_divergence`, `null_coherence_lab`, `oracle_scale_ceiling`, `ordered_aggregate_lab`, `pathspec_brace_refusal`, `per_row_consumption`, `perl_alarm_orphan`, `point_free_lab`, `pre_registry_drift`, `purity_split`, `register_lowering`, `rel_definition_hash_lab`, `rel_value_unification_lab`, `scan_match_reconciliation`, `scan_spelling_card`, `schema_import_epic`, `simplify_wave`, `struct_dictionary_gc`, `sub_forest`, `sub_graph_disk`, `swipl_gc_abort`, `text_expression_parity`, `ts_grammar_import`, `type_matrix_lab`, `v5_lsp_exit_hang`
 
 </details>
 **`task/3` state contradictions.** `task_state_conflict` counts states per task name; a name with more than one is a row that was appended when its state changed instead of rewritten. the `just arch` `go` check does not catch this -- it checks the dependency graph is acyclic and total, which a duplicated row does not break.
@@ -330,7 +332,7 @@ flowchart LR
 Read out of `analyze.pl` by `v6/prolog/tools/self_map_facts.pl`, through the same two-step `program_plan/2` runs: the host pre-pass first (which is why `__host_demand_*` and `__host_response_*` appear -- the demand/answer round trip the `sh` surface hides), then the declared sugar phases. `origin` is the analyzer own partition: `world` = headed by no rule, `level` = headed by a `<-` rule, `edge` = headed by a `<+` rule. Dashed edges are negated bodies, which are the reason this program has strata.
 A `*` marks a rel no RULE reads. Two different things wear that mark: a real answer rel meant to be read from outside, and a `__host_demand_*` rel, which the host RUNTIME consumes rather than any rule. The map draws the set and does not guess which is which.
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph og_level["level"]
     direction TB
     r___host_demand_sm_phase["__host_demand_sm_phase *"]
@@ -415,7 +417,9 @@ flowchart LR
     r_ready_total["ready_total"]
     r_registry_axes_text["registry_axes_text"]
     r_registry_axis_body["registry_axis_body"]
+    r_registry_axis_chain_text["registry_axis_chain_text"]
     r_registry_axis_fragment["registry_axis_fragment"]
+    r_registry_axis_node["registry_axis_node"]
     r_registry_class_line["registry_class_line"]
     r_registry_classes_text["registry_classes_text"]
     r_registry_construct_line["registry_construct_line"]
@@ -576,7 +580,10 @@ flowchart LR
   r_ready_total --> r_map_line
   r_registry_axes_text --> r_map_line
   r_registry_axis_body --> r_registry_axis_fragment
+  r_registry_axis_chain_text --> r_map_line
   r_registry_axis_fragment --> r_registry_axes_text
+  r_registry_axis_fragment --> r_registry_axis_node
+  r_registry_axis_node --> r_registry_axis_chain_text
   r_registry_class_line --> r_registry_classes_text
   r_registry_classes_text --> r_map_line
   r_registry_construct_line --> r_registry_axis_body
@@ -629,10 +636,10 @@ flowchart LR
   r_task_total --> r_map_line
   r_watch --> r_source
 ```
-`self-map`: 115 rels, 184 edges. Sinks (`*`, nothing reads them): `__host_demand_sm_phase`, `__host_demand_sm_rel_edge`, `__host_demand_sm_rel`, `__host_demand_sm_surface`, `__host_demand_sm_task_dep`, `__host_demand_sm_task`, `__host_demand_write_arch_map`, `write_receipt`.
+`self-map`: 117 rels, 187 edges. Sinks (`*`, nothing reads them): `__host_demand_sm_phase`, `__host_demand_sm_rel_edge`, `__host_demand_sm_rel`, `__host_demand_sm_surface`, `__host_demand_sm_task_dep`, `__host_demand_sm_task`, `__host_demand_write_arch_map`, `write_receipt`.
 | widest fan-in | writers | widest fan-out | readers |
 |---|---|---|---|
-| `map_line` | 28 | `source` | 13 |
+| `map_line` | 29 | `source` | 13 |
 | `registry_table_row` | 6 | `construct` | 8 |
 | `registry_table_row` | 6 | `task` | 8 |
 | `axis_live_count` | 3 | `axis_status_total` | 6 |
