@@ -309,6 +309,23 @@ silent_receipt() {
 }
 silent_receipt
 
+# (4d) M1-3, no refusal, a COST. One accumulator folded from two different
+#      triggers (the shape merge_family.pl:91-92 ships) expands to a base arm
+#      per trigger: four rules where today writes two. The sugar makes this
+#      program longer, and the receipt is the count.
+two_trigger_receipt() {
+  local rules
+  ( cd "$HERE" && swipl -q -l emit.pl \
+      -g "emit('break/two_trigger_fold.sugar.pl','break/two_trigger_fold.dl6')" -g halt >/dev/null 2>&1 )
+  rules="$(grep -c '<+' "$HERE/break/two_trigger_fold.dl6")"
+  if [ "$rules" = 4 ]; then
+    ok '(4d) two triggers, one accumulator: 2 rules today -> 4 after M1 (COST, pinned)'
+  else
+    bad "(4d) expected 4 expanded rules, got $rules"
+  fi
+}
+two_trigger_receipt
+
 echo
 echo "== leg 5: surface probes ================================================="
 
@@ -335,8 +352,100 @@ else
   bad '(5c) head-last `|->` behaves differently now -- re-grade Q4'
 fi
 
+# (5d) The base-arm spelling, decided by measurement rather than taste. The
+#      corpus writes it both ways -- `not(head)` and `not(pre(head))` -- and
+#      they produce the SAME oracle log. Only one of them compiles: the second
+#      is edge_body_with_negation. So `scan` has one legal expansion, and
+#      merge_family.pl:111 is an oracle-only fixture.
+base_arm_receipt() {
+  local scratch
+  scratch="$(mktemp -d)"
+  oracle_log "$HERE/today/counter.dl6"           "$HERE/today/counter.schedule.json" | sequence >"$scratch/plain"
+  oracle_log "$HERE/probe/base_arm_not_pre.dl6"  "$HERE/today/counter.schedule.json" | sequence >"$scratch/pre"
+  if [ -s "$scratch/plain" ] && diff -q "$scratch/plain" "$scratch/pre" >/dev/null \
+     && check_out "$HERE/probe/base_arm_not_pre.dl6" | grep -q 'edge_body_with_negation'; then
+    ok '(5d) `not(head)` and `not(pre(head))` agree on the oracle; only `not(head)` compiles'
+  else
+    bad '(5d) the base-arm receipt no longer reproduces -- re-grade slot_scan_spelling'
+  fi
+  rm -rf "$scratch"
+}
+base_arm_receipt
+
 echo
-echo "== leg 6: sabotage, proving the comparisons discriminate ================="
+echo "== leg 6: Q1 mapping rows, each pinned by its own log line ==============="
+
+has_delta() {
+  local program="$1" schedule="$2" want="$3"
+  oracle_log "$HERE/$program" "$HERE/$schedule" | sequence | grep -qxF "$want"
+}
+
+# (Q1a) merge = two rules heading one rel. Both sources reach the head in the
+#       tick they arrive; neither replaces the other.
+if has_delta today/merge.dl6 today/merge.schedule.json 'click + [2,"right"]' \
+&& has_delta today/merge.dl6 today/merge.schedule.json 'click + [3,"left"]'; then
+  ok '(Q1a) merge: two rules, one head, both sources land'
+else
+  bad '(Q1a) merge receipt no longer reproduces'
+fi
+
+# (Q1b) distinctUntilChanged = the keyed decl, not a body word. The repeated
+#       identical arrival produces NO delta at all -- three deltas over four
+#       ticks, not four.
+dedup_receipt() {
+  local lines
+  lines="$(oracle_log "$HERE/today/distinct_until_changed.dl6" \
+                      "$HERE/today/distinct_until_changed.schedule.json" | sequence stable | wc -l | tr -d ' ')"
+  if [ "$lines" = 3 ]; then
+    ok '(Q1b) distinctUntilChanged: the repeated identical write is a ZERO delta (3 stable deltas, not 4)'
+  else
+    bad "(Q1b) expected 3 stable deltas, got $lines"
+  fi
+}
+dedup_receipt
+
+# (Q1c) withLatestFrom = latest/1. `submit` fires the rule once with the draft
+#       SAMPLED at that tick; the later draft edit fires nothing.
+wlf_receipt() {
+  local lines
+  lines="$(oracle_log "$HERE/today/with_latest_from.dl6" \
+                      "$HERE/today/with_latest_from.schedule.json" | sequence submission | wc -l | tr -d ' ')"
+  if [ "$lines" = 1 ] \
+     && has_delta today/with_latest_from.dl6 today/with_latest_from.schedule.json 'submission + ["signup","ab"]'; then
+    ok '(Q1c) withLatestFrom: one submission carrying the sampled draft; the later edit fires nothing'
+  else
+    bad "(Q1c) expected exactly 1 submission delta, got $lines"
+  fi
+}
+wlf_receipt
+
+# (Q1d) pairwise = finalize + read, WITH A CADENCE CONDITION found here. The
+#       departure is a NEXT-tick occurrence, so the read beside it sees the
+#       state at that later tick. One idle tick between changes and the pairs
+#       are right.
+if has_delta today/pairwise.dl6 probe/pairwise_gapped.schedule.json 'step + ["north",10,14]' \
+&& has_delta today/pairwise.dl6 probe/pairwise_gapped.schedule.json 'step + ["north",14,9]'; then
+  ok '(Q1d) pairwise is CORRECT at one change per two ticks: (10,14) then (14,9)'
+else
+  bad '(Q1d) the gapped pairwise receipt no longer reproduces'
+fi
+
+# (Q1e) THE SAME PROGRAM IS WRONG at one change per tick. Values 10, 14, 9 on
+#       consecutive ticks pair as (10,9) and (14,9): the departed OLD value is
+#       matched against whatever the rel holds a tick later, so the middle
+#       value is skipped on one side and repeated on the other. It compiles
+#       clean and there is no diagnostic. Pinned as the wrong-but-current
+#       behaviour; this receipt goes red when it is fixed, which is the intent.
+if has_delta today/pairwise.dl6 today/pairwise.schedule.json 'step + ["north",10,9]' \
+&& has_delta today/pairwise.dl6 today/pairwise.schedule.json 'step + ["north",14,9]' \
+&& ! has_delta today/pairwise.dl6 today/pairwise.schedule.json 'step + ["north",10,14]'; then
+  ok '(Q1e) pairwise SKIPS the middle value at one change per tick: (10,9) not (10,14) (WRONG, pinned)'
+else
+  bad '(Q1e) the back-to-back pairwise defect no longer reproduces -- re-grade the Q1 mapping'
+fi
+
+echo
+echo "== leg 7: sabotage, proving the comparisons discriminate ================="
 
 # (S1) Leg 1 compares whole tick logs. One changed seed in the counter sugar
 #      must make it go red.
