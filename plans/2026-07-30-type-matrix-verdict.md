@@ -523,3 +523,168 @@ survive the merge and 266 cells read emitter_run_error until the coordinator
 recreated them; they are now committed so `matrix.sh` regenerates anywhere.
 Lab dir stays alive pending the fix wave (the matrix is the fix lanes'
 verification tool); protocol debt accepted, same as csp/extract-t2.
+
+---
+
+## Addendum: regrade at base `ed639842` (2026-07-31)
+
+Re-run of all 422 cells on `ed639842`, plus a classifier that had gone stale
+against three landings. `matrix.sh` regenerates everything; the run itself is
+35s wall.
+
+Nothing outside `v6/prolog/labs/type_matrix/**` and this section was touched. No
+compiler, runtime, emitter, fixture, rail or gate file was edited. `just
+conformance` re-run from `v6/` on this tree after the regrade: **267 PASS / 0
+FAIL, exit 0**.
+
+### What moved, and which half is the engine
+
+Two different things changed since the last committed matrix, and folding them
+into one number would misattribute both:
+
+* **landings** — the float/avg + `int_out_of_range` arc (`b6154706`), the
+  `intMode` bigint revert (`0b7c2d37`). The incremental-affinity fix
+  (`32916613`) was already in the last committed matrix.
+* **the reading** — the classifier could not hear a run-time refusal, and could
+  not parse a refusal name through the `at/3` location wrapper.
+
+| verdict | committed matrix (`32916613`, pre float/avg) | this base, OLD classifier | this base, NEW classifier |
+|---|---|---|---|
+| IDENTICAL | 87 | 81 | **81** |
+| SILENT_COERCION | 79 | 75 | **75** |
+| DIVERGENT | 140 | 150 | **104** |
+| NAMED_REFUSAL | 116 | 116 | **162** |
+
+| verdict / label | committed | this base, OLD | this base, NEW |
+|---|---|---|---|
+| IDENTICAL / lossless | 87 | 81 | 81 |
+| NAMED_REFUSAL / compiler_only | 86 | 81 | 81 |
+| DIVERGENT / doors_disagree | 81 | 69 | 69 |
+| SILENT_COERCION / value_changed | 58 | 54 | 54 |
+| NAMED_REFUSAL / both | 30 | 30 | **48** |
+| NAMED_REFUSAL / name_mismatch | 0 | 5 | **33** |
+| SILENT_COERCION / row_absent | 21 | 21 | 21 |
+| DIVERGENT / emitter_only_refusal | — | — | **14** (new label) |
+| DIVERGENT / oracle_only_refusal | 40 | 58 | **12** |
+| DIVERGENT / emitter_modes_disagree | 0 | 8 | 8 |
+| DIVERGENT / emitter_run_error | 19 | 15 | **1** |
+
+Only the last column is current truth. Columns 1 and 2 are the same stale
+reading applied either side of the landings; column 2 to column 3 is the reading
+being corrected against one banked `run-results.json`, so those 60 cells are the
+classifier moving and not the engine.
+
+**The stale reading was hiding the float/avg landing's whole benefit.** Read with
+the old classifier the arc looks like a regression (DIVERGENT 140 -> 150,
+IDENTICAL 87 -> 81). Read correctly it converted 46 divergences into agreed
+refusals: the emitted module now carries an arrival type gate
+(`emit_ts.pl:504-518`), so 46 cells that used to be "the reference engine refuses
+and the emitter stores it anyway" are now "both sides refuse".
+
+Cell movement, 60 cells, all one direction:
+
+| movement | cells | landing that caused the behaviour |
+|---|---|---|
+| `oracle_only_refusal` -> `NAMED_REFUSAL/name_mismatch` | 28 | float/avg arrival gate (18 bool, 10 float) |
+| `oracle_only_refusal` -> `NAMED_REFUSAL/both` | 18 | float/avg `int_out_of_range`, both sides same functor |
+| `emitter_run_error` -> `emitter_only_refusal` | 14 | float/avg gate refusing where the engine accepts |
+
+Three classifier defects fixed, each named in place in `classify.mjs`:
+
+1. **Run-time refusals are refusals.** `RUNTIME_REFUSALS` is a closed set copied
+   out of `emit_ts.pl` and `runtime/rows.ts`, not a pattern guess. An
+   unrecognised throw still grades `emitter_run_error`, which is what keeps the
+   driver `RangeError` visible as the crash it is.
+2. **Name-match leg.** The name is the refusal FUNCTOR when the message carries
+   one that also exists prolog-side (`int_out_of_range`), and `""` when the guard
+   is prose. Two of the emitted guards answer in a vocabulary the oracle's
+   `type_arrival_shape_mismatch` does not share, so those 28 pairs grade
+   `name_mismatch` rather than quietly asserting the sides agree.
+3. **`at/3` unwrap.** `unsupported_construct(at(File,Line,Reason))` was reading as
+   the refusal named `at` in 50 cells. Verdicts unaffected, 50 receipts repaired.
+
+Sabotage receipt: swapping the `int_out_of_range` probe for a never-matching
+pattern puts exactly those cells back (`both` 48 -> 30, `emitter_only_refusal`
+14 -> 0, `oracle_only_refusal` 12 -> 30, `emitter_run_error` 1 -> 15).
+
+### The RangeError count, honestly
+
+**ONE cell**, not 19: `cell_json_capture__int__wide_int`, both emitter modes,
+`RangeError: Received integer which cannot be safely represented as a JavaScript
+number`. It is the only unnamed emitter failure left in the matrix.
+
+The `intMode` revert did **not** push read-side overflow cells back to
+`RangeError` at the scale the priced ARCH row anticipated. Traced cell by cell
+against the committed matrix: all 19 of its `emitter_run_error` cells were
+`RangeError`, and **18 of those exact 19 are now `NAMED_REFUSAL/both`** on
+`int_out_of_range` while 1 survives. The count did not collapse because of the
+revert; it collapsed because the arrival gate now refuses the unsafe integer by
+name before it ever reaches the driver.
+
+The one survivor reaches SQLite through a **json capture**, which has no arrival
+gate to pass, so the unsafe integer is only discovered on the way back out. That
+single cell is the whole remaining surface of the `bigint_seam_normalize` class
+and it is exactly the shape that row predicts (SQL-computed overflow read back
+raw). The row's own "matrix residual" note is therefore accurate and its size is
+one cell.
+
+### The two `.dl6` oracle doors: DIV-3 and DIV-6 are structurally closed
+
+Both doors now delegate to the shared `compile/scripts/0_json_arrival.pl`, whose
+only per-door argument is a Context atom used in `halt/1` text. Measured this
+run: **0 cells where the doors disagree, 0 cells where one door carried an
+arrival the other refused.** DIV-3 (92 cells) and DIV-6 (120 cells) as written no
+longer reproduce. The lab's golden leg had been answering
+`existence_error(read_schedule/2)` on every cell since the door repair; it is
+called at the shared arity again so this stays a measurement.
+
+### What the current numbers say about each open ruling
+
+One sentence each, evidence only.
+
+**Refusal-widening blast radius.** The widening has already been run as a live
+experiment on three of the seven declared types — the float/avg arrival gate
+covers `int`/`float`/`bool` — and the measured result at the two world-boundary
+positions is that `bool` went to **0 divergent cells of 20**, `float` to 2 and
+`int` to 6, while the four ungated types (`text`/`json`/`list(text)`/`undeclared`)
+sit at 6/3/3/6 each, and no cell anywhere got worse; the edge head, still the
+only position with a full type wall, holds **0 divergent of 70**.
+
+**`int_widens_to_float`.** The language currently answers this question three
+different ways depending on where the integer crosses: at an arrival or join
+column both oracle doors refuse `type_arrival_shape_mismatch` while the emitter
+stores `4` (2 divergent cells), at a level head or aggregate head every door
+accepts and grades `4` **IDENTICAL**, and at an edge head the compiler refuses
+`edge_head_column_type_mismatch` — so the widening is already silently permitted
+inside a program and refused only at its boundary.
+
+**`wide_int_fate`.** Of 42 wide-integer cells there are still **zero IDENTICAL
+anywhere**, but the shape has changed: 28 are now agreed named refusals at
+`int`-declared columns, and the 14 survivors are all at columns the gate does not
+cover, where the value is not refused but silently altered — 8 of them are
+`emitter_modes_disagree` giving **three different answers to the same input**
+(`"9007199254740992"` incremental vs `"9.00719925474099e+15"` naive vs
+`9007199254740993` oracle at a `text` column), which is a stronger receipt than
+the original DIV-4 because it shows the two emitter modes disagreeing with each
+other rather than merely with the engine.
+
+**`bool_storage`.** A `bool` column is well-behaved on exactly one input: of its
+60 cells only **4 are IDENTICAL and all four are fed an actual boolean**, 44 are
+refusals and the remaining 12 are divergences concentrated at the two head
+positions that no arrival gate protects, where the oracle keeps the source value
+and the emitter's `CHECK ("value" IN (0,1))` either drops the row entirely
+(`4`, `1.5`, `"north"`, `{"key":1}` -> ABSENT) or coerces it (`1.0` -> `true`,
+`-0.0` -> `false`) — evidence for, not against, the golden plan's
+"bool = row presence / two-variant enum, never a column type".
+
+### Process notes
+
+* Base `git merge --ff-only ed639842` from `01ac896e` (382 behind, 0 ahead),
+  confirmed `git rev-parse HEAD` = `ed639842`.
+* `pnpm install` was needed in **both** `v6/tsv2` and `v6/sprefa-store/js`; the
+  store package is a workspace source dependency and its own `rxjs` must resolve
+  or every emitted cell dies at import. No outer `node_modules` was symlinked.
+* The lab's two symlinks were absent again (they are gitignored, so the
+  "committed" note in the previous addendum does not hold). `matrix.sh` now
+  recreates them and hard-fails on an empty `node_modules` rather than reporting
+  422 silent errors at exit 0.
