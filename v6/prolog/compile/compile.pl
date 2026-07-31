@@ -1,28 +1,10 @@
-% compile.pl : Phase B entry point. Reads a fixture(Name, prog(Decls, Rules),
-% Initial, Schedule, Expectations) fact DIRECTLY off the fixture source file
-% via read_term/3 with variable_names/1, never through consult, so the
-% surface Prolog variable names (SessionId, RouteId, ...) survive as real
-% term identity (shared across the WHOLE clause, since one fixture is one
-% Prolog fact and same-spelled variables inside one clause are the same
-% variable object). analyze.pl:rel_columns/4 mines column names from that
-% identity. Consulting the fixture the normal way loses the names the moment
-% the reader returns; that is the reason this file exists instead of just
-% calling `user:fixture/5`.
+% Phase B entry point. Fixture terms are read with read_term/3 and
+% variable_names/1 so source variable identity remains available to analysis.
 %
 % Emit:  swipl -q -l v6/prolog/compile/compile.pl \
 %          -g "compile_fixture(switch_as_keyed_replace, 'v6/prolog/conformance/fixtures/scopes.pl', 'v6/prolog/compile/out/switch_as_keyed_replace.ts')" \
 %          -g halt
 %
-% BACKEND-PLUGGABLE (user directive, mid-arc: the compile technique will
-% later also target Rust, so nothing above the emitter may become 1:1 with
-% TypeScript). analyze.pl, strat.pl and lower.pl never mention a host
-% language; program_plan/2 and lower_program/2 produce plan/6 and lowered/8,
-% both plain SQL text + Prolog structure. `compile_fixture/3` below defaults
-% to the emit_ts.pl backend; `compile_fixture/4` takes an explicit
-% Module:Predicate emitter (called as `call(Emitter, Name, Plan, Lowered,
-% BootStatements, Text)`) so a future emit_rust.pl plugs in without
-% touching anything upstream of it -- same plan term, different renderer.
-
 :- module(compile,
           [ read_fixture_term/4,
             compile_fixture/3,

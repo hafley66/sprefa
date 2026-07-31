@@ -498,9 +498,7 @@ finite_float_text(Value, Text) :-
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
 
-% Precedence comes from registry.pl's expression/5 (rank R5 of
-% plans/2026-07-29-prolog-org-review.md), where it sits beside the SQL
-% rendering and the type rule for the same operator.
+% Precedence comes from registry.pl's expression/5.
 arith_op(Operator, Precedence) :-
     expression(Operator/2, arithmetic, Precedence, _, _).
 

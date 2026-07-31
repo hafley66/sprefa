@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# roundtrip.sh : phase D parser grade runner (plans/2026-07-28-tsv2-phase-d-
-# parser-header.md). Three grades:
+# roundtrip.sh : phase D parser grade runner. Three grades:
 #   G1 (binding) - for every fixture in v6/prolog/conformance/fixtures/*.pl,
 #     parse_dl(print_dl(Term)) is a variant (=@=) of Term. Also regenerates
 #     every v6/prolog/compile/dl_view/<fixture>.dl6 rendering as a side effect
@@ -9,12 +8,9 @@
 #     without error; unsupported_surface(...) findings are collected and
 #     printed, never silently dropped. Reports Decls/Rules counts per file.
 #   G3 (no-regression sanity) - the existing conformance suite
-#     (v6/prolog/conformance/go.pl) stays green untouched, since this parser
-#     never edits compile.pl/analyze.pl/strat.pl/lower.pl/emit_ts.pl.
+#     (v6/prolog/conformance/go.pl) stays green.
 #
-# The grading logic is a Prolog program written to a temp file at RUN TIME
-# (not a committed .pl file) so this directory gains exactly the one script
-# file the phase D contract lists, per its strict file-ownership rule.
+# The grading logic is written to a temporary Prolog file at runtime.
 #
 # Usage: bash v6/prolog/compile/scripts/roundtrip.sh
 #

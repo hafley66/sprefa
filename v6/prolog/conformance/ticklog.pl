@@ -1,9 +1,5 @@
-% ticklog.pl : the oracle-side tick-log printer for the tsv2 compile-target
-% arc (plans/2026-07-27-tsv2-compile-target-header.md, phase A). Loads the
-% existing reference engine UNCHANGED (via go.pl, which loads engine.pl and
-% every fixtures/*.pl) and prints the same JSONL envelope the tsv2 runtime
-% prints, so the two logs can be diffed byte-for-byte. NEVER edits engine.pl,
-% go.pl, body.pl, level_eval.pl, or any fixtures/*.pl.
+% Oracle-side tick-log printer. It loads the reference engine and emits the
+% JSONL envelope used for byte-for-byte comparison with the runtime.
 %
 % Envelope (both sides agree on this exact text):
 %   {"tick":N,"deltas":{"relName":{"add":[[..],...],"del":[[..],...]}}}
@@ -32,12 +28,8 @@
 :- use_module(body, [json_canon/2, rel_ref/2]).   % read-only reuse; body.pl is untouched
 :- use_module('../0_type_plane', [js_float_text/2]).
 
-% ═══ perturbed schedules (HARD RULE receipt: proves the tsv2 side computes
-% deltas from the rules rather than replaying the fixture's own expected
-% answers — same program/Decls/Rules/Initial as the fixture, one extra tick
-% appended with a brand new session/target the fixture's Expectations never
-% mention). Mirrors tests/schedules.ts's DEMAND_LAZINESS_SCHEDULE_PERTURBED
-% on the tsv2 side. ═══════════════════════════════════════════════════════
+% The perturbed schedule uses the same program and initial rows with one extra
+% arrival, so deltas are computed from the rules.
 
 perturbed_schedule(demand_laziness_effect_rows, Schedule) :-
     fixture(demand_laziness_effect_rows, _, _, BaseSchedule, _),
@@ -137,10 +129,8 @@ normalize_float_json_atom(Raw, Text) :-
     ; Text = Raw
     ).
 
-% The forms below are the landed JSON representation from body.pl: lists for
-% arrays and obj(SortedPairs) for objects. A braces literal is still written
-% as {}(Fields) in raw fixture/host rows and is canonicalized here before
-% rendering. A plain compound term reaches the following term_text/2 clause.
+% Lists and obj(SortedPairs) are the canonical JSON value forms from body.pl.
+% A braces literal is canonicalized before rendering.
 % The empty object is the ATOM `{}` on both doors (parse_dl.pl braces_term/5;
 % term_to_atom reads `{}` at arity 0). Without this pair it would fall through
 % to string_json/2 and render as the JSON STRING "{}" rather than an object.
@@ -185,26 +175,19 @@ string_json(Value, Json) :-
     atom_codes(Escaped, EscapedCodes),
     format(atom(Json), '"~w"', [Escaped]).
 
-% THE ESCAPE SET IS `JSON.stringify`'s, exactly (ECMA-262 QuoteJSONString):
-% " \ \b \f \n \r \t by name, every other code below 0x20 as \uXXXX with four
-% LOWERCASE hex digits, everything else raw. The tsv2 door IS JSON.stringify
-% and the tick log is graded by BYTE DIFF, so two spellings of one character
-% are two different logs.
-%
-% This is a clause-for-clause mirror of 0_type_plane.pl:json_escaped_codes/2,
-% the same deliberate duplication json_value_json/2 already carries and for
-% the same reason (ticklog.pl is a SCRIPT, not a module). The header there
-% records what the previous version got wrong and how the json_flex lab
-% caught it; the short version is that `~4|` is an ABSOLUTE column stop that
-% counted the `\u` inside its own four-column budget and emitted TWO hex
-% digits, so `\f` came out as `\u0c` with the next character glued on. The
-% oracle's own tick log was not JSON, and no fixture carried a control
-% character to notice.
+% The escape set matches JSON.stringify: named escapes for standard controls,
+% four lowercase hex digits below 0x20, and raw text otherwise.
 escape_json_codes([], []).
 escape_json_codes([Code | Rest], Out) :-
     json_escaped_codes(Code, Escaped),
     escape_json_codes(Rest, RestOut),
     append(Escaped, RestOut, Out).
+
+% Keep this clause-for-clause duplicate of 0_type_plane.pl:json_escaped_codes/2:
+% ticklog.pl is a script, not a module, and both doors must share the same
+% escape behavior. The tick log is graded by byte diff, so escape spelling is
+% a cross-target contract. The ~4| format is an absolute column stop; counting
+% the \u prefix inside the same width would emit \u0c instead of four hex digits.
 
 json_escaped_codes(0'", [0'\\, 0'"]) :- !.
 json_escaped_codes(0'\\, [0'\\, 0'\\]) :- !.

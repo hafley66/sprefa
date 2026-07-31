@@ -17,10 +17,7 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-% Legacy single-call entry: match arms first, then enum, with the enum context
-% read off the same sugared declarations. Kept because the expansion driver
-% (1_expansion.pl, rank R3 of plans/2026-07-29-prolog-org-review.md) is what
-% the doors call now, and this is the one-shot form the driver replaced.
+% One-shot entry that expands match arms before enum declarations.
 expand_match_program(prog(SugaredDecls, SugaredRules), ExpandedProgram) :-
     enum_context(SugaredDecls, Enums),
     expand_match_rules(Enums, SugaredRules, MatchExpandedRules),

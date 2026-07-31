@@ -1,4 +1,4 @@
-% 1_host_expand.pl: selected host, bind, probe, and query term forms.
+% Selected host, bind, probe, and query term forms.
 %
 % Phase 1 turns a probe into ordinary relations:
 %
@@ -9,35 +9,17 @@
 % EDB, keyed by (Witness, Ordinal), and receives answers through the fixture
 % schedule or, when served, from the host runner.
 %
-% WHY THE ORDINAL, and why the key is a PAIR (golden plan phase 2): a host
-% answer is N ROWS, not one. An extractor asked about one file reports every
-% call site in it; `sprefa-extract --family call` over a real module returns
-% ten. Keyed on the witness ALONE those N rows all share one key and
-% INSERT OR REPLACE keeps the last -- silently, since nine dropped rows look
-% exactly like a file with one call site. The ordinal is the answer's own row
-% index, so the replace unit becomes "the k-th row of this witness's answer":
-% N rows coexist, and a LATE or DUPLICATE answer for the same witness still
-% replaces row for row, which is the behaviour the ghcacher fixture grades.
+% Host answers are keyed by (Witness, Ordinal), so multiple rows for one
+% witness coexist and late answers replace rows positionally.
 %
-% Rules never mention the column. `expand_probe/7` puts a fresh variable there,
-% so `? sg(FileDigest, Caller, Callee)` reads exactly as before.
-%
-% Known limit, stated: a late answer with FEWER rows than the one it replaces
-% leaves the surplus ordinals behind. Under ruling salt_minting =
-% content_addressed that cannot arise (the witness IS the content address, so
-% one witness has one answer); it is reachable only through a hand-written
-% schedule that contradicts the ruling.
+% A late answer with fewer rows leaves surplus ordinals; content-addressed
+% witnesses prevent this under the declared schedule contract.
 
 :- module(host_expand,
           [ prepare_program/5,
             compile_host_decl/2,
             compile_ts_query/2,
-            % Exported as the characterization seam for the shared-walker
-            % consolidation (rank R1): the plainest comma flatten in the tree.
             body_goals/2,
-            % Exported for the drift guard that pins this list against the
-            % columns generated_host_decls/7 emits, rather than being reached
-            % as a private qualified goal, which `just prolog-lint` refuses.
             reserved_host_column/1
           ]).
 

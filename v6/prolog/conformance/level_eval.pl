@@ -5,9 +5,8 @@
 
 :- module(level_eval,
           [ split_rules/4, level_closure/5,
-            % Exported as the characterization seam for the shared-walker
-            % consolidation (rank R1). Its not/1 clause carries an ordering
-            % contract the shared walker deliberately does not reproduce.
+            % Its not/1 clause carries an ordering contract the shared walker
+            % deliberately does not reproduce.
             goal_rel_refs/3 ]).
 
 :- use_module(library(lists)).
@@ -30,18 +29,10 @@ aggregate_head(Head, Template, Ref) :-
     maplist(classify_head_arg, Args, Template),
     memberchk(agg(_, _), Template).
 
-% The aggregate inventory is registry.pl's aggregate AXIS (rank R4 of
-% plans/2026-07-29-prolog-org-review.md), not a local list. analyze.pl already
-% read the same set that way, so adding an aggregate row used to update the
-% compiler and silently miss the oracle.
+% The aggregate inventory comes from registry.pl, not a local list.
 %
-% Status is DELIBERATELY not consulted. json_array/1 and json_object/2 carry
-% head(refuse(aggregate)) because this compiler cannot emit them, and the
-% reference engine executes both: the oracle is the wider language on purpose.
-% Filtering on `live` here would make a json aggregate head fall through to
-% plain level evaluation and derive a row per body derivation instead of one
-% grouped row, and it would do it QUIETLY. The
-% oracle_aggregate_classification unit pins exactly that.
+% Status is not consulted because the reference engine executes aggregate
+% forms that the compiler refuses.
 classify_head_arg(Arg, agg(json_object, KeyExpr-ValueExpr)) :-
     nonvar(Arg), Arg = json_object(KeyExpr, ValueExpr), !.
 classify_head_arg(Arg, agg(json_group_array, ValueExpr)) :-
@@ -73,11 +64,8 @@ split_rules(Rules, AggRules, PlainLevel, EdgeRules) :-
             PlainLevel),
     findall(Rule, ( member(Rule, Rules), Rule = (_ <+ _) ), EdgeRules).
 
-% Stratified evaluation (defect found by the timeless_rail promotion: a joint
-% fixpoint let not/1 over a DERIVED rel read an incomplete set and permanently
-% admit wrong rows). Rules group by head stratum; a negated or aggregated rel
-% must sit strictly below its consumer, so by the time a stratum runs, every
-% rel it negates or aggregates is complete.
+% A negated or aggregated relation must sit strictly below its consumer, so a
+% stratum reads complete inputs.
 level_closure(PlainLevel, AggRules, Base, Tick, Level) :-
     append(PlainLevel, AggRules, LevelRules),
     stratify_level_rules(LevelRules, Strata),

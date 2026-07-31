@@ -1,21 +1,7 @@
-% sweep.pl : Phase C entry point (plans/2026-07-27-tsv2-compile-target-header.md,
-% PHASE C CONTRACT). Sweeps EVERY fixture(Name, Prog, Initial, Schedule,
-% Expectations) fact across every conformance/fixtures/*.pl file through the
-% phase B compiler (analyze/strat/lower/emit_ts, all unedited by this file),
-% bucketing each into compiled or refused, and for every compiled program
-% writing its emitted TypeScript module plus a JSON rendering of the
-% fixture's own Schedule term (v6/tsv2/scripts/sweep-run.ts replays exactly
-% that schedule against the emitted module, never re-deriving one, so a
-% fixture is graded against what its own oracle run used).
+% Phase C entry point. Compile every fixture, bucket the result, and write the
+% emitted module and the fixture's schedule for runtime replay.
 %
-% Reads fixture files the same read_term-without-consult way
-% compile.pl:read_fixture_term/4 does (mining surface variable names off
-% shared variable identity), generalized here to collect EVERY fixture in a
-% file rather than stopping at the first Name match -- compile.pl itself is
-% not edited; this is new code, not a rewrite of it.
-%
-% Never touches conformance/engine.pl, go.pl, body.pl, level_eval.pl,
-% ticklog.pl, or fixtures/*.pl.
+% Fixture files are read without consult so source variable identity is kept.
 %
 % Run: swipl -q -l v6/prolog/compile/sweep.pl -g sweep -g halt
 
@@ -90,22 +76,7 @@ sweep :-
     write_manifest(Results),
     summarize(Results).
 
-% A fixture that COMPILED on a previous run and now falls out of the
-% compiled set (a widening's own gate narrowing, e.g. the comparison/bind/
-% head-arithmetic refusal) would otherwise leave its stale .ts/.schedule.json
-% behind, no longer regenerated but also not removed -- misleading generated
-% output nothing re-checks. Only .ts and .schedule.json are cleared (one
-% per compiled fixture, by construction); manifest.json/run-results.json are
-% overwritten wholesale every run regardless.
-%
-% PHASE C2 fix: '.schedule.json' is 14 characters, not 13 -- the Length=13
-% off-by-one made every `sub_atom(Entry, _, 13, 0, '.schedule.json')` call
-% fail outright (a 13-char substring can never unify with a 14-char atom),
-% so this clause never actually matched anything and every fixture that
-% ever fell OUT of the compiled set left its stale .schedule.json behind
-% permanently (caught during the PHASE C2 RULING 2 sweep: two fixtures that
-% briefly compiled before a later-added safety check refused them stayed on
-% disk, untracked, across repeated re-sweeps).
+% Remove stale per-fixture outputs before rewriting the compiled set.
 clear_stale_compiled_outputs(OutDir) :-
     directory_files(OutDir, Entries),
     forall(( member(Entry, Entries),
@@ -192,10 +163,6 @@ arrival_value_json(_, json, Value, Json) :- !,
     json_string(Text, Json).
 arrival_value_json(_, _, Value, Json) :- row_value_json(Value, Json).
 
-% Mirrors ticklog.pl's value_json/2 (that file is never touched; this is an
-% independent small copy since ticklog.pl declares no module and this file
-% must not depend on load order with it -- the compile sweep and the oracle
-% dump run as two separate swipl processes, plans header "the grading loop").
 row_value_json(Value, Json) :- integer(Value), !, format(atom(Json), '~w', [Value]).
 row_value_json(bool_lit(Boolean), Json) :- !, format(atom(Json), '~w', [Boolean]).
 row_value_json(Value, Json) :- float(Value), !,
@@ -214,14 +181,6 @@ json_string(Value, Json) :-
     escape_json_codes(Codes, EscapedCodes),
     atom_codes(Escaped, EscapedCodes),
     format(atom(Json), '"~w"', [Escaped]).
-
-% escape_json_codes/2 is IMPORTED from 0_type_plane.pl, not written here. It
-% used to be a third private copy of the same clause set, and the copy is what
-% kept the json_flex lab's fail-first fixture red after both encoders were
-% repaired: the schedule this file writes still carried `"back\u08space"`,
-% which the sweep's own reader rejected as `Bad Unicode escape in JSON`. The
-% schedule is a graded artifact (sweep-run.ts replays exactly this text), so
-% it owes the same escape rule the tick log does.
 
 % ═══ manifest + console summary ═══════════════════════════════════════════
 

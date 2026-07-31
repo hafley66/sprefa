@@ -1,5 +1,4 @@
-% xref_facts.pl : the DATAFLOW ATLAS's PROLOG fact plane. One .pl path in, JSON
-% lines of predicate-level call-graph facts out.
+% Predicate-level call-graph facts. One .pl path in, JSON lines out.
 %
 % Run:  swipl -q -l v6/prolog/tools/xref_facts.pl -g main -t halt -- <path.pl>
 %       (v6/dl/fixtures/dataflow-atlas.dl6 drives it through an `sh` host)

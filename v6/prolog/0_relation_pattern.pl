@@ -12,38 +12,8 @@
 %
 %   span(obj([at-obj([name-Path]), repo-obj([name-Name])]), Start, End) <- ...
 %
-% ── why this file exists ─────────────────────────────────────────────────────
-%
-% There is ONE relation-value spelling in this system and it is obj(SortedPairs)
-% (0_type_plane.pl header; the arrival path has produced it since
-% canonicalize_world_rows/3 landed). A rule head that BUILT a relation value
-% never went through that path: engine.pl stored the raw compound, so
-%
-%   the tick log printed prolog term text (`"repo(acme)"`) where the emitted
-%   side printed canonical JSON (`{"name":"acme"}`) -- divergent at depth 1,
-%   never graded because no fixture built a relation value in a rule; and
-%
-%   body.pl json_decode/2, which has no clause for a compound, failed on every
-%   decode/2 over a constructed value, which is
-%   plans/2026-07-30-file-span-spine-reconciled.md section 3.3's "emitter
-%   right, oracle empty".
-%
-% Rewriting to the object fixes both at once and costs no new syntax: the term
-% is sugar, the object is the value, and a PATTERN (`file(_, fpath(Path))`)
-% rewrites to a pattern object that unifies against a stored value at any
-% depth, which is why depth-N reads need no depth-N machinery here.
-%
-% ── what it deliberately does not do ─────────────────────────────────────────
-%
-% It is not part of 1_expansion.pl's shared phase table. The compiler needs the
-% TERM form intact so lower.pl can turn each level into a `__ref_<type>`
-% dictionary join; handing it the object instead would replace one unlowerable
-% shape with another. The two doors agree on the VALUE, not on the intermediate
-% representation, and the tick-log grade is what says so.
-%
-% Malformed shapes never reach here: they are the shared refusal
-% relation_pattern_not_a_relation_value in 0_program_check.pl, which both doors
-% run before this pass.
+% Relation-value terms are rewritten to canonical objects before execution.
+% Malformed shapes are rejected by the shared program checks.
 
 :- module(relation_pattern,
           [ expand_relation_values/2 ]).

@@ -5,27 +5,8 @@
 %   oracle_ticklog(File, ScheduleFile)  one {"tick":N,"deltas":{...}} line per tick
 %   oracle_final(File, ScheduleFile)    one {"final":{...}} line
 %
-% WHY THIS EXISTS BESIDE dl6_oracle.pl. Two gaps were measured while writing
-% v6/dl/fixtures/golden-flex.dl6:
-%
-%  (1) NO FINAL-STATE LEG. `dl6_oracle.pl:oracle/2` calls `print_ticklog/3`,
-%      which throws FinalAll away. `oracle_dump.pl` has the final-state encoder
-%      but only over `fixture/5` terms, so a `.dl6` TEXT program has no way to
-%      earn the grade an empty-or-short schedule needs. `final_state_line/2`
-%      below is oracle_dump.pl's own predicate, reused by loading that file, not
-%      reimplemented.
-%
-%  (2) ARRIVAL VALUES NEED DECLARED-TYPE MAPPING. The shared
-%      `0_json_arrival.pl` helper resolves column order through `rel_columns/5`.
-%      JSON and list carriers parse canonical text into the reference engine's
-%      object/list terms, while structured relation values keep the golden's
-%      existing object/list conversion:
-%
-%        type_arrival_shape_mismatch(tree/2, site, patch,
-%          not_an_object(patch, '#{at: #{col:3,row:2},label:"north"}'))
-%
-%      Both text-door oracle scripts call that helper, so the same declared
-%      column mapping handles served schedules and the golden schedule.
+% The final-state leg reuses oracle_dump.pl's encoder. Arrival values use
+% 0_json_arrival.pl for the same declared-type mapping as the text-door oracle.
 %
 % Run:
 %   swipl -q -l golden_oracle.pl -g "oracle_ticklog('p.dl6','s.json')" -g halt

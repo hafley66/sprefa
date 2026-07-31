@@ -1,29 +1,10 @@
-% emit_ts.pl : the prolog frontend's exit door, literal-TS edition. `<-` rules
-% (native terms via op/3) are printed as a readable TypeScript module built
-% from ast.ts's OWN constructor helpers (edbRel/derivedRel/relRef/v/lit/wild/
-% compare/headVar/notRel) — the helpers that file ships "so hand-built programs
-% (tests, a future parser) stay terse". This is that parser. No JSON, no
-% hydration: the emitted module typechecks against `Program` and the engine
-% (evalProgramSql) runs it unchanged. Replaces the rejected AST-JSON bridge
-% (emit_ast.pl, removed; history at 020a4bbc).
+% Prolog frontend exit door for the literal TypeScript program format.
 %
 % Emit:    swipl -q -l v6/prolog/src/emit_ts.pl -g "emit(reach, 'out.gen.ts'),halt"
 % Score:   swipl -q -l v6/prolog/src/emit_ts.pl -g go -g halt   (from repo root)
 %
-% Variable naming: a join hole is named after the COLUMN of its first positive
-% binding position (edge(Parent, Child) -> v("parent"), v("child")), so the
-% emitted TS reads like the hand-written programs in the engine's tests.
-% Collisions inside one rule get a numeric suffix; a hole with no positive
-% binding falls back to v0-style. A hole occurring once is wild(); a head hole
-% with no body binding fails emission (unsafe rule), same check the SQL
-% lowering does.
-
-% The module name says which engine seam this targets. `compile/emit_ts.pl` is
-% the tsv2 backend and owns the plain `emit_ts` name; both files declaring it
-% made an all-files load impossible ("No permission to redefine module
-% emit_ts"). `just prolog-lint` is the gate that now refuses a re-collision.
-% The file path is unchanged, so `-l v6/prolog/src/emit_ts.pl -g emit(...)`
-% callers such as bench/engines/swi_emit.sh are unaffected.
+% Variable names are derived from the first positive binding position. A head
+% hole without a body binding is rejected.
 :- module(emit_ts_engine_v1,
           [ emit/2, emit/3, go/0,
             decl_ts/2, rule_ts/3, used_helpers/2

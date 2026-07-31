@@ -1,6 +1,4 @@
-% go.pl : the conformance runner. Loads THE reference interpreter and every
-% promoted fixture file; a green run is the proof the lab sketches described
-% one language (AGGREGATE.md section 5).
+% Conformance runner for the reference interpreter and fixture files.
 %
 % Run: swipl -q -l v6/prolog/conformance/go.pl -g go -g halt
 
@@ -11,7 +9,7 @@
 :- use_module('../src/grader.pl').
 :- use_module(engine).
 
-% Every fixtures/*.pl loads; promotion agents add files, never edit this one.
+% Every fixtures/*.pl file is loaded in sorted order.
 load_fixture_files :-
     prolog_load_context(directory, Here),
     atomic_list_concat([Here, '/fixtures'], FixturesDir),

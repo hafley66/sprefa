@@ -1,29 +1,5 @@
-% strat.pl : level-rule execution order for SQL emission.
-%
-% Two orderings are computed and they answer different questions:
-%
-%   stratum_groups/2  reproduces level_eval.pl:stratify_level_rules/2's OWN
-%   grouping exactly (same relax_strata gap algorithm, reimplemented here
-%   since that predicate is not exported): S(head) >= S(body rel) for a
-%   positive read, strictly greater under not/1. This is the number the
-%   reference engine assigns; report it verbatim (RETURN section: "stratum
-%   orders found").
-%
-%   sql_rule_order/2 answers a NARROWER question the reference engine never
-%   has to ask, because it re-evaluates a whole stratum group to a joint
-%   fixpoint (plain_fixpoint) rather than emitting SQL statements in a fixed
-%   sequence. A generated program executes each rule's SQL exactly ONCE per
-%   tick, so within a stratum group the rules need a topological
-%   sub-order over POSITIVE-only edges (a negated read already point to a
-%   strictly lower, already-settled stratum, so it never needs sequencing
-%   within the group). For the two target fixtures this sub-order coincides
-%   with dependency order (demanded before route_view / demanded before
-%   effect_call) because both fixtures are acyclic; a genuine positive cycle
-%   inside one group (real mutual recursion, which relax_strata is willing to
-%   leave at the same number since Gap=0 never forces separation) is NOT
-%   something this compiler lowers -- sql_rule_order/2 throws
-%   unsupported_construct(recursive_stratum(Refs)) rather than silently
-%   emitting a wrong single-pass order.
+% Compute reference stratum groups and the topological rule order required by
+% one-pass SQL emission. Positive cycles within a stratum are refused.
 
 :- module(strat, [ stratum_groups/2, sql_rule_order/2 ]).
 

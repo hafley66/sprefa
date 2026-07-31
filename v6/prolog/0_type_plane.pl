@@ -43,11 +43,7 @@
             type_ref_columns/3,
             canonical_json_text/2,
             js_float_text/2,
-            % Exported for sweep.pl, which writes the schedule JSON with its
-            % own string writer and used to carry a THIRD copy of this
-            % predicate. Three copies is how one broken escape survived: the
-            % json_flex lab fixed two of them and the fixture stayed red
-            % because the schedule writer was still emitting `\u08`.
+            % Exported for sweep.pl's schedule JSON writer.
             escape_json_codes/2,
             json_object_value/2,
             relation_columns_and_types/5,

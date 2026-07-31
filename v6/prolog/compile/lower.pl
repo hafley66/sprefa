@@ -28,14 +28,8 @@
 % Initial, which plan/6 does not carry, plus LevelStatements for the t=0
 % level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
-% TARGET-NEUTRAL BY CONSTRUCTION (user directive, mid-arc: a future Rust
-% backend must consume this unchanged): every field above is SQL text plus
-% plain Prolog structure -- no TypeScript syntax, no rxjs, no host-language
-% idiom anywhere in this file. `emit_ts.pl` is the ONE backend that renders
-% this term. A future emit_rust.pl reads the identical lowered/8 +
-% boot_statements/5 + RelPlans and renders sqlx/rusqlite calls around the
-% SAME SQL strings -- SQLite is the shared middle language both backends
-% speak; nothing here decides how a HOST assembles statements into a program.
+% The lowered representation contains SQL text and plain Prolog structures;
+% host-language assembly belongs to the emitter.
 %
 % ── ROUND 2 (reconciliation, tsgo error list): no tick number reaches
 % tick() ───────────────────────────────────────────────────────────────────
@@ -126,15 +120,7 @@
 
 :- module(lower,
           [ lower_program/2, boot_statements/5, relplan_kind/3,
-            % The expression-lowering seam, exported for the
-            % expression_inventory unit (rank R5 of
-            % plans/2026-07-29-prolog-org-review.md). That unit walks every
-            % registry.pl expression/5 row and checks it lowers to the SQL the
-            % row declares, which has to reach these two by name.
             compile_expr/4, compile_comparison/3,
-            % The column-expression and refCount-SQL seams (rank R8). The
-            % sql_text_snapshots and incremental_mode units pin the exact text
-            % these produce; both were private qualified calls before.
             canonical_column_expr/2, level_support_sql/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the

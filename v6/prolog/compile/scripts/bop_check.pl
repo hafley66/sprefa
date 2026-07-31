@@ -13,12 +13,7 @@
 %                  OR the compile pipeline threw one of its own NAMED
 %                  refusal reasons
 %
-% "Named refusal reason" is a closed list, grepped once
-% (`grep -rhoE "throw\([a-z_]+" v6/prolog/compile/*.pl`) rather than guessed:
-% every throw shape the analyzer/lowerer/hosts pipeline uses to name a
-% specific refused construct. Anything else escaping to the top (a swipl
-% type_error, existence_error, or a genuinely unparseable file) is NOT one of
-% these -- it is broken, not a finding, and exits 1.
+% Named refusal reasons are a closed list. Other uncaught errors are broken.
 %
 % v6/tsv2/cli/bop.ts's `classifyCompileFailureText` mirrors this same list
 % for the `run`/`load` verbs, which hit this same compile door over HTTP and
@@ -26,14 +21,8 @@
 % see that function's own header for why the two lists are kept in step by
 % hand instead of sharing one file.
 %
-% HALT DISCIPLINE, the reason for the exit_code/2 + halt/1 split below: SWI
-% implements halt/1 as `throw(unwind(halt(Code)))` internally, so a bare
-% `catch(Goal, Error, Recovery)` with an unbound Error INSIDE Goal intercepts
-% its own halt call the moment one fires (measured: the first draft's
-% clean-exit path landed in the error handler as `unwind(halt(0))`, printed
-% "broken", and exited 1). The fix is structural, not a pattern exclusion:
-% every code path below COMPUTES a plain integer, and halt/1 is called
-% exactly ONCE, at the very top, outside every catch/3 in this file.
+% Compute a plain integer inside the catches and call halt/1 once outside them;
+% SWI represents halt/1 as an unwind exception.
 %
 % Run: BOP_CHECK_FILE=/abs/path/to/prog.dl6 swipl -q -l bop_check.pl \
 %        -g bop_check_env -g halt

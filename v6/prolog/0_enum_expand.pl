@@ -15,10 +15,7 @@
 % the metadata rather than re-reading declarations that are gone. It is
 % computed from the SURFACE declarations, before any phase runs.
 %
-% This file owns the variant naming, so it owns the context. 0_match_expand.pl
-% used to carry a second copy of the naming rule and a second enum_variant/2
-% walker; both were deleted when the expansion driver (rank R3 of
-% plans/2026-07-29-prolog-org-review.md) started passing this context.
+% This file owns variant naming and the enum context.
 :- module(enum_expand,
           [ expand_enum_program/2,
             expand_enum_in_context/3,

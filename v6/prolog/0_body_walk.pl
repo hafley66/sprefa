@@ -1,12 +1,5 @@
-% 0_body_walk.pl : one registry-driven traversal of a rule body, shared by the
-% reference engine and the compiler.
-%
-% Rank 1 of plans/2026-07-29-prolog-org-review.md. The review inventoried
-% fourteen independent body traversals across five modules, each carrying its
-% own hardcoded list of which functors are "not a relation atom". Adding a
-% surface/5 row updated some of them and silently missed the rest; the drifts
-% that produced are pinned as goldens in the body_walk_characterization unit
-% of compile/test/plunit_tests.pl.
+% Registry-driven traversal of a rule body shared by the reference engine and
+% compiler.
 %
 % The contract:
 %
@@ -48,33 +41,6 @@
 % conjunctions therefore produce the same event list, which the
 % comma_left/comma_right goldens pin.
 %
-% WHAT DELIBERATELY DOES NOT USE THIS FILE, with reasons, so a later reader
-% does not read the remaining traversals as oversights:
-%
-%   body:solve/2                  executes goals. Binding order, backtracking
-%                                 and negation-as-failure are its semantics; a
-%                                 structural walk cannot carry them.
-%   body:substitute_goal/3        a rewrite that must leave wrappers opaque:
-%                                 descending could delete a sampled or negated
-%                                 goal that is not the firing occurrence.
-%   host_expand:compile_value_terms/2
-%                                 a whole-term rewrite over every compound
-%                                 argument, wider than a body walk.
-%   level_eval:goal_rel_refs/3    keeps its own not/1 recursion. Its clause
-%                                 appends inner-positive before inner-negative,
-%                                 so for not((not(a), b)) it answers [b/1,a/1]
-%                                 and NOT source order. The not_mixed golden
-%                                 pins that. Projecting it from this file's
-%                                 source-ordered events would reorder
-%                                 stratification constraints.
-%   print_dl:print_body/3         rendering policy, including a fallback for
-%                                 left-nested conjunctions that the parser
-%                                 never produces.
-%   parse_dl construction, enum and match semicolon flattens
-%                                 different shapes, not rule bodies.
-%   src/ cluster walkers          a separate AST (\+/1, cmp_op/4) belonging to
-%                                 the superseded engine-v1 experiment.
-
 :- module(body_walk,
           [ walk_body/3,
             body_conjunction_goals/3,

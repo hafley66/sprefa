@@ -1,34 +1,5 @@
-% 0_graph.pl : the one graph module. Reachability, closure, strongly
-% connected components, topological order, cycle detection.
-%
-% WHY THIS FILE EXISTS. Before it, two modules each carried their own
-% all-pairs-mutual-reachability strongly-connected-component search, and each
-% reachability call enumerated SIMPLE PATHS with a Visited list and no memo:
-%
-%   v6/prolog/compile/3_clock_check.pl        graph_reachable/4 + clock_scc/3
-%   v6/prolog/labs/rel_definition_hash/       reachable/4 + relation_scc/3
-%
-% Measured cost of that shape (plans/2026-07-30-prolog-compile-profiling.md):
-% the compiler's plan phase spent 255,333 ms of 255,490 ms on
-% flagship-flow.dl6, at 6,011,087,004 inferences, on a dependency graph of
-% 42 nodes and 60 edges. Simple-path enumeration is exponential in graph
-% connectivity, so the shape of the graph dominated its size.
-%
-% BUY BEFORE BUILD (plans/2026-07-30-prolog-graph-buy-verdict.md holds the
-% full candidate-by-candidate analysis and every measurement). Summary:
-% library(ugraphs) ships with SWI, has zero prior uses in this repo, and
-% wins for representation, transpose, topological order and cycle detection.
-% It ships NO strongly-connected-component predicate, and neither does any
-% other SWI library or any published pack. Composing one from its
-% transitive_closure/2 is correct but pays Warshall's cubic cost, measured
-% at 27,082 ms on a 1000-node chain against 27 ms for the direct search.
-% So: everything below is library(ugraphs) directly, except
-% graph_components/2, which is Kosaraju over ugraphs' own transpose and
-% neighbour structures.
-%
-% The Warshall composition survives as the differential oracle in
-% test/0_graph.test.pl: it is the obviously-correct spelling, and every
-% component answer here is checked against it.
+% Graph reachability, closure, strongly connected components, topological
+% order, and cycle detection. Components use Kosaraju over ugraphs data.
 
 :- module(graph,
           [ graph_from_edges/2,          % +Edges, -Graph

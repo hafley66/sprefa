@@ -1,29 +1,15 @@
 % dl6_oracle.pl : run the REFERENCE ENGINE over a `.dl6` text program and a
 % JSON arrival schedule, printing the shared tick-log envelope.
 %
-% Why this exists (runtime-bridge arc, plans/2026-07-29-runtime-bridge-header.md
-% scope 4): the schedule-fed byte grading stays the referee for the SERVED
-% engine too. oracle_dump.pl covers every conformance FIXTURE, whose program is
-% a prolog term and whose schedule is a prolog list. A served program is `.dl6`
-% TEXT and its schedule is the very JSON the http client posts. This file closes
-% that gap by reading both in their served form and handing them to
-% conformance/ticklog.pl's own `print_ticklog/3` -- the same predicate
-% oracle_dump.pl calls, unedited, so the two logs are produced by one printer.
+% Run the reference engine over a .dl6 program and a JSON arrival schedule.
 %
 % The schedule file is the SAME file the http client posts from (the
 % out/<name>.schedule.json shape sweep.pl already writes):
 %
 %   [ [ {"rel":"event","sign":"add","row":[1,"boot"]} ], ... ]
 %
-% VALUE MAPPING, stated because prolog makes it a real choice: a JSON number
-% becomes an integer and a JSON string becomes an ATOM, not a prolog string.
-% Atoms and strings both serialize as JSON strings on the way out (ticklog.pl
-% `value_json/2`), so the printed log is identical either way -- but joins are
-% not. The compiler's own generated text (a probe's witness digest, built by
-% concatenation in 1_host_expand.pl) is an ATOM, so a schedule that fed a host
-% response's witness column as a string would silently fail to join and the
-% derived rows would vanish. Measured, not assumed: with strings, the served
-% receipt (b) log carried `answered` at its third tick and the oracle's did not.
+% JSON numbers become integers and JSON strings become atoms, preserving joins
+% against text produced by host expansion.
 % The remaining edge, named rather than fixed: a program whose RULES carry
 % double-quoted string literals compared against a world-fed column needs its
 % schedule expressed as a fixture term instead.

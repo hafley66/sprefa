@@ -45,14 +45,7 @@ eval_expr(Left / Right, Out)   :- !,
     ; Out is LeftV / RightV
     ).
 eval_expr(Left mod Right, Out) :- !, eval_int2(Left, Right, LeftV, RightV), Out is LeftV mod RightV.
-% TEXT SCALARS, read off the same registry row the emitter lowers from
-% (registry.pl expression/5, family text_scalar). That row shipped with a SQL
-% rendering and no reference implementation at all, so `norm(Raw)` in a head
-% left this engine holding the unevaluated term: the oracle printed
-% "norm(Hello World)" where the emitter computed "helloworld". A live registry
-% row whose two doors answer different things is the divergence this clause
-% closes, and dispatching on the FAMILY rather than on norm/1 by name is what
-% stops the next text scalar from repeating it.
+% Text scalar evaluation follows the registry family used by the emitter.
 eval_expr(Term, Out) :-
     nonvar(Term),
     expression_for_term(Term, text_scalar, _, Rendering, _),
@@ -101,12 +94,7 @@ eval_number2(Left, Right, LeftV, RightV) :-
 text_piece(Value, Value) :- atomic(Value), !.
 text_piece(Value, _) :- throw(non_display_in_concat(Value)).
 
-% The six comparison functors come from registry.pl's expression/5 (rank R5 of
-% plans/2026-07-29-prolog-org-review.md), which is also where the compiler's
-% lowering reads them. solve_comparison/1 below stays a clause per operator,
-% because those clauses are EXECUTION and differ in kind: the ordered four
-% evaluate through eval_int2 and enforce the Int-only law, while ==/\== use
-% eval_expr and then term identity.
+% Ordered comparisons enforce numeric evaluation; ==/\== use term identity.
 comparison_goal(Goal) :-
     nonvar(Goal),
     functor(Goal, Name, 2),
@@ -122,14 +110,7 @@ solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, Rig
 
 % ═══ json ═══════════════════════════════════════════════════════════════════
 
-% AN UNBOUND VALUE IS A NAMED REFUSAL, not an answer. Without this clause the
-% next one UNIFIES the unbound input with the atom `{}` and hands back
-% `obj([])`: `json_canon(Free, C)` answered "the empty object" and bound the
-% caller's variable to `{}` on the way out (json_flex lab receipt, 2026-07-30).
-% The obj/1 clause below would do the same one step later. Every shipped path
-% reaches json_canon through eval_expr/2, which already throws
-% `unbound_in_expression` first, so this is a latent hole rather than a live
-% one -- and latent silent-wrong-answer is exactly what a refusal is for.
+% An unbound value is a named refusal. It must not unify with the empty object.
 json_canon(Value, _) :- var(Value), !, throw(json_value_unbound).
 % The EMPTY object is the atom `{}`, not `{}`/1: that is what the term door's
 % own reader produces for `{}` (term_to_atom gives arity 0), so the text door
@@ -161,37 +142,17 @@ braces_pairs(Key: Raw, [Key-Value]) :- json_canon(Raw, Value).
 % A `memberchk` anywhere in those three would answer the first match only and
 % silently lose rows the emitter derives.
 json_decode(Value, Pattern) :- var(Pattern), !, Pattern = Value.
-% `$Name` in VALUE position (ruling json_key_hole_marker = dollar: "so
-% {$key: $value} reads uniformly on both planes"). The TERM door reads it as
-% the `$`/1 compound, because `$` is a standard SWI prefix operator; the TEXT
-% door resolves it to the plain variable, because on the value plane a bare
-% identifier is already a variable and `$` is an alias rather than a second
-% meaning. Both spellings are holes and both arrive here.
+% `$Name` in value position is a hole on both doors.
 json_decode(Value, Pattern) :- nonvar(Pattern), Pattern = $(Hole), !,
     Hole = Value.
-% TYPED CAPTURE `{stars: Stars: int}` (ruling decl_column_spelling =
-% colon_typed_ordered_columns, read one level down): the colon is already the
-% language's type marker on the decl plane, so it is the type marker here too.
+% A typed capture uses the same colon marker as typed declarations.
 % `:` is 600 xfy in SWI, which makes `stars: Stars: int` read as
 % `:(stars, :(Stars, int))` with no term-door parser work at all.
 %
-% The type is a MATCHER, not a cast. An untyped hole binds whatever json value
-% sits at the position and the emitter types the capture `text` (lower.pl
-% json_pattern_sql/8's var clause says so in as many words), which is why a
-% json number could not feed an `int` head column without
-% edge_head_column_type_mismatch. A typed capture states the type instead of
-% widening it, and BOTH doors then filter on it: this clause, and
-% `json_type(<path>) = 'integer'` in the emitted WHERE.
+% The type is a matcher, not a cast. Both doors filter on the declared type.
 %
-% Filtering rather than throwing is the deliberate half. A document whose
-% `stars` is a string is DATA, not a program defect, and it is the same shape
-% the json plane already answers with zero rows for an absent key
-% (decode_missing_key_fails_quietly). Throwing would also have no emitted
-% twin: SQL cannot raise a named refusal from a WHERE clause, so a thrown
-% oracle and a filtering emitter would disagree on every such document. The
-% program-level mistake -- declaring a capture `text` and feeding it to an
-% `int` column -- stays LOUD, at compile time, through
-% edge_head_column_type_mismatch naming the rel and the column.
+% A type mismatch filters the document. Invalid program-level column types are
+% rejected during compilation.
 json_decode(Value, Pattern) :- nonvar(Pattern), Pattern = (Hole : Type),
     var(Hole), atom(Type), !,
     json_capture_type(Type, Value),
@@ -246,10 +207,7 @@ braces_decode((Left, Right), Pairs) :- !,
 braces_decode('**': Pattern, Pairs) :- !,
     descendant_object(obj(Pairs), Descendant),
     json_decode(Descendant, Pattern).
-% Key capture (ruling json_key_hole_marker = dollar): the key is data. Lowers
-% to `json_each`, whose (key, value) columns already carry both -- the
-% construct the recovery doc graded "needs new surface" and that needs ZERO
-% new SQL machinery (lab receipt L3).
+% Key capture treats the key as data and binds it alongside the value.
 braces_decode(Key: Pattern, Pairs) :-
     nonvar(Key), Key = $(KeyHole), !,
     member(ActualKey-Value, Pairs),
@@ -285,32 +243,8 @@ solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
 solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), member(Atom, PreState).
 solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
 solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
-% SPLICE ROWS (registry AnalyzeRole splice_bare): next/1 and variadic combine.
-% The wrapper is TRANSPARENT -- solving it is solving its arguments in order,
-% which is precisely a conjunction, and precisely what the compiler emits.
-%
-% FAIL-FIRST RECEIPT, oracle door, before this clause existed:
-%
-%   F1 combine:   rows=[]          F1 next: rows=[]
-%   control conj: rows=[out(1,2)]
-%
-% while the compiler's lowering for the same two programs was BYTE-IDENTICAL
-% to the plain conjunction and the plain atom:
-%
-%   combine  INSERT ... SELECT b0."col1", b1."col1" FROM "a" b0, "b" b1
-%   conj     INSERT ... SELECT b0."col1", b1."col1" FROM "a" b0, "b" b1
-%   next     INSERT ... SELECT b0."col1" FROM "a" b0
-%
-% So these were LIVE registry rows the reference engine could not execute:
-% solve/2's final clause read `combine(a(X), b(Y))` as an ordinary relation
-% atom named combine/2, nothing pushes such a row, and the rule derived
-% nothing. The stratifier had the splice semantics all along
-% (level_eval:goal_rel_refs/3 dispatches on the same role), which is what made
-% the gap invisible -- dependencies were computed for a join that never ran.
-%
-% Dispatched on the registry ROLE and not on the two functors by name, the way
-% eval_expr/2 dispatches text scalars on their FAMILY: a third splice row must
-% not be able to repeat this.
+% next/1 and combine are transparent registry-defined splice rows. Their
+% arguments solve left to right as a conjunction.
 solve(Term, Ctx) :-
     nonvar(Term),
     surface_for_term(Term, _, _, splice_bare, _, _),
@@ -331,8 +265,6 @@ solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
 solve_spliced([], _).
 solve_spliced([Goal | Rest], Ctx) :- solve(Goal, Ctx), solve_spliced(Rest, Ctx).
 
-% This predicate currently has no caller in the tree outside that test; rank R7
-% of the review owns deciding whether it survives at all.
 body_atoms(Body, Atoms) :-
     walk_body(Body, walk_policy(descend_not(false), splice_bare(false)),
               Events),
