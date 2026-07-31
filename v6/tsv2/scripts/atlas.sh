@@ -84,6 +84,44 @@
 #   drawn, they are simply no longer reachable -- so an assertion on node count
 #   alone would have passed the sabotage. The reachability answer is what
 #   discriminates.
+#
+# ── SABOTAGE RECEIPT 2, the filesystem nesting (2026-07-31, scratch copy) ─────
+#
+#   ONE CLAUSE POINTED AT THE WRONG FILE. In a scratch copy,
+#
+#     node_file(node_id, path) <- atlas_node(node_id, 'prolog', path, _, _).
+#
+#   became
+#
+#     node_file(node_id, 'v6/tsv2/cli/bop.ts') <- atlas_node(node_id, 'prolog', _, _, _).
+#
+#   so every prolog node claims to live in a TypeScript file. Nothing else was
+#   touched. The run, `ATLAS_PROGRAM` pointing at the copy:
+#
+#     SAME NODE SET in all 5 .dot files (421 ids each, identical after sort)
+#     pl:v6/prolog/0_body_walk.pl#walk_body/3 sits in [v6/tsv2/cli/bop.ts]
+#       but its path is [v6/prolog/0_body_walk.pl]
+#     ... 265 such lines ...
+#     265 misplaced node line(s)
+#     FAIL  the fs-td .dot nests a node under the wrong directory
+#
+#   THE FIRST LINE IS THE POINT. The same-node-set assertion PASSED the
+#   sabotage, and so would a cluster count, a node count, an orphan check and
+#   the reachability answer: every node is still drawn exactly once, every edge
+#   still lands, the graph is unchanged. Only a check that compares each node's
+#   ENCLOSING CLUSTER CHAIN against its own path can see a node in the wrong
+#   box, which is why the nesting check exists and why it is total rather than
+#   a sample.
+#
+# ── HOW THE ratio TABLE IN THE PROGRAM HEADER WAS MEASURED ───────────────────
+#
+#   For each of the four new .dot files, with the rail's own output on disk:
+#
+#     sed 's/^  ratio=.*/  ratio=0.7;/' DATAFLOW-ATLAS-fs-lr.dot > /tmp/t.dot
+#     dot -Tsvg /tmp/t.dot -o /tmp/t.svg
+#     grep -m1 -o 'width="[0-9]*pt" height="[0-9]*pt"' /tmp/t.svg
+#
+#   and with `grep -v '^  ratio='` for the unlevered row.
 
 set -uo pipefail
 

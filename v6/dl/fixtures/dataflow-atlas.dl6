@@ -28,9 +28,10 @@
 # It writes files, so it is not byte-graded against the oracle -- a program
 # with a staged write trades that away, the same call self-map.dl6 and the
 # comment rails make. What it is graded on instead: `just atlas` twice produces
-# byte-identical .dot files, and deleting a bridge rule in a scratch copy
-# shortens the longest path (sabotage receipt in v6/tsv2/scripts/atlas.sh's
-# header).
+# byte-identical .dot files; deleting a bridge rule in a scratch copy shortens
+# the longest path; pointing one plane's nodes at the wrong file lands them in
+# the wrong cluster and the nesting check names every one. Both sabotage
+# receipts are in v6/tsv2/scripts/atlas.sh's header.
 #
 # ── FIVE DRAWINGS OF ONE GRAPH ───────────────────────────────────────────────
 #
@@ -131,12 +132,13 @@
 #   combineLatest([tsSpec$, tsDef$]).pipe(...)    // the delta joins below
 #   expand(frontier => joinOnce(frontier))        // the `reach` fixpoint
 #
-# ── the two output effects ───────────────────────────────────────────────────
+# ── the three output effects ─────────────────────────────────────────────────
 #
-# `write_file` performs the sole text write and `render_dot` shells out to
-# graphviz. Everything between the extractors and those two boundaries is a
-# relational value: node identity, edge derivation, reachability, DOT escaping,
-# cluster folds and the final document concat.
+# `write_file` performs every text write (five .dot files and one .md),
+# `render_dot` shells out to graphviz once per drawing, and `svg_size` reads
+# back the canvas graphviz chose. Everything between the extractors and those
+# boundaries is a relational value: node identity, edge derivation,
+# reachability, DOT escaping, cluster folds and the final document concat.
 
 # ═════════════════════════════════════════════════════════════════════════════
 # THE SEED, and the file sets
@@ -1107,8 +1109,12 @@ pl_fact_total(count(callee)) <- pl_call_row(_, _, _, callee, _).
 # DOT RENDERING -- the output plane is ordinary dl6 data
 # ═════════════════════════════════════════════════════════════════════════════
 #
-# rankdir=TB and never LR: the reader's viewer cannot use a horizontal strip,
-# and a graph this wide laid out left to right is a mile of whitespace.
+# This section used to say "rankdir=TB and never LR", on the grounds that a
+# graph this wide read left to right is a mile of whitespace. The four extra
+# views measured that claim and it is half right: LR does not widen the band,
+# it ROTATES it (`flat_lr` unlevered is 3511 x 10253, a vertical strip), and
+# under the same `ratio` lever both directions land on the same page. The
+# numbers are in the table above `dot_line('head', 25, ...)`.
 
 # ── THE FIVE VIEWS ───────────────────────────────────────────────────────────
 #
@@ -1604,7 +1610,7 @@ rel md_document(document: text).
 md_document(document) <- md_section_text('doc', body_text), document := concat([body_text, '\n']).
 
 # ═════════════════════════════════════════════════════════════════════════════
-# THE TWO OUTPUT EFFECTS
+# THE OUTPUT EFFECTS
 # ═════════════════════════════════════════════════════════════════════════════
 
 # THE WRITE RETURNS A DIGEST, not the word `written`, and that is a defect fix
