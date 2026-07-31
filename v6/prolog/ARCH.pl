@@ -841,7 +841,8 @@ task(clock_legs, done, [clock_check]). % LANDED 2026-07-31 (opus worktree): repl
 task(bench_cli, done, []). % LANDED 2026-07-31 (opus worktree + coordinator fixes 62ff636b): rust-course phase 0 -- language-agnostic CLI contract, buy-verdict (hyperfine secondary, /usr/bin/time -l for RSS), 11 timed cells byte-identical, floor gate. Coordinator restored the gitignore-eaten node_modules symlink (all 14 cells error'd silently at exit 0).
 task(oracle_scale_ceiling, unbuilt, [bench_cli]). % RULING CARD (gates rust phase 1): swipl oracle walls before 10k rows (s1/1k 1.4s vs tsv2 33ms) -- rust cannot be graded at PERF-REPORT 960k scale by tick-log byte-diff. Exits in bench-cli/CONTRACT.md section 7: (a) reference that scales, (b) tiered grading (tick log where oracle reaches, final-state hash beyond). User call.
 task(perl_alarm_orphan, unbuilt, []). % MEASURED 2026-07-31 (bench lane): the house perl -e alarm+exec timeout kills the wrapper, orphans the child (timed-out swipl left burning a core). Same one-liner in sprefa-store/bench/engines/tsv2_gen.sh + coordinator scratch runs. Fix = process-group kill (setsid + kill -TERM -pgid). Small lane.
-task(getting_started, done, [refusal_messages_arc]). % LANDED 2026-07-31 (merge a5ad6233, opus): beta gate 4 -- 24-block executed doc, all replay-gated (just getting-started, green-all), persistent-shell replay so cwd/exports/background serve behave like a reader's terminal. 5 cold-author defects filed on the row below.
+task(getting_started, done, [refusal_messages_arc]).
+task(refusal_messages_arc, done, []). % LANDED 2026-07-31 (merge 3ffc1074, codex luna): beta gate 1 -- 107 specific refusal message clauses 0 fallback, parse errors line:col furthest-failure, text door file:line at/3; serve-path exit classifier three-shape fix by coordinator. % LANDED 2026-07-31 (merge a5ad6233, opus): beta gate 4 -- 24-block executed doc, all replay-gated (just getting-started, green-all), persistent-shell replay so cwd/exports/background serve behave like a reader's terminal. 5 cold-author defects filed on the row below.
 task(cold_author_defects, unbuilt, [getting_started]). % FILED 2026-07-31 by the doc lane, none fixed in-lane: D1 host_input_contract keyed on hardcoded host NAMES (registry.pl -- any new host name refuses the standard (path,digest) shape); D2 template_mismatch renders without payload (which column? where?); D3 bop check bypasses throw_text_door_error -> refusals lose file:line the compile door prints (SMALL, high beta value); D4 served errors name gen_served temp copies not the user's file; D5 single-output sh host truncates at first whitespace (parseWhitespace fields[0] fallback, silent). D3+D2 = the natural next errors lane; D1 = registry design card; D5 = decode-seam guard.
 task(grader_exit_gate, done, []). % LANDED 2026-07-31 (4a6a6c1c, failure-modes class 37): grader run/1 was exit-0 advisory since birth; now accumulates failures + fails the goal (every -g go runner inherits exit 1). Red float fixture (two deltas/2 terms for one rel) fixed same commit; shipped through 4 green batteries undetected.
 task(manifest_reason_diff, unbuilt, []). % PROPOSED by the fork_join lane 2026-07-31: a refusal-reason-level manifest diff as a standing check -- the lane's own first draft silently rewrote 2 edge fixtures' refusal reason (same bucket, same counts, sweep green) and only a manifest diff caught it. Small: sweep already writes the manifest; the check is a git-diff classifier over (name, bucket, reason-functor) triples.
@@ -891,9 +892,12 @@ check(covers_endpoints_ground, ( forall(covers(Subject, Name),
 reaches_ast(ast).
 reaches_ast(G) :- refines(G, Parent), reaches_ast(Parent).
 
-go :- forall(check(N, G),
-             ( catch(G, E, (print_message(error, E), fail))
-             -> format("PASS  ~w~n", [N]) ; format("fail  ~w~n", [N]) )).
+:- use_module('src/grader', [run/1]).
+% go rides grader run/1 so a red check FAILS the goal and `-g go -g halt`
+% exits 1. The private copy of the loop here was the exit-blind class-37
+% shape a second time: roadmap_is_total went red (dangling dep) and every
+% `just arch` tail still said PASS/exit 0.
+go :- run(check).
 
 % ═════════════════════════════════════════════════════════════════════════════
 % FABLE HANDOFF BLOCK (2026-07-29 evening, coordinator final save; sol drives
