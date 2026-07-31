@@ -25,11 +25,52 @@
 #
 # ── this is a RAIL, not a fixture ────────────────────────────────────────────
 #
-# It writes two files, so it is not byte-graded against the oracle -- a program
+# It writes files, so it is not byte-graded against the oracle -- a program
 # with a staged write trades that away, the same call self-map.dl6 and the
 # comment rails make. What it is graded on instead: `just atlas` twice produces
-# a byte-identical .dot, and deleting a bridge rule in a scratch copy shortens
-# the longest path (sabotage receipt in v6/tsv2/scripts/atlas.sh's header).
+# byte-identical .dot files, and deleting a bridge rule in a scratch copy
+# shortens the longest path (sabotage receipt in v6/tsv2/scripts/atlas.sh's
+# header).
+#
+# ── FIVE DRAWINGS OF ONE GRAPH ───────────────────────────────────────────────
+#
+# The node set, the edge set and every count are derived ONCE. What varies is
+# `rankdir` and which clusters the node lines are folded into, and that is one
+# rel: `variant/7`, five rows, near the DOT section. The five files:
+#
+#   lang      DATAFLOW-ATLAS.dot          TB, clustered by language then file
+#   flat_td   DATAFLOW-ATLAS-flat-td.dot  TB, no clusters at all
+#   flat_lr   DATAFLOW-ATLAS-flat-lr.dot  LR, no clusters at all
+#   fs_td     DATAFLOW-ATLAS-fs-td.dot    TB, nested clusters mirroring the
+#                                         directory tree, one exploded file
+#   fs_lr     DATAFLOW-ATLAS-fs-lr.dot    LR, the same nesting
+#
+# WHAT THE FOUR EXTRA VIEWS COST, measured on this machine with the same swipl:
+# the text door compiles this file in 4m16s where it compiled the pre-variant
+# file in 30s. The whole difference is `3_clock_check.pl`'s `clock_path_conflict`,
+# which enumerates every simple path between every pair of refs; the filesystem
+# fold is a sixteen-rel chain that four different file depths enter, so the path
+# count through it multiplies against every rel upstream of `node_line`. Two
+# numbers from the same rig, both on the default 1GB stack unless stated:
+#
+#   30s     the file at HEAD before this change
+#   86s     + the variant / flat / markdown machinery, no filesystem fold
+#   4m16s   + the filesystem fold, counting rels read off the FOLD SOURCES
+#   9m40s   the same fold with the cluster counts read off `fs_frag_d1..d4`
+#           (four extra taps into the middle of the chain) -- and this one
+#           needed an 8GB stack; at 1GB the served compile died with
+#           `Stack limit (1.0Gb) exceeded` inside `clock_violation/2`'s setof
+#
+# That last pair is the finding worth carrying out of this file: a checker
+# whose cost is the simple-path count is a cliff, not a slope, and the program
+# that walks off it gets a stack-limit crash rather than a refusal. Nothing
+# here is a workaround for it -- rerouting the counts off the fold is the
+# correct spelling anyway -- but the cliff is real and unowned.
+#
+# Because the node lines are shared, the rail can assert what would otherwise
+# be a claim: the five files carry the SAME node id set, and only layout and
+# grouping move. `lang` keeps an empty label suffix so its .dot stays byte
+# identical to the one that existed before the variants were added.
 #
 # ── ZERO NEW CONSTRUCTS ──────────────────────────────────────────────────────
 #
@@ -121,6 +162,47 @@ seed(path, digest) <- watch('v6/dl/fixtures/dataflow-atlas.dl6', path, digest).
 sh files(glob: text) -> (path: text, digest: text, base: text) =
   `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s %s\n' "$entry" "$(git hash-object -- "$entry")" "${entry##*/}"; done`.
 
+# THE DIRECTORY DECOMPOSITION, and why it is a host and not an expression.
+#
+# The filesystem views need every ancestor directory of every drawn file: for
+# `v6/prolog/compile/analyze.pl`, the four rows `v6`, `v6/prolog`,
+# `v6/prolog/compile` with their parents and their own last segment. That is a
+# repeated string split on `/`, and this language has no string split.
+#
+# THE FINDING IS NOT "IT IS REFUSED", WHICH IS WHAT THE BRIEF EXPECTED. A probe
+# program compiled through the real text door:
+#
+#   rel dir_part(path: text, head_text: text).
+#   dir_part(path, head_text) <- source_path(path), head_text := split(path, '/').
+#
+#   compile_dl6.sh -> `wrote split_probe.ts`, exit 0, NO refusal, and the
+#   emitted statement is
+#     INSERT OR IGNORE INTO "dir_part" ("path", "head_text")
+#     SELECT b0."path", json_object('fn', 'split', 'args', json_array(b0."path", '/'))
+#     FROM "source_path" b0
+#
+# An unknown functor on the right of `:=` is NOT caught by the registry's
+# refusal-by-absence: that gate covers BODY GOALS, and an expression-position
+# compound falls through to the generic compound-term encoder, so `split(...)`
+# is stored as the literal TEXT of a term that was never evaluated. The program
+# runs, the column fills, and every value in it is wrong. That is the same
+# silent class the expression lift closed for braces and list VALUES, one step
+# up the grammar, and it is unowned here: this rail records it and does the
+# split where the language can be honest about it, in the fact host.
+#
+# One subprocess per GLOB, not per file: the demand column is the same glob set
+# `files` already uses, so this adds twelve content-addressed demand rows and no
+# per-file cost. The output is a five-column grid, one line per (file, ancestor).
+#
+# THE SHELL LOOP COUNTER IS `level` AND NOT `depth`, and that is a real check
+# doing its job rather than a style choice: `validate_template/3` refuses a
+# template that names an OUTPUT column, and it reads `$depth` in the shell as
+# exactly that (`template_mismatch(output_used_as_input(depth))`, hit on the
+# first load of this rule). The refusal is right -- an output name in a template
+# is either a typo or a value the host cannot have yet.
+sh file_dirs(glob: text) -> (path: text, depth: int, dir_path: text, parent_path: text, segment: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do rest="${entry%/*}"; if [ "$rest" = "$entry" ]; then rest=""; fi; prefix=""; level=0; while [ -n "$rest" ]; do seg="${rest%%/*}"; parent="$prefix"; if [ -z "$prefix" ]; then prefix="$seg"; else prefix="$prefix/$seg"; fi; level=$((level + 1)); if [ -z "$parent" ]; then parent="."; fi; printf '%s %s %s %s %s\n' "$entry" "$level" "$prefix" "$parent" "$seg"; case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac; done; done`.
+
 rel want_ts(glob: text).
 want_ts('v6/tsv2/cli/*.ts') <- seed(_, _).
 want_ts('v6/tsv2/serve/*.ts') <- seed(_, _).
@@ -170,6 +252,36 @@ gen_file(path, digest, base) <- want_gen(glob), files(glob, path, digest, base).
 
 rel marker_file(path: text, digest: text, base: text).
 marker_file(path, digest, base) <- want_marker(glob), files(glob, path, digest, base).
+
+# The same glob demand, decomposed. `path_dir` holds one row per (file,
+# ancestor); `dir_meta` forgets the file and keeps the directory tree itself.
+rel path_dir(path: text, depth: int, dir_path: text, parent_path: text, segment: text).
+path_dir(path, depth, dir_path, parent_path, segment) <-
+  want_ts(glob), file_dirs(glob, path, depth, dir_path, parent_path, segment).
+path_dir(path, depth, dir_path, parent_path, segment) <-
+  want_pl(glob), file_dirs(glob, path, depth, dir_path, parent_path, segment).
+path_dir(path, depth, dir_path, parent_path, segment) <-
+  want_sh(glob), file_dirs(glob, path, depth, dir_path, parent_path, segment).
+
+rel dir_meta(dir_path: text, depth: int, parent_path: text, segment: text).
+dir_meta(dir_path, depth, parent_path, segment) <- path_dir(_, depth, dir_path, parent_path, segment).
+
+# A file's own directory is its DEEPEST ancestor. The aggregate reads a single
+# atom for the delta-local reason recorded at `forward_positive`.
+rel path_dir_depth(path: text, depth: int).
+path_dir_depth(path, max(depth)) <- path_dir(path, depth, _, _, _).
+
+rel file_dir(path: text, dir_depth: int, dir_path: text).
+file_dir(path, depth, dir_path) <- path_dir_depth(path, depth), path_dir(path, depth, dir_path, _, _).
+
+# Every drawn file, with the label the filesystem view puts on its cluster and
+# the plane that colours it. The three file sets are disjoint by construction:
+# the globs never overlap between languages, and `gen_file` / `marker_file` are
+# subsets of `ts_file` / `pl_file` rather than sets of their own.
+rel drawn_file(path: text, base: text, plane: text).
+drawn_file(path, base, 'typescript') <- ts_file(path, _, base).
+drawn_file(path, base, 'prolog') <- pl_file(path, _, base).
+drawn_file(path, base, 'shell') <- sh_file(path, _, base).
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PLANE 1 -- TYPESCRIPT, through the fixed extractor
@@ -998,7 +1110,26 @@ pl_fact_total(count(callee)) <- pl_call_row(_, _, _, callee, _).
 # rankdir=TB and never LR: the reader's viewer cannot use a horizontal strip,
 # and a graph this wide laid out left to right is a mile of whitespace.
 
-rel dot_line(section: text, ordinal: int, line_text: text).
+# ── THE FIVE VIEWS ───────────────────────────────────────────────────────────
+#
+# One row per drawing. Everything that differs between the five .dot files is
+# in this rel and nowhere else: the layout direction, which grouping folds the
+# node lines, the aspect lever, the label suffix and the two output paths. The
+# node lines, the edge lines and every count are derived once and shared, which
+# is exactly why the rail can assert that the five files hold the same graph.
+rel variant(variant: text, rankdir: text, grouping: text, ratio_value: text, title_suffix: text, dot_path: text, svg_path: text).
+variant('lang', 'TB', 'language', '0.4', '',
+        'v6/DATAFLOW-ATLAS.dot', 'v6/DATAFLOW-ATLAS.svg') <- seed(_, _).
+variant('flat_td', 'TB', 'none', '0.4', ' -- flat, no grouping, top to bottom',
+        'v6/DATAFLOW-ATLAS-flat-td.dot', 'v6/DATAFLOW-ATLAS-flat-td.svg') <- seed(_, _).
+variant('flat_lr', 'LR', 'none', '0.4', ' -- flat, no grouping, left to right',
+        'v6/DATAFLOW-ATLAS-flat-lr.dot', 'v6/DATAFLOW-ATLAS-flat-lr.svg') <- seed(_, _).
+variant('fs_td', 'TB', 'filesystem', '0.4', ' -- filesystem nesting, top to bottom',
+        'v6/DATAFLOW-ATLAS-fs-td.dot', 'v6/DATAFLOW-ATLAS-fs-td.svg') <- seed(_, _).
+variant('fs_lr', 'LR', 'filesystem', '0.4', ' -- filesystem nesting, left to right',
+        'v6/DATAFLOW-ATLAS-fs-lr.dot', 'v6/DATAFLOW-ATLAS-fs-lr.svg') <- seed(_, _).
+
+rel dot_line(variant: text, section: text, ordinal: int, line_text: text).
 
 rel plane_label(plane: text, label_text: text).
 plane_label('cli', 'cli (commander)') <- seed(_, _).
@@ -1034,12 +1165,19 @@ edge_style('bridge_dispatch', 'color="#b45309",penwidth=3') <- seed(_, _).
 
 # A node on a longest path is filled; every other node is plain. The highlight
 # is derived, so it moves when the graph does.
-rel node_line(plane: text, container: text, line_text: text).
-node_line(plane, container, line_text) <-
+#
+# THE NODE LINE IS DERIVED ONCE AND SHARED BY ALL FIVE VIEWS. That is not a
+# saving, it is the invariant the rail asserts: the five .dot files hold the
+# SAME node id set and the same label, shape and highlight for every one of
+# them, and differ only in rankdir and in which clusters the lines are nested
+# inside. `node_id` rides in the rel so the filesystem view can join a line to
+# the file it belongs to; the language view still folds on (plane, container).
+rel node_line(node_id: text, plane: text, container: text, line_text: text).
+node_line(node_id, plane, container, line_text) <-
   atlas_node(node_id, plane, container, label_text, shape_name),
   on_longest(node_id, _),
   line_text := concat(['    "', node_id, '" [label="', label_text, '",shape=', shape_name, ',style=filled,fillcolor="#fde68a"];']).
-node_line(plane, container, line_text) <-
+node_line(node_id, plane, container, line_text) <-
   atlas_node(node_id, plane, container, label_text, shape_name),
   not(on_longest(node_id, _)),
   line_text := concat(['    "', node_id, '" [label="', label_text, '",shape=', shape_name, '];']).
@@ -1047,7 +1185,7 @@ node_line(plane, container, line_text) <-
 # Ordered by the line text itself, so the fold is deterministic without a
 # separate ordinal column and without leaning on the engine's row order.
 rel container_body(plane: text, container: text, body_text: text).
-container_body(plane, container, group_concat(line_text, '\n')) <- node_line(plane, container, line_text).
+container_body(plane, container, group_concat(line_text, '\n')) <- node_line(_, plane, container, line_text).
 
 rel container_fragment(plane: text, container: text, fragment: text).
 container_fragment(plane, container, fragment) <-
@@ -1067,6 +1205,170 @@ plane_fragment(plane, fragment) <-
 rel graph_body(body_text: text).
 graph_body(group_concat(fragment, '\n')) <- plane_fragment(_, fragment).
 
+# ── GROUPING 2 of 3: none. The raw graph, no cluster of any kind ─────────────
+#
+# The same lines, folded once. A cluster in graphviz is a layout constraint as
+# much as a box, so this is the only view where dot is free to rank a node
+# purely by its edges, and it is the view that answers "what does the dataflow
+# look like when nothing about the source tree is allowed to shape it".
+rel flat_body(body_text: text).
+flat_body(group_concat(line_text, '\n')) <- node_line(_, _, _, line_text).
+
+# ── GROUPING 3 of 3: the filesystem, nested ──────────────────────────────────
+#
+# One big exploded file: the directory tree becomes nested graphviz clusters,
+# `v6` containing `tsv2` containing `serve` containing `1_hosts.ts` containing
+# the symbols that file defines. Every box in it is derived from the paths the
+# facts already carry -- `node_meta`'s container for TypeScript and prolog is
+# the file path, and the shell plane's node id is `sh:` plus the path.
+#
+# THE NESTING IS FOUR LEVELS DEEP AND WRITTEN OUT FOUR TIMES, on purpose. The
+# natural spelling is one recursive rule -- a directory's body is the fold of
+# its children, where a child is a file cluster OR a deeper directory cluster --
+# and that is a group_concat whose input depends on its own output: a RECURSIVE
+# AGGREGATE, which no stratification admits. So the fold is unrolled by depth,
+# deepest first, each level an ordinary rel reading the level below. The corpus
+# reaches depth 4 (`v6/prolog/compile/scripts`), and `fs_dir_too_deep` below
+# turns a fifth level into a rail failure rather than a silently dropped
+# cluster -- the same choice `prior < 32` makes in the reachability stratum.
+
+# Where a node lives. TypeScript and prolog carry the file path as their
+# container already; the shell plane's container is a bucket, so its path comes
+# back through the node id the way `db_table_node` recovers a table node.
+rel sh_node(node_id: text, path: text).
+sh_node(node_id, path) <- sh_file(path, _, _), node_id := concat(['sh:', path]).
+
+rel node_file(node_id: text, path: text).
+node_file(node_id, path) <- atlas_node(node_id, 'typescript', path, _, _).
+node_file(node_id, path) <- atlas_node(node_id, 'prolog', path, _, _).
+node_file(node_id, path) <- atlas_node(node_id, 'shell', _, _, _), sh_node(node_id, path).
+
+# The CLI verbs, the SQLite tables and the extractor's own surface name no file
+# in this tree, and inventing one for them would be a lie in a picture whose
+# whole claim is that the boxes come from the paths. They get their own
+# top-level dashed clusters beside the directory tree.
+rel node_unfiled(node_id: text, bucket: text).
+node_unfiled(node_id, container) <- atlas_node(node_id, 'cli', container, _, _).
+node_unfiled(node_id, container) <- atlas_node(node_id, 'sqlite', container, _, _).
+node_unfiled(node_id, container) <- atlas_node(node_id, 'extractor', container, _, _).
+
+# INTEGRITY, the filesystem half. A drawn node that lands in neither the
+# directory tree nor a bucket would silently vanish from two of the five views
+# while the other three still drew it, so the rail refuses on it.
+rel fs_placed(node_id: text).
+fs_placed(node_id) <- node_file(node_id, path), file_dir(path, _, _).
+fs_placed(node_id) <- node_unfiled(node_id, _).
+
+rel fs_unplaced(node_id: text).
+fs_unplaced(node_id) <- atlas_node(node_id, _, _, _, _), not(fs_placed(node_id)).
+
+rel fs_dir_too_deep(dir_path: text, depth: int).
+fs_dir_too_deep(dir_path, depth) <- dir_meta(dir_path, depth, _, _), depth > 4.
+
+rel fs_node_line(path: text, line_text: text).
+fs_node_line(path, line_text) <- node_file(node_id, path), node_line(node_id, _, _, line_text).
+
+rel fs_file_body(path: text, body_text: text).
+fs_file_body(path, group_concat(line_text, '\n')) <- fs_node_line(path, line_text).
+
+rel fs_file_fragment(path: text, dir_path: text, dir_depth: int, fragment: text).
+fs_file_fragment(path, dir_path, dir_depth, fragment) <-
+  fs_file_body(path, body_text), file_dir(path, dir_depth, dir_path),
+  drawn_file(path, base, plane), plane_colour(plane, colour_name),
+  fragment := concat(['   subgraph cluster_fsfile_', norm(path), ' {\n   label="', base,
+                      '";\n   style=dotted;\n   color="', colour_name, '";\n', body_text, '\n   }']).
+
+# Depth 4, the deepest directory level the corpus reaches. It folds files only:
+# a depth-5 directory would have to appear here and `fs_dir_too_deep` refuses
+# the run before it can be dropped.
+rel fs_body_d4(dir_path: text, body_text: text).
+fs_body_d4(dir_path, group_concat(fragment, '\n')) <- fs_file_fragment(_, dir_path, 4, fragment).
+rel fs_frag_d4(dir_path: text, parent_path: text, fragment: text).
+fs_frag_d4(dir_path, parent_path, fragment) <-
+  fs_body_d4(dir_path, body_text), dir_meta(dir_path, 4, parent_path, segment),
+  fragment := concat(['  subgraph cluster_fsdir_', norm(dir_path), ' {\n  label="', segment,
+                      '/";\n  style=rounded;\n  penwidth=2;\n', body_text, '\n  }']).
+
+rel fs_item_d3(dir_path: text, fragment: text).
+fs_item_d3(dir_path, fragment) <- fs_file_fragment(_, dir_path, 3, fragment).
+fs_item_d3(dir_path, fragment) <- fs_frag_d4(_, dir_path, fragment).
+rel fs_body_d3(dir_path: text, body_text: text).
+fs_body_d3(dir_path, group_concat(fragment, '\n')) <- fs_item_d3(dir_path, fragment).
+rel fs_frag_d3(dir_path: text, parent_path: text, fragment: text).
+fs_frag_d3(dir_path, parent_path, fragment) <-
+  fs_body_d3(dir_path, body_text), dir_meta(dir_path, 3, parent_path, segment),
+  fragment := concat(['  subgraph cluster_fsdir_', norm(dir_path), ' {\n  label="', segment,
+                      '/";\n  style=rounded;\n  penwidth=2;\n', body_text, '\n  }']).
+
+rel fs_item_d2(dir_path: text, fragment: text).
+fs_item_d2(dir_path, fragment) <- fs_file_fragment(_, dir_path, 2, fragment).
+fs_item_d2(dir_path, fragment) <- fs_frag_d3(_, dir_path, fragment).
+rel fs_body_d2(dir_path: text, body_text: text).
+fs_body_d2(dir_path, group_concat(fragment, '\n')) <- fs_item_d2(dir_path, fragment).
+rel fs_frag_d2(dir_path: text, parent_path: text, fragment: text).
+fs_frag_d2(dir_path, parent_path, fragment) <-
+  fs_body_d2(dir_path, body_text), dir_meta(dir_path, 2, parent_path, segment),
+  fragment := concat(['  subgraph cluster_fsdir_', norm(dir_path), ' {\n  label="', segment,
+                      '/";\n  style=rounded;\n  penwidth=2;\n', body_text, '\n  }']).
+
+rel fs_item_d1(dir_path: text, fragment: text).
+fs_item_d1(dir_path, fragment) <- fs_file_fragment(_, dir_path, 1, fragment).
+fs_item_d1(dir_path, fragment) <- fs_frag_d2(_, dir_path, fragment).
+rel fs_body_d1(dir_path: text, body_text: text).
+fs_body_d1(dir_path, group_concat(fragment, '\n')) <- fs_item_d1(dir_path, fragment).
+rel fs_frag_d1(dir_path: text, parent_path: text, fragment: text).
+fs_frag_d1(dir_path, parent_path, fragment) <-
+  fs_body_d1(dir_path, body_text), dir_meta(dir_path, 1, parent_path, segment),
+  fragment := concat([' subgraph cluster_fsdir_', norm(dir_path), ' {\n label="', segment,
+                      '/";\n color="#334155";\n penwidth=3;\n', body_text, '\n }']).
+
+rel fs_bucket_line(bucket: text, line_text: text).
+fs_bucket_line(bucket, line_text) <- node_unfiled(node_id, bucket), node_line(node_id, _, _, line_text).
+rel fs_bucket_body(bucket: text, body_text: text).
+fs_bucket_body(bucket, group_concat(line_text, '\n')) <- fs_bucket_line(bucket, line_text).
+rel fs_bucket_fragment(bucket: text, fragment: text).
+fs_bucket_fragment(bucket, fragment) <-
+  fs_bucket_body(bucket, body_text),
+  fragment := concat([' subgraph cluster_fsbucket_', norm(bucket), ' {\n label="(no file) ', bucket,
+                      '";\n style=dashed;\n color="#64748b";\n', body_text, '\n }']).
+
+rel fs_top_fragment(fragment: text).
+fs_top_fragment(fragment) <- fs_frag_d1(_, _, fragment).
+fs_top_fragment(fragment) <- fs_bucket_fragment(_, fragment).
+
+rel fs_body(body_text: text).
+fs_body(group_concat(fragment, '\n')) <- fs_top_fragment(fragment).
+
+# ── how many boxes each grouping draws, counted rather than typed ────────────
+#
+# One id per emitted `subgraph cluster_`, so the number in the document is the
+# number in the file. The flat grouping contributes NO rows at all, which is
+# why the per-variant read below goes through `coalesce`: a `count` aggregate
+# over an empty rel yields no row, never a zero.
+#
+# EVERY CLAUSE READS THE SOURCE OF A CLUSTER, NEVER THE FOLD THAT EMITS IT, and
+# that is a compile-cost fix with a measured receipt. Counting `fs_frag_d1..d4`
+# taps the nesting fold at four separate depths, and `3_clock_check.pl`'s
+# `clock_path_conflict` enumerates every simple path between every pair of
+# refs: four extra routes through a sixteen-rel chain took the compile from 30s
+# to 9m40s at an 8GB stack (the served compiler runs at 1GB and simply died).
+# Read off the sources instead and the counts are the same numbers -- a
+# directory cluster is emitted exactly when some drawn node's file sits under
+# it, which is what these clauses say -- for a fraction of the path count.
+rel grouping_cluster(grouping: text, cluster_id: text).
+grouping_cluster('language', cluster_id) <- atlas_node(_, plane, container, _, _), cluster_id := concat(['file:', plane, ':', container]).
+grouping_cluster('language', cluster_id) <- atlas_node(_, plane, _, _, _), cluster_id := concat(['plane:', plane]).
+grouping_cluster('filesystem', cluster_id) <- node_file(_, path), file_dir(path, _, _), cluster_id := concat(['file:', path]).
+grouping_cluster('filesystem', cluster_id) <- node_file(_, path), path_dir(path, _, dir_path, _, _), cluster_id := concat(['dir:', dir_path]).
+grouping_cluster('filesystem', cluster_id) <- node_unfiled(_, bucket), cluster_id := concat(['bucket:', bucket]).
+
+rel grouping_cluster_total(grouping: text, clusters: int).
+grouping_cluster_total(grouping, count(cluster_id)) <- grouping_cluster(grouping, cluster_id).
+
+rel variant_clusters(variant: text, clusters: int).
+variant_clusters(variant, clusters) <-
+  variant(variant, _, grouping, _, _, _, _), coalesce(grouping_cluster_total(grouping, clusters), 0).
+
 rel edge_line(line_text: text).
 edge_line(line_text) <-
   atlas_edge(from_id, to_id, edge_kind), edge_style(edge_kind, style_text),
@@ -1075,8 +1377,9 @@ edge_line(line_text) <-
 rel edges_text(body_text: text).
 edges_text(group_concat(line_text, '\n')) <- edge_line(line_text).
 
-dot_line('head', 10, 'digraph dataflow_atlas {') <- seed(_, _).
-dot_line('head', 20, '  rankdir=TB;') <- seed(_, _).
+dot_line(variant, 'head', 10, 'digraph dataflow_atlas {') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 20, line_text) <-
+  variant(variant, rankdir, _, _, _, _, _), line_text := concat(['  rankdir=', rankdir, ';']).
 # `ratio` is here because TB alone did not deliver what TB is for. MEASURED on
 # this graph: plain TB renders 27303 x 1900pt, a 14:1 horizontal band, because
 # 421 nodes over 26 ranks puts 20 to 40 nodes side by side on every rank and no
@@ -1087,29 +1390,66 @@ dot_line('head', 20, '  rankdir=TB;') <- seed(_, _).
 # costs the file grouping, which is information the picture is for. `ratio=0.4`
 # gives 27303 x 10945, a 2.5:1 canvas: the same drawing with the ranks given
 # room, which is a page a reader scrolls in two directions instead of one
-# endless band. rankdir stays TB; LR was never tried and never will be.
-dot_line('head', 25, '  ratio=0.4;') <- seed(_, _).
-dot_line('head', 30, '  compound=true;') <- seed(_, _).
-dot_line('head', 40, '  newrank=true;') <- seed(_, _).
-dot_line('head', 50, '  ranksep=0.7;') <- seed(_, _).
-dot_line('head', 60, '  nodesep=0.25;') <- seed(_, _).
-dot_line('head', 70, '  graph [fontname="Helvetica",fontsize=14,labelloc=t];') <- seed(_, _).
-dot_line('head', 80, '  node [fontname="Helvetica",fontsize=10,margin="0.06,0.03"];') <- seed(_, _).
-dot_line('head', 90, '  edge [fontname="Helvetica",fontsize=8];') <- seed(_, _).
-dot_line('head', 100, line_text) <- node_total(nodes), edge_total(edges), longest_span(span),
+# endless band.
+#
+# THE OTHER FOUR VIEWS KEEP THE SAME 0.4, and that is a measurement rather
+# than a default. Each drawing was rendered at five settings of the lever
+# (v6/tsv2/scripts/atlas.sh's sabotage-and-measurement notes hold the command);
+# the canvas graphviz chose, in points:
+#
+#              no ratio         0.2            0.4             0.7            1.0
+#   flat_td  15207 x  1701  15207 x  3071  15207 x  6111  15207 x 10671  15207 x 15230
+#   flat_lr   3511 x 10253  50458 x 10283  25233 x 10265  14422 x 10238  10098 x 10304
+#   fs_td    27759 x  2064  27759 x  5581  27759 x 11131  27759 x 19457  27759 x 27782
+#   fs_lr     3937 x 15802  78863 x 15802  39436 x 15802  22538 x 15802  15779 x 15802
+#
+# Two things fall out of that table. The lever stretches whichever dimension
+# the layout did NOT fix -- height under TB, width under LR -- so the untouched
+# column is the layout's own answer and the moving one is the page. And LR does
+# not fix the band problem, it rotates it: `flat_lr` unlevered is 3511 x 10253,
+# a 1:2.9 vertical strip, exactly as unreadable as TB's 8.9:1 horizontal one.
+#
+# 0.4 is kept for all five because it is the only value that gives all five the
+# SAME page: 2.5:1, within half a percent of each other (0.401, 0.402, 0.407,
+# 0.401, 0.401). That is what makes the five drawings comparable -- what a
+# reader sees differing between two of them is the grouping and the rankdir,
+# never the lever. The alternative worth knowing about is `fs_lr` at 0.7
+# (22538 x 15802), which halves the widest canvas at the cost of that
+# comparability.
+dot_line(variant, 'head', 25, line_text) <-
+  variant(variant, _, _, ratio_value, _, _, _), line_text := concat(['  ratio=', ratio_value, ';']).
+dot_line(variant, 'head', 30, '  compound=true;') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 40, '  newrank=true;') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 50, '  ranksep=0.7;') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 60, '  nodesep=0.25;') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 70, '  graph [fontname="Helvetica",fontsize=14,labelloc=t];') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 80, '  node [fontname="Helvetica",fontsize=10,margin="0.06,0.03"];') <- variant(variant, _, _, _, _, _, _).
+dot_line(variant, 'head', 90, '  edge [fontname="Helvetica",fontsize=8];') <- variant(variant, _, _, _, _, _, _).
+# The language view's suffix is the EMPTY STRING, which is what keeps
+# v6/DATAFLOW-ATLAS.dot byte-identical to the file this change found on disk.
+dot_line(variant, 'head', 100, line_text) <-
+  variant(variant, _, _, _, title_suffix, _, _),
+  node_total(nodes), edge_total(edges), longest_span(span),
   line_text := concat(['  label="sprefa v6 dataflow atlas -- ', nodes, ' nodes, ', edges,
-                       ' edges, longest path from bop run = ', span, ' hops (GENERATED, do not edit)";']).
-dot_line('body', 10, body_text) <- graph_body(body_text).
-dot_line('edges', 10, body_text) <- edges_text(body_text).
-dot_line('tail', 10, '}') <- seed(_, _).
+                       ' edges, longest path from bop run = ', span, ' hops (GENERATED, do not edit)',
+                       title_suffix, '";']).
 
-rel section_text(section: text, body_text: text).
-section_text(section, group_concat(line_text, '\n', ordinal)) <- dot_line(section, ordinal, line_text).
+# The grouping word is a CONSTANT IN ARGUMENT POSITION, never a guard, for the
+# reason recorded at the top of this file: a guard over a probe output variable
+# is refused, and this program keeps one spelling for every filter.
+dot_line(variant, 'body', 10, body_text) <- variant(variant, _, 'language', _, _, _, _), graph_body(body_text).
+dot_line(variant, 'body', 10, body_text) <- variant(variant, _, 'none', _, _, _, _), flat_body(body_text).
+dot_line(variant, 'body', 10, body_text) <- variant(variant, _, 'filesystem', _, _, _, _), fs_body(body_text).
+dot_line(variant, 'edges', 10, body_text) <- variant(variant, _, _, _, _, _, _), edges_text(body_text).
+dot_line(variant, 'tail', 10, '}') <- variant(variant, _, _, _, _, _, _).
 
-rel dot_document(document: text).
-dot_document(document) <-
-  section_text('head', head_text), section_text('body', body_text),
-  section_text('edges', edges_body), section_text('tail', tail_text),
+rel section_text(variant: text, section: text, body_text: text).
+section_text(variant, section, group_concat(line_text, '\n', ordinal)) <- dot_line(variant, section, ordinal, line_text).
+
+rel dot_document(variant: text, document: text).
+dot_document(variant, document) <-
+  section_text(variant, 'head', head_text), section_text(variant, 'body', body_text),
+  section_text(variant, 'edges', edges_body), section_text(variant, 'tail', tail_text),
   document := concat([head_text, '\n', body_text, '\n', edges_body, '\n', tail_text, '\n']).
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1120,13 +1460,52 @@ rel md_line(section: text, ordinal: int, line_text: text).
 
 md_line('doc', 10, '# The v6 dataflow atlas') <- seed(_, _).
 md_line('doc', 20,
-  'GENERATED by `just atlas` (`v6/tsv2/scripts/atlas.sh`). Do not edit: the next run overwrites it, byte for byte. The graph is `v6/DATAFLOW-ATLAS.svg`, rendered by graphviz from `v6/DATAFLOW-ATLAS.dot`, which `v6/dl/fixtures/dataflow-atlas.dl6` assembles from extracted facts.') <- seed(_, _).
+  'GENERATED by `just atlas` (`v6/tsv2/scripts/atlas.sh`). Do not edit: the next run overwrites it, byte for byte. The default graph is `v6/DATAFLOW-ATLAS.svg`, rendered by graphviz from `v6/DATAFLOW-ATLAS.dot`, which `v6/dl/fixtures/dataflow-atlas.dl6` assembles from extracted facts. Four more drawings of the same graph sit beside it, listed below.') <- seed(_, _).
 md_line('doc', 30, line_text) <- node_total(nodes), edge_total(edges), reach_total(pairs), cycle_total(cycles),
   line_text := concat(['**', nodes, ' nodes, ', edges, ' edges.** The reachability stratum settled at ',
                        pairs, ' (from, to, hops) triples with ', cycles,
                        ' node(s) reaching themselves; zero is what makes the longest path a number rather than a bound.']).
 md_line('doc', 40, '') <- seed(_, _).
-md_line('doc', 50, '## Nodes per plane') <- seed(_, _).
+
+md_line('doc', 41, '## The five views') <- seed(_, _).
+md_line('doc', 42, '') <- seed(_, _).
+md_line('doc', 43,
+  'ONE graph, five drawings. The node set, the edge set, the labels, the shapes and the longest-path highlight are derived once and shared, so the five `.dot` files differ only in `rankdir` and in which clusters the node lines are nested inside. `just atlas` asserts exactly that: the same node id set in all five files, every node in the two filesystem views inside the cluster chain its own path spells, and every `.dot` byte-stable across two runs. Canvas is what graphviz chose, read back out of the rendered SVG; clusters are counted from the fragments the program emitted. All five carry `ratio=0.4`, which is the one setting that gives them the same 2.5:1 page, so what differs between two views is the grouping and the direction rather than the lever (the five-setting measurement is in the program header).') <- seed(_, _).
+md_line('doc', 44, '') <- seed(_, _).
+md_line('doc', 45, '| view | file | rankdir | grouping | clusters | canvas pt | what it is for |') <- seed(_, _).
+md_line('doc', 46, '|---|---|---|---|---|---|---|') <- seed(_, _).
+
+rel variant_order(variant: text, ordinal: int).
+variant_order('lang', 1) <- seed(_, _).
+variant_order('flat_td', 2) <- seed(_, _).
+variant_order('flat_lr', 3) <- seed(_, _).
+variant_order('fs_td', 4) <- seed(_, _).
+variant_order('fs_lr', 5) <- seed(_, _).
+
+rel variant_purpose(variant: text, purpose_text: text).
+variant_purpose('lang', 'the default: which LANGUAGE each box belongs to, with the file it lives in as an inner box, so a bridge arrow is visibly a line between two coloured regions') <- seed(_, _).
+variant_purpose('flat_td', 'the raw graph with nothing imposed on it: ranks come only from edges, so the layers dot finds are the layers the dataflow actually has') <- seed(_, _).
+variant_purpose('flat_lr', 'the same raw graph read as a pipeline: entry on the left, SQLite tables on the right, one rank per hop of the longest path') <- seed(_, _).
+variant_purpose('fs_td', 'the source tree as one exploded file: nested directory boxes down to the file, so an arrow leaving a box is a dependency leaving a directory') <- seed(_, _).
+variant_purpose('fs_lr', 'the same nesting read left to right, which is the shape that shows the repository laid out as a flow rather than as a tree') <- seed(_, _).
+
+rel variant_row(ordinal: int, line_text: text).
+variant_row(ordinal, line_text) <-
+  variant(variant, rankdir, grouping, _, _, dot_path, _),
+  variant_order(variant, ordinal), variant_purpose(variant, purpose_text),
+  variant_clusters(variant, clusters), variant_canvas(variant, canvas_width, canvas_height),
+  line_text := concat(['| `', variant, '` | `', dot_path, '` | ', rankdir, ' | ', grouping, ' | ',
+                       clusters, ' | ', canvas_width, ' x ', canvas_height, ' | ', purpose_text, ' |']).
+rel variant_rows(body_text: text).
+variant_rows(group_concat(line_text, '\n', ordinal)) <- variant_row(ordinal, line_text).
+md_line('doc', 47, body_text) <- variant_rows(body_text).
+
+md_line('doc', 48, '') <- seed(_, _).
+md_line('doc', 49,
+  'The filesystem nesting is unrolled to four levels (`v6/prolog/compile/scripts` is the deepest directory the corpus reaches) because the natural spelling -- a directory folds its children, where a child may be another directory -- is a `group_concat` reading its own output, and a recursive aggregate has no stratification. A fifth level is a rail FAILURE via `fs_dir_too_deep`, never a silently dropped cluster. The directory split itself is done in the fact host: this language has no string split, and the probe that proved it found something worse than a refusal -- see the note above `file_dirs` in the program.') <- seed(_, _).
+
+md_line('doc', 50, '') <- seed(_, _).
+md_line('doc', 51, '## Nodes per plane') <- seed(_, _).
 md_line('doc', 60, '') <- seed(_, _).
 md_line('doc', 70, '| plane | nodes |') <- seed(_, _).
 md_line('doc', 80, '|---|---|') <- seed(_, _).
@@ -1245,23 +1624,49 @@ md_document(document) <- md_section_text('doc', body_text), document := concat([
 sh write_file(path: text, document: text) -> (status: text) =
   `printf '%s' "$document" > "$path"; shasum -a 256 "$path" | cut -c1-16`.
 
-sh render_dot(dot_path: text, svg_path: text, source_digest: text) -> (status: text) =
-  `: {source_digest}; dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s' rendered`.
+# THE RENDER RETURNS THE RENDERED FILE'S DIGEST BESIDE ITS STATUS, for the
+# reason the write does: `svg_size` below has to read a file this host writes,
+# and a demand row of constant columns would let it read whatever happened to
+# be on disk at the tick it first fired. With the digest in the answer the read
+# cannot be demanded before the render produced it, and it is re-demanded every
+# time the drawing changes.
+sh render_dot(dot_path: text, svg_path: text, source_digest: text) -> (status: text, svg_digest: text) =
+  `: {source_digest}; dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s %s' rendered "$(shasum -a 256 "$svg_path" | cut -c1-16)"`.
 
-rel dot_receipt(source_digest: text).
-dot_receipt(source_digest) <- dot_document(document), write_file('v6/DATAFLOW-ATLAS.dot', document, source_digest).
+# The canvas graphviz actually chose. It is a property of the RENDER, not of
+# the graph, so it cannot be derived: the only honest source is the header
+# attributes of the file `dot` just wrote.
+sh svg_size(svg_path: text, svg_digest: text) -> (canvas_width: int, canvas_height: int) =
+  `: {svg_digest}; sed -n 's/.*width="\([0-9]*\)pt" height="\([0-9]*\)pt".*/\1 \2/p' "$svg_path" | head -1`.
+
+# FIVE WRITES AND FIVE RENDERS, from one pair of hosts. The output paths are
+# columns of `variant`, so adding a sixth drawing is one row in that rel and no
+# change here at all -- and the digest chain that makes the render re-fire when
+# the document changes is per variant, because the digest is content-derived.
+rel dot_receipt(variant: text, source_digest: text).
+dot_receipt(variant, source_digest) <-
+  dot_document(variant, document), variant(variant, _, _, _, _, dot_path, _),
+  write_file(dot_path, document, source_digest).
 
 rel md_receipt(source_digest: text).
 md_receipt(source_digest) <- md_document(document), write_file('v6/DATAFLOW-ATLAS.md', document, source_digest).
 
-rel render_receipt(status: text).
-render_receipt(status) <-
-  dot_receipt(source_digest),
-  render_dot('v6/DATAFLOW-ATLAS.dot', 'v6/DATAFLOW-ATLAS.svg', source_digest, status).
+rel render_receipt(variant: text, status: text, svg_digest: text).
+render_receipt(variant, status, svg_digest) <-
+  dot_receipt(variant, source_digest), variant(variant, _, _, _, _, dot_path, svg_path),
+  render_dot(dot_path, svg_path, source_digest, status, svg_digest).
+
+rel variant_canvas(variant: text, canvas_width: int, canvas_height: int).
+variant_canvas(variant, canvas_width, canvas_height) <-
+  render_receipt(variant, _, svg_digest), variant(variant, _, _, _, _, _, svg_path),
+  svg_size(svg_path, svg_digest, canvas_width, canvas_height).
 
 ? edge_without_node(node_id).
 ? cycle_node(node_id).
+? fs_unplaced(node_id).
+? fs_dir_too_deep(dir_path, depth).
 ? longest_level(depth_index, node_list).
-? dot_receipt(status).
+? dot_receipt(variant, status).
 ? md_receipt(status).
-? render_receipt(status).
+? render_receipt(variant, status, svg_digest).
+? variant_canvas(variant, canvas_width, canvas_height).
