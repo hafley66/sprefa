@@ -191,10 +191,19 @@ self-map:
 # rules, and rendered by graphviz. v6/dl/fixtures/dataflow-atlas.dl6 derives
 # every node, edge, count and the whole DOT text; the script owns only process
 # lifecycle and the two env names the hosts read.
-# The .dot is byte-stable across runs and the recipe PROVES it by running twice
-# and comparing (that is most of the wall time). NOT in green-all yet.
-# (expect: ATLAS HOLDS, CYCLES=0 ORPHANS=0, exit 0; ~2min, two full runs,
-#  spawns one extractor process per TS file and one swipl per .pl file)
+# FIVE drawings of the one graph: DATAFLOW-ATLAS.dot (clustered by language),
+# -flat-td / -flat-lr (no clusters), -fs-td / -fs-lr (nested clusters mirroring
+# the directory tree, the source read as one exploded file). All five .dot files
+# are byte-stable across runs and the recipe PROVES it by running twice and
+# digesting each (that is most of the wall time). It also asserts the five files
+# hold the SAME node id set and that every node in the fs views sits inside the
+# cluster chain its own path spells. NOT in green-all yet.
+# (expect: ATLAS HOLDS, CYCLES=0 ORPHANS=0, SAME NODE SET, FS NESTING x2,
+#  BYTE STABLE x5, exit 0; ~10min, two full runs, spawns one extractor process
+#  per TS file and one swipl per .pl file. ~8.5min of that is the text door
+#  compiling this program TWICE -- 4m16s each, up from 30s before the four
+#  extra views, all of it 3_clock_check.pl's simple-path enumeration against
+#  the filesystem fold; numbers in dataflow-atlas.dl6's header.)
 atlas:
 	bash {{v6}}/tsv2/scripts/atlas.sh
 

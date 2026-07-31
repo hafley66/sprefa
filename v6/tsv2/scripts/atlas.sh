@@ -2,7 +2,35 @@
 # atlas.sh: the DATAFLOW ATLAS production rail. Boots the served tsv2 engine on
 # an ephemeral port, loads v6/dl/fixtures/dataflow-atlas.dl6, waits for the four
 # fact planes and the reachability stratum to settle, and waits for the program's
-# three output effects (the .dot write, the .md write, the graphviz render).
+# eleven output effects (five .dot writes, the .md write, five graphviz renders).
+#
+# ── FIVE DRAWINGS, AND THE THREE THINGS THAT MAKES CHECKABLE ─────────────────
+#
+#   DATAFLOW-ATLAS.dot          TB, clustered by language then by file
+#   DATAFLOW-ATLAS-flat-td.dot  TB, no clusters at all
+#   DATAFLOW-ATLAS-flat-lr.dot  LR, no clusters at all
+#   DATAFLOW-ATLAS-fs-td.dot    TB, nested clusters mirroring the directory tree
+#   DATAFLOW-ATLAS-fs-lr.dot    LR, the same nesting
+#
+# The program derives ONE node line per node and folds it five ways, so three
+# claims stop being claims and become assertions below:
+#
+#   1  every .dot draws the same node id set (sorted ids compared byte for byte
+#      against the language view, and that view's line count against the rel)
+#   2  every node line in either fs view sits inside the exact chain of cluster
+#      labels its own path spells -- checked for ALL of them, with the count
+#      printed so an empty check cannot pass
+#   3  neither flat view carries a single `subgraph cluster_`
+#
+# ── WHAT THIS RAIL COSTS NOW, and why ────────────────────────────────────────
+#
+# ~10 minutes, of which ~8.5 is swipl. The text door has no compile cache, so
+# the byte-stability leg pays a second full compile, and this program compiles
+# in ~4m16s (30s before the four extra views). The cost is `3_clock_check.pl`'s
+# simple-path enumeration against the sixteen-rel filesystem fold; the numbers
+# and the 1GB-stack crash that came with them are recorded in the program's own
+# header. Nothing about it is this rail's to fix, and it is why `just atlas`
+# stays out of green-all.
 #
 # Run: cd v6 && just atlas
 #
@@ -56,6 +84,44 @@
 #   drawn, they are simply no longer reachable -- so an assertion on node count
 #   alone would have passed the sabotage. The reachability answer is what
 #   discriminates.
+#
+# ── SABOTAGE RECEIPT 2, the filesystem nesting (2026-07-31, scratch copy) ─────
+#
+#   ONE CLAUSE POINTED AT THE WRONG FILE. In a scratch copy,
+#
+#     node_file(node_id, path) <- atlas_node(node_id, 'prolog', path, _, _).
+#
+#   became
+#
+#     node_file(node_id, 'v6/tsv2/cli/bop.ts') <- atlas_node(node_id, 'prolog', _, _, _).
+#
+#   so every prolog node claims to live in a TypeScript file. Nothing else was
+#   touched. The run, `ATLAS_PROGRAM` pointing at the copy:
+#
+#     SAME NODE SET in all 5 .dot files (421 ids each, identical after sort)
+#     pl:v6/prolog/0_body_walk.pl#walk_body/3 sits in [v6/tsv2/cli/bop.ts]
+#       but its path is [v6/prolog/0_body_walk.pl]
+#     ... 265 such lines ...
+#     265 misplaced node line(s)
+#     FAIL  the fs-td .dot nests a node under the wrong directory
+#
+#   THE FIRST LINE IS THE POINT. The same-node-set assertion PASSED the
+#   sabotage, and so would a cluster count, a node count, an orphan check and
+#   the reachability answer: every node is still drawn exactly once, every edge
+#   still lands, the graph is unchanged. Only a check that compares each node's
+#   ENCLOSING CLUSTER CHAIN against its own path can see a node in the wrong
+#   box, which is why the nesting check exists and why it is total rather than
+#   a sample.
+#
+# ── HOW THE ratio TABLE IN THE PROGRAM HEADER WAS MEASURED ───────────────────
+#
+#   For each of the four new .dot files, with the rail's own output on disk:
+#
+#     sed 's/^  ratio=.*/  ratio=0.7;/' DATAFLOW-ATLAS-fs-lr.dot > /tmp/t.dot
+#     dot -Tsvg /tmp/t.dot -o /tmp/t.svg
+#     grep -m1 -o 'width="[0-9]*pt" height="[0-9]*pt"' /tmp/t.svg
+#
+#   and with `grep -v '^  ratio='` for the unlevered row.
 
 set -uo pipefail
 
@@ -64,8 +130,18 @@ TSV2="$(cd "$SCRIPT_DIR/.." && pwd)"
 V6="$(cd "$TSV2/.." && pwd)"
 ROOT="$(cd "$V6/.." && pwd)"
 PROGRAM="${ATLAS_PROGRAM:-$V6/dl/fixtures/dataflow-atlas.dl6}"
-DOT_OUT="$V6/DATAFLOW-ATLAS.dot"
-SVG_OUT="$V6/DATAFLOW-ATLAS.svg"
+
+# THE FIVE DRAWINGS, in the same order `variant/7` declares them. The names are
+# repeated here rather than read out of the program because this script has to
+# check the files BEFORE it can trust anything the program says about them.
+VARIANTS="lang flat_td flat_lr fs_td fs_lr"
+DOT_lang="$V6/DATAFLOW-ATLAS.dot";         SVG_lang="$V6/DATAFLOW-ATLAS.svg"
+DOT_flat_td="$V6/DATAFLOW-ATLAS-flat-td.dot"; SVG_flat_td="$V6/DATAFLOW-ATLAS-flat-td.svg"
+DOT_flat_lr="$V6/DATAFLOW-ATLAS-flat-lr.dot"; SVG_flat_lr="$V6/DATAFLOW-ATLAS-flat-lr.svg"
+DOT_fs_td="$V6/DATAFLOW-ATLAS-fs-td.dot";     SVG_fs_td="$V6/DATAFLOW-ATLAS-fs-td.svg"
+DOT_fs_lr="$V6/DATAFLOW-ATLAS-fs-lr.dot";     SVG_fs_lr="$V6/DATAFLOW-ATLAS-fs-lr.svg"
+dot_of() { eval "printf '%s' \"\$DOT_$1\""; }
+svg_of() { eval "printf '%s' \"\$SVG_$1\""; }
 MD_OUT="$V6/DATAFLOW-ATLAS.md"
 SERVE="$TSV2/serve/main.ts"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/atlas.XXXXXX")"
@@ -154,6 +230,7 @@ status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @
 # reachability answers, the integrity check, and the three effect receipts.
 RELS="ts_def_row pl_call_row goal_mention sql_touch cli_command extract_record"
 RELS="$RELS atlas_node atlas_edge edge_without_node cycle_node longest_span"
+RELS="$RELS path_dir fs_unplaced fs_dir_too_deep variant_clusters variant_canvas"
 RELS="$RELS dot_receipt md_receipt render_receipt"
 
 fetch_all() {
@@ -184,10 +261,14 @@ COMPLETE='(.ts_def_row.rows | length) > 0
   and (.extract_record.rows | length) > 0
   and (.atlas_node.rows | length) > 0
   and (.atlas_edge.rows | length) > 0
+  and (.path_dir.rows | length) > 0
   and (.longest_span.rows | length) == 1
-  and (.dot_receipt.rows | length) == 1
+  and (.variant_clusters.rows | length) == 5
+  and (.variant_canvas.rows | length) == 5
+  and (.dot_receipt.rows | length) == 5
   and (.md_receipt.rows | length) == 1
-  and (.render_receipt.rows | length) == 1 and .render_receipt.rows[0][0] == "rendered"'
+  and (.render_receipt.rows | length) == 5
+  and ([.render_receipt.rows[] | select(.[1] == "rendered")] | length) == 5'
 
 settle() {
   local previous="" current settled=0 attempt
@@ -207,8 +288,10 @@ settle() {
 settle
 stop_server
 
-[ -s "$DOT_OUT" ] || die "no .dot was written: $DOT_OUT"
-[ -s "$SVG_OUT" ] || die "no .svg was rendered: $SVG_OUT"
+for variant in $VARIANTS; do
+  [ -s "$(dot_of "$variant")" ] || die "no .dot was written for $variant: $(dot_of "$variant")"
+  [ -s "$(svg_of "$variant")" ] || die "no .svg was rendered for $variant: $(svg_of "$variant")"
+done
 [ -s "$MD_OUT" ] || die "no .md was written: $MD_OUT"
 
 # INTEGRITY, checked rather than assumed. `edge_without_node` is derived in the
@@ -219,8 +302,8 @@ orphans="$(jq -r '.edge_without_node.rows | length' "$WORK/rows.json")"
 
 # The reachability stratum carries a hop cap so a future cyclic edge family
 # fails as a bounded wrong number rather than as a hung rail. A node reaching
-# itself means the cap is load-bearing and the longest path is a bound, not an
-# answer, so the rail refuses instead of publishing it.
+# itself means the cap is what stopped the walk and the longest path is a
+# bound, not an answer, so the rail refuses instead of publishing it.
 cycles="$(jq -r '.cycle_node.rows | length' "$WORK/rows.json")"
 [ "$cycles" = 0 ] || die "$cycles node(s) reach themselves; the longest path is a cap, not an answer: $(jq -c '.cycle_node.rows' "$WORK/rows.json")"
 
@@ -232,26 +315,119 @@ pl_rows="$(jq -r '.pl_call_row.rows | length' "$WORK/rows.json")"
 sql_rows="$(jq -r '.sql_touch.rows | length' "$WORK/rows.json")"
 goal_rows="$(jq -r '.goal_mention.rows | length' "$WORK/rows.json")"
 
-say "ATLAS WROTE $DOT_OUT"
-say "ATLAS WROTE $SVG_OUT"
+# The filesystem view's two integrity rels, both derived in the program. A node
+# that lands in no cluster would vanish from two of the five drawings while the
+# other three still showed it; a directory deeper than the unrolled fold would
+# be dropped without a word.
+unplaced="$(jq -r '.fs_unplaced.rows | length' "$WORK/rows.json")"
+[ "$unplaced" = 0 ] || die "$unplaced node(s) belong to no filesystem cluster: $(jq -c '.fs_unplaced.rows' "$WORK/rows.json")"
+too_deep="$(jq -r '.fs_dir_too_deep.rows | length' "$WORK/rows.json")"
+[ "$too_deep" = 0 ] || die "$too_deep director(y|ies) sit below the four unrolled nesting levels; the fold would drop them: $(jq -c '.fs_dir_too_deep.rows' "$WORK/rows.json")"
+
+# ONE GRAPH, FIVE DRAWINGS, and this is where that stops being a claim. A node
+# line is `    "id" [label=...` and an edge line is `  "from" -> "to" [color=`,
+# so requiring `[label=` immediately after the closing quote separates them.
+node_ids_of() { grep -Eo '^[[:space:]]*"[^"]*" \[label=' "$1" | sed -E 's/^[[:space:]]*"(.*)" \[label=$/\1/' | sort; }
+node_ids_of "$(dot_of lang)" >"$WORK/ids.lang"
+lang_id_count="$(wc -l <"$WORK/ids.lang" | tr -d ' ')"
+[ "$lang_id_count" = "$nodes" ] \
+  || die "the language .dot draws $lang_id_count node lines but the graph has $nodes nodes"
+for variant in $VARIANTS; do
+  node_ids_of "$(dot_of "$variant")" >"$WORK/ids.$variant"
+  cmp -s "$WORK/ids.lang" "$WORK/ids.$variant" \
+    || die "the $variant .dot draws a different node id set than the language .dot: $(diff "$WORK/ids.lang" "$WORK/ids.$variant" | head -5)"
+done
+say "  SAME NODE SET in all 5 .dot files ($lang_id_count ids each, identical after sort)"
+
+# THE NESTING IS CHECKED AGAINST THE PATHS, not eyeballed. Walk the fs .dot
+# keeping a stack of cluster labels; every node line must sit inside the exact
+# chain of directory labels its own id spells. Directory labels carry a
+# trailing slash and file labels do not, so the stack concatenated with no
+# separator IS the path: `v6/` `tsv2/` `serve/` `1_hosts.ts`.
+#
+# This is total, not a spot check: every node line in the file is compared, and
+# the count is printed so a rule that stopped emitting node lines cannot pass
+# by checking nothing.
+check_fs_nesting() {
+  awk -v want_checked="$1" '
+    /^[[:space:]]*subgraph cluster_/ { pending = 1; next }
+    pending && /^[[:space:]]*label="/ {
+      label = $0
+      sub(/^[[:space:]]*label="/, "", label)
+      sub(/";$/, "", label)
+      depth++
+      stack[depth] = label
+      pending = 0
+      next
+    }
+    /^[[:space:]]*}$/ { if (depth > 0) depth--; next }
+    /^[[:space:]]*"[^"]*" \[label=/ {
+      id = $0
+      sub(/^[[:space:]]*"/, "", id)
+      sub(/" \[label=.*$/, "", id)
+      here = ""
+      for (i = 1; i <= depth; i++) here = here stack[i]
+      checked++
+      if (id ~ /^(ts|pl):/) {
+        want = id
+        sub(/^(ts|pl):/, "", want)
+        sub(/#.*$/, "", want)
+      } else if (id ~ /^sh:/) {
+        want = id
+        sub(/^sh:/, "", want)
+      } else {
+        if (here !~ /^\(no file\) /) { bad++; print "  " id " sits in [" here "] but names no file"; }
+        next
+      }
+      if (here != want) { bad++; print "  " id " sits in [" here "] but its path is [" want "]"; }
+    }
+    END {
+      if (checked != want_checked) { print "  checked " checked " node lines, expected " want_checked; exit 1 }
+      if (bad > 0) { print "  " bad " misplaced node line(s)"; exit 1 }
+      printf "  FS NESTING: %d node lines, every one inside the cluster chain its path spells\n", checked
+    }' "$2"
+}
+check_fs_nesting "$lang_id_count" "$(dot_of fs_td)" || die "the fs-td .dot nests a node under the wrong directory"
+check_fs_nesting "$lang_id_count" "$(dot_of fs_lr)" || die "the fs-lr .dot nests a node under the wrong directory"
+
+# The flat views must carry no cluster at all; that is the whole point of them.
+for variant in flat_td flat_lr; do
+  stray="$(grep -c 'subgraph cluster_' "$(dot_of "$variant")" || true)"
+  [ "$stray" = 0 ] || die "the $variant .dot carries $stray cluster(s) and is supposed to carry none"
+done
+
 say "ATLAS WROTE $MD_OUT"
 say "  NODES=$nodes EDGES=$edges LONGEST=$longest CYCLES=$cycles ORPHANS=$orphans"
 say "  facts: ts_def=$ts_rows pl_call=$pl_rows sql_touch=$sql_rows goal_mention=$goal_rows"
-say "  dot lines=$(wc -l <"$DOT_OUT" | tr -d ' ') svg bytes=$(wc -c <"$SVG_OUT" | tr -d ' ')"
+for variant in $VARIANTS; do
+  dot_file="$(dot_of "$variant")"
+  svg_file="$(svg_of "$variant")"
+  clusters="$(jq -r --arg v "$variant" '[.variant_clusters.rows[] | select(.[0] == $v) | .[1]][0]' "$WORK/rows.json")"
+  canvas="$(jq -r --arg v "$variant" '[.variant_canvas.rows[] | select(.[0] == $v) | "\(.[1]) x \(.[2])"][0]' "$WORK/rows.json")"
+  say "ATLAS WROTE $dot_file + $svg_file"
+  say "  $variant: dot lines=$(wc -l <"$dot_file" | tr -d ' ') clusters=$clusters canvas=${canvas}pt svg bytes=$(wc -c <"$svg_file" | tr -d ' ')"
+done
 
-# BYTE STABILITY. `ATLAS_SKIP_STABILITY=1` is for the sabotage runs only, where
-# the point is the diff and a second run costs a minute for nothing.
+# BYTE STABILITY, over EVERY .dot rather than the headline one. A variant that
+# folded on a set with no ordinal would flip between runs and the other four
+# would stay still, so the gate digests all five and names the one that moved.
+# `ATLAS_SKIP_STABILITY=1` is for the sabotage runs only, where the point is the
+# diff and a second run costs a minute for nothing.
 if [ "${ATLAS_SKIP_STABILITY:-0}" != 1 ]; then
-  first="$(cksum <"$DOT_OUT")"
-  cp "$DOT_OUT" "$WORK/first.dot"
+  for variant in $VARIANTS; do
+    cp "$(dot_of "$variant")" "$WORK/first.$variant.dot"
+  done
   ATLAS_SKIP_STABILITY=1 ATLAS_PORT="$((PORT + 1))" bash "$0" >"$WORK/second.log" 2>&1 \
     || die "the second run failed: $(tail -20 "$WORK/second.log")"
-  second="$(cksum <"$DOT_OUT")"
-  if [ "$first" != "$second" ]; then
-    diff "$WORK/first.dot" "$DOT_OUT" | head -20
-    die "the .dot is not byte-stable across two runs"
-  fi
-  say "  BYTE STABLE across two runs (cksum $first)"
+  for variant in $VARIANTS; do
+    first="$(cksum <"$WORK/first.$variant.dot")"
+    second="$(cksum <"$(dot_of "$variant")")"
+    if [ "$first" != "$second" ]; then
+      diff "$WORK/first.$variant.dot" "$(dot_of "$variant")" | head -20
+      die "the $variant .dot is not byte-stable across two runs"
+    fi
+    say "  BYTE STABLE $variant (cksum $first)"
+  done
 fi
 
 say "ATLAS HOLDS"
