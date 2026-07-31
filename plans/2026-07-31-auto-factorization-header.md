@@ -44,6 +44,17 @@ re-extract.
 5. **Auto-search**: rank candidate cuts by metric improvement. Start
    exhaustive over small candidate sets (every folder boundary, every
    bridge edge), not heuristic search — smallest correct first.
+6. **Auto-numbering** (user 2026-07-31: "auto cluster and number our
+   files and folder systems"): derive the numeric file prefix
+   (0_types, 1_binds, ...) from toposort depth per file within each
+   folder, and folder ordering from cluster depth. OUTPUT = a proposed
+   rename table (current path -> numbered path) per package, NOT
+   applied renames (renames touch every import; applying is its own
+   arc after user review). Grade: where the derived numbers DISAGREE
+   with the existing hand-assigned prefixes (v6/tsv2/src, v6/dl/src,
+   v6/prolog compile files), each disagreement is either a
+   hand-numbering error or a metric error — classify every one.
+   Ties (same depth) need a stated tiebreak (edge count, then name).
 
 ## Grading references (the answer key problem)
 

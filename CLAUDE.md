@@ -875,6 +875,13 @@ fill_free_slots :590 is the current exact-fill gate).
   deleted; a lab file surviving its landing commit is a defect, not a follow-up.
 
 ### Style notes for this repo
+- **Comment budget law** (user-set 2026-07-31): comments state only constraints
+  the code cannot show. No change-log narrative, no dates/arc/merge references,
+  no restating the next line, no justification-to-reviewer, no essay headers
+  (1-3 line module purpose max). Sabotage/fail-first receipts in TEST headers
+  and scanner-backed @-waivers stay. History belongs in git/plans/ledger, never
+  in source. Applies to every agent at every level; the 2026-07-31 cleanup lane
+  is sweeping existing bloat.
 - **Language vocabulary law** (user-set 2026-07-28): construct names and design
   discussion use ONLY rxjs, prolog, or SQL words. No invented terminology.
   Consequence under review: `only()` -> `latest()` (withLatestFrom), explicit
