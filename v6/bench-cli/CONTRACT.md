@@ -621,15 +621,23 @@ scale would be exactly the v1 asymmetry wearing a different hat.
 are graded now, and two cells the finding could not even list were added
 because the referee reaches them:
 
-| cell | phase 0 | now | tsv2 wall ms |
-|---|---|---|---:|
-| s1/10k | `no_reference` | `identical_vs_reference` | 280.0 |
-| s1/100k | not benched | `identical_vs_reference` | 2610.4 |
-| s2/10k | `no_reference` | `identical_vs_reference` | 153.9 |
-| s2/100k | not benched | `identical_vs_reference` | 1420.7 |
-| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 9928.2 |
+| cell | phase 0 | now | tsv2 wall ms | ticks | stmts | peak RSS MB |
+|---|---|---|---:|---:|---:|---:|
+| s1/10k | `no_reference` | `identical_vs_reference` | 627.2 | 101 | 2316 | 182.0 |
+| s1/100k | not benched | `identical_vs_reference` | 2627.3 | 1001 | 23016 | 485.2 |
+| s2/10k | `no_reference` | `identical_vs_reference` | 156.5 | 101 | 3744 | 177.8 |
+| s2/100k | not benched | `identical_vs_reference` | 1437.1 | 1001 | 37044 | 514.6 |
+| s3/1k | `no_reference` (and `SCALE.md` DNF) | `identical_vs_reference` | 8141.9 | 20 | 500 | 911.6 |
+
+Read the statement column, not the wall: s1 and s2 both hold ~23 statements per
+tick flat from 10k to 100k, which is the P1 incremental emitter's claim being
+re-stated by a different harness. s1/10k is the noisiest cell in the table
+(280-630 ms across runs at the same statement count); `BENCH_RUNS` medians it,
+and it is the one row not to read a 10% movement into.
 
 s3 stays at 1k: its shape is a 2-atom cross join, quadratic on purpose, and
 1000x1000 already produces the 1M combined rows the memory column is there to
-watch (929.7 MB peak RSS against a 512 MB V8 old-space cap — most of that is
-sqlite, outside the heap the flag bounds).
+watch (911.6 MB peak RSS against a 512 MB V8 old-space cap — most of that is
+sqlite, outside the heap the flag bounds; the `SCALE.md` DNF this cell was
+recorded with is gone, and the memory-wall note in `cases.json` now reads as
+history rather than as an expectation).
