@@ -160,7 +160,7 @@ if [ "$EXEC_PROFILE_N" != 0 ]; then
   fi
   echo
   echo "SWI execution profiler: warm N=$EXEC_PROFILE_N, wall sampling at 1000 Hz, all ports"
-  swipl -q -l "$COMPILE_DIR/6_profile.pl" \
+  swipl -q -l "$COMPILE_DIR/../6_profile.pl" \
     -g "execution_profile_dl6('$SCRATCH/$EXEC_PROFILE_N.dl6','$SCRATCH/profile.ts')" \
     -g halt
 fi

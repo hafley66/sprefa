@@ -17,8 +17,8 @@
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2 ]).
-:- use_module('../1_host_expand', [compile_host_decl/2]).
-:- use_module(registry, [bind_executor/2, host_execution/3]).
+:- use_module('1_host_expand', [compile_host_decl/2]).
+:- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

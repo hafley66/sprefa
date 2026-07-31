@@ -12,7 +12,7 @@
 %
 % Run: swipl -q -l compile_all.pl -g "one(cell_arrival__int__int)" -g halt
 
-:- use_module('../../compile/compile', [compile_dl6/2]).
+:- use_module('../../compile', [compile_dl6/2]).
 :- use_module(library(http/json)).
 
 one(Id) :-

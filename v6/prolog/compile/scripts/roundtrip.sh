@@ -42,8 +42,8 @@ trap 'rm -f "$GRADER"' EXIT
 
 cat > "$GRADER" <<PLEOF
 :- use_module('$COMPILE_DIR/parse_dl').
-:- use_module('$COMPILE_DIR/print_dl').
-:- use_module('$COMPILE_DIR/compile', [program_plan/2]).
+:- use_module('$PROLOG_DIR/print_dl').
+:- use_module('$PROLOG_DIR/compile', [program_plan/2]).
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(filesex)).

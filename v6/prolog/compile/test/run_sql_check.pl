@@ -36,8 +36,8 @@
 :- use_module(library(process)).
 :- use_module(library(readutil)).
 :- use_module(library(http/json)).
-:- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
-:- use_module('../lower', [ lower_program/2, boot_statements/5 ]).
+:- use_module('../../compile', [ read_fixture_term/4, program_plan/2 ]).
+:- use_module('../../lower', [ lower_program/2, boot_statements/5 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

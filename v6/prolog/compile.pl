@@ -19,20 +19,20 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('../0_refusal_messages', []).
-:- use_module('../1_expansion', [expand_program/3]).
-:- use_module('../1_host_expand', [prepare_program/5]).
+:- use_module('0_refusal_messages', []).
+:- use_module('1_expansion', [expand_program/3]).
+:- use_module('1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
 :- use_module('3_clock_check', [check_clock_program/1]).
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
 :- use_module(library(tableutil), [table_statistics/2]).
-:- use_module(parse_dl,
+:- use_module('compile/parse_dl',
               [ parse_dl_file/4,
                 parse_dl_line_for_reason/2
               ]).
-:- use_module('../0_type_plane', [world_row_shape_violation/3]).
+:- use_module('0_type_plane', [world_row_shape_violation/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

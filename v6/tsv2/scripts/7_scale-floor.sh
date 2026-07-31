@@ -108,7 +108,7 @@ if ! swipl -q -s "$bench_dir/scale-gen.pl" \
   exit 1
 fi
 
-if ! swipl -q -l "$v6_dir/prolog/compile/compile.pl" \
+if ! swipl -q -l "$v6_dir/prolog/compile.pl" \
      -g "compile_fixture(scale_bench,'$fixture','$generated',emit_ts:emit_program),halt" \
      > /dev/null 2> "$scratch/compile.err"; then
   echo "scale-floor: compile_fixture/4 failed for $shape/$rows" >&2

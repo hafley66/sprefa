@@ -21,7 +21,7 @@ trap cleanup EXIT
 
 cd "$ROOT_DIR"
 
-swipl -q -l "$V6_DIR/prolog/compile/compile.pl" \
+swipl -q -l "$V6_DIR/prolog/compile.pl" \
   -g "compile_dl6('$PROGRAM', '$GENERATED')" \
   -g halt >/dev/null
 

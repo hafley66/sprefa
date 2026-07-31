@@ -138,14 +138,14 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze).
-:- use_module(registry, [expression/5, body_surface_for_term/6]).
-:- use_module('../0_type_plane',
+:- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
+:- use_module('0_type_plane',
               [ type_definitions/2, type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
                 relation_value_shape/3, canonical_json_text/2 ]).
-:- use_module('../0_body_walk', [walk_body/3, body_relation_atoms/4]).
-:- use_module('../conformance/body', [rel_ref/2]).
+:- use_module('0_body_walk', [walk_body/3, body_relation_atoms/4]).
+:- use_module('conformance/body', [rel_ref/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).

@@ -22,7 +22,7 @@
                 restore_phase_outcome/1,
                 write_compile_trace/2
               ]).
-:- use_module(parse_dl, [parse_dl_file/4]).
+:- use_module('compile/parse_dl', [parse_dl_file/4]).
 :- use_module(lower, [lower_program/2, boot_statements/5]).
 :- use_module(emit_ts, [emit_program/5]).
 

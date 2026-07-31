@@ -16,8 +16,8 @@
               [type_definitions/2, column_storage/3,
                type_cycle_witness/2, canonical_json_text/2]).
 :- use_module('../../1_host_expand', [prepare_program/5]).
-:- use_module('../../compile/compile', [program_plan/2]).
-:- use_module('../../compile/lower', [lower_program/2]).
+:- use_module('../../compile', [program_plan/2]).
+:- use_module('../../lower', [lower_program/2]).
 :- use_module('../../compile/parse_dl', [parse_dl/4]).
 :- use_module(library(process)).
 :- use_module(library(readutil), [read_file_to_string/3]).

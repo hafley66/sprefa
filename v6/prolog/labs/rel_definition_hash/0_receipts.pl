@@ -6,10 +6,10 @@
 % Run:
 %   swipl -q -l v6/prolog/labs/rel_definition_hash/0_receipts.pl -g go -g halt
 
-:- use_module('../../compile/compile',
+:- use_module('../../compile',
               [read_fixture_term/4, program_plan/2]).
-:- use_module('../../compile/lower', [lower_program/2]).
-:- use_module('../../compile/analyze',
+:- use_module('../../lower', [lower_program/2]).
+:- use_module('../../analyze',
               [body_ref_uses/2, rule_head_ref/2,
                rule_is_edge/1, rule_is_level/1]).
 :- use_module('../../compile/registry',

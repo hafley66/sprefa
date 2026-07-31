@@ -48,7 +48,7 @@ echo "=== stage 1: compile sweep ==="
 # cliff, not a corpus -- and because the leg's honest wall is small enough that
 # a tight multiple of it would be measuring machine load rather than the sweep.
 capped "${SWEEP_COMPILE_BUDGET_S:-900}" "stage 1 compile sweep" \
-  swipl -q -l "$COMPILE_DIR/sweep.pl" -g 'set_prolog_flag(gc,false), sweep' -g halt
+  swipl -q -l "$COMPILE_DIR/../sweep.pl" -g 'set_prolog_flag(gc,false), sweep' -g halt
 
 echo ""
 echo "=== stage 2: oracle dump ==="

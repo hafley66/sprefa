@@ -80,7 +80,7 @@ compile-speed:
 	cd {{v6}}/prolog/compile && bash scripts/1_compile_speed.sh
 
 compile-profile program:
-	program_name="{{program}}"; program_name="${program_name#program=}"; profile_scratch="$(mktemp -d "${TMPDIR:-/tmp}/sprefa-compile-profile.XXXXXX")"; trap 'rm -rf "$profile_scratch"' EXIT; cd {{v6}}/prolog/compile && {{capped}} 120 swipl -q -l 6_profile.pl -g "compile_profile:execution_profile_dl6('{{v6}}/dl/fixtures/$program_name.dl6','$profile_scratch/$program_name.ts')" -g halt
+	program_name="{{program}}"; program_name="${program_name#program=}"; profile_scratch="$(mktemp -d "${TMPDIR:-/tmp}/sprefa-compile-profile.XXXXXX")"; trap 'rm -rf "$profile_scratch"' EXIT; cd {{v6}}/prolog/compile && {{capped}} 120 swipl -q -l ../6_profile.pl -g "compile_profile:execution_profile_dl6('{{v6}}/dl/fixtures/$program_name.dl6','$profile_scratch/$program_name.ts')" -g halt
 
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
