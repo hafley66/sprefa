@@ -48,7 +48,11 @@
 % markers `rel(N)`) become unsupported_surface(...) findings, collected and
 % returned, never silently dropped.
 
-:- module(parse_dl, [ parse_dl/4, parse_dl_file/4 ]).
+:- module(parse_dl,
+          [ parse_dl/4,
+            parse_dl_file/4,
+            parse_dl_line_for_reason/2
+          ]).
 
 :- set_prolog_flag(back_quotes, codes).
 
@@ -65,6 +69,10 @@
 :- dynamic(finding_fact/1).
 :- dynamic(rel_column_order_fact/2).
 :- dynamic(host_signature_fact/3).
+:- dynamic(parse_input_codes_fact/1).
+:- dynamic(parse_input_length_fact/1).
+:- dynamic(parse_furthest_index_fact/1).
+:- dynamic(source_statement_fact/3).
 
 record_finding(F) :- assertz(finding_fact(F)).
 record_column_order(Name, Cols) :-
@@ -79,14 +87,32 @@ record_host_signature(Name, Inputs, Outputs) :-
 
 parse_dl_file(FilePath, Prog, Bindings, Findings) :-
     read_file_to_codes(FilePath, Codes, []),
-    parse_dl(Codes, Prog, Bindings, Findings).
+    parse_dl_source(FilePath, Codes, Prog, Bindings, Findings).
 
 parse_dl(Codes, Prog, Bindings, Findings) :-
+    parse_dl_source(none, Codes, Prog, Bindings, Findings).
+
+parse_dl_source(_Source, Codes, _Prog, _Bindings, _Findings) :-
+    var(Codes),
+    !,
+    throw(dl_parse_error(invalid_input, position(1, 1))).
+parse_dl_source(_Source, Codes, Prog, Bindings, Findings) :-
     retractall(finding_fact(_)),
     retractall(rel_column_order_fact(_, _)),
     retractall(host_signature_fact(_, _, _)),
+    retractall(parse_input_codes_fact(_)),
+    retractall(parse_input_length_fact(_)),
+    retractall(parse_furthest_index_fact(_)),
+    retractall(source_statement_fact(_, _, _)),
+    assertz(parse_input_codes_fact(Codes)),
+    length(Codes, InputLength),
+    assertz(parse_input_length_fact(InputLength)),
+    assertz(parse_furthest_index_fact(0)),
     statements(Codes, Left, [], VarsFinal, ParsedDecls, ParsedRules, Queries),
-    ( Left == [] -> true ; throw(dl_parse_error(trailing_input(Left))) ),
+    ( Left == []
+    -> true
+    ;  mark_furthest(Left), parse_failure(trailing_input)
+    ),
     normalize_relation_value_decls(ParsedDecls, Decls),
     normalize_host_calls(Decls, ParsedRules, Rules),
     maplist(swap_pair, VarsFinal, BindingsRev),
@@ -98,6 +124,90 @@ parse_dl(Codes, Prog, Bindings, Findings) :-
     -> Prog = prog(Decls, Rules)
     ; Prog = program(Decls, Rules, Queries)
     ).
+
+parse_failure(Reason) :-
+    furthest_line_col(Line, Column),
+    throw(dl_parse_error(Reason, position(Line, Column))).
+
+mark_furthest(Suffix) :-
+    parse_input_length_fact(InputLength),
+    length(Suffix, RemainingLength),
+    ConsumedIndex is InputLength - RemainingLength,
+    ( parse_furthest_index_fact(FurthestIndex), ConsumedIndex > FurthestIndex
+    -> retractall(parse_furthest_index_fact(_)),
+       assertz(parse_furthest_index_fact(ConsumedIndex))
+    ;  true
+    ).
+
+furthest_line_col(Line, Column) :-
+    parse_furthest_index_fact(FurthestIndex),
+    parse_input_codes_fact(Codes),
+    length(Prefix, FurthestIndex),
+    append(Prefix, _, Codes),
+    prefix_line_col(Prefix, 1, 1, Line, Column).
+
+prefix_line_col([], Line, Column, Line, Column).
+prefix_line_col([0'\n | Rest], Line, _Column, FinalLine, FinalColumn) :-
+    !,
+    NextLine is Line + 1,
+    prefix_line_col(Rest, NextLine, 1, FinalLine, FinalColumn).
+prefix_line_col([_ | Rest], Line, Column, FinalLine, FinalColumn) :-
+    NextColumn is Column + 1,
+    prefix_line_col(Rest, Line, NextColumn, FinalLine, FinalColumn).
+
+prolog:message(dl_parse_error(Reason, position(Line, Column))) -->
+    [ 'parse error at line ~d, column ~d: ~w'-[Line, Column, Reason] ].
+
+parse_dl_line_for_reason(Reason, Line) :-
+    findall(Ref, reason_relation_reference(Reason, Ref), References0),
+    sort(References0, References),
+    ( member(Ref, References), source_statement_fact(Ref, rule, Line)
+    -> true
+    ;  member(Ref, References), source_statement_fact(Ref, decl, Line)
+    -> true
+    ).
+
+reason_relation_reference(Reason, Name/Arity) :-
+    sub_term(Name/Arity, Reason),
+    atom(Name),
+    integer(Arity).
+
+record_statement_source_lines(decl_list, Declarations, Line) :-
+    record_declaration_source_lines(Declarations, Line).
+record_statement_source_lines(rule, Rule, Line) :-
+    findall(Name/Arity,
+            ( sub_term(Term, Rule),
+              compound(Term),
+              functor(Term, Name, Arity),
+              atom(Name)
+            ),
+            References0),
+    sort(References0, References),
+    record_source_references(References, rule, Line).
+record_statement_source_lines(_, _, _).
+
+record_source_references([], _, _).
+record_source_references([Reference | Rest], Kind, Line) :-
+    assertz(source_statement_fact(Reference, Kind, Line)),
+    record_source_references(Rest, Kind, Line).
+
+record_declaration_source_lines([], _).
+record_declaration_source_lines([Declaration | Rest], Line) :-
+    ( declaration_source_ref(Declaration, Ref)
+    -> assertz(source_statement_fact(Ref, decl, Line))
+    ;  true
+    ),
+    record_declaration_source_lines(Rest, Line).
+
+declaration_source_ref(kind(Ref, _), Ref).
+declaration_source_ref(keyed(Ref, _), Ref).
+declaration_source_ref(keep(Ref, _), Ref).
+declaration_source_ref(type_decl(Name, Specs), Name/Arity) :-
+    length(Specs, Arity).
+declaration_source_ref(col_type(Ref, _, _), Ref).
+declaration_source_ref(sh_decl(Name, Inputs, Outputs, _), Name/Arity) :-
+    append(Inputs, Outputs, Columns),
+    length(Columns, Arity).
 
 swap_pair(Name-Var, Name=Var).
 
@@ -158,9 +268,14 @@ normalize_host_body(_, Item, Item).
 
 statements(S0, S, Vars0, Vars, Decls, Rules, Queries) :-
     skip_ws(S0, S1),
+    mark_furthest(S1),
     ( S1 == []
     -> Decls = [], Rules = [], Queries = [], Vars = Vars0, S = S1
-    ; ( statement(Kind, Item, Vars0, Vars1, S1, S2) -> true ; throw(dl_parse_error(statement, S1)) ),
+    ; ( statement(Kind, Item, Vars0, Vars1, S1, S2)
+      -> line_at_suffix(S1, StatementLine),
+         record_statement_source_lines(Kind, Item, StatementLine)
+      ;  mark_furthest(S1), parse_failure(statement)
+      ),
       statements(S2, S, Vars1, Vars, Decls1, Rules1, Queries1),
       ( Kind == decl_list -> append(Item, Decls1, Decls), Rules = Rules1, Queries = Queries1
       ; Kind == rule -> Decls = Decls1, Rules = [Item | Rules1], Queries = Queries1
@@ -169,10 +284,20 @@ statements(S0, S, Vars0, Vars, Decls, Rules, Queries) :-
       )
     ).
 
+line_at_suffix(Suffix, Line) :-
+    parse_input_length_fact(InputLength),
+    length(Suffix, RemainingLength),
+    PrefixLength is InputLength - RemainingLength,
+    parse_input_codes_fact(Codes),
+    length(Prefix, PrefixLength),
+    append(Prefix, _, Codes),
+    prefix_line_col(Prefix, 1, 1, Line, _Column).
+
 % ═══ whitespace + `#` line comments (plain predicate, not `-->`, since the
 % rest of this parser is written with explicit S0/S args throughout) ════════
 
 skip_ws(S0, S) :-
+    mark_furthest(S0),
     ( S0 = [C | S1], (code_type(C, space) ; C == 0'\n ; C == 0'\r)
     -> skip_ws(S1, S)
     ; S0 = [0'# | S1]
@@ -181,6 +306,7 @@ skip_ws(S0, S) :-
     ).
 
 skip_to_eol(S0, S) :-
+    mark_furthest(S0),
     ( S0 = [C | S1], C \== 0'\n -> skip_to_eol(S1, S)
     ; S0 = [0'\n | S1] -> S = S1
     ; S = S0
@@ -190,8 +316,11 @@ ws0(S0, S) :- skip_ws(S0, S).
 
 % ═══ literal punctuation / keyword matching ════════════════════════════════
 
-lit_dcg([]) --> [].
-lit_dcg([C | Cs]) --> [C], lit_dcg(Cs).
+lit_dcg([], S, S) :-
+    mark_furthest(S).
+lit_dcg([C | Cs], [C | Rest], S) :-
+    mark_furthest([C | Rest]),
+    lit_dcg(Cs, Rest, S).
 
 % whole-word keyword match: literal Codes followed by a non-identifier char
 % (or end of input), so e.g. `rel` never fires on `related` and `sh` never
@@ -210,6 +339,7 @@ peek(C, S, S) :- S = [C | _], !.
 % see the module header's superseding-decision note.
 
 ident(Name, S0, S) :-
+    mark_furthest(S0),
     S0 = [C0 | Rest0],
     ( code_type(C0, alpha) ; C0 == 0'_ ), !,
     ident_rest_codes(Rest0, RestCodes, S),
@@ -223,6 +353,7 @@ ident_rest_codes(S, [], S).
 % ═══ numbers ════════════════════════════════════════════════════════════════
 
 integer_lit(Value, S0, S) :-
+    mark_furthest(S0),
     ( S0 = [0'- | S1] -> Neg = true, S2 = S1 ; Neg = false, S2 = S0 ),
     S2 = [D0 | _], code_type(D0, digit), !,
     digits(S2, Digits, S),
@@ -230,11 +361,12 @@ integer_lit(Value, S0, S) :-
     ( Neg == true -> Value is -Magnitude ; Value = Magnitude ).
 
 digits([C | Cs], [C | More], S) :- code_type(C, digit), !, digits(Cs, More, S).
-digits(S, [], S).
+digits(S, [], S) :- mark_furthest(S).
 
 % A float token contains a decimal point or exponent, so integer spelling
 % remains on integer_lit/3. Only finite IEEE-754 values enter the AST.
 float_lit(Value, S0, S) :-
+    mark_furthest(S0),
     phrase(float_codes(Codes), S0, S),
     number_codes(Value, Codes),
     float(Value),
@@ -282,19 +414,23 @@ exponent_sign([]) --> [].
 % '...' is one literal quote, the plain Prolog convention).
 
 quoted_atom_lit(Atom, S0, S) :-
+    mark_furthest(S0),
     S0 = [0'\' | S1], !,
     quoted_chars(0'\', S1, Codes, S),
     atom_codes(Atom, Codes).
 
 string_lit(Str, S0, S) :-
+    mark_furthest(S0),
     S0 = [0'" | S1], !,
     quoted_chars(0'", S1, Codes, S),
     string_codes(Str, Codes).
 
 quoted_chars(Quote, [Quote, Quote | Rest], [Quote | More], S) :- !,
+    mark_furthest([Quote, Quote | Rest]),
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [Quote | Rest], [], Rest) :- !.
 quoted_chars(Quote, [0'\\, Esc | Rest], Codes, S) :- !,
+    mark_furthest([0'\\, Esc | Rest]),
     escape_codes(Quote, Esc, Codes, More),
     quoted_chars(Quote, Rest, More, S).
 quoted_chars(Quote, [C | Rest], [C | More], S) :-

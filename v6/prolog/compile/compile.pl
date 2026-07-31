@@ -41,7 +41,10 @@
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
-:- use_module(parse_dl, [parse_dl_file/4]).
+:- use_module(parse_dl,
+              [ parse_dl_file/4,
+                parse_dl_line_for_reason/2
+              ]).
 :- use_module('../0_type_plane', [world_row_shape_violation/3]).
 
 :- op(1150, xfx, <-).
@@ -207,8 +210,24 @@ compile_dl6(File, OutFile) :-
     ),
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
-    compile_program(Name, fixture(Name, Prog, [], [], []), Bindings,
-                    [], OutFile, emit_ts:emit_program).
+    catch(
+        compile_program(Name, fixture(Name, Prog, [], [], []), Bindings,
+                        [], OutFile, emit_ts:emit_program),
+        Error,
+        throw_text_door_error(File, Error)
+    ).
+
+throw_text_door_error(_File, Error) :-
+    Error = unsupported_construct(at(_, _, _)),
+    !,
+    throw(Error).
+throw_text_door_error(File, unsupported_construct(Reason)) :-
+    ( parse_dl_line_for_reason(Reason, Line)
+    -> throw(unsupported_construct(at(File, Line, Reason)))
+    ;  throw(unsupported_construct(Reason))
+    ).
+throw_text_door_error(_File, Error) :-
+    throw(Error).
 
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
     program_plan(Term-Bindings, Plan),
