@@ -54,6 +54,10 @@ bench-printk-on linux:
 crawl-bench:
     nice -n 19 bash "{{repo}}/v6/tsv2/scripts/crawl-bench.sh"
 
+# generate DEVLOG.md from the read-only chat_log ledgers through the dl6 rail
+devlog:
+    bash "{{repo}}/v6/tsv2/scripts/devlog.sh"
+
 # remove scratch dbs
 clean-db:
     rm -f /tmp/dl-*.db* /tmp/dlbench.db*
