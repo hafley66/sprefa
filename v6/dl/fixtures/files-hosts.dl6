@@ -71,3 +71,45 @@ rel want_at(rev: text, glob: text).
 rel file(path: text, digest: text).
 file(path, digest) <- want(glob), files(glob, path, digest).
 file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
+
+# ── the repo-scoped pair ─────────────────────────────────────────────────────
+#
+# RULED: `repo_column_spelling = distinct_name_hosts` (rulings.pl, user: "no
+# magic strings repeated all the time since we dont have defaults or nulls").
+# A host relation is NAME-KEYED -- one name, one demand rel, one response rel --
+# so "optional leading column" is not a thing that can exist here: two arities
+# under one name is two column sets with one place to live, which is exactly
+# the miscompile the duplicate-host-name refusal now closes. The other candidate
+# (a REQUIRED leading repo column, cwd spelled '.') was rejected by the ruling:
+# every single-repo call site would carry a literal '.' that means nothing.
+#
+# So the repo case is its OWN NAME, and the two hosts above are byte-untouched.
+# The precedent is already in the tree: goldens/multirepo_crawl's repo_grep_at
+# takes a root column and spells `cd '{root}'`. These two spell `git -C`, which
+# is the same move without the subshell.
+#
+# WHAT DOES NOT TRAVEL: the ignore semantics, the digest source and the cache
+# lifetime are identical to the unscoped pair, because the commands are the same
+# commands. What changes is only WHERE git runs, and that is one input column.
+#
+# repo is an IDENTITY input on both: it is part of what the answer is about, it
+# returns on the response row, and two repos asking the same glob are two
+# witnesses and two subprocesses (they must be -- the answers differ).
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+
+sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+rel want_repo(repo: text, glob: text).
+rel want_repo_at(repo: text, rev: text, glob: text).
+
+# A SEPARATE rel, not more clauses of `file`: a path is only a key alongside the
+# repository it is in, and two repos routinely hold the same path. Folding them
+# into `file(path, digest)` would make one repo's row indistinguishable from the
+# other's, which is the whole reason repo is a column rather than a cwd.
+rel repo_file(repo: text, path: text, digest: text).
+repo_file(repo, path, digest) <-
+  want_repo(repo, glob), repo_files(repo, glob, path, digest).
+repo_file(repo, path, digest) <-
+  want_repo_at(repo, rev, glob), repo_files_at(repo, rev, glob, path, digest).

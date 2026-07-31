@@ -264,11 +264,24 @@ function runSprefaExtract(host: string, commandLine: string, env: Record<string,
 }
 
 /** Executor registry. `sprefa_extract` retains the declaration's current
- * subprocess command while isolating the V6.2 process boundary from DL6. */
+ * subprocess command while isolating the V6.2 process boundary from DL6.
+ * `sprefa_extract_repo` is the repo-scoped twin (ruling repo_column_spelling =
+ * distinct_name_hosts): same subprocess, different declared contract, and the
+ * compiler picks between them from the template (registry.pl host_execution). */
 export const HostExecutors: ReadonlyMap<string, HostExecutor> = new Map([
   ["shell", runShellLine],
   ["sprefa_extract", runSprefaExtract],
+  ["sprefa_extract_repo", runSprefaExtract],
 ]);
+
+/**
+ * The executors whose invocations may be FOLDED (see groupInvocations). This is
+ * a set and not a `=== "sprefa_extract"` test because the repo-scoped twin
+ * earns the fold on the same argument -- its command is a pure read of a file
+ * that the demand row already names -- and a name test that silently excluded
+ * it would have cost one subprocess per named projection with nothing saying so.
+ */
+const ApplicativeExecutors: ReadonlySet<string> = new Set(["sprefa_extract", "sprefa_extract_repo"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Output decode. Three shapes, tried in order: a JSON array of objects, JSON
@@ -466,16 +479,16 @@ function invocationKey(demand: HostDemand): string {
 }
 
 /**
- * `sprefa_extract` is applicative at one engine frontier: named projections
- * with the same command and ordered inputs read the same stdout. Generic shell
- * declarations remain singleton invocations because their commands may carry
- * effects even when their text and inputs happen to match.
+ * The `sprefa_extract` family is applicative at one engine frontier: named
+ * projections with the same command and ordered inputs read the same stdout.
+ * Generic shell declarations remain singleton invocations because their
+ * commands may carry effects even when their text and inputs happen to match.
  */
 function groupInvocations(demands: readonly HostDemand[]): readonly HostInvocation[] {
   const groups: HostInvocation[] = [];
   const extractGroupByKey = new Map<string, HostDemand[]>();
   for (const demand of demands) {
-    if (demand.plan.execution !== "sprefa_extract") {
+    if (!ApplicativeExecutors.has(demand.plan.execution)) {
       groups.push({ demands: [demand] });
       continue;
     }
