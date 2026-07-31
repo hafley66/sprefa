@@ -3,6 +3,7 @@
 :- module(clock_history,
           [ historical_bug_class/5,
             historical_bug_program/2,
+            historical_bug_fixed_twin/2,
             historical_clock_receipt/3
           ]).
 
@@ -55,6 +56,28 @@ historical_bug_class(
     not_provable,
     'Empty-group count policy belongs to aggregate semantics; both zero rows and one count-zero row inhabit B.').
 
+% ── the 2026-07-31 legs round ──────────────────────────────────────────────
+%
+% Three classes the checker had never been replayed against. Each is graded
+% by what the checker SAYS, not by whether some suite is green: a12 and d1 by
+% a label that appears on the wrong program and is absent from the right one,
+% c2 by an inferred grade paired with the observed tick.
+historical_bug_class(
+    a12, marker_stops_backlog_replay,
+    oracle_emitter_golden,
+    labelled_ring_discriminates,
+    'The unmarked twin reads its second atom in ring Z as a trigger, so a late arrival replays the whole banked backlog; latest() reads it in ring B as a sample. The dependency projection carries the difference and the multi-trigger boundary appears only on the unmarked twin.').
+historical_bug_class(
+    c2, same_tick_transition_collapse,
+    oracle_emitter_golden,
+    runtime_clock_crosscheck,
+    'The update arm reads a departure at grade 1 and its keyed source in ring B. Ring B holds no per-tick multiplicity, so N-1 of N same-tick transitions is not a loss the ring can express; the checker owns the +1 placement and pairs it with the observed tick.').
+historical_bug_class(
+    d1, arm_absence_over_edge_headed_rel,
+    no_general_check,
+    labelled_boundary,
+    'not(Atom) in an arm is a zero-test against a plane. Over a level-headed rel the plane is frozen before edges and the arm is order-independent; over an edge-headed rel a later occurrence in one batch tests what an earlier one wrote. The checker names the second case and stays silent on the first.').
+
 historical_bug_program(
     a2,
     prog([ kind(left/1, log), keep(left/1, all),
@@ -89,6 +112,42 @@ historical_bug_program(
 historical_bug_program(
     a11,
     prog([], [ (total(count(N)) <- item(N)) ])).
+historical_bug_program(
+    a12,
+    prog([ kind(demand/1, log), keep(demand/1, all),
+           kind(config/1, log), keep(config/1, all),
+           kind(answer/2, log), keep(answer/2, all) ],
+         [ (answer(Demand, Config) <+ demand(Demand), config(Config)) ])).
+historical_bug_program(
+    c2,
+    prog([ keyed(current/2, [1]),
+           kind(changed/3, log), keep(changed/3, all) ],
+         [ (changed(Key, Old, New) <+
+              finalize(current(Key, Old)), current(Key, New)) ])).
+historical_bug_program(
+    d1,
+    prog([ kind(req/1, log), keep(req/1, all),
+           kind(out/1, log), keep(out/1, all) ],
+         [ (out(Item) <+ req(Item), not(out(_))) ])).
+
+% historical_bug_fixed_twin(Id, Program).
+%
+% The program a cold author writes AFTER learning the class. A label that
+% fires on both twins proves nothing; these pin that the checker's output
+% CHANGES when the bug is fixed.
+historical_bug_fixed_twin(
+    a12,
+    prog([ kind(demand/1, log), keep(demand/1, all),
+           kind(config/1, log), keep(config/1, all),
+           kind(answer/2, log), keep(answer/2, all) ],
+         [ (answer(Demand, Config) <+
+              demand(Demand), latest(config(Config))) ])).
+historical_bug_fixed_twin(
+    d1,
+    prog([ kind(req/1, log), keep(req/1, all),
+           kind(out/1, log), keep(out/1, all) ],
+         [ (out(Item) <+ req(Item), not(seen(Item))),
+           (seen(Item) <- req(Item)) ])).
 
 % historical_clock_receipt(Id, Status, Evidence).
 %
@@ -134,3 +193,15 @@ historical_clock_receipt(
     a11,
     not_provable,
     empty_group_policy_requires_aggregate_semantics).
+historical_clock_receipt(
+    a12,
+    labelled_ring_discriminates,
+    trigger_ring_z_versus_sample_ring_b(answer/2, config/1)).
+historical_clock_receipt(
+    c2,
+    runtime_clock_crosscheck,
+    departure_grade_matches_observed_tick(changed/3, clock(current/2, 1))).
+historical_clock_receipt(
+    d1,
+    labelled_boundary,
+    arm_absence_batch_invariance(rule(1, edge, out/1), out/1)).

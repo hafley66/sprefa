@@ -13,7 +13,7 @@
 :- use_module('../../conformance/engine', [check_program/1, run_program/5]).
 :- use_module('3_clock_history',
               [ historical_bug_class/5, historical_bug_program/2,
-                historical_clock_receipt/3 ]).
+                historical_bug_fixed_twin/2, historical_clock_receipt/3 ]).
 
 :- begin_tests(clock_checker).
 
@@ -202,8 +202,14 @@ test(five_cross_plane_classes_are_derived) :-
 
 test(historical_table_has_required_ids_and_programs) :-
     findall(Id, historical_bug_class(Id, _, _, _, _), Ids),
-    Ids == [a2, a4, a5, a6, a7, a8, a9, a11],
-    forall(member(Id, Ids), historical_bug_program(Id, _)).
+    Ids == [a2, a4, a5, a6, a7, a8, a9, a11, a12, c2, d1],
+    forall(member(Id, Ids), historical_bug_program(Id, _)),
+    % A fixed twin is the discriminating half. Every class whose catch is a
+    % LABEL must carry one, or the label proves nothing.
+    forall(( historical_bug_class(Id, _, _, Catch, _),
+             memberchk(Catch, [labelled_ring_discriminates, labelled_boundary])
+           ),
+           historical_bug_fixed_twin(Id, _)).
 
 test(historical_clock_receipt_status_partition_is_exact) :-
     findall(Id-Status,
@@ -217,7 +223,10 @@ test(historical_clock_receipt_status_partition_is_exact) :-
         a7-not_provable,
         a8-not_provable,
         a9-not_provable,
-        a11-not_provable
+        a11-not_provable,
+        a12-labelled_ring_discriminates,
+        c2-runtime_clock_crosscheck,
+        d1-labelled_boundary
       ].
 
 test(historical_clock_catch_partition_is_exact) :-
@@ -232,8 +241,15 @@ test(historical_clock_catch_partition_is_exact) :-
         a7-not_provable,
         a8-not_provable,
         a9-not_provable,
-        a11-not_provable
-      ].
+        a11-not_provable,
+        a12-labelled_ring_discriminates,
+        c2-runtime_clock_crosscheck,
+        d1-labelled_boundary
+      ],
+    % The two tables must agree class-by-class, or the ledger and the
+    % receipts drift apart silently.
+    forall(historical_bug_class(Id, _, _, Catch, _),
+           historical_clock_receipt(Id, Catch, _)).
 
 test(a2_replay_states_named_not_provable_boundary) :-
     historical_bug_program(a2, Program),
@@ -337,6 +353,172 @@ test(a11_replay_labels_grade_zero_aggregate_dependency) :-
     historical_clock_receipt(
       a11, not_provable,
       empty_group_policy_requires_aggregate_semantics).
+
+% ── the 2026-07-31 legs round ──────────────────────────────────────────────
+%
+% Three classes replayed for the first time. Every claim below is a MEASURED
+% number: the runtime legs run the recorded program through the same oracle
+% the conformance corpus uses, and the inferred side is read out of the
+% checker, never written down by hand.
+
+% a12. Same rows, same schedule, one word of difference. The unmarked twin
+% banks two demands and answers BOTH when config finally lands (the backlog
+% replay); the marked twin samples config and answers nothing, because a
+% sample is not a firing. The checker separates them BEFORE either runs:
+% ring Z trigger versus ring B sample, and the multi-trigger boundary is
+% present on one and absent on the other.
+%
+% RED-BEFORE: the discriminating leg is `\+ clock_boundary(Fixed, ...)`
+% together with the ring in the dependency. Delete the `latest(...)` wrapper
+% from the fixed twin and this test goes red on the absence check; make
+% edge_sample carry ring z in registry.pl and it goes red on the projection.
+test(a12_replay_ring_separates_backlog_replay_from_sampling) :-
+    historical_bug_program(a12, Unmarked),
+    historical_bug_fixed_twin(a12, Fixed),
+    check_clock_program(Unmarked),
+    check_clock_program(Fixed),
+    clock_dependencies(Unmarked, UnmarkedDependencies),
+    UnmarkedDependencies ==
+      [ dependency(rule(1, edge, answer/2), config/1, answer/2,
+                   z, n, positive, 0, trigger),
+        dependency(rule(1, edge, answer/2), demand/1, answer/2,
+                   z, n, positive, 0, trigger) ],
+    clock_dependencies(Fixed, FixedDependencies),
+    FixedDependencies ==
+      [ dependency(rule(1, edge, answer/2), config/1, answer/2,
+                   b, n, state, 0, edge_sample),
+        dependency(rule(1, edge, answer/2), demand/1, answer/2,
+                   z, n, positive, 0, trigger) ],
+    once(clock_boundary(
+           Unmarked,
+           not_provable(multi_trigger_batch_invariance(
+                          rule(1, edge, answer/2), [config/1, demand/1])))),
+    \+ clock_boundary(
+         Fixed, not_provable(multi_trigger_batch_invariance(_, _))),
+    historical_clock_receipt(
+      a12, labelled_ring_discriminates,
+      trigger_ring_z_versus_sample_ring_b(answer/2, config/1)),
+    % proof fact: the unmarked head carries a clock under BOTH origins, so a
+    % config arrival is a firing of answer/2; the fixed head carries one.
+    findall(Origin,
+            clock_fact(Unmarked, answer/2, n, clock(Origin, 0), acyclic),
+            UnmarkedOrigins),
+    msort(UnmarkedOrigins, [config/1, demand/1]),
+    findall(Origin,
+            clock_fact(Fixed, answer/2, n, clock(Origin, 0), acyclic),
+            FixedOrigins),
+    FixedOrigins == [demand/1],
+    a12_backlog_runtime_leg(Unmarked, Fixed).
+
+% The runtime half, kept beside the static half so drift between them shows
+% up here rather than in a distant fixture.
+a12_backlog_runtime_leg(Unmarked, Fixed) :-
+    Schedule = [[+demand(a)], [+demand(b)], [+config(one)]],
+    once(run_program(Unmarked, [], Schedule, _, UnmarkedTicks)),
+    UnmarkedTicks ==
+      [ [+demand(a)],
+        [+demand(b)],
+        [+config(one), +answer(a, one), +answer(b, one)],
+        [] ],
+    once(run_program(Fixed, [], Schedule, _, FixedTicks)),
+    FixedTicks == [ [+demand(a)], [+demand(b)], [+config(one)] ].
+
+% c2. The same-tick transition "loss" is the B plane's definition, not a
+% dropped row: current/2 is keyed, so it is ring B and holds no per-tick
+% multiplicity to lose. What the checker owns is the PLACEMENT, and it is the
+% update-arm verdict's +1 exactly: the departure at grade 1 is the only causal
+% path, so changed/3 sits one tick after the replace it reports.
+%
+% RED-BEFORE: set edge_departure's grade to 0 in registry.pl and the inferred
+% clock drops to 0 while the observed tick stays 1, which is the crosscheck
+% this test exists to make.
+test(c2_replay_pairs_departure_grade_with_observed_tick) :-
+    historical_bug_program(c2, Program),
+    check_clock_program(Program),
+    clock_dependencies(Program, Dependencies),
+    Dependencies ==
+      [ dependency(rule(1, edge, changed/3), current/2, changed/3,
+                   b, n, state, 0, edge_sample),
+        dependency(rule(1, edge, changed/3), current/2, changed/3,
+                   z, n, negative, 1, edge_departure) ],
+    % proof facts: the keyed source is ring B at offset 0, the report is ring
+    % N one tick later.
+    once(clock_fact(Program, current/2, b, clock(current/2, 0), acyclic)),
+    once(clock_fact(Program, changed/3, n, InferredClock, acyclic)),
+    historical_clock_receipt(
+      c2, runtime_clock_crosscheck,
+      departure_grade_matches_observed_tick(changed/3, InferredClock)),
+    InferredClock = clock(current/2, 1),
+    % Three values for one key inside tick 2. B keeps the endpoint pair, and
+    % the report lands at tick 3 = the replace tick plus the inferred grade.
+    once(run_program(Program, [],
+                     [ [+current(key, v1)],
+                       [+current(key, v2), +current(key, v3)],
+                       [] ],
+                     Final, DeltaTicks)),
+    DeltaTicks ==
+      [ [+current(key, v1)],
+        [-current(key, v1), +current(key, v3)],
+        [+changed(key, v1, v3)],
+        [] ],
+    Final == [current(key, v3), changed(key, v1, v3)],
+    nth1(ReplaceTick, DeltaTicks, ReplaceDeltas),
+    memberchk(-current(key, v1), ReplaceDeltas),
+    nth1(ReportTick, DeltaTicks, ReportDeltas),
+    memberchk(+changed(key, v1, v3), ReportDeltas),
+    ObservedGrade is ReportTick - ReplaceTick,
+    ObservedGrade =:= 1,
+    !.
+
+% d1. not(Atom) in an arm reads a plane, and which plane is the whole story.
+% Over the arm's own edge-headed head, two rows in ONE batch give two
+% different answers depending on their order. Over a level-headed rel the
+% plane is frozen before edges run and both orders agree. The checker names
+% the first and stays silent on the second.
+%
+% RED-BEFORE: drop the `memberchk(Ref, EdgeHeaded)` guard from the new
+% clock_boundary clause and the level-headed twin gets labelled too, which
+% the absence leg below catches.
+test(d1_replay_labels_arm_absence_only_over_the_edge_headed_plane) :-
+    historical_bug_program(d1, EdgeHeaded),
+    historical_bug_fixed_twin(d1, LevelHeaded),
+    check_clock_program(EdgeHeaded),
+    check_clock_program(LevelHeaded),
+    historical_clock_receipt(d1, labelled_boundary, Evidence),
+    once(clock_boundary(EdgeHeaded, not_provable(Evidence))),
+    Evidence = arm_absence_batch_invariance(rule(1, edge, out/1), out/1),
+    \+ clock_boundary(
+         LevelHeaded, not_provable(arm_absence_batch_invariance(_, _))),
+    % proof fact: both twins place out/1 on req/1's clock at offset 0. The
+    % label is about batch order, not about tick placement.
+    once(clock_fact(EdgeHeaded, out/1, n, clock(req/1, 0), acyclic)),
+    once(clock_fact(LevelHeaded, out/1, n, clock(req/1, 0), acyclic)),
+    d1_order_sensitivity_runtime_leg(EdgeHeaded, LevelHeaded).
+
+% The measurement the label stands on. Same rows, one batch, two orders.
+d1_order_sensitivity_runtime_leg(EdgeHeaded, LevelHeaded) :-
+    once(run_program(EdgeHeaded, [], [[+req(a), +req(b)]], EdgeForward, _)),
+    once(run_program(EdgeHeaded, [], [[+req(b), +req(a)]], EdgeReverse, _)),
+    EdgeForward == [out(a), req(a), req(b)],
+    EdgeReverse == [out(b), req(a), req(b)],
+    once(run_program(LevelHeaded, [], [[+req(a), +req(b)]], LevelForward, _)),
+    once(run_program(LevelHeaded, [], [[+req(b), +req(a)]], LevelReverse, _)),
+    LevelForward == LevelReverse.
+
+% The live corpus carries this shape. json_typed_capture_folds_into_a_keyed_
+% int_total's first-write arm reads not(total(Repo, _)) over its own keyed
+% edge-headed head; its schedule never puts two rows of one key in one batch,
+% so the sensitivity is real and unexercised. This pins that the checker
+% LABELS the ruled program rather than refusing it.
+test(live_keyed_first_write_arm_is_labelled_not_refused) :-
+    Program =
+      prog([ keyed(total/2, [1]), kind(star/2, log), keep(star/2, all) ],
+           [ (total(Repo, Stars) <+ star(Repo, Stars), not(total(Repo, _))) ]),
+    check_clock_program(Program),
+    once(clock_boundary(
+           Program,
+           not_provable(arm_absence_batch_invariance(
+                          rule(1, edge, total/2), total/2)))).
 
 equal_diamond(
   prog([ kind(source/1, log), keep(source/1, all),
