@@ -860,6 +860,10 @@ fill_free_slots :590 is the current exact-fill gate).
   is a defect, never a fix — a permission denial ends the approach, full stop.
 - The coordinator verifies the agent's base sha in its first report and refuses
   work built on any other base (cherry-pick at most, never a history merge).
+- **Lanes never spawn subagents** (user-set 2026-07-31, incident: cleanup lane
+  spawned 8 unknown-model children, 0 commits, 0 receipts, killed by user). A
+  worktree lane does its own edits sequentially; every dispatch prompt states
+  this. Fan-out is the coordinator's call only, on luna/sonnet, never implicit.
 
 ### Lab protocol (user-set 2026-07-27, applies to every agent at every level)
 - **Planner seeds the header first.** Every lab starts from a planner-written contract
