@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -86,18 +89,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "union_size" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_callee_set_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_callee_set_size_sign" ON "__delta_callee_set_size" ("_sign")`,
+  `CREATE INDEX "__delta_callee_set_size_group" ON "__delta_callee_set_size" ("left", "left_size")`,
   `CREATE TEMP TABLE "__frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_callee_set_size_phase" ON "__frontier_callee_set_size" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_callee_set_size_phase" ON "__next_frontier_callee_set_size" ("_phase")`,
   `CREATE TEMP TABLE "__delta_shared_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_shared_count_sign" ON "__delta_shared_count" ("_sign")`,
+  `CREATE INDEX "__delta_shared_count_group" ON "__delta_shared_count" ("left", "right", "shared")`,
   `CREATE TEMP TABLE "__frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_shared_count_phase" ON "__frontier_shared_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_shared_count_phase" ON "__next_frontier_shared_count" ("_phase")`,
   `CREATE TEMP TABLE "__delta_union_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_union_size_sign" ON "__delta_union_size" ("_sign")`,
+  `CREATE INDEX "__delta_union_size_group" ON "__delta_union_size" ("left", "right", "col3")`,
   `CREATE TEMP TABLE "__frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_union_size_phase" ON "__frontier_union_size" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,

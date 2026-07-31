@@ -60,7 +60,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -76,6 +76,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -98,18 +101,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "span_seen" ("start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("start", "end")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finding_sign" ON "__delta_finding" ("_sign")`,
+  `CREATE INDEX "__delta_finding_group" ON "__delta_finding" ("at")`,
   `CREATE TEMP TABLE "__frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_finding_phase" ON "__frontier_finding" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_finding_phase" ON "__next_frontier_finding" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE INDEX "__delta_span_group" ON "__delta_span" ("start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_seen_sign" ON "__delta_span_seen" ("_sign")`,
+  `CREATE INDEX "__delta_span_seen_group" ON "__delta_span_seen" ("start", "end")`,
   `CREATE TEMP TABLE "__frontier_span_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_seen_phase" ON "__frontier_span_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -109,42 +112,49 @@ const ddl: readonly string[] = [
   `CREATE TABLE "scope_done" ("endpoint" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demanded_sign" ON "__delta_demanded" ("_sign")`,
+  `CREATE INDEX "__delta_demanded_group" ON "__delta_demanded" ("col1", "endpoint")`,
   `CREATE TEMP TABLE "__frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demanded_phase" ON "__frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_demanded_phase" ON "__next_frontier_demanded" ("_phase")`,
   `CREATE TEMP TABLE "__delta_fetch_result" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fetch_result_sign" ON "__delta_fetch_result" ("_sign")`,
+  `CREATE INDEX "__delta_fetch_result_group" ON "__delta_fetch_result" ("endpoint", "col2")`,
   `CREATE TEMP TABLE "__frontier_fetch_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fetch_result_phase" ON "__frontier_fetch_result" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fetch_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_fetch_result_phase" ON "__next_frontier_fetch_result" ("_phase")`,
   `CREATE TEMP TABLE "__delta_live_fetch" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_live_fetch_sign" ON "__delta_live_fetch" ("_sign")`,
+  `CREATE INDEX "__delta_live_fetch_group" ON "__delta_live_fetch" ("endpoint")`,
   `CREATE TEMP TABLE "__frontier_live_fetch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_live_fetch_phase" ON "__frontier_live_fetch" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_live_fetch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_live_fetch_phase" ON "__next_frontier_live_fetch" ("_phase")`,
   `CREATE TEMP TABLE "__delta_open_fetch" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_open_fetch_sign" ON "__delta_open_fetch" ("_sign")`,
+  `CREATE INDEX "__delta_open_fetch_group" ON "__delta_open_fetch" ("endpoint")`,
   `CREATE TEMP TABLE "__frontier_open_fetch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_open_fetch_phase" ON "__frontier_open_fetch" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_open_fetch" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_open_fetch_phase" ON "__next_frontier_open_fetch" ("_phase")`,
   `CREATE TEMP TABLE "__delta_phase" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_phase_sign" ON "__delta_phase" ("_sign")`,
+  `CREATE INDEX "__delta_phase_group" ON "__delta_phase" ("endpoint", "col2")`,
   `CREATE TEMP TABLE "__frontier_phase" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_phase_phase" ON "__frontier_phase" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_phase" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_phase_phase" ON "__next_frontier_phase" ("_phase")`,
   `CREATE TEMP TABLE "__delta_poll_due" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_poll_due_sign" ON "__delta_poll_due" ("_sign")`,
+  `CREATE INDEX "__delta_poll_due_group" ON "__delta_poll_due" ("endpoint")`,
   `CREATE TEMP TABLE "__frontier_poll_due" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_poll_due_phase" ON "__frontier_poll_due" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_poll_due" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_poll_due_phase" ON "__next_frontier_poll_due" ("_phase")`,
   `CREATE TEMP TABLE "__delta_scope_done" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_scope_done_sign" ON "__delta_scope_done" ("_sign")`,
+  `CREATE INDEX "__delta_scope_done_group" ON "__delta_scope_done" ("endpoint")`,
   `CREATE TEMP TABLE "__frontier_scope_done" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_scope_done_phase" ON "__frontier_scope_done" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_scope_done" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,

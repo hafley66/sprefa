@@ -42,6 +42,7 @@
             type_field_values/4,
             type_ref_columns/3,
             canonical_json_text/2,
+            js_float_text/2,
             % Exported for sweep.pl, which writes the schedule JSON with its
             % own string writer and used to carry a THIRD copy of this
             % predicate. Three copies is how one broken escape survived: the
@@ -470,6 +471,12 @@ column_value_shape_error(_, bool, Value, field_not_bool(Value)) :-
     \+ bool_value(Value), !.
 column_value_shape_error(_, float, Value, field_not_finite_float(Value)) :-
     \+ finite_float(Value), !.
+column_value_shape_error(_, int, Value, int_out_of_range(Value)) :-
+    integer(Value),
+    ( Value < -9007199254740991
+    ; Value > 9007199254740991
+    ),
+    !.
 column_value_shape_error(Types, TypeName, Value, Reason) :-
     declared_type_name(Types, TypeName),
     type_shape_error(Types, TypeName, Value, Reason).
@@ -577,9 +584,126 @@ finite_float_json(Value, Text) :-
     memberchk(Class, [normal, subnormal, zero]),
     ( Value =:= 0.0
     -> Text = '0'
-    ; format(atom(Raw), '~h', [Value]),
-      normalize_float_json_atom(Raw, Text)
+    ; js_float_text(Value, Text)
     ).
+
+% SWI-Prolog's ~h is shortest round-trip, but its exponent threshold differs
+% from ECMAScript Number::toString. Rewrite that same shortest digit sequence
+% using JavaScript's fixed range [1e-6, 1e21), preserving the exact binary64
+% value represented by the source float.
+js_float_text(Value, Text) :-
+    float_class(Value, Class),
+    memberchk(Class, [normal, subnormal]),
+    format(atom(Raw), '~h', [Value]),
+    ( Value < 0.0 -> Sign = '-', sub_atom(Raw, 1, _, 0, UnsignedRaw)
+    ; Sign = '', UnsignedRaw = Raw
+    ),
+    ( split_float_exponent(UnsignedRaw, Mantissa, Exponent)
+    -> mantissa_digits(Mantissa, Digits, IntegerDigits),
+       decimal_position(IntegerDigits, Exponent, DecimalPosition),
+       js_float_digits(Sign, Digits, DecimalPosition, Text)
+    ; normalize_fixed_float_atom(UnsignedRaw, UnsignedText),
+      atom_concat(Sign, UnsignedText, Text)
+    ).
+
+split_float_exponent(Raw, Mantissa, Exponent) :-
+    ( sub_atom(Raw, Before, 1, After, 'e')
+    ; sub_atom(Raw, Before, 1, After, 'E')
+    ),
+    sub_atom(Raw, 0, Before, _, Mantissa),
+    Start is Before + 1,
+    sub_atom(Raw, Start, After, 0, ExponentText),
+    atom_number(ExponentText, Exponent).
+
+mantissa_digits(Mantissa, Digits, IntegerDigits) :-
+    atom_chars(Mantissa, Chars),
+    append(IntegerChars, FractionWithDot, Chars),
+    FractionWithDot = ['.' | FractionChars],
+    append(IntegerChars, FractionChars, DigitsChars),
+    Digits = DigitsChars,
+    length(IntegerChars, IntegerDigits).
+
+decimal_position(IntegerDigits, Exponent, Position) :-
+    Position is IntegerDigits + Exponent.
+
+js_float_digits(Sign, Digits, DecimalPosition, Text) :-
+    length(Digits, DigitCount),
+    ( DecimalPosition > 0,
+      DecimalPosition =< 21
+    -> fixed_positive_digits(Digits, DecimalPosition, UnsignedText),
+       atom_concat(Sign, UnsignedText, Text)
+    ; DecimalPosition =< 0,
+      DecimalPosition >= -5
+    -> fixed_fraction_digits(Digits, DecimalPosition, UnsignedText),
+       atom_concat(Sign, UnsignedText, Text)
+    ; scientific_digits(Digits, DecimalPosition, UnsignedText),
+      atom_concat(Sign, UnsignedText, Text)
+    ),
+    DigitCount > 0.
+
+fixed_positive_digits(Digits, DecimalPosition, Text) :-
+    length(Prefix, DecimalPosition),
+    append(Prefix, Suffix, Digits),
+    atom_chars(PrefixAtom, Prefix),
+    ( Suffix == []
+    -> Text = PrefixAtom
+    ; strip_trailing_zero_chars(Suffix, TrimmedSuffix),
+      ( TrimmedSuffix == []
+      -> Text = PrefixAtom
+      ; atom_chars(TrimmedAtom, TrimmedSuffix),
+        format(atom(Text), '~w.~w', [PrefixAtom, TrimmedAtom])
+      )
+    ).
+fixed_positive_digits(Digits, DecimalPosition, Text) :-
+    DecimalPosition >= 0,
+    length(Digits, DigitCount),
+    DecimalPosition >= DigitCount,
+    atom_chars(DigitsAtom, Digits),
+    ZeroCount is DecimalPosition - DigitCount,
+    zero_chars(ZeroCount, Zeros),
+    atom_chars(ZeroAtom, Zeros),
+    atom_concat(DigitsAtom, ZeroAtom, Text).
+
+fixed_fraction_digits(Digits, DecimalPosition, Text) :-
+    ZeroCount is -DecimalPosition,
+    zero_chars(ZeroCount, LeadingZeros),
+    append(['0', '.'], LeadingZeros, PrefixChars),
+    append(PrefixChars, Digits, AllChars),
+    strip_trailing_zero_chars(AllChars, TrimmedChars),
+    atom_chars(Text, TrimmedChars).
+
+scientific_digits(Digits, DecimalPosition, Text) :-
+    Digits = [First | Rest],
+    strip_trailing_zero_chars(Rest, TrimmedRest),
+    atom_chars(FirstAtom, [First]),
+    ( TrimmedRest == []
+    -> MantissaText = FirstAtom
+    ; atom_chars(RestAtom, TrimmedRest),
+      format(atom(MantissaText), '~w.~w', [FirstAtom, RestAtom])
+    ),
+    Exponent is DecimalPosition - 1,
+    ( Exponent >= 0 -> ExponentText = '+' ; ExponentText = '' ),
+    format(atom(Text), '~we~w~w', [MantissaText, ExponentText, Exponent]).
+
+normalize_fixed_float_atom(Raw, Text) :-
+    ( sub_atom(Raw, Before, 2, 0, '.0')
+    -> sub_atom(Raw, 0, Before, _, Text)
+    ; Text = Raw
+    ).
+
+strip_trailing_zero_chars(Chars, Trimmed) :-
+    reverse(Chars, Reversed),
+    drop_leading_zeros(Reversed, ReversedTrimmed),
+    reverse(ReversedTrimmed, Trimmed).
+
+drop_leading_zeros(['0' | Rest], Trimmed) :- !,
+    drop_leading_zeros(Rest, Trimmed).
+drop_leading_zeros(Chars, Chars).
+
+zero_chars(0, []) :- !.
+zero_chars(Count, ['0' | Rest]) :-
+    NextCount is Count - 1,
+    zero_chars(NextCount, Rest).
 
 normalize_float_json_atom(Raw, Text) :-
     ( sub_atom(Raw, Before, 2, After, '.0'),

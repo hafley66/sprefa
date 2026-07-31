@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"mean":{"add":[["a",1.5]],"del":[["a",1]]},"score":{"add":[],"del":[["a",0.5]]}}}
+{"tick":2,"deltas":{"mean":{"add":[],"del":[["a",1.5]]},"score":{"add":[],"del":[["a",1.5]]}}}
+{"tick":3,"deltas":{"mean":{"add":[["a",3]],"del":[]},"score":{"add":[["a",3]],"del":[]}}}

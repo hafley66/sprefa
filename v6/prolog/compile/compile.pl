@@ -197,8 +197,11 @@ compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
 check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     append([Initial | Schedule], WorldRows),
     (   world_row_shape_violation(Decls, WorldRows, mismatch(Ref, Column, TypeName, Reason))
-    ->  throw(unsupported_construct(
-                  type_arrival_shape_mismatch(Ref, Column, TypeName, Reason)))
+    ->  ( Reason = int_out_of_range(Value)
+        -> throw(unsupported_construct(int_out_of_range(Ref, Column, Value)))
+        ;  throw(unsupported_construct(
+                    type_arrival_shape_mismatch(Ref, Column, TypeName, Reason)))
+        )
     ;   true
     ).
 

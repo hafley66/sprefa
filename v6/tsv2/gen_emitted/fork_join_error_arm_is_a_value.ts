@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -87,24 +90,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "outcome_b" ("col1" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_any_failed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "status" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_any_failed_sign" ON "__delta_any_failed" ("_sign")`,
+  `CREATE INDEX "__delta_any_failed_group" ON "__delta_any_failed" ("status")`,
   `CREATE TEMP TABLE "__frontier_any_failed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "status" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_any_failed_phase" ON "__frontier_any_failed" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_any_failed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "status" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_any_failed_phase" ON "__next_frontier_any_failed" ("_phase")`,
   `CREATE TEMP TABLE "__delta_both_ok" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body_a" TEXT NOT NULL, "body_b" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_both_ok_sign" ON "__delta_both_ok" ("_sign")`,
+  `CREATE INDEX "__delta_both_ok_group" ON "__delta_both_ok" ("body_a", "body_b")`,
   `CREATE TEMP TABLE "__frontier_both_ok" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body_a" TEXT NOT NULL, "body_b" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_both_ok_phase" ON "__frontier_both_ok" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_both_ok" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body_a" TEXT NOT NULL, "body_b" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_both_ok_phase" ON "__next_frontier_both_ok" ("_phase")`,
   `CREATE TEMP TABLE "__delta_outcome_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_outcome_a_sign" ON "__delta_outcome_a" ("_sign")`,
+  `CREATE INDEX "__delta_outcome_a_group" ON "__delta_outcome_a" ("col1")`,
   `CREATE TEMP TABLE "__frontier_outcome_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_outcome_a_phase" ON "__frontier_outcome_a" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_outcome_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_outcome_a_phase" ON "__next_frontier_outcome_a" ("_phase")`,
   `CREATE TEMP TABLE "__delta_outcome_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_outcome_b_sign" ON "__delta_outcome_b" ("_sign")`,
+  `CREATE INDEX "__delta_outcome_b_group" ON "__delta_outcome_b" ("col1")`,
   `CREATE TEMP TABLE "__frontier_outcome_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_outcome_b_phase" ON "__frontier_outcome_b" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_outcome_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,

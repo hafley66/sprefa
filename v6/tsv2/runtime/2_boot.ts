@@ -24,7 +24,7 @@ function bootArgs(params: readonly IRowValue[]): (string | number | bigint)[] {
   return params.map((param) =>
     typeof param === "boolean"
       ? BigInt(param ? 1 : 0)
-      : typeof param === "number" && Number.isInteger(param)
+      : typeof param === "number" && Number.isSafeInteger(param)
         ? BigInt(param)
         : param,
   );

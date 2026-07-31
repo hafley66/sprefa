@@ -495,7 +495,7 @@ host_column_json(col(Name, Type), Json) :-
 % narrow).
 bind_args_helper_lines(
     [ 'function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {',
-      '  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));',
+      '  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));',
       '}'
     ]).
 
@@ -513,6 +513,9 @@ arrival_value_guard_lines(
       '      if (type === "float") {',
       '        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);',
       '        return Object.is(value, -0) ? 0 : value;',
+      '      }',
+      '      if (type === "int") {',
+      '        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);',
       '      }',
       '      return value;',
       '    });',
@@ -883,7 +886,19 @@ aggregate_sql_text(aggsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSq
     maplist(js_template, InsertScopedSqls, InsertScopedTemplates),
     atomic_list_concat(InsertScopedTemplates, ', ', InsertScopedJoined),
     format(atom(Text),
-           '{ scopeClearSql: ~w, scopeSeedSql: [~w], deleteScopedSql: ~w, insertScopedSql: [~w] }',
+           '{ scopeClearSql: ~w, scopeSeedSql: [~w], deleteScopedSql: ~w, insertScopedSql: [~w], deltaMaintained: false }',
+           [ScopeClearTemplate, ScopeSeedJoined, DeleteScopedTemplate,
+            InsertScopedJoined]).
+aggregate_sql_text(avgsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                          DeleteScopedSql, InsertScopedSqls, _BootSqls), Text) :-
+    js_template(ScopeClearSql, ScopeClearTemplate),
+    maplist(js_template, ScopeSeedSqls, ScopeSeedTemplates),
+    atomic_list_concat(ScopeSeedTemplates, ', ', ScopeSeedJoined),
+    js_template(DeleteScopedSql, DeleteScopedTemplate),
+    maplist(js_template, InsertScopedSqls, InsertScopedTemplates),
+    atomic_list_concat(InsertScopedTemplates, ', ', InsertScopedJoined),
+    format(atom(Text),
+           '{ scopeClearSql: ~w, scopeSeedSql: [~w], deleteScopedSql: ~w, insertScopedSql: [~w], deltaMaintained: true }',
            [ScopeClearTemplate, ScopeSeedJoined, DeleteScopedTemplate,
             InsertScopedJoined]).
 

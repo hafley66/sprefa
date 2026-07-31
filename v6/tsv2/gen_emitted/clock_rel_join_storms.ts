@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -108,36 +111,42 @@ const ddl: readonly string[] = [
   `CREATE TABLE "tick_rel" ("at" INTEGER NOT NULL, PRIMARY KEY ("at")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_diag_history" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_diag_history_sign" ON "__delta_diag_history" ("_sign")`,
+  `CREATE INDEX "__delta_diag_history_group" ON "__delta_diag_history" ("path", "line", "code", "opened_at")`,
   `CREATE TEMP TABLE "__frontier_diag_history" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_diag_history_phase" ON "__frontier_diag_history" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag_history" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "opened_at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_diag_history_phase" ON "__next_frontier_diag_history" ("_phase")`,
   `CREATE TEMP TABLE "__delta_diag_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_diag_seen_sign" ON "__delta_diag_seen" ("_sign")`,
+  `CREATE INDEX "__delta_diag_seen_group" ON "__delta_diag_seen" ("path", "line", "code", "at")`,
   `CREATE TEMP TABLE "__frontier_diag_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_diag_seen_phase" ON "__frontier_diag_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_diag_seen_phase" ON "__next_frontier_diag_seen" ("_phase")`,
   `CREATE TEMP TABLE "__delta_diagnostic" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_diagnostic_sign" ON "__delta_diagnostic" ("_sign")`,
+  `CREATE INDEX "__delta_diagnostic_group" ON "__delta_diagnostic" ("path", "line", "code", "col4")`,
   `CREATE TEMP TABLE "__frontier_diagnostic" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_diagnostic_phase" ON "__frontier_diagnostic" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diagnostic" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL, "col4" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_diagnostic_phase" ON "__next_frontier_diagnostic" ("_phase")`,
   `CREATE TEMP TABLE "__delta_file_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_file_line_sign" ON "__delta_file_line" ("_sign")`,
+  `CREATE INDEX "__delta_file_line_group" ON "__delta_file_line" ("path", "line", "code")`,
   `CREATE TEMP TABLE "__frontier_file_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_file_line_phase" ON "__frontier_file_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "code" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_file_line_phase" ON "__next_frontier_file_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ratchet" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ratchet_sign" ON "__delta_ratchet" ("_sign")`,
+  `CREATE INDEX "__delta_ratchet_group" ON "__delta_ratchet" ("col1", "col2")`,
   `CREATE TEMP TABLE "__frontier_ratchet" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ratchet_phase" ON "__frontier_ratchet" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ratchet" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_ratchet_phase" ON "__next_frontier_ratchet" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tick_rel" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tick_rel_sign" ON "__delta_tick_rel" ("_sign")`,
+  `CREATE INDEX "__delta_tick_rel_group" ON "__delta_tick_rel" ("at")`,
   `CREATE TEMP TABLE "__frontier_tick_rel" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tick_rel_phase" ON "__frontier_tick_rel" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tick_rel" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,

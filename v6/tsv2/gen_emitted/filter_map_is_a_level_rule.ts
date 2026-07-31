@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "reading" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_doubled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_doubled_sign" ON "__delta_doubled" ("_sign")`,
+  `CREATE INDEX "__delta_doubled_group" ON "__delta_doubled" ("name", "out")`,
   `CREATE TEMP TABLE "__frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_doubled_phase" ON "__frontier_doubled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_doubled_phase" ON "__next_frontier_doubled" ("_phase")`,
   `CREATE TEMP TABLE "__delta_reading" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_reading_sign" ON "__delta_reading" ("_sign")`,
+  `CREATE INDEX "__delta_reading_group" ON "__delta_reading" ("name", "value")`,
   `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_reading_phase" ON "__frontier_reading" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,

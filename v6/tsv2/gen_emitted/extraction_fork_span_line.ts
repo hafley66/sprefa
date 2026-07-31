@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [{ rel: "span_line", arity:
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -88,30 +91,35 @@ const ddl: readonly string[] = [
   `CREATE TABLE "span_line" ("file" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file", "line", "text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta___host_demand_span_scan" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta___host_demand_span_scan_sign" ON "__delta___host_demand_span_scan" ("_sign")`,
+  `CREATE INDEX "__delta___host_demand_span_scan_group" ON "__delta___host_demand_span_scan" ("identity_digest", "witness_digest", "file_digest", "query_digest")`,
   `CREATE TEMP TABLE "__frontier___host_demand_span_scan" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier___host_demand_span_scan_phase" ON "__frontier___host_demand_span_scan" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_demand_span_scan" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" TEXT NOT NULL, "witness_digest" TEXT NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_demand_span_scan_phase" ON "__next_frontier___host_demand_span_scan" ("_phase")`,
   `CREATE TEMP TABLE "__delta___host_response_span_scan" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta___host_response_span_scan_sign" ON "__delta___host_response_span_scan" ("_sign")`,
+  `CREATE INDEX "__delta___host_response_span_scan_group" ON "__delta___host_response_span_scan" ("witness_digest", "ordinal", "file_digest", "query_digest", "line", "text")`,
   `CREATE TEMP TABLE "__frontier___host_response_span_scan" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier___host_response_span_scan_phase" ON "__frontier___host_response_span_scan" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___host_response_span_scan" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "witness_digest" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "file_digest" TEXT NOT NULL, "query_digest" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier___host_response_span_scan_phase" ON "__next_frontier___host_response_span_scan" ("_phase")`,
   `CREATE TEMP TABLE "__delta_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_file_sign" ON "__delta_file" ("_sign")`,
+  `CREATE INDEX "__delta_file_group" ON "__delta_file" ("file", "file_digest")`,
   `CREATE TEMP TABLE "__frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_file_phase" ON "__frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "file_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_file_phase" ON "__next_frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_query_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_query_value_sign" ON "__delta_query_value" ("_sign")`,
+  `CREATE INDEX "__delta_query_value_group" ON "__delta_query_value" ("query_digest")`,
   `CREATE TEMP TABLE "__frontier_query_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_query_value_phase" ON "__frontier_query_value" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_query_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "query_digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_query_value_phase" ON "__next_frontier_query_value" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_span_line_sign" ON "__delta_span_line" ("_sign")`,
+  `CREATE INDEX "__delta_span_line_group" ON "__delta_span_line" ("file", "line", "text")`,
   `CREATE TEMP TABLE "__frontier_span_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_span_line_phase" ON "__frontier_span_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "line" INTEGER NOT NULL, "text" TEXT NOT NULL)`,

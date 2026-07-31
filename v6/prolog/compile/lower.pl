@@ -1785,8 +1785,18 @@ level_statement_group(RelPlans, HeadRef-Rules,
        % them null and 1_incremental.ts dispatches on the aggregate plan.
        DeltaInsertSql = none,
        SupportSql = none,
-       level_aggregate_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
+       (   avg_aggregate_rules(AggregateRules)
+       ->  level_avg_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
+       ;   level_aggregate_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
+       )
     ).
+
+avg_aggregate_rules(Rules) :-
+    Rules \== [],
+    forall(member(Rule, Rules),
+           ( Rule = (Head <- _),
+             aggregate_head_template(Head, Template),
+             memberchk(agg(avg, _), Template) )).
 
 % ═══ group-scoped aggregate maintenance (the incremental family) ════════════
 % Four statements per tick, all SQL-side, all scoped to the groups this
@@ -1838,6 +1848,295 @@ level_aggregate_sql(RelPlans, HeadRef, Rules,
     maplist(aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns,
                                         QuotedScopeTable),
             Rules, InsertScopedSqls).
+
+% AVG is decomposed at the storage seam. The accumulator table holds one
+% REAL sum and one INTEGER count per live group; the public head stores only
+% sum/count, so a changed group reads one accumulator row and never scans the
+% source relation during the delta path. The refresh statements are scoped to
+% groups touched by this tick. Boot uses the same source query without the
+% tick-local delta predicate.
+level_avg_sql(RelPlans, HeadRef, Rules,
+              avgsql(ScopeColumns, ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                     DeleteScopedSql, InsertScopedSqls, BootSqls)) :-
+    aggregate_scope_columns(RelPlans, HeadRef, Rules, ScopeColumns, ScopeTypes),
+    aggregate_scope_table_name(HeadRef, ScopeTable),
+    quote_ident(ScopeTable, QuotedScopeTable),
+    format(atom(ScopeClearSql), 'DELETE FROM ~w', [QuotedScopeTable]),
+    findall(SeedSql,
+            ( member(Rule, Rules),
+              aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable,
+                                       Rule, SeedSql) ),
+            ScopeMarkers),
+    avg_accumulator_table_name(HeadRef, AccumulatorTable),
+    quote_ident(AccumulatorTable, QuotedAccumulatorTable),
+    avg_refresh_sqls(RelPlans, HeadRef, Rules, ScopeColumns,
+                     QuotedScopeTable, QuotedAccumulatorTable,
+                     RefreshSqls),
+    avg_accumulator_seed_sql(ScopeColumns, QuotedScopeTable,
+                             QuotedAccumulatorTable, AccumulatorSeedSql),
+    append([ScopeMarkers, [AccumulatorSeedSql], RefreshSqls], ScopeSeedSqls),
+    avg_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                          DeleteScopedSql),
+    Rules = [FirstRule | _],
+    FirstRule =.. [_Operator, Head, _Body],
+    aggregate_head_template(Head, Template),
+    avg_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                          QuotedAccumulatorTable, Template, InsertScopedSql),
+    InsertScopedSqls = [InsertScopedSql],
+    format(atom(ClearAccumulatorSql), 'DELETE FROM ~w', [QuotedAccumulatorTable]),
+    avg_boot_refresh_sqls(RelPlans, HeadRef, Rules, QuotedAccumulatorTable,
+                          BootRefreshSqls),
+    avg_boot_insert_sql(RelPlans, HeadRef, QuotedAccumulatorTable, Template,
+                        BootInsertSql),
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
+    format(atom(BootDeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
+    append([[ClearAccumulatorSql], BootRefreshSqls,
+            [BootDeleteSql, BootInsertSql]], BootSqls).
+
+avg_accumulator_table_name(Name/_Arity, Table) :-
+    format(atom(Table), '__avg_acc_~w', [Name]).
+
+avg_refresh_sqls(RelPlans, HeadRef, Rules, ScopeColumns,
+                 QuotedScopeTable, QuotedAccumulatorTable, Sqls) :-
+    maplist(avg_refresh_sql(RelPlans, HeadRef, ScopeColumns,
+                            QuotedScopeTable, QuotedAccumulatorTable),
+            Rules, Sqls).
+
+avg_boot_refresh_sqls(RelPlans, HeadRef, Rules, QuotedAccumulatorTable, Sqls) :-
+    maplist(avg_boot_refresh_sql(RelPlans, HeadRef, QuotedAccumulatorTable),
+            Rules, Sqls).
+
+avg_refresh_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                QuotedAccumulatorTable, Rule, Sql) :-
+    avg_delta_rows_sql(RelPlans, HeadRef, Rule, DeltaRowsSql),
+    avg_accumulator_scope_predicate(ScopeColumns, QuotedScopeTable, 'a', ScopeSql),
+    avg_accumulator_update_sql(QuotedAccumulatorTable, ScopeColumns, DeltaRowsSql,
+                               ScopeSql, Sql).
+
+avg_boot_refresh_sql(RelPlans, HeadRef, QuotedAccumulatorTable, Rule, Sql) :-
+    avg_body_rows_sql(RelPlans, HeadRef, Rule, BodyRowsSql),
+    avg_accumulator_boot_update_sql(QuotedAccumulatorTable, BodyRowsSql, Sql).
+
+avg_accumulator_seed_sql(['_all'], QuotedScopeTable,
+                         QuotedAccumulatorTable, Sql) :- !,
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w ("__group_1", "__sum", "__count") SELECT 0, 0.0, 0 FROM ~w',
+           [QuotedAccumulatorTable, QuotedScopeTable]).
+avg_accumulator_seed_sql(ScopeColumns, QuotedScopeTable,
+                         QuotedAccumulatorTable, Sql) :-
+    avg_scope_seed_projection(ScopeColumns, 1, ProjectionColumns),
+    avg_accumulator_key_columns(ScopeColumns, 1, AccumulatorKeyColumns),
+    atomic_list_concat(ProjectionColumns, ', ', ProjectionSql),
+    atomic_list_concat(AccumulatorKeyColumns, ', ', AccumulatorKeysSql),
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w (~w, "__sum", "__count") SELECT ~w, 0.0, 0 FROM ~w',
+           [QuotedAccumulatorTable, AccumulatorKeysSql, ProjectionSql,
+            QuotedScopeTable]).
+
+avg_scope_seed_projection([], _, []).
+avg_scope_seed_projection([Column | Rest], Position, [QuotedColumn | More]) :-
+    quote_ident(Column, QuotedColumn),
+    NextPosition is Position + 1,
+    avg_scope_seed_projection(Rest, NextPosition, More).
+
+% The body projection is deliberately a two-column relation: group key plus
+% numeric contribution. Keeping the projection explicit makes the accumulator
+% update independent of the public head's derived average column.
+avg_body_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
+    aggregate_head_template(Head, Template),
+    memberchk(agg(avg, ValueExpr), Template),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    include(is_negative_use, Uses, NegUses),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    aggregate_group_exprs(Template, Bound, GroupExprs),
+    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
+    memberchk(ValueType, [int, float]),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
+    append(FromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
+    avg_body_where_sql(WhereTexts, WhereSql),
+    avg_body_projection(GroupExprs, ValueSql, ProjectionSql),
+    format(atom(Sql), 'SELECT ~w FROM ~w~w',
+           [ProjectionSql, FromSql, WhereSql]).
+
+% The delta path updates sum and count from the staged signed rows. This keeps
+% the source relation out of the maintenance query: the source scan belongs
+% only to boot, while each tick searches the delta rows for affected groups.
+avg_delta_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
+    aggregate_head_template(Head, Template),
+    memberchk(agg(avg, ValueExpr), Template),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, [use(DeltaRef, DeltaArgs, pos, _)]),
+    include(is_negative_use, Uses, []),
+    delta_table_name(DeltaRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    relplan_columns(RelPlans, DeltaRef, DeltaColumns),
+    relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
+    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+                      Bound0, DeltaWhereParts),
+    maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    JsonFromParts = [],
+    aggregate_group_exprs(Template, Bound, GroupExprs),
+    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
+    memberchk(ValueType, [int, float]),
+    append([DeltaWhereTexts, GuardWhereTexts], WhereTexts0),
+    avg_group_projection(GroupExprs, 1, GroupProjectionParts),
+    format(atom(ValueProjection), '~w AS "__value"', [ValueSql]),
+    append(GroupProjectionParts,
+           [ValueProjection, 'd0."_sign" AS "__sign"'],
+           ProjectionParts),
+    atomic_list_concat(ProjectionParts, ', ', ProjectionSql),
+    append(['d0."_sign" IN (-1, 1)'], WhereTexts0, WhereTexts),
+    atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+    format(atom(Sql), 'SELECT ~w FROM ~w d0 WHERE ~w',
+           [ProjectionSql, QuotedDeltaTable, WhereSql]).
+
+avg_body_projection([], ValueSql, ProjectionSql) :-
+    format(atom(ProjectionSql), '~w AS "__value"', [ValueSql]),
+    !.
+avg_body_projection(GroupExprs, ValueSql, ProjectionSql) :-
+    avg_group_projection(GroupExprs, 1, GroupParts),
+    format(atom(ValueProjection), '~w AS "__value"', [ValueSql]),
+    append(GroupParts, [ValueProjection], Parts),
+    atomic_list_concat(Parts, ', ', ProjectionSql).
+
+avg_group_projection([], _, []).
+avg_group_projection([GroupExpr | Rest], Position, [Sql | More]) :-
+    format(atom(Sql), '~w AS "__group_~w"', [GroupExpr, Position]),
+    NextPosition is Position + 1,
+    avg_group_projection(Rest, NextPosition, More).
+
+avg_body_where_sql([], '').
+avg_body_where_sql(WhereTexts, WhereSql) :-
+    WhereTexts \== [],
+    atomic_list_concat(WhereTexts, ' AND ', Joined),
+    format(atom(WhereSql), ' WHERE ~w', [Joined]).
+
+avg_accumulator_scope_predicate(['_all'], _QuotedScopeTable, _Alias,
+                                '1 = 1') :- !.
+avg_accumulator_scope_predicate(ScopeColumns, QuotedScopeTable, _Alias, Sql) :-
+    avg_scope_key_columns(ScopeColumns, 1, ScopeKeys),
+    atomic_list_concat(ScopeKeys, ', ', ScopeKeysSql),
+    avg_accumulator_key_columns(ScopeColumns, 1, AccumulatorKeys),
+    atomic_list_concat(AccumulatorKeys, ', ', AccumulatorKeysSql),
+    format(atom(Sql), '(~w) IN (SELECT ~w FROM ~w)',
+           [AccumulatorKeysSql, ScopeKeysSql, QuotedScopeTable]).
+
+avg_scope_key_columns([], _, []).
+avg_scope_key_columns([Column | Rest], Position, [QuotedColumn | More]) :-
+    quote_ident(Column, QuotedColumn),
+    NextPosition is Position + 1,
+    avg_scope_key_columns(Rest, NextPosition, More).
+
+avg_scope_equalities([], _, _, _, []).
+avg_scope_equalities([Column | Rest], QuotedScopeTable, Alias, Position,
+                     [Sql | More]) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(AccumulatorColumn), '"__group_~w"', [Position]),
+    format(atom(Sql), 'EXISTS (SELECT 1 FROM ~w s WHERE s.~w = ~w.~w)',
+           [QuotedScopeTable, QuotedColumn, Alias, AccumulatorColumn]),
+    NextPosition is Position + 1,
+    avg_scope_equalities(Rest, QuotedScopeTable, Alias, NextPosition, More).
+
+avg_accumulator_update_sql(QuotedAccumulatorTable, ScopeColumns, BodyRowsSql,
+                           ScopeSql, Sql) :-
+    avg_body_matches_accumulator(ScopeColumns, MatchSql),
+    avg_where_parts([MatchSql, ScopeSql], BodyWhereSql),
+    format(atom(Sql),
+           'UPDATE ~w AS a SET "__sum" = "__sum" + COALESCE((SELECT sum(contributions."__sign" * contributions."__value") FROM (~w) contributions WHERE ~w), 0.0), "__count" = "__count" + COALESCE((SELECT sum(contributions."__sign") FROM (~w) contributions WHERE ~w), 0) WHERE ~w',
+           [QuotedAccumulatorTable, BodyRowsSql, BodyWhereSql,
+            BodyRowsSql, BodyWhereSql, ScopeSql]).
+
+avg_body_matches_accumulator(['_all'], '1 = 1') :- !.
+avg_body_matches_accumulator(ScopeColumns, Sql) :-
+    avg_body_acc_equalities(ScopeColumns, 1, Equalities),
+    atomic_list_concat(Equalities, ' AND ', Sql).
+
+avg_body_acc_equalities([], _, []).
+avg_body_acc_equalities([_Column | Rest], Position, [Sql | More]) :-
+    format(atom(AccumulatorColumn), '"__group_~w"', [Position]),
+    format(atom(Sql), 'contributions."__group_~w" = a.~w',
+           [Position, AccumulatorColumn]),
+    NextPosition is Position + 1,
+    avg_body_acc_equalities(Rest, NextPosition, More).
+
+avg_where_parts(Parts, Sql) :-
+    exclude(=('1 = 1'), Parts, Meaningful),
+    ( Meaningful == [] -> Sql = '1 = 1' ; atomic_list_concat(Meaningful, ' AND ', Sql) ).
+
+avg_accumulator_boot_update_sql(QuotedAccumulatorTable, BodyRowsSql, Sql) :-
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w ("__group_1", "__sum", "__count") SELECT "__group_1", sum("__value"), count(*) FROM (~w) contributions GROUP BY "__group_1"',
+           [QuotedAccumulatorTable, BodyRowsSql]).
+
+avg_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                      Sql) :-
+    aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns,
+                                QuotedScopeTable, Sql).
+
+avg_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+                      QuotedAccumulatorTable, Template, Sql) :-
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    avg_head_projection(Template, ProjectionColumns),
+    atomic_list_concat(ProjectionColumns, ', ', ProjectionSql),
+    avg_accumulator_scope_predicate(ScopeColumns, QuotedScopeTable, 'a', ScopeSql),
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM ~w a WHERE a."__count" > 0 AND ~w RETURNING ~w',
+           [QuotedHeadTable, HeadColumnsSql, ProjectionSql,
+            QuotedAccumulatorTable, ScopeSql, HeadColumnsSql]).
+
+avg_boot_insert_sql(RelPlans, HeadRef, QuotedAccumulatorTable, Template, Sql) :-
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    avg_head_projection(Template, ProjectionColumns),
+    atomic_list_concat(ProjectionColumns, ', ', ProjectionSql),
+    format(atom(Sql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM ~w a WHERE a."__count" > 0 RETURNING ~w',
+           [QuotedHeadTable, HeadColumnsSql, ProjectionSql,
+            QuotedAccumulatorTable, HeadColumnsSql]).
+
+avg_head_projection(Template, ProjectionColumns) :-
+    avg_head_projection_(Template, 1, ProjectionColumns).
+
+avg_head_projection_([], _, []) :- !.
+avg_head_projection_([plain(_) | Rest], Position,
+                     [Projection | More]) :-
+    !,
+    format(atom(Projection), 'a."__group_~w"', [Position]),
+    NextPosition is Position + 1,
+    avg_head_projection_(Rest, NextPosition, More).
+avg_head_projection_([agg(avg, _) | Rest], Position,
+                     ['a."__sum" / a."__count"' | More]) :-
+    !,
+    avg_head_projection_(Rest, Position, More).
+
+avg_scope_from(['_all'], QuotedScopeTable, QuotedAccumulatorTable,
+               FromSql) :- !,
+    format(atom(FromSql), '~w s JOIN ~w a ON 1 = 1',
+           [QuotedScopeTable, QuotedAccumulatorTable]).
+avg_scope_from(ScopeColumns, QuotedScopeTable, QuotedAccumulatorTable,
+               FromSql) :-
+    avg_join_equalities(ScopeColumns, 1, Equalities),
+    atomic_list_concat(Equalities, ' AND ', EqualitySql),
+    format(atom(FromSql), '~w s JOIN ~w a ON ~w',
+           [QuotedScopeTable, QuotedAccumulatorTable, EqualitySql]).
+
+avg_join_equalities([], _, []).
+avg_join_equalities([Column | Rest], Position, [Sql | More]) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Sql), 'a."__group_~w" = s.~w', [Position, QuotedColumn]),
+    NextPosition is Position + 1,
+    avg_join_equalities(Rest, NextPosition, More).
 
 aggregate_scope_table_name(Name/_Arity, ScopeTable) :-
     format(atom(ScopeTable), '__agg_scope_~w', [Name]).
@@ -1962,7 +2261,50 @@ aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
     format(atom(Ddl),
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedScopeTable, ColumnsSql, PrimaryKeySql]).
+aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
+                              avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _)),
+                    [ScopeDdl, AccumulatorDdl]) :- !,
+    aggregate_scope_table_name(HeadRef, ScopeTable),
+    avg_accumulator_table_name(HeadRef, AccumulatorTable),
+    quote_ident(ScopeTable, QuotedScopeTable),
+    quote_ident(AccumulatorTable, QuotedAccumulatorTable),
+    maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
+    maplist(column_def, QuotedScopeColumns, ScopeTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedScopeColumns, ', ', PrimaryKeySql),
+    format(atom(ScopeDdl),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedScopeTable, ColumnsSql, PrimaryKeySql]),
+    avg_accumulator_columns(ScopeColumns, ScopeTypes,
+                            AccumulatorColumnsSql, AccumulatorPrimaryKeySql),
+    format(atom(AccumulatorDdl),
+           'CREATE TEMP TABLE ~w (~w, "__sum" REAL NOT NULL, "__count" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedAccumulatorTable, AccumulatorColumnsSql,
+            AccumulatorPrimaryKeySql]).
 aggregate_scope_ddl(_, []).
+
+avg_accumulator_columns(['_all'], _,
+                        '"__group_1" INTEGER NOT NULL', '"__group_1"') :- !.
+avg_accumulator_columns(ScopeColumns, ScopeTypes, ColumnsSql,
+                        PrimaryKeySql) :-
+    avg_accumulator_group_columns(ScopeColumns, ScopeTypes, 1, GroupColumns),
+    atomic_list_concat(GroupColumns, ', ', ColumnsSql),
+    avg_accumulator_key_columns(ScopeColumns, 1, KeyColumns),
+    atomic_list_concat(KeyColumns, ', ', PrimaryKeySql).
+
+avg_accumulator_group_columns([], [], _, []).
+avg_accumulator_group_columns([_ | RestColumns], [Type | RestTypes], Position,
+                              [Column | More]) :-
+    format(atom(QuotedColumn), '"__group_~w"', [Position]),
+    column_def(QuotedColumn, Type, Column),
+    NextPosition is Position + 1,
+    avg_accumulator_group_columns(RestColumns, RestTypes, NextPosition, More).
+
+avg_accumulator_key_columns([], _, []).
+avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
+    format(atom(Column), '"__group_~w"', [Position]),
+    NextPosition is Position + 1,
+    avg_accumulator_key_columns(Rest, NextPosition, More).
 
 level_support_sql(RelPlans, HeadRef, Rules,
                   supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
@@ -2801,7 +3143,7 @@ pre_ddl(RelPlans, Ref, Ddl) :-
     ).
 
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
-          [TableDdl, IndexDdl, FrontierDdl, FrontierIndexDdl,
+          [TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
            NextFrontierDdl, NextFrontierIndexDdl]) :-
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
@@ -2816,6 +3158,12 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
     format(atom(IndexDdl),
            'CREATE INDEX ~w ON ~w ("_sign")',
            [QuotedIndexName, QuotedDeltaTable]),
+    format(atom(GroupIndexName), '~w_group', [DeltaTable]),
+    quote_ident(GroupIndexName, QuotedGroupIndexName),
+    atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
+    format(atom(GroupIndexDdl),
+           'CREATE INDEX ~w ON ~w (~w)',
+           [QuotedGroupIndexName, QuotedDeltaTable, GroupColumnsSql]),
     frontier_table_name(Ref, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
     format(atom(FrontierDdl),
@@ -3112,6 +3460,12 @@ boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
 % Initial-seeded data starts at its real t=0 rows rather than empty.
 boot_level_recompute_statements(LevelStatements, BootStatements) :-
     findall(bootstmt(Sql, []),
-            ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements),
-              ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ),
+            ( member(LevelStatement, LevelStatements),
+              boot_level_statement_sql(LevelStatement, Sql) ),
             BootStatements).
+
+boot_level_statement_sql(levelstmt(_, _DeleteSql, _InsertSqls, _, _,
+                                   avgsql(_, _, _, _, _, _, BootSqls)), Sql) :- !,
+    member(Sql, BootSqls).
+boot_level_statement_sql(levelstmt(_, DeleteSql, InsertSqls, _, _, _), Sql) :-
+    ( Sql = DeleteSql ; member(Sql, InsertSqls) ).

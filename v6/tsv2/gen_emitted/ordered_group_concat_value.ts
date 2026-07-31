@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "value_joined" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_item_sign" ON "__delta_item" ("_sign")`,
+  `CREATE INDEX "__delta_item_group" ON "__delta_item" ("group", "value")`,
   `CREATE TEMP TABLE "__frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_item_phase" ON "__frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_item_phase" ON "__next_frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__delta_value_joined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_value_joined_sign" ON "__delta_value_joined" ("_sign")`,
+  `CREATE INDEX "__delta_value_joined_group" ON "__delta_value_joined" ("group", "col2")`,
   `CREATE TEMP TABLE "__frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_value_joined_phase" ON "__frontier_value_joined" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
@@ -171,7 +176,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "value_joined", headDeltaTableName: "__delta_value_joined", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "value_joined"`, recomputeSql: `DELETE FROM "value_joined";
-INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_value_joined"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_value_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "value_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_value_joined") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`] } },
+INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_value_joined"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_value_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "value_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_value_joined") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

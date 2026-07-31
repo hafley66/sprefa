@@ -44,7 +44,7 @@ export type { EdgeRow, NodeRow, SpanRow, SqliteDb };
  *  (the header names the `Client` TYPE, which erases at build). `url` is passed
  *  through verbatim (`file:/abs/path.sqlite` or `:memory:`). */
 export function open_db(url: string): SqliteDb {
-  return createClient({ url });
+  return createClient({ url, intMode: "bigint" });
 }
 
 /** Widest table is `node` at 7 columns; 100 rows/statement keeps bound params under 999. */

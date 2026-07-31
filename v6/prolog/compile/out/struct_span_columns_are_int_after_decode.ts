@@ -60,7 +60,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -76,6 +76,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -98,18 +101,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "end", "start", json_object('end', t."end", 'start', t."start") AS "__rendered" FROM "span" t`,
   `CREATE TEMP TABLE "__delta_def_start" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_def_start_sign" ON "__delta_def_start" ("_sign")`,
+  `CREATE INDEX "__delta_def_start_group" ON "__delta_def_start" ("path", "offset")`,
   `CREATE TEMP TABLE "__frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_def_start_phase" ON "__frontier_def_start" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_def_start_phase" ON "__next_frontier_def_start" ("_phase")`,
   `CREATE TEMP TABLE "__delta_node_fact" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_node_fact_sign" ON "__delta_node_fact" ("_sign")`,
+  `CREATE INDEX "__delta_node_fact_group" ON "__delta_node_fact" ("path", "name", "at")`,
   `CREATE TEMP TABLE "__frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_node_fact_phase" ON "__frontier_node_fact" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_node_fact_phase" ON "__next_frontier_node_fact" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
+  `CREATE INDEX "__delta_span_group" ON "__delta_span" ("end", "start")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,

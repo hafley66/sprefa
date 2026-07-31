@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -107,30 +110,35 @@ const ddl: readonly string[] = [
   `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_demand_rev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demand_rev_sign" ON "__delta_demand_rev" ("_sign")`,
+  `CREATE INDEX "__delta_demand_rev_group" ON "__delta_demand_rev" ("dep_repo_id", "ref_text")`,
   `CREATE TEMP TABLE "__frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demand_rev_phase" ON "__frontier_demand_rev" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_demand_rev_phase" ON "__next_frontier_demand_rev" ("_phase")`,
   `CREATE TEMP TABLE "__delta_pin_want" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_pin_want_sign" ON "__delta_pin_want" ("_sign")`,
+  `CREATE INDEX "__delta_pin_want_group" ON "__delta_pin_want" ("col1", "dep_repo_id", "ref_text")`,
   `CREATE TEMP TABLE "__frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_pin_want_phase" ON "__frontier_pin_want" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_pin_want_phase" ON "__next_frontier_pin_want" ("_phase")`,
   `CREATE TEMP TABLE "__delta_rev_fill" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rev_fill_sign" ON "__delta_rev_fill" ("_sign")`,
+  `CREATE INDEX "__delta_rev_fill_group" ON "__delta_rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead")`,
   `CREATE TEMP TABLE "__frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rev_fill_phase" ON "__frontier_rev_fill" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_rev_fill_phase" ON "__next_frontier_rev_fill" ("_phase")`,
   `CREATE TEMP TABLE "__delta_rev_status" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rev_status_sign" ON "__delta_rev_status" ("_sign")`,
+  `CREATE INDEX "__delta_rev_status_group" ON "__delta_rev_status" ("dep_repo_id", "ref_text", "behind", "ahead")`,
   `CREATE TEMP TABLE "__frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rev_status_phase" ON "__frontier_rev_status" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_rev_status_phase" ON "__next_frontier_rev_status" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stale_pin" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_stale_pin_sign" ON "__delta_stale_pin" ("_sign")`,
+  `CREATE INDEX "__delta_stale_pin_group" ON "__delta_stale_pin" ("dep_repo_id", "ref_text")`,
   `CREATE TEMP TABLE "__frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_stale_pin_phase" ON "__frontier_stale_pin" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,

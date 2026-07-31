@@ -58,7 +58,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -111,6 +114,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "gone" ("ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_ev_sign" ON "__delta_ev" ("_sign")`,
+  `CREATE INDEX "__delta_ev_group" ON "__delta_ev" ("ordinal", "payload")`,
   `CREATE TEMP TABLE "__frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_ev_phase" ON "__frontier_ev" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
@@ -119,6 +123,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__departure_frontier_ev_phase" ON "__departure_frontier_ev" ("_phase")`,
   `CREATE TEMP TABLE "__delta_gone" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_gone_sign" ON "__delta_gone" ("_sign")`,
+  `CREATE INDEX "__delta_gone_group" ON "__delta_gone" ("ordinal", "payload")`,
   `CREATE TEMP TABLE "__frontier_gone" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_gone_phase" ON "__frontier_gone" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_gone" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,

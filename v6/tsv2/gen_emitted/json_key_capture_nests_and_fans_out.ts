@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -85,12 +88,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "spec" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_operation" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_operation_sign" ON "__delta_operation" ("_sign")`,
+  `CREATE INDEX "__delta_operation_group" ON "__delta_operation" ("path", "method", "id")`,
   `CREATE TEMP TABLE "__frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_operation_phase" ON "__frontier_operation" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_operation_phase" ON "__next_frontier_operation" ("_phase")`,
   `CREATE TEMP TABLE "__delta_spec" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_spec_sign" ON "__delta_spec" ("_sign")`,
+  `CREATE INDEX "__delta_spec_group" ON "__delta_spec" ("body")`,
   `CREATE TEMP TABLE "__frontier_spec" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_spec_phase" ON "__frontier_spec" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_spec" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,

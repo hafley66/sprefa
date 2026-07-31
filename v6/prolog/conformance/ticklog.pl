@@ -30,6 +30,7 @@
 
 :- ensure_loaded(go).   % pulls in engine.pl + every fixtures/*.pl, unedited
 :- use_module(body, [json_canon/2, rel_ref/2]).   % read-only reuse; body.pl is untouched
+:- use_module('../0_type_plane', [js_float_text/2]).
 
 % ═══ perturbed schedules (HARD RULE receipt: proves the tsv2 side computes
 % deltas from the rules rather than replaying the fixture's own expected
@@ -119,8 +120,7 @@ finite_float_json(Value, Json) :-
     memberchk(Class, [normal, subnormal, zero]),
     ( Value =:= 0.0
     -> Json = '0'
-    ; format(atom(Raw), '~h', [Value]),
-      normalize_float_json_atom(Raw, Json)
+    ; js_float_text(Value, Json)
     ).
 
 normalize_float_json_atom(Raw, Text) :-

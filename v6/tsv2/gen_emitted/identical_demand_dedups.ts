@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -73,6 +73,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
       if (type === "float") {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       }
       return value;
     });
@@ -106,24 +109,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "watch_request" ("col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_demand" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demand_sign" ON "__delta_demand" ("_sign")`,
+  `CREATE INDEX "__delta_demand_group" ON "__delta_demand" ("args", "salt")`,
   `CREATE TEMP TABLE "__frontier_demand" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demand_phase" ON "__frontier_demand" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demand" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_demand_phase" ON "__next_frontier_demand" ("_phase")`,
   `CREATE TEMP TABLE "__delta_fill" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fill_sign" ON "__delta_fill" ("_sign")`,
+  `CREATE INDEX "__delta_fill_group" ON "__delta_fill" ("args", "salt", "payload")`,
   `CREATE TEMP TABLE "__frontier_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fill_phase" ON "__frontier_fill" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_fill_phase" ON "__next_frontier_fill" ("_phase")`,
   `CREATE TEMP TABLE "__delta_response" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_response_sign" ON "__delta_response" ("_sign")`,
+  `CREATE INDEX "__delta_response_group" ON "__delta_response" ("args", "salt", "payload")`,
   `CREATE TEMP TABLE "__frontier_response" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_response_phase" ON "__frontier_response" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_response" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_response_phase" ON "__next_frontier_response" ("_phase")`,
   `CREATE TEMP TABLE "__delta_watch_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_watch_request_sign" ON "__delta_watch_request" ("_sign")`,
+  `CREATE INDEX "__delta_watch_request_group" ON "__delta_watch_request" ("col1", "args", "salt")`,
   `CREATE TEMP TABLE "__frontier_watch_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_watch_request_phase" ON "__frontier_watch_request" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_watch_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,

@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -87,24 +90,28 @@ const ddl: readonly string[] = [
   `CREATE TABLE "unwrap_hit" ("path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL, PRIMARY KEY ("path", "line_no", "col", "end_col")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_changed_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_changed_file_sign" ON "__delta_changed_file" ("_sign")`,
+  `CREATE INDEX "__delta_changed_file_group" ON "__delta_changed_file" ("path")`,
   `CREATE TEMP TABLE "__frontier_changed_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_changed_file_phase" ON "__frontier_changed_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_changed_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_changed_file_phase" ON "__next_frontier_changed_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_diag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col3" TEXT NOT NULL, "col4" TEXT NOT NULL, "col5" TEXT NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_diag_sign" ON "__delta_diag" ("_sign")`,
+  `CREATE INDEX "__delta_diag_group" ON "__delta_diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col")`,
   `CREATE TEMP TABLE "__frontier_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col3" TEXT NOT NULL, "col4" TEXT NOT NULL, "col5" TEXT NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_diag_phase" ON "__frontier_diag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col3" TEXT NOT NULL, "col4" TEXT NOT NULL, "col5" TEXT NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_diag_phase" ON "__next_frontier_diag" ("_phase")`,
   `CREATE TEMP TABLE "__delta_unwrap_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_unwrap_count_sign" ON "__delta_unwrap_count" ("_sign")`,
+  `CREATE INDEX "__delta_unwrap_count_group" ON "__delta_unwrap_count" ("path", "total")`,
   `CREATE TEMP TABLE "__frontier_unwrap_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_unwrap_count_phase" ON "__frontier_unwrap_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_unwrap_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_unwrap_count_phase" ON "__next_frontier_unwrap_count" ("_phase")`,
   `CREATE TEMP TABLE "__delta_unwrap_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_unwrap_hit_sign" ON "__delta_unwrap_hit" ("_sign")`,
+  `CREATE INDEX "__delta_unwrap_hit_group" ON "__delta_unwrap_hit" ("path", "line_no", "col", "end_col")`,
   `CREATE TEMP TABLE "__frontier_unwrap_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_unwrap_hit_phase" ON "__frontier_unwrap_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_unwrap_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_no" INTEGER NOT NULL, "col" INTEGER NOT NULL, "end_col" INTEGER NOT NULL)`,
@@ -202,7 +209,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "unwrap_count", headDeltaTableName: "__delta_unwrap_count", headColumns: ["path", "total"], insertSql: null, selectSql: `SELECT "path", "total" FROM "unwrap_count"`, recomputeSql: `DELETE FROM "unwrap_count";
-INSERT OR IGNORE INTO "unwrap_count" ("path", "total") SELECT b0."path", count(*) FROM "unwrap_hit" b0, "changed_file" b1 WHERE b1."path" = b0."path" GROUP BY b0."path" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_unwrap_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_unwrap_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_unwrap_hit" d0 WHERE d0."_sign" IN (-1, 1)`, `INSERT OR IGNORE INTO "__agg_scope_unwrap_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_changed_file" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "unwrap_count" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_unwrap_count") RETURNING "path", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "unwrap_count" ("path", "total") SELECT b0."path", count(*) FROM "unwrap_hit" b0, "changed_file" b1 WHERE b1."path" = b0."path" AND (b0."path") IN (SELECT "path" FROM "__agg_scope_unwrap_count") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "total"`] } },
+INSERT OR IGNORE INTO "unwrap_count" ("path", "total") SELECT b0."path", count(*) FROM "unwrap_hit" b0, "changed_file" b1 WHERE b1."path" = b0."path" GROUP BY b0."path" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_unwrap_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_unwrap_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_unwrap_hit" d0 WHERE d0."_sign" IN (-1, 1)`, `INSERT OR IGNORE INTO "__agg_scope_unwrap_count" ("path") SELECT DISTINCT d0."path" FROM "__delta_changed_file" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "unwrap_count" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_unwrap_count") RETURNING "path", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "unwrap_count" ("path", "total") SELECT b0."path", count(*) FROM "unwrap_hit" b0, "changed_file" b1 WHERE b1."path" = b0."path" AND (b0."path") IN (SELECT "path" FROM "__agg_scope_unwrap_count") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "total"`], deltaMaintained: false } },
   { headRel: "diag", headDeltaTableName: "__delta_diag", headColumns: ["path", "line_no", "col3", "col4", "col5", "col", "end_col"], insertSql: `INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT DISTINCT d0."path", d0."line_no", 'warning', 'unwrap-budget', (b1."total" || ' non-test unwraps in a changed file'), d0."col", d0."end_col" FROM "__frontier_unwrap_hit" d0, "changed_file" b0, "unwrap_count" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (b1."total" > 10) UNION ALL SELECT DISTINCT d0."path", b0."line_no", 'warning', 'unwrap-budget', (b1."total" || ' non-test unwraps in a changed file'), b0."col", b0."end_col" FROM "__frontier_changed_file" d0, "unwrap_hit" b0, "unwrap_count" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (b1."total" > 10) UNION ALL SELECT DISTINCT d0."path", b0."line_no", 'warning', 'unwrap-budget', (d0."total" || ' non-test unwraps in a changed file'), b0."col", b0."end_col" FROM "__frontier_unwrap_count" d0, "unwrap_hit" b0, "changed_file" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (d0."total" > 10) RETURNING "path", "line_no", "col3", "col4", "col5", "col", "end_col"`, selectSql: `SELECT "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "diag"`, recomputeSql: `DELETE FROM "diag";
 INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT b0."path", b0."line_no", 'warning', 'unwrap-budget', (b2."total" || ' non-test unwraps in a changed file'), b0."col", b0."end_col" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10)`, supportSql: [`DELETE FROM "__support_next_diag"`, `INSERT INTO "__support_next_diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col", "__support_count") SELECT "path", "line_no", "col3", "col4", "col5", "col", "end_col", sum("__support_count") FROM (SELECT b0."path" AS "path", b0."line_no" AS "line_no", 'warning' AS "col3", 'unwrap-budget' AS "col4", (b2."total" || ' non-test unwraps in a changed file') AS "col5", b0."col" AS "col", b0."end_col" AS "end_col", count(*) AS "__support_count" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10) GROUP BY b0."path", b0."line_no", 'warning', 'unwrap-budget', (b2."total" || ' non-test unwraps in a changed file'), b0."col", b0."end_col") GROUP BY "path", "line_no", "col3", "col4", "col5", "col", "end_col"`, `UPDATE "diag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_diag" n WHERE n."path" = h."path" AND n."line_no" = h."line_no" AND n."col3" = h."col3" AND n."col4" = h."col4" AND n."col5" = h."col5" AND n."col" = h."col" AND n."end_col" = h."end_col"), 0))`, `DELETE FROM "diag" WHERE "__support_count" <= 0 RETURNING "path", "line_no", "col3", "col4", "col5", "col", "end_col"`, `INSERT INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col", "__support_count") SELECT "path", "line_no", "col3", "col4", "col5", "col", "end_col", n."__support_count" FROM "__support_next_diag" n WHERE NOT EXISTS (SELECT 1 FROM "diag" h WHERE n."path" = h."path" AND n."line_no" = h."line_no" AND n."col3" = h."col3" AND n."col4" = h."col4" AND n."col5" = h."col5" AND n."col" = h."col" AND n."end_col" = h."end_col") RETURNING "path", "line_no", "col3", "col4", "col5", "col", "end_col"`], aggregateSql: null },
 ];

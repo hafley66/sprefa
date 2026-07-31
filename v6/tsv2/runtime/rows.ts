@@ -19,13 +19,12 @@ import type {
 /** A generated program's scalar columns are TEXT, INTEGER, or REAL and never
  *  NULL. Bool columns use constrained INTEGER storage and cross this boundary
  *  as booleans; float columns use finite REAL storage. `IRowValue` covers every value a
- *  SELECT can hand back here without a runtime check: libsql returns an
- *  INTEGER-affinity column as a plain JS `number` (verified empirically,
- *  not assumed -- this driver's default `intMode` is "number", not
- *  "bigint") and a TEXT-affinity column as a JS `string`. The cast stays
- *  narrow (libsql's `Value` is `null | string | number | bigint |
- *  ArrayBuffer`) and would need widening only if a future column type
- *  introduces `bigint` or `null` into this seam. */
+ *  SELECT can hand back here after the bigint driver seam is normalized:
+ *  safe INTEGER values become JS numbers and unsafe values receive the
+ *  named int_out_of_range refusal. TEXT-affinity columns cross as strings.
+ *  The cast stays narrow (libsql's `Value` is `null | string | number |
+ *  bigint | ArrayBuffer`) and would need widening only if a future column
+ *  type introduces `null` into this seam. */
 export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefined, value: unknown): IRowValue => {
   if (type === "bool") {
     if (value === 0 || value === 0n) return false;
@@ -37,6 +36,17 @@ export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefin
       throw new Error(`float column crossed SQLite with ${JSON.stringify(value)}`);
     }
     return Object.is(value, -0) ? 0 : value;
+  }
+  if (type === "int") {
+    if (typeof value === "bigint") {
+      if (value < -9007199254740991n || value > 9007199254740991n) {
+        throw new Error("int_out_of_range");
+      }
+      return Number(value);
+    }
+    if (typeof value === "number" && !Number.isSafeInteger(value)) {
+      throw new Error("int_out_of_range");
+    }
   }
   return value as IRowValue;
 };

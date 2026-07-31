@@ -179,6 +179,7 @@ export interface IAggregateLevelPlan {
   readonly scopeSeedSql: readonly string[];
   readonly deleteScopedSql: string;
   readonly insertScopedSql: readonly string[];
+  readonly deltaMaintained?: boolean;
 }
 
 export interface IIncrementalLevelStatement {

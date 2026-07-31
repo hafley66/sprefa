@@ -57,7 +57,7 @@ export const queryPlans: readonly IQueryPlanData[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value));
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
@@ -74,6 +74,9 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
         if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`float arrival ${arrival.rel}[${index}] requires a finite number`);
         return Object.is(value, -0) ? 0 : value;
       }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isSafeInteger(value)) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      }
       return value;
     });
     return { ...arrival, row };
@@ -86,18 +89,21 @@ const ddl: readonly string[] = [
   `CREATE TABLE "seen" ("name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL, PRIMARY KEY ("name", "base", "col3")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_bump" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_bump_sign" ON "__delta_bump" ("_sign")`,
+  `CREATE INDEX "__delta_bump_group" ON "__delta_bump" ("name", "extra")`,
   `CREATE TEMP TABLE "__frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_bump_phase" ON "__frontier_bump" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_bump_phase" ON "__next_frontier_bump" ("_phase")`,
   `CREATE TEMP TABLE "__delta_over_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_over_budget_sign" ON "__delta_over_budget" ("_sign")`,
+  `CREATE INDEX "__delta_over_budget_group" ON "__delta_over_budget" ("name", "sum")`,
   `CREATE TEMP TABLE "__frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_over_budget_phase" ON "__frontier_over_budget" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_over_budget_phase" ON "__next_frontier_over_budget" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
+  `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("name", "base", "col3")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
