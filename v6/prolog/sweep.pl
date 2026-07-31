@@ -13,8 +13,8 @@
 :- use_module(compile, [ program_plan/2 ]).
 :- use_module(lower, [ lower_program/2, boot_statements/5 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
-:- use_module('../conformance/body', [ rel_ref/2 ]).
-:- use_module('../0_type_plane',
+:- use_module('conformance/body', [ rel_ref/2 ]).
+:- use_module('0_type_plane',
               [ type_definitions/2, type_canonical_json/4,
                 canonical_json_text/2, escape_json_codes/2 ]).
 
@@ -31,8 +31,8 @@
 :- prolog_load_context(directory, Here), assertz(compile_dir_fact(Here)).
 
 compile_dir(Dir) :- compile_dir_fact(Dir).
-out_dir(Dir) :- compile_dir(Here), atomic_list_concat([Here, '/out'], Dir).
-fixtures_dir(Dir) :- compile_dir(Here), atomic_list_concat([Here, '/../conformance/fixtures'], Dir).
+out_dir(Dir) :- compile_dir(Here), atomic_list_concat([Here, '/compile/out'], Dir).
+fixtures_dir(Dir) :- compile_dir(Here), atomic_list_concat([Here, '/conformance/fixtures'], Dir).
 
 fixture_files(Files) :-
     fixtures_dir(Dir),

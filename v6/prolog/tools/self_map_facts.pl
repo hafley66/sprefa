@@ -186,7 +186,7 @@ emit_task_facts :-
 
 emit_program_facts(Path) :-
     source_path('../compile/parse_dl.pl', ParsePath),
-    source_path('../compile/analyze.pl', AnalyzePath),
+    source_path('../analyze.pl', AnalyzePath),
     source_path('../1_expansion.pl', ExpansionPath),
     source_path('../1_host_expand.pl', HostExpandPath),
     use_module(ParsePath, [parse_dl_file/4]),

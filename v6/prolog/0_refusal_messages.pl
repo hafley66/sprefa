@@ -16,7 +16,7 @@
           ]).
 
 :- use_module('compile/registry', [surface/5]).
-:- use_module('compile/3_clock_check', [clock_refusal_reason/1]).
+:- use_module('3_clock_check', [clock_refusal_reason/1]).
 
 :- multifile prolog:message//1.
 

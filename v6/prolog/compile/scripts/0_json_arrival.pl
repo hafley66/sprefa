@@ -3,7 +3,7 @@
             schedule_value/5
           ]).
 
-:- use_module('../analyze', [rel_columns/5]).
+:- use_module('../../analyze', [rel_columns/5]).
 :- use_module(library(http/json)).
 
 arrival_column_types(Prog, Bindings, Ref, ColumnTypes) :-

@@ -13,15 +13,15 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
-:- use_module('../compile', [ read_fixture_term/4, program_plan/2 ]).
+:- use_module('../../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../../0_refusal_messages',
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
-:- use_module('../strat', [ stratum_groups/2 ]).
-:- use_module('../lower',
+:- use_module('../../strat', [ stratum_groups/2 ]).
+:- use_module('../../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
                 canonical_column_expr/2, level_support_sql/4,
                 json_capture_json_type/2 ]).
-:- use_module('../analyze', [ check_supported_subset/1, literal_witness/1 ]).
+:- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
@@ -29,9 +29,9 @@
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a refusal happens to land
 % on.
-:- use_module('../parse_dl', [ parse_dl/4, remaining_line_column/3 ]).
+:- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
-:- use_module('../print_dl', [ print_dl_program/3, print_term/5 ]).
+:- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
               [ surface/5, expression/5, host_execution/3,
                 % The reserved-body-word sweep reads which rows are BODY
@@ -41,20 +41,20 @@
 :- use_module('../../1_host_expand',
               [ prepare_program/5, compile_host_decl/2, compile_ts_query/2,
                 reserved_host_column/1 ]).
-:- use_module('../emit_ts',
+:- use_module('../../emit_ts',
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
                 % plan compiles to, asserted by the incremental_mode unit.
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../lower', [ boot_statements/5 ]).
+:- use_module('../../lower', [ boot_statements/5 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
 % several of them are the same predicate written twice. Each of these was
 % added to its module's export list for exactly this test rather than being
 % called as a private qualified goal, which `just prolog-lint` refuses.
-:- use_module('../analyze',
+:- use_module('../../analyze',
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
                 listened_departure_refs/2,

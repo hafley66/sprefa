@@ -17,8 +17,8 @@
 
 :- use_module('../../conformance/engine',
               [run_program/5, rel_rows/3, rel_deltas/3]).
-:- use_module('../../compile/compile', [program_plan/2]).
-:- use_module('../../compile/lower', [lower_program/2]).
+:- use_module('../../compile', [program_plan/2]).
+:- use_module('../../lower', [lower_program/2]).
 :- use_module('../../compile/registry', [expression/5]).
 :- use_module(library(crypto), [crypto_data_hash/3]).
 :- use_module(library(lists), [list_to_set/2]).

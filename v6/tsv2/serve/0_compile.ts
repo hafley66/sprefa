@@ -14,7 +14,7 @@ import { Observable, concatMap, from, map } from "rxjs";
 
 import type { IProgramCompiler, IServedProgram } from "../runtime/types.ts";
 
-const COMPILE_PL = fileURLToPath(new URL("../../prolog/compile/compile.pl", import.meta.url));
+const COMPILE_PL = fileURLToPath(new URL("../../prolog/compile.pl", import.meta.url));
 const GEN_SERVED_DIR = fileURLToPath(new URL("../gen_served", import.meta.url));
 
 const DEFAULT_COMPILE_BUDGET_MS = 600_000;

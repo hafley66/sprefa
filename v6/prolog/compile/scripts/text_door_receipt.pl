@@ -79,9 +79,9 @@
 
 :- use_module(library(filesex)).
 :- use_module(library(lists)).
-:- use_module('../compile', [compile_dl6/2, compile_fixture/3, compile_program/6,
+:- use_module('../../compile', [compile_dl6/2, compile_fixture/3, compile_program/6,
                              program_plan/2]).
-:- use_module('../print_dl', [print_dl_program/3, augmented_decls/6]).
+:- use_module('../../print_dl', [print_dl_program/3, augmented_decls/6]).
 
 :- dynamic(compile_dir_fact/1).
 :- prolog_load_context(directory, Here), assertz(compile_dir_fact(Here)).

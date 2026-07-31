@@ -30,7 +30,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(analyze, [ rel_columns/5, declared_refs/2 ]).
-:- use_module(registry,
+:- use_module('compile/registry',
               [ body_surface_for_term/6,
                 wrapper_lower_role/3,
                 expression/5,

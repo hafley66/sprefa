@@ -46,7 +46,7 @@ if ! /opt/homebrew/bin/swipl -q -s "$bdir/scale-gen.pl" \
   exit 1
 fi
 
-if ! /opt/homebrew/bin/swipl -q -l "$root/v6/prolog/compile/compile.pl" \
+if ! /opt/homebrew/bin/swipl -q -l "$root/v6/prolog/compile.pl" \
     -g "compile_fixture(scale_bench,'$term','$generated',emit_ts:emit_program),halt" \
     >/dev/null 2>"$out/tsv2-${shape}-${rows}.compile.err"; then
   echo "TSV2_FATAL compile_fixture/4 failed for $shape/$rows" >&2

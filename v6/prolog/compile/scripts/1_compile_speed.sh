@@ -213,7 +213,7 @@ if [ "$regressions" -gt 0 ]; then
   profile_destination="$scratch/$worst_program.profile.ts"
   echo "COMPILE_PROFILE program=$worst_program phase=$worst_phase top_self_time_lines=15"
   if "$v6_dir/tools/run-capped.sh" 120 swipl -q \
-      -l "$compile_dir/6_profile.pl" \
+      -l "$compile_dir/../6_profile.pl" \
       -g "compile_profile:execution_profile_dl6('$profile_source', '$profile_destination')" \
       -g halt >"$profile_output" 2>&1; then
     awk '
