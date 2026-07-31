@@ -63,6 +63,15 @@
 #                                  stated future use of `{`.
 #   set/0                          removed word: unsupported_surface(
 #                                  removed_word(set)).
+#   scan/variadic                  reserved removed word (ruling files_naming). v5's
+#                                  corpus-walk spelling; file enumeration here
+#                                  is the files/files_at host pair
+#                                  (fixtures/files-hosts.dl6). Reserved rather
+#                                  than absent so a ported v5 body is a named
+#                                  refusal instead of a silently empty EDB
+#                                  relation: reserved_body_word(scan/N) on both
+#                                  doors, covered by conformance
+#                                  scan_is_a_named_refusal{,_at_five_arguments}.
 #   zip/2                          reserved.
 #   subscribe/1, unsubscribe/1,    reserved lifecycle wrappers; their kernel
 #   complete/1, error/1            forms are next/finalize on the demand rel.
