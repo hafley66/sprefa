@@ -149,6 +149,9 @@ status=0
 regressions=0
 improvements=0
 phase_rows=0
+worst_program=
+worst_phase=
+worst_ratio=0
 
 while IFS=$'\t' read -r program phase count; do
   [ -n "$program" ] || continue
@@ -174,7 +177,20 @@ while IFS=$'\t' read -r program phase count; do
     }')"
 
   case "$verdict" in
-    REGRESSION) regressions=$((regressions + 1)); status=1 ;;
+    REGRESSION)
+      regressions=$((regressions + 1))
+      status=1
+      candidate_ratio="$(awk -v base="$base" -v got="$count" 'BEGIN {
+        if (base == 0) print (got == 0 ? 0 : 1e300)
+        else print got / base
+      }')"
+      if [ -z "$worst_program" ] || awk -v candidate="$candidate_ratio" \
+          -v current="$worst_ratio" 'BEGIN { exit !(candidate > current) }'; then
+        worst_program="$program"
+        worst_phase="$phase"
+        worst_ratio="$candidate_ratio"
+      fi
+      ;;
     IMPROVED)   improvements=$((improvements + 1)); status=1 ;;
   esac
 
@@ -189,6 +205,35 @@ while IFS=$'\t' read -r program wall total; do
   printf '%-20s %10s %14s\n' "$program" "$wall" "$total"
 done < "$wall_report"
 echo
+
+if [ "$regressions" -gt 0 ]; then
+  profile_source="$v6_dir/dl/fixtures/$worst_program.dl6"
+  profile_output="$scratch/$worst_program.profile.txt"
+  profile_top="$scratch/$worst_program.profile.top.txt"
+  profile_destination="$scratch/$worst_program.profile.ts"
+  echo "COMPILE_PROFILE program=$worst_program phase=$worst_phase top_self_time_lines=15"
+  if "$v6_dir/tools/run-capped.sh" 120 swipl -q \
+      -l "$compile_dir/6_profile.pl" \
+      -g "compile_profile:execution_profile_dl6('$profile_source', '$profile_destination')" \
+      -g halt >"$profile_output" 2>&1; then
+    awk '
+      /^Predicate[[:space:]]/ { collecting = 1; next }
+      collecting && /^=+/ { next }
+      collecting && NF {
+        print
+        lines++
+        if (lines == 15) exit
+      }
+    ' "$profile_output" > "$profile_top"
+    echo "COMPILE_PROFILE_TOP_SELF_TIME_BEGIN"
+    sed -n '1,15p' "$profile_top"
+    echo "COMPILE_PROFILE_TOP_SELF_TIME_END"
+  else
+    profile_status=$?
+    echo "COMPILE_PROFILE status=failed exit=$profile_status"
+    sed -n '1,20p' "$profile_output"
+  fi
+fi
 
 if [ "$improvements" -gt 0 ] && [ "$regressions" -eq 0 ]; then
   echo "Compiler got materially FASTER. Bank it:"
