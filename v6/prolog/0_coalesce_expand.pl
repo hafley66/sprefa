@@ -1,53 +1,21 @@
 % 0_coalesce_expand.pl : `coalesce/2`, the use-site total read.
 %
-% Ruling null_design = get_else_use_site_never_storage (conformance/rulings.pl,
-% ARCH task get_else_wiring). Null never enters storage or the type system.
-% Absence stays row absence. A consumer that wants a TOTAL answer spells the
-% default itself, at the use site, and the default is an ordinary value of the
-% column's own type. Datomic's `get-else` is the prior art
-% (plans/2026-07-30-option-versus-null-lab.md section 5, candidate D, receipt
-% G1); the surface WORD here is `coalesce` because the language vocabulary law
-% admits only rxjs, prolog or SQL words and COALESCE is the SQL word with
-% exactly these semantics.
-%
-%   repo_latest(Repo, Commit) <-
-%     repo(Repo),
-%     coalesce(latest_commit(Repo, Commit), 'absent').
-%
-% ── the desugar, which is the whole implementation ───────────────────────────
-%
-% ZERO new runtime semantics. One rule carrying a coalesce becomes TWO ordinary
+% One rule carrying a coalesce becomes two ordinary
 % clauses of the same head:
 %
 %   h(...) <- Rest, latest_commit(Repo, Commit).
 %   h(...) <- Rest, not(latest_commit(Repo, _)), Commit := 'absent'.
 %
-% Multiple clauses on one head, stratified negation, `:=` binds and the
-% negation path's retraction flip are all already shipped in both emitter
-% modes, so coalesce inherits every one of them rather than adding a lowering.
-% N coalesce goals in one body therefore produce 2^N clauses, which is what the
-% outer-join semantics of N independent optional reads actually is.
-%
-% ── the arrow decides the positive arm's SHAPE ───────────────────────────────
+% Multiple coalesce goals produce 2^N clauses.
 %
 % In a LEVEL body the present arm is the bare relation atom: a level body reads
 % state. In an EDGE body a bare atom is a TRIGGER, an occurrence, so the bare
 % form would turn an optional lookup into a second firing source. The edge arm
 % is therefore `latest(Atom)`, the sampled base-table read
-% (registry.pl latest/1, the N->(0|1) coercion). This is not a new judgement:
-% 0_relation_edge_expand.pl splices membership atoms in with exactly the same
-% split and for exactly the same reason.
+% (registry.pl latest/1, the N->(0|1) coercion). The edge expander uses the
+% same split for membership atoms.
 %
-% ── variables are SHARED with the source rule, never copied ──────────────────
-%
-% Both emitted clauses share the original rule's variable objects. That is
-% deliberate and it is the status quo, not a new risk: one fixture is ONE
-% prolog fact, so two rules written with the same variable spelling ALREADY
-% share one variable object (fixtures/merge_family.pl:91-92 is the standing
-% example). analyze.pl:column_name_at/4 mines column NAMES by ==/2 identity
-% against the fixture's variable_names bindings, so a copy_term here would
-% hand the absent-arm clause a head full of anonymous variables and rename
-% every column it is the first witness for.
+% Both emitted clauses retain the source rule's variable identity.
 %
 % ── what is refused, and why each one is decidable here ──────────────────────
 %

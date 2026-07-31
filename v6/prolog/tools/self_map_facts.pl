@@ -1,5 +1,4 @@
-% self_map_facts.pl : the SELF-MAP rail's fact source. One path in, JSON lines
-% of architecture facts out.
+% Self-map fact source. One path in, JSON lines of architecture facts out.
 %
 % Run:  swipl -q -l v6/prolog/tools/self_map_facts.pl -g 'emit_for(Path)' -g halt
 %       (v6/tsv2/scripts/self-map.sh drives it through an `sh` host instead)

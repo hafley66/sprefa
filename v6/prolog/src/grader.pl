@@ -1,5 +1,4 @@
-% grader.pl : the PASS/fail loop every lab was copy-pasting, written once.
-% A lab defines check(Name, Goal) facts and one line: `go :- run(check).`
+% Shared PASS/fail loop for lab check(Name, Goal) facts.
 
 :- module(grader, [run/1]).
 
@@ -8,10 +7,7 @@
 % lab's private helpers need the qualification.
 :- meta_predicate run(:).
 
-% run/1 FAILS when any check failed, so `swipl -g go -g halt` exits nonzero.
-% It printed `fail` lines and succeeded until 2026-07-31: every runner riding
-% it (conformance included) was exit-0 advisory, and a red fixture shipped
-% invisible under battery tails that trusted the exit code.
+% run/1 fails when any check fails, so the command exits nonzero.
 run(Module:Check) :-
     Failures = failures(0),
     forall(call(Module:Check, Name, Goal),

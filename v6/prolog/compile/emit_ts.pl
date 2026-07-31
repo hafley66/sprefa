@@ -1,36 +1,6 @@
-% emit_ts.pl : prints a lowered/8 term as a literal TypeScript module
-% conforming to IGenProgram (plans/2026-07-27-tsv2-compile-target-header.md,
-% ADDENDUM). P1 emits two execution families. The default incremental family
-% stages one tick's effective changes in indexed TEMP tables, runs inline
-% delta-side joins for positive non-recursive level rules, and reads boundary
-% changes from those tables. The recompute family remains available through
-% SPREFA_TSV2_EMITTER_MODE=naive and remains the fallback for negative
-% bodies and retraction ticks. P2 carries positive rule frontiers across
-% drain ticks in per-relation current/next TEMP tables.
-%
-% Table-driven, not hand-unrolled: every rel's snapshot read / arrival
-% statement / delta entry is one row in a compile-time array or record
-% literal, the more "generated code" shape for a compiler meant to scale
-% past two or three rels. The one genuinely dynamic-length pieces are
-% `arrivals` itself (a runtime value: `.map()`/`.filter()` over it is plain
-% array code, "sync stays sync") and the edge-write resolution's `forkJoin`
-% over one query per matching arrival row (a real sequential IO fan-out,
-% legitimately rx-shaped).
-%
-% SEAM NAMES: IGenProgram, ISqlSeam, IArrivalBatch, IArrivalRow, IRow,
-% IRowValue, ITickDeltas, SqlStatement all imported from
-% "../runtime/types.ts" (real file, merged). `IBootStatement` is a LOCAL
-% type (the header's IGenProgram has no boot slot; "extend by adding
-% fields, never renaming" -- v6/tsv2/scripts/run-emitted.ts confirms who
-% runs it and when: after DDL, before the tick fold).
+% Emit lowered compiler plans as TypeScript modules.
 
-% The four extra exports are the EMITTER MODE seam (rank R8 of
-% plans/2026-07-29-prolog-org-review.md). The incremental_mode unit in
-% compile/test/plunit_tests.pl asserts which statement family a plan compiles
-% to, and it used to reach these as private qualified goals, which
-% `just prolog-lint` refuses. They are a real contract, not a test hole: each
-% answers a yes/no question about a plan that the emitted module's SHAPE
-% depends on, and stating them here makes that contract checkable.
+% The four extra exports form the emitter-mode seam.
 :- module(emit_ts,
           [ emit_program/5,
             incremental_program_safe/4,
@@ -40,11 +10,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-% relplan_kind/3 (Ref -> log|set): PHASE C2 RULING 2's per-arm resolver needs
-% the TRIGGER's kind (to choose the log-unconditional vs set-dedup branch of
-% the emitted triggerOccurrences call), and RelPlans is available straight
-% off the Lowered term this module already renders -- reused, not
-% reimplemented.
+% relplan_kind/3 supplies trigger kind to the per-arm resolver.
 :- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/2 ]).
 :- use_module(analyze,
@@ -61,13 +27,8 @@
 
 lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
 
-% A JS TEMPLATE LITERAL processes THREE things, and this used to escape two.
-% The backtick and `${` were handled; the BACKSLASH was not, so any backslash
-% in the SQL text -- a string constant carrying a regex, `\d` or `\.` -- was
-% consumed by JavaScript's own escape processing before sqlite ever saw the
-% statement. The emitted file read `'digit \d here'` and the running program
-% compared against `'digit d here'`, silently. Escaping `${` while not
-% escaping `\` is what made that a PARTIAL escape rather than a decision.
+% Escape backslashes, backticks, and `${` before embedding SQL in a template
+% literal. Backslashes must be handled first.
 %
 % The backslash clause goes FIRST, or it would double the backslashes this
 % predicate itself introduces for the other two.
@@ -241,9 +202,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
 
 % ═══ the declared value plane (STRUCT-AS-ROWS) ══════════════════════════════
 % Emitted ONLY for a program that declares a type. Every other module stays
-% byte-identical to what it was before this arc: no import line, no constant,
-% no wrapper -- the storage plane costs exactly nothing where it is unused,
-% and the sweep's byte-identity discipline is what checks that claim.
+% Programs without struct declarations receive no struct-plane output.
 
 struct_plane_lines([], _, [], false) :- !.
 struct_plane_lines(StructPlans, RelPlans, Lines, true) :-
@@ -706,11 +665,8 @@ gate_column_type(list(_), json) :- !.
 gate_column_type(_,     other).
 
 boundary_column_type(ref(_), ref) :- !.
-% A `json` column KEEPS its own name at the driver seam. It used to collapse
-% to `text` on the premise that "encodeValue already renders a string that
-% starts with `{` or `[` as a canonical JSON value, so widening
-% IRowColumnType would buy nothing". The json_flex lab measured that premise
-% and it is false in both directions:
+% A `json` column keeps its own name at the driver seam. JSON scalars and
+% strings cannot be classified by inspecting only the first character.
 %
 %   json column holding `42`        -> string "42", misses the first-char
 %                                     sniff, prints as "42" where the oracle
@@ -783,7 +739,7 @@ snapshot_read_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), L
     format(atom(Line), '    ~w: selectRows(seam, ~w, relColumns.~w!, relColumnTypes.~w!),',
            [Name, Template, Name, Name]).
 
-% ═══ finalSelect (EXPRESSION + AGGREGATE LIFT arc, final-state grading leg) ══
+% ═══ finalSelect (final-state grading leg) ════════════════════════════════════
 % The SAME per-rel "read every row" SQL readSnapshot uses (deltastmt's
 % SelectAllSql, canonical-text rendered), exported by rel name so a grader
 % can compare the program's END state against the oracle's FinalAll. This is
@@ -1591,14 +1547,8 @@ build_deltas_fn_lines(RelPlans, EdgeStatements, _RetentionStatements,
           ['    ],', CarryLine, '  };', '}']
         ], Lines).
 
-% ONE line per rel, and no retention special case. A rel with a keep(...)
-% clause used to emit `del: []` here, which was the naive referee's copy of
-% the same suppression the incremental door carried in boundaryDelta's
-% `kind === "set"` guard. The naive snapshot straddles retention (the tick
-% takes `before`, runs applyNaiveRetention, then takes `after`), so the plain
-% multisetDiff already reports a reclaimed row as a del; the special case was
-% throwing that answer away. A keep(all) rel is unaffected, because nothing
-% is ever reclaimed and the del list comes back empty on its own.
+% Retention runs between the before and after snapshots, so multisetDiff must
+% retain reclaimed rows as deletions; no keep-specific suppression is needed.
 diff_local_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     format(atom(Line), '  const ~w = multisetDiff(before.~w, after.~w);',

@@ -1,9 +1,4 @@
-% engine.pl : THE reference interpreter (AGGREGATE.md section 5b).
-%
-% One tick semantics, merged from the nine lab interpreters under the rulings
-% in rulings.pl. The labs stay as the receipts; fixtures promoted from them
-% run here, and a green run over the full corpus is the proof the lab
-% sketches described one language.
+% Reference interpreter for the conformance fixtures.
 %
 % Run: swipl -q -l v6/prolog/conformance/go.pl -g go -g halt
 %
@@ -58,19 +53,9 @@
 :- module(engine,
           [ run_fixture_checks/2, run_program/5, fixture_expectations_hold/2,
             rel_rows/3, rel_deltas/3,
-            % Body traversals, exported as the characterization seam for the
-            % shared-walker consolidation (rank R1). body_latest_ref/2 and
-            % body_pre_ref/2 are the oracle's copies of two compiler scans;
-            % the test that pins them equal reaches both sides by name.
             trigger_items/2, body_finalize_ref/2,
             body_latest_ref/2, body_pre_ref/2,
-            % The oracle's load-time program gate, exported so the
-            % cross_plane_check_parity unit (rank R2) can put the same prog/2
-            % term through both doors and compare the two exception terms.
             check_program/1,
-            % Declaration queries, exported as the declaration_query_parity
-            % seam (rank R9). rel_kind/3 lost the Rules argument no clause
-            % ever read.
             rel_kind/3, decl_key/3 ]).
 :- reexport(body, [json_canon/2]).
 
@@ -110,10 +95,6 @@ drain_cap(100).
 % Bound: count(N) | all      (duration bounds arrive with the clock fixtures)
 
 
-% Both resolvers are shared with the compiler (rank R9 of
-% plans/2026-07-29-prolog-org-review.md). This file used to carry its own
-% clause-for-clause copies, and rel_kind/4's Rules argument was never read by
-% any clause; the declaration_query_parity unit is the receipt.
 rel_kind(Decls, Ref, Kind) :- relation_kind(Decls, Ref, Kind).
 
 decl_key(Decls, Ref, Positions) :- declared_key(Decls, Ref, Positions).
@@ -125,8 +106,7 @@ key_of(Positions, Row, Key) :-
 % Load-time program checks: headed relation compatibility, body markings,
 % keyed-Log exclusion, and retention presence.
 %
-% The trigger conditions live in 0_program_check.pl, shared with the compiler's
-% supported-subset gate (rank R2 of plans/2026-07-29-prolog-org-review.md).
+% The trigger conditions live in 0_program_check.pl, shared with the compiler.
 % What stays here is this door's ORDER and this door's exception vocabulary,
 % both of which are fixture data: the oracle throws bare terms, the compiler
 % wraps in unsupported_construct/1, and a program violating two classes reports
@@ -193,13 +173,7 @@ engine_refusal(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
 engine_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
-% ONE name for all five reserved words, where the compiler splits the four
-% lifecycle wrappers out as lifecycle_arm/1. Deliberate, and the same kind of
-% split keyed_log_rel already has: this door's term answers "the language has
-% claimed this word and given it no meaning", which is one fact and reads the
-% same for `zip` as for `subscribe`. The compiler's split exists because its
-% four lifecycle rows share a refuse(lifecycle) LOWERING role that a future
-% arc lands together; the oracle has no lowering to group.
+% The oracle uses one refusal term for all reserved body words.
 engine_refusal(reserved_body_word, reserved(Ref, _), reserved_body_word(Ref)).
 engine_refusal(relation_value_under_negation,
                pattern(Ref, Column, TypeName, Value),
@@ -258,27 +232,12 @@ log_stamps(Store, Ref, Stamps) :-
 % r4: finalize(Atom) is a DEPARTURE trigger position; it fires on a Set/level
 % row's -delta arriving as a next-tick occurrence, and is never satisfiable
 % as a read (the row is gone). Items are arrival(Atom) | departure(Atom).
-% The conjunction spine comes from the shared walk (rank R1 of
-% plans/2026-07-29-prolog-org-review.md); the classification stays here,
-% because it is NOT the registry's.
+% The conjunction spine comes from the shared walk; classification stays here.
 %
 % The walk must NOT descend not/1: a negated atom is not a trigger.
 %
-% It MUST splice next/1 and combine, and this was the other half of the same
-% silence body.pl:solve/2's splice clause closes. The policy used to be
-% splice_bare(false) with the reason "next/1 or combine remain wrappers rather
-% than becoming live triggers on their spliced atoms", which made
-% `out(X, Y) <+ combine(a(X), b(Y))` a rule with NO trigger item at all --
-% statically dead, no refusal. Measured against the compiler for exactly that
-% program, both doors before the change:
-%
-%   oracle   edge combine: rows=[]              compiler: COMPILED CLEAN
-%   oracle   edge conj:    rows=[out(1,2)]      compiler: COMPILED CLEAN
-%
-% and the compiler's own trigger classification for the two bodies is the same
-% term, `unmarked_conjunction([a(_), b(_)])`, emitting the same two arrival
-% statements. A splice row is transparent on the occurrence plane as well as
-% the solving plane, or it is not a splice.
+% next/1 and combine are transparent splice rows and must contribute trigger
+% items from their component goals.
 %
 % Every body WITHOUT a splice row walks identically under either policy --
 % walk_children/7 branches on splice_bare only for a splice_bare surface row --
@@ -317,14 +276,7 @@ listened_departure_refs(Rules, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
-% All three are the shared walk under different policies (rank R1 of
-% plans/2026-07-29-prolog-org-review.md). The compiler shipped its own copies
-% of the latest/1 and pre/1 scans as analyze:level_body_latest_ref/2 and
-% analyze:level_body_pre_ref/2; both now call this same implementation, and
-% the body_walk_characterization unit asserts the two sides agree case by case.
-%
-% finalize/1 deliberately does NOT descend not/1, matching what this file did
-% before: a negated finalize is not a departure the engine listens for.
+% finalize/1 does not descend not/1: a negated finalize is not a departure.
 body_finalize_ref(Body, Ref) :-
     body_wrapper_refs(Body, finalize,
                       walk_policy(descend_not(false), splice_bare(false)),

@@ -1,19 +1,8 @@
-% analyze.pl : structural analysis of a prog(Decls, Rules) term form. Reads
-% relation kind (0_program_check.pl:relation_kind/3, shared with the oracle
-% since rank R9 -- this file used to carry its own copy of it), which refs are
-% EDB (an arrival schedule may write them: never a rule head) vs derived
-% (headed by a level or edge rule), and per-ref column names mined from typed
-% declaration entries or the ORIGINAL surface variable names the caller recovers via
-% read_term(Stream, Term, [variable_names(Bindings)]) -- column identity comes
-% from the fixture source text, never invented here.
+% Structural analysis of prog(Decls, Rules) terms. Column names come from
+% declaration entries or source variable names recovered by read_term/3.
 %
-% Compiles the SUBSET engine.pl semantics that the two Phase B target
-% fixtures use: edge rule bodies are `TriggerAtom` alone (no extra
-% joined goal, no pre/1, no departed/1, no guard); level rules are
-% non-aggregate, with `not/1` and single-reference self recursion allowed.
-% Anything wider
-% throws unsupported_construct(What) at analysis time -- a compiler finding,
-% not a silent guess.
+% The compiler accepts a defined subset of engine.pl semantics and throws
+% unsupported_construct/1 for constructs outside it.
 
 :- module(analyze,
           [ rel_kind/3, decl_key/3, decl_keep/3, declared_refs/2,
@@ -30,16 +19,7 @@
             program_uses_tick/2,
             program_column_types/7,
             literal_witness/1,
-            % Body traversals, exported as the characterization seam for the
-            % shared-walker consolidation (rank R1). The oracle ships its own
-            % copy of the latest/1 and pre/1 scans, so the test that pins them
-            % equal has to reach both sides by name.
             level_body_latest_ref/2, level_body_pre_ref/2,
-            % The compiler's copy of engine.pl:listened_departure_refs/2 --
-            % the rels some rule binds with finalize/1, which are exactly the
-            % rels that owe a departure frontier. lower.pl and emit_ts.pl both
-            % read it; the departure_ref_parity plunit unit pins it equal to
-            % the oracle's.
             listened_departure_refs/2,
             reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 
@@ -68,12 +48,6 @@
 :- op(700,  xfx, :=).
 
 % ═══ rel kind ═══════════════════════════════════════════════════════════════
-% Shared with engine.pl rather than mirroring it (rank R9 of
-% plans/2026-07-29-prolog-org-review.md). The header here used to say "mirrors
-% engine.pl exactly", which was true and is exactly the kind of claim that
-% stops being true without anything failing. Both doors now call one
-% implementation, and declaration_query_parity is the receipt.
-
 rel_kind(Decls, Ref, Kind) :- relation_kind(Decls, Ref, Kind).
 
 decl_key(Decls, Ref, Positions) :- declared_key(Decls, Ref, Positions).
@@ -117,10 +91,8 @@ derived_refs(Rules, Refs) :-
 % stratification and column-name mining, both of which DO care about a
 % negated read).
 
-% This is the walk the review named as the reference semantics for the shared
-% traversal, and the one whose policy is widest: it descends not/1 and splices
-% next/1 and combine. The traversal itself now lives in 0_body_walk.pl (rank
-% R1); what stays here is the projection from a walk event to a use/4.
+% This projection uses the widest walk policy: it descends not/1 and splices
+% next/1 and combine.
 %
 % Polarity comes from the walker, which absorbs to neg under any descended
 % not/1 rather than flipping, so a doubly negated atom reads negative. That is
@@ -453,27 +425,9 @@ literal_witnesses_type(Witnesses, Type) :-
     ).
 
 % ═══ program-wide column typing (EXPRESSION + AGGREGATE LIFT) ══════════════
-% PHASE C2 RULING 1 types each column from ITS OWN literal witnesses alone,
-% which is exactly right while every value in a column arrives as a literal
-% somewhere. An expression column does not: union_size/3's third column is
-% only ever written by the head expression `LeftSize + RightSize - Shared`
-% and only ever read into jaccard's body variable `Union`, so it has ZERO
-% literal witnesses and falls to the "no witness -> text" default while the
-% value crossing it is the integer 12. Stored TEXT, the tick-log and
-% final-state encoders print "12" where the oracle prints 12, and `Union > 0`
-% compares TEXT affinity against an integer literal. That is fail-first check
-% (a), the TEXT-collapse class, and this pass is the fix.
-%
-% One fixpoint over EVERY rule head, level and edge alike. Edge heads used to
-% be excluded, on the literal-witness-only rule, and check_edge_head_column_
-% types/2 refused the resulting mismatches by name
-% (edge_head_column_type_mismatch) rather than resolving them. That refusal is
-% the "real fix, out of this ruling's scope" the C2 comment below names, and
-% this is that fix: an edge head's column inherits its type from the body
-% variable that feeds it, exactly the way a level head's does. The
-% cross-check itself stays -- it now fires only where two DIFFERENT body atoms
-% feed one head column with genuinely disagreeing types, which is a real
-% program defect rather than an artefact of where the fixpoint stopped.
+% Column types start with literal witnesses and are refined through rule-head
+% expressions until stable. Edge-head columns inherit types from shared body
+% variables; conflicting body sources remain errors.
 %   1. seed every column from its literal witnesses, keeping "no witness"
 %      DISTINCT from "text witness" (contribution `none` vs `text`);
 %   2. for each level rule, build a variable -> type environment from its
@@ -1006,34 +960,13 @@ edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
 % condition rather than refused.
 edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
     \+ plain_positive_rel_atom(Atom).
-% decode/2 and json_each/2 are blocked BELOW the arm, on the value encoding,
-% which is why widening the arm did not reach them. A compound value that
-% ARRIVES is stored as canonical term text (`fresh(tag_w1,body1)` --
-% sweep.pl:term_text/2, mirroring ticklog.pl's own value_json/2), while
-% compile_pattern_arg/7's compound branch destructures the json1 tagged form
-% (`json_extract(Expr,'$.fn')` / `'$.args[N]'`) that the emitter writes for a
-% compound a HEAD expression produces. The two encodings do not meet, and that
-% mismatch is the one SCOREBOARD.md has carried since phase C ("compound
-% arrival text vs json1 match"). Lowering decode/2 on top of it would answer
-% zero rows where the oracle unifies. The object-pattern half (`{name: X}`)
-% needs a third shape again, and json_each/2 needs a table-valued read.
-% A decode arc owns the encoding decision first; the arm is not the blocker.
-%
-% STRUCT-AS-ROWS flipped decode/2's registry row to `lower` so a LEVEL body
-% over a struct-typed column compiles to a dictionary join. This clause
-% therefore names the two functors directly instead of reading the refused
-% status off the row: the arm is still the blocker for an EDGE body, and the
-% status word can no longer say so.
+% Edge bodies cannot destructure JSON values because their runtime encoding is
+% not available to the edge SQL shape.
 edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     nonvar(Goal),
     ( Goal = decode(_, _) ; Goal = json_each(_, _) ).
 
-% The ordered goal list, with next/1 and variadic combine spliced away and
-% not/1 left whole. The splicing used to be a local `Term =.. [combine | ...]`
-% test plus a next/1 clause; it is now the registry's splice_bare role, walked
-% by 0_body_walk.pl (rank R1). not/1 stays one goal because callers depend on
-% it: negated_guard_goal/2 below selects a not/1 goal out of this list and
-% inspects its inside.
+% The ordered goal list splices next/1 and combine while leaving not/1 whole.
 conjunction_goals(Body, Goals) :-
     body_conjunction_goals(Body,
                            walk_policy(descend_not(false), splice_bare(true)),
@@ -1065,23 +998,8 @@ shape_trigger_refs(departure_trigger(FinalizeAtom, _, _, _, _, _), [Ref]) :-
     rel_ref(FinalizeAtom, Ref).
 
 % ═══ edge head column-type consistency (PHASE C2 RULING 1 x RULING 2) ═══════
-% A real gap the unmarked-trigger widening surfaced, not present in the
-% marked_single-only corpus before this ruling: an edge rule's HEAD column
-% inherits its VALUE from a body atom via a shared variable (e.g.
-% spine_semantics.pl's `xref(FromSpanId, ...) <+ pin_extracted(FromSpanId,
-% ...)`), but analyze.pl:rel_column_types/5 infers each ref's column types
-% from ITS OWN literal occurrences alone -- xref/6 never appears as a raw
-% Schedule arrival (it is edge-headed), so its own from_span_id position
-% never sees the literal integer values that only ever arrive via
-% pin_extracted's arguments, and defaults to text (PHASE C2 RULING 1's own
-% "zero witnesses -> text" rule). The stored column is TEXT while the
-% flowing value is a genuine integer, so the tick log prints the quoted
-% string form the oracle prints as a bare number -- WRONG, not a silent
-% pass. This is called AFTER RelPlans exists (compile.pl:program_plan/2,
-% past check_supported_subset/1, which runs before RelPlans is built) and
-% refuses the specific mismatch by name rather than attempting general
-% cross-rule type propagation (a real fix, out of this ruling's scope --
-% Item 1 only ever reasons about one ref's OWN literal occurrences).
+% Check edge-head columns after RelPlans exists. A shared body variable must
+% have the same storage type in the head and source relation.
 check_edge_head_column_types(RelPlans, Rules) :-
     forall(( member(Rule, Rules), rule_is_edge(Rule) ),
            check_edge_head_column_types_for_rule(RelPlans, Rule)).
@@ -1117,17 +1035,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
              BodyColumnType \== HeadColumnType ),
            throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).
 
-% ═══ mid-tick level state on the non-trigger side of an edge arm ═══════════
-% The refusal that used to live here (`edge_body_joins_arrival_fed_level`) is
-% GONE, closed by the TICK PHASE ALIGNMENT arc. It was a runtime-seam
-% placeholder: the emitted mid-tick level plane was insert-only, so a level row
-% an arrival retracted this tick was still in its table when a NON-TRIGGER atom
-% joined it (clock_rel_join_storms tick 3 derived three diag_seen rows where
-% the oracle derives one). Both pipelines now freeze the plane where engine.pl
-% freezes it -- 1_incremental.ts:recomputeLevelsBeforeEdges runs the retracting
-% half between applyLevelsBeforeEdges and applyEdges, and the naive referee
-% calls recomputeLevels once before the edge batch and once after -- so the
-% whole class compiles and grades identical in both emitter modes.
+% The emitted edge path reads the level plane frozen before edge evaluation.
 
 % ═══ supported-subset gate ═══════════════════════════════════════════════════
 % Refuses (with a specific term, not a generic failure) any construct wider

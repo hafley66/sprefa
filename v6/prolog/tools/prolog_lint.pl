@@ -1,9 +1,6 @@
-% prolog_lint.pl -- read-only organization gate over v6/prolog/**/*.pl.
-%
-% Implements the 8-step recipe from plans/2026-07-29-prolog-org-review.md
-% section 6. Three SWI processes are needed because the tree cannot be loaded
-% all at once: two source clusters declare their own modules, and the loaded
-% checks in library(check) only see code that is actually loaded.
+% Read-only organization gate over v6/prolog/**/*.pl.
+% Three SWI processes are used because the source clusters declare separate
+% modules and library(check) only sees code that is loaded.
 %
 %   lint_sources          steps 1, 2, 8  -- xref every file, duplicate module
 %                                            names, unused-export advisory

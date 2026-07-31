@@ -1,11 +1,4 @@
-% 0_program_check.pl : one implementation of every invalid-program trigger
-% both doors test, with each door keeping its own exception vocabulary.
-%
-% Rank 2 of plans/2026-07-29-prolog-org-review.md. The review found six trigger
-% classes written twice, once in the oracle's engine:check_program/1 and once
-% in the compiler's analyze:check_supported_subset/1, plus two classes the
-% ORACLE alone checked, which let the compiler accept programs the reference
-% door rejects.
+% Shared implementation of invalid-program triggers checked by both doors.
 %
 %   program_violation(+CheckName, +Program, -Payload)
 %
@@ -13,32 +6,10 @@
 % is whatever that class needs to name the offender, in a shape both doors can
 % project from; it is NOT an exception term.
 %
-% WHAT THIS FILE DELIBERATELY DOES NOT OWN, and why the shape is
-% trigger-only rather than a whole shared check_program/1:
-%
-%   Exception terms. The oracle throws a bare term, the compiler wraps in
-%   unsupported_construct/1 and, for keyed Log, carries the key positions its
-%   emitter would have needed. Those terms are fixture data on both sides.
-%   Each door's adapter builds its own.
-%
-%   Check ORDER. The two doors run these classes in different orders, and the
-%   compiler interleaves them with its own capability refusals (edge body
-%   shape, head arithmetic, conflict risk). A program violating two classes
-%   therefore reports different ones at the two doors, and that too is fixture
-%   data. Each door declares its own order; first_violation/3 walks whatever
-%   order it is given.
-%
-%   Compiler capability refusals. Anything the reference engine executes
-%   happily and only this compiler cannot emit stays in analyze.pl. The oracle
-%   is deliberately the wider language.
-
 :- module(program_check,
           [ program_violation/3,
             first_violation/3,
-            % Declaration queries, shared by both doors (rank R9 of the same
-            % review). The oracle and the compiler each carried a clause-for-
-            % clause identical resolver, the oracle's taking an extra Rules
-            % argument it never read.
+            % Declaration queries shared by both doors.
             relation_kind/3,
             declared_key/3
           ]).

@@ -1,12 +1,6 @@
-% checks.pl : reusable program-level checks for the kernel-4 surface.
-% These are the analyses the labs proved (enum_match.pl exhaustiveness,
-% initialization.pl's first-instant rule, the v5 twin post-mortems), packaged
-% for import instead of restatement.
+% Reusable program-level checks for the kernel-4 surface.
 
-% body_member/2 is exported for examples/ghcacher.pl, which reads rule bodies
-% to report which boundary relations are clocked on deltas. It reached it as a
-% private qualified goal before rank R8 of
-% plans/2026-07-29-prolog-org-review.md.
+% body_member/2 is exported for examples/ghcacher.pl.
 :- module(checks,
           [ covers_enum/2, has_subscribe_arm/1,
             no_twin_names/1, no_self_union/1,

@@ -7,14 +7,8 @@
 % so the parser, printer, analyzer, and supported-subset gate can project from
 % these rows without maintaining their own functor lists.
 
-% expression/5 is a SECOND, SEPARATE table on a different axis, added by rank 5
-% of plans/2026-07-29-prolog-org-review.md. surface/5 says which functors are
-% body syntax and what the analyzer and the gate do with them; expression/5
-% says how the arithmetic and comparison operators PRINT, LOWER, and TYPE.
-% Keeping them apart is deliberate: widening surface/5 with precedence and SQL
-% text would put rendering metadata on rows like not/1 and match/2 that have
-% no rendering. The two tables overlap on the eleven operator functors and
-% expression_table_agrees_with_surface_rows asserts they stay consistent.
+% expression/5 stores print, lower, and type metadata separately from
+% surface/5. The overlapping operator rows are checked for consistency.
 :- module(registry,
           [ surface/5,
             surface_for_term/6,
@@ -188,22 +182,8 @@ surface(col_type/3,      decl,      no_refs,                      decl(column_ty
 % boundary read or in the tick log (arc header Edge 2).
 surface(type_decl/2,     decl,      no_refs,                      decl(struct_type),                      live).
 surface(set/0,           decl,      no_refs,                      decl(refuse(removed_word)),            refused).
-% RULING files_naming = files_unmarked_worktree_marked_rev. `scan` is v5's word
-% for the corpus walk and it is BANNED here: file enumeration spells `files` for
-% the worktree and `files_at` for a pinned revision (fixtures/files-hosts.dl6).
-%
-% RESERVED, not absent, and the reason is the edb_definition ruling: an
-% undeclared unheaded relation atom is legal input, so a program carrying a
-% ported v5 `scan(repo, rev, glob, path, rev)` would otherwise become a silently
-% empty EDB relation and derive nothing on BOTH doors. This is the zip/2 shape
-% (registry row + reserved_body_word), and the refusal message names the two
-% replacements rather than only the removed word.
-%
-% VARIADIC because v5 spells scan at four and five arguments and the ban is on
-% the WORD. `goal(...)` rather than `wrapper(...)` keeps parse_dl.pl's
-% keyword_call clause out of it: the text door parses `scan(...)` as the plain
-% atom it looks like, and 0_program_check.pl's reserved_body_word refuses it
-% from the registry row through the shared body walk.
+% scan is reserved at every arity. The supported file-enumeration spellings
+% are files and files_at.
 surface(scan/variadic,   world,     no_refs,                      goal(refuse(removed_word)),            reserved).
 surface(match/2,         sugar,     no_refs,                      block(match_arms),                      live).
 surface(sh_decl/4,       world,     no_refs,                      decl(host_plan),                        live).
@@ -244,11 +224,6 @@ clock_role(edge_absence,     b, negative, 0).
 %   TypeRule        both_int  operands must both be int (the Int-only law)
 %                   same_type operands must agree, whatever the type
 %                   text_only operand must be text
-%
-% Before this table, the same eleven operators were listed in five places:
-% body.pl's comparison_goal/1, lower.pl's arithmetic_expr/4 and
-% comparison_operator_sql/5, print_dl.pl's arith_op/2, and two memberchk lists
-% in analyze.pl. Adding an operator meant finding all five.
 %
 % mod is the row that shows why SqlRendering is not just an operator atom:
 % SQLite's % takes the sign of the dividend, while this language's mod follows
