@@ -1,0 +1,4 @@
+rel source(name: text).
+rel target(total: int).
+
+target(Value) <- source(Value).

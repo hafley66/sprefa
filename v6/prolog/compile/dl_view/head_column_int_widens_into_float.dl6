@@ -1,0 +1,4 @@
+rel source(count: int).
+rel scaled(value: float).
+
+scaled(Value) <- source(Value).

@@ -296,18 +296,46 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
 % column has no type here to contradict (the divergence undeclared columns
 % still show is a different open question -- what a bare column's default
 % should be -- and is not this ruling's).
+% COST: the first draft called relation_columns_and_types/5 inside BOTH loops,
+% and each call is a findall over the whole Decls list, so the work was
+% quadratic in declarations for no reason. The declared column table is built
+% ONCE per program here and the loops index it.
+%
+% Honest about the measurement: `just compile-speed` reports a parse-phase
+% regression on all four pinned programs, and that regression is NOT this. It
+% reproduces at base a87ca936 with this arc's changes stashed, to the
+% inference, so the baseline is stale against main and this check does not
+% appear in any gated phase's numbers at all.
 program_violation(head_column_type_conflict, prog(Decls, Rules),
                   conflict(HeadRef, HeadColumn, HeadType,
                            BodyRef, BodyColumn, BodyType)) :-
     type_definitions(Decls, Types),
+    declared_column_table(Decls, Types, Rules, Table),
+    Table \== [],
     member(Rule, Rules),
-    rule_head_column_variable(Decls, Types, Rule, HeadVariable,
+    rule_head_column_variable(Table, Rule, HeadVariable,
                               HeadRef, HeadColumn, HeadType),
-    rule_body_column_variable(Decls, Types, Rule, BodyVariable,
+    rule_body_column_variable(Table, Rule, BodyVariable,
                               BodyRef, BodyColumn, BodyType),
     BodyVariable == HeadVariable,
     \+ column_type_assignable(Types, BodyType, HeadType),
     !.
+
+% One entry per DISTINCT relation reference the rules mention, resolved once.
+% A ref whose columns are not fully declared simply has no entry, which is the
+% same all-or-nothing rule ref_column_names/4 applies.
+declared_column_table(Decls, Types, Rules, Table) :-
+    findall(Ref,
+            ( member(Rule, Rules), rule_relation_atom(Rule, Atom),
+              compound(Atom), functor(Atom, Name, Arity), Ref = Name/Arity ),
+            Refs0),
+    sort(Refs0, Refs),
+    findall(rel_columns(Ref, Columns, ColumnTypes),
+            ( member(Ref, Refs),
+              Ref = _/Arity,
+              relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
+              length(Columns, Arity) ),
+            Table).
 
 
 % ── two shapes that used to be a door DISAGREEMENT ───────────────────────────
@@ -615,13 +643,12 @@ body_relation_atom(Body, Atom) :-
 % column, not in the ref column that holds it -- the first draft of this
 % predicate unwrapped every compound one level and refused nine struct
 % fixtures and one aggregate fixture on exactly that mistake.
-rule_head_column_variable(Decls, Types, Rule, Variable, Ref, Column, Type) :-
+rule_head_column_variable(Table, Rule, Variable, Ref, Column, Type) :-
     rule_head(Rule, Head),
     compound(Head),
     functor(Head, Name, Arity),
     Ref = Name/Arity,
-    relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
-    length(Columns, Arity),
+    memberchk(rel_columns(Ref, Columns, ColumnTypes), Table),
     nth1(Position, ColumnTypes, Type),
     nth1(Position, Columns, Column),
     arg(Position, Head, Argument),
@@ -634,14 +661,13 @@ head_argument_variable(Argument, Variable) :-
     var(Inner),
     Variable = Inner.
 
-rule_body_column_variable(Decls, Types, Rule, Variable, Ref, Column, Type) :-
+rule_body_column_variable(Table, Rule, Variable, Ref, Column, Type) :-
     rule_body(Rule, Body),
     body_relation_atom(Body, Atom),
     compound(Atom),
     functor(Atom, Name, Arity),
     Ref = Name/Arity,
-    relation_columns_and_types(Decls, Types, Ref, Columns, ColumnTypes),
-    length(Columns, Arity),
+    memberchk(rel_columns(Ref, Columns, ColumnTypes), Table),
     nth1(Position, ColumnTypes, Type),
     nth1(Position, Columns, Column),
     arg(Position, Atom, Variable),
