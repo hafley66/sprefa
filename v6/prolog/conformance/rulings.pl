@@ -520,3 +520,11 @@ ruling(json_dup_key_fate, refuse_both_doors, user,
 % user-worded arc, this ruling only fixes which way ties break when it comes.
 ruling(vocabulary_tiebreak, sqlite_first_then_sql_standard, user,
        'user 2026-07-30: sqlite spelling wins on doubt; ansi/sql standard next; rx/prolog words only where the concept has no storage-plane spelling').
+
+% 2026-07-30 night, user ruling round.
+ruling(seq_sugar, approved_wire_m2, user,
+       'user: "approve seq". M2 only; M1 scan and M3 stages stay unwired.').
+ruling(release_gate_v620, arch_from_single_dl6_file, user,
+       'user: "no release till u give me arch from single dl6 file mate, dogfood". The self-map rail must emit ARCH-MAP.md from ONE dl6 program; the python renderer must go. Push+tag gated on this.').
+ruling(devlog_rail, approved_dogfood, user,
+       'user: "docs YES DOGFOOD DOCS". A dl6 program reads the session ledgers and emits DEVLOG.md.').
