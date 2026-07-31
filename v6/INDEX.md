@@ -11,7 +11,7 @@
 | [.agents/skills/v6-deps/SKILL.md](.agents/skills/v6-deps/SKILL.md) | 145 | V6 dependency dossier (researched 2026-07-19) |
 | [.agents/skills/v6-plan/SKILL.md](.agents/skills/v6-plan/SKILL.md) | 85 | V6 primed context |
 | [AGENTS.md](AGENTS.md) | 103 | v6 — AGENTS.md (start here; stay out of everything else) |
-| [ARCH-MAP.md](ARCH-MAP.md) | 451 | v6 architecture map |
+| [ARCH-MAP.md](ARCH-MAP.md) | 649 | v6 architecture map |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
 | [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
@@ -61,6 +61,7 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 122 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -107,10 +108,10 @@
 ### ARCH-MAP.md
 ```
 1:# v6 architecture map
-14:## 1. Surface sugar expands in a declared order
-38:## 2. The writable surface, by axis
-160:## 3. The build DAG's open frontier
-324:## 4. A compiled program's rel dataflow: this program's own
+10:## 1. Surface sugar expands in a declared order
+32:## 2. The writable surface, by axis
+150:## 3. The build DAG open frontier
+323:## 4. A compiled program rel dataflow: this program own
 ```
 
 ### ARCHITECTURE.md
@@ -867,6 +868,14 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md

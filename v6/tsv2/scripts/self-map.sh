@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # self-map.sh: the SELF-MAP production rail. Boots the served tsv2 engine on an
 # ephemeral port, loads v6/dl/fixtures/self-map.dl6, waits for the derived rels
-# to settle, reads them back over HTTP, and renders v6/ARCH-MAP.md.
+# to settle, reads the derived document back over HTTP, and waits for the
+# dl6 write-out effect to finish.
 #
 # Run: cd v6 && just self-map                     one shot, server torn down
 #      cd v6 && SELF_MAP_WATCH=1 just self-map    stays up, redraws on change
@@ -14,19 +15,15 @@
 # cannot do:
 #
 #   1  process lifecycle (start a server, load a program, stop the server)
-#   2  STRING ASSEMBLY. dl6 has no string aggregate -- `group_concat` is a
-#      named refusal and `concat/1` folds a fixed list of expressions, not N
-#      rows -- so folding rows into one mermaid document is a host job. This is
-#      the language gap the rail exists to make visible, and it is stated in
-#      the .dl6 header too rather than only here.
+#   2  process completion. The dl6 program owns Mermaid text construction and
+#      the write_arch_map host owns the one output-file effect.
 #
 # ── determinism ──────────────────────────────────────────────────────────────
 #
 # ARCH-MAP.md must be byte-stable across runs so a staleness gate can diff it.
-# Row order out of the engine is not a guarantee, so self_map_render.py sorts
-# every collection it prints and the prolog fact source sorts before printing.
 # Nothing in the output carries a timestamp, a port, a temp path, or a row count
-# that depends on scheduling.
+# that depends on scheduling. Ordered aggregates and value-sorted aggregate
+# folds are inside self-map.dl6.
 #
 # ── SABOTAGE RECEIPTS (run 2026-07-30, both reverted; tree clean after) ───────
 #
@@ -68,7 +65,6 @@ V6="$(cd "$TSV2/.." && pwd)"
 ROOT="$(cd "$V6/.." && pwd)"
 PROGRAM="$V6/dl/fixtures/self-map.dl6"
 OUT="$V6/ARCH-MAP.md"
-RENDER="$SCRIPT_DIR/self_map_render.py"
 SERVE="$TSV2/serve/main.ts"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/self-map.XXXXXX")"
 PORT="${SELF_MAP_PORT:-17711}"
@@ -90,9 +86,9 @@ stop_server() {
 trap stop_server EXIT
 
 [ -f "$PROGRAM" ] || die "program is missing: $PROGRAM"
-[ -f "$RENDER" ] || die "renderer is missing: $RENDER"
 [ -f "$SELF_MAP_FACTS" ] || die "fact source is missing: $SELF_MAP_FACTS"
 command -v swipl >/dev/null || die "swipl is not on PATH; the fact host cannot run"
+command -v jq >/dev/null || die "jq is not on PATH; the rail receipt cannot inspect rel rows"
 
 # The four watched sources are TRACKED paths read as git pathspecs by the watch
 # bind's boot enumeration. An untracked source is invisible to the rail and
@@ -118,7 +114,7 @@ done
 ) >"$WORK/server.log" 2>&1 &
 SERVER_PID=$!
 
-for _ in $(seq 1 100); do
+for ((attempt=1; attempt<=100; attempt++)); do
   curl -s -o /dev/null "$BASE/ticks" 2>/dev/null && break
   kill -0 "$SERVER_PID" 2>/dev/null || die "server died: $(tail -30 "$WORK/server.log")"
   sleep 0.2
@@ -128,18 +124,9 @@ curl -s -o /dev/null "$BASE/ticks" 2>/dev/null || die "server did not become rea
 status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || die "program load returned $status: $(cat "$WORK/load.json")"
 
-# The rels the map draws from. Fetched as one document so the renderer sees a
-# single consistent read rather than N reads across N ticks.
-# Only the rels the document actually prints. The program's intermediates
-# (task_done, task_open, task_blocker, phase_later, phase_successor,
-# axis_non_live, task_state_count) are not fetched -- they exist to be joined,
-# not to be drawn, and fetching an unread rel would be dead weight the renderer
-# would then have to explain.
-RELS="source phase phase_wired phase_unwired phase_step phase_first phase_last \
-construct axis axis_total axis_status_total axis_all_live \
-task task_dep task_ready task_blocked \
-frontier_edge frontier_node state_total task_state_conflict \
-program_rel program_edge program_sink program_fan_in program_fan_out program_negated_edge"
+# The source rels are readiness witnesses. The final two rels are the document
+# and the write-out effect receipt produced by self-map.dl6.
+RELS="source phase construct task task_dep program_rel program_edge map_document write_receipt"
 
 fetch_all() {
   local target="$1" rel first=1
@@ -160,11 +147,11 @@ fetch_all() {
 # non-empty) and STABLE (two consecutive identical reads). A pure "unchanged
 # twice" test would accept the empty pre-boot state; a pure completeness test
 # would accept a half-filled mid-tick state.
-settle_and_render() {
+settle_and_write() {
   local previous="" current settled=0 attempt
-  for attempt in $(seq 1 240); do
+  for ((attempt=1; attempt<=240; attempt++)); do
     fetch_all "$WORK/rows.json" || die "read failed; server log: $(tail -30 "$WORK/server.log")"
-    if python3 "$RENDER" --complete-check <"$WORK/rows.json" >/dev/null 2>&1; then
+    if jq -e '(.source.rows | length) == 4 and (.phase.rows | length) > 0 and (.construct.rows | length) > 0 and (.task.rows | length) > 0 and (.task_dep.rows | length) > 0 and (.program_rel.rows | length) > 0 and (.program_edge.rows | length) > 0 and (.map_document.rows | length) == 1 and (.write_receipt.rows | length) == 1 and .write_receipt.rows[0][0] == "written"' "$WORK/rows.json" >/dev/null 2>&1; then
       current="$(cksum <"$WORK/rows.json")"
       if [ "$current" = "$previous" ]; then settled=1; break; fi
       previous="$current"
@@ -173,31 +160,24 @@ settle_and_render() {
     sleep 0.5
   done
   [ "$settled" = 1 ] || die "rels did not settle in 120s; server log: $(tail -30 "$WORK/server.log")"
-  python3 "$RENDER" <"$WORK/rows.json" >"$WORK/ARCH-MAP.md" || die "render failed"
-  mv "$WORK/ARCH-MAP.md" "$OUT"
   SETTLED_READ="$(cksum <"$WORK/rows.json")"
 }
 
 SETTLED_READ=""
-settle_and_render
+settle_and_write
 say "SELF MAP WROTE $OUT"
 report_shape() {
-  python3 - "$OUT" <<'PY'
-import sys
-text = open(sys.argv[1]).read()
-print(f"  diagrams={text.count('```mermaid')} lines={len(text.splitlines())}")
-PY
+  awk 'BEGIN { diagrams = 0 } /```mermaid/ { diagrams++ } END { print "  diagrams=" diagrams " lines=" NR }' "$OUT"
 }
 report_shape
 
 # ── LIVE MODE ────────────────────────────────────────────────────────────────
 #
-# `SELF_MAP_WATCH=1 just self-map` keeps the same server up and re-renders on
-# every change to a watched source. Nothing here polls the FILESYSTEM: the
-# watch bind already turned a file edit into an arrival, so this loop watches
-# the DERIVED ROWS and re-renders when they move. A source edit that changes no
-# fact (a comment, a reordering the emitter sorts away) correctly redraws
-# nothing.
+# `SELF_MAP_WATCH=1 just self-map` keeps the same server up and lets the dl6
+# write-out effect redraw on every change to a watched source. Nothing here
+# polls the FILESYSTEM: the watch bind already turned a file edit into an
+# arrival, so this loop watches the DERIVED ROWS and waits for the effect when
+# they move.
 #
 # LIVE RECEIPTS (run 2026-07-30, all reverted, tree clean after; the probe
 # scripts were scratch and are not checked in -- this loop is the read they
@@ -229,9 +209,9 @@ if [ "${SELF_MAP_WATCH:-0}" = 1 ]; then
   while kill -0 "$SERVER_PID" 2>/dev/null; do
     sleep 1
     fetch_all "$WORK/rows.json" || continue
-    python3 "$RENDER" --complete-check <"$WORK/rows.json" >/dev/null 2>&1 || continue
+    jq -e '(.source.rows | length) == 4 and (.map_document.rows | length) == 1 and (.write_receipt.rows | length) == 1 and .write_receipt.rows[0][0] == "written"' "$WORK/rows.json" >/dev/null 2>&1 || continue
     [ "$(cksum <"$WORK/rows.json")" = "$SETTLED_READ" ] && continue
-    settle_and_render
+    settle_and_write
     say "SELF MAP REDREW $OUT"
     report_shape
   done
