@@ -1077,6 +1077,18 @@ edges_text(group_concat(line_text, '\n')) <- edge_line(line_text).
 
 dot_line('head', 10, 'digraph dataflow_atlas {') <- seed(_, _).
 dot_line('head', 20, '  rankdir=TB;') <- seed(_, _).
+# `ratio` is here because TB alone did not deliver what TB is for. MEASURED on
+# this graph: plain TB renders 27303 x 1900pt, a 14:1 horizontal band, because
+# 421 nodes over 26 ranks puts 20 to 40 nodes side by side on every rank and no
+# layout choice makes that narrow. Four levers were tried and their numbers are
+# the reason for this one line: `ratio=compress` with `size` only downscales
+# (2880 x 200, same 14:1); `unflatten -l 8 -c 12` reaches 24358 x 2325 and then
+# IGNORES ratio; dropping the per-file sub-clusters reaches 14913 x 1756 and
+# costs the file grouping, which is information the picture is for. `ratio=0.4`
+# gives 27303 x 10945, a 2.5:1 canvas: the same drawing with the ranks given
+# room, which is a page a reader scrolls in two directions instead of one
+# endless band. rankdir stays TB; LR was never tried and never will be.
+dot_line('head', 25, '  ratio=0.4;') <- seed(_, _).
 dot_line('head', 30, '  compound=true;') <- seed(_, _).
 dot_line('head', 40, '  newrank=true;') <- seed(_, _).
 dot_line('head', 50, '  ranksep=0.7;') <- seed(_, _).

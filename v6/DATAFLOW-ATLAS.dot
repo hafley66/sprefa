@@ -1,5 +1,6 @@
 digraph dataflow_atlas {
   rankdir=TB;
+  ratio=0.4;
   compound=true;
   newrank=true;
   ranksep=0.7;
