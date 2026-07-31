@@ -15,7 +15,7 @@ of which, and it is the first thing to read.
 
 ---
 
-## A. Computation ledger — one row per computation, no exceptions
+## A. Computation ledger: one row per computation, no exceptions
 
 Legend: **(a)** expressed in dl6 and graded through the real engine, receipt
 named. **(b)** NAMED REFUSAL, the exact thrown text quoted. **(c)** ENGINE GAP,
@@ -124,7 +124,7 @@ plainly because it is what makes every depth number below defined at all.
 
 ---
 
-## 1. Toposort depth as a rel — HOLDS, and dot ranks are not the answer key
+## 1. Toposort depth as a rel: HOLDS, and dot ranks are not the answer key
 
 **Definition used.** `depth(file)` is height above the dependency leaves: 0 when
 the file depends on nothing inside the analysed set, otherwise
@@ -191,7 +191,7 @@ finding, not a failure of the leg.
 
 ---
 
-## 2. Cohesion and coupling per axis — the numbers for the CURRENT partition
+## 2. Cohesion and coupling per axis: the numbers for the CURRENT partition
 
 Internal = both endpoints in the group. Crossing = exactly one endpoint, counted
 by both endpoint groups so per-group ratios are comparable. `Q` is networkx
@@ -277,7 +277,7 @@ the type axis is per-plane and does not exist on three of the six planes.
 
 ---
 
-## 3. Community detection — buy research first, then what can and cannot be lowered
+## 3. Community detection: buy research first, then what can and cannot be lowered
 
 ### 3a. Candidate research (run before any clustering code)
 
@@ -328,7 +328,7 @@ differently is split the 27-file prolog package into 23 + 3 + 1 while leaving
 points at the same place, and this is the first of them: **the prolog package is
 the one that is not one thing.**
 
-### 3c. What the language can and cannot express — one NAMED REFUSAL
+### 3c. What the language can and cannot express: one NAMED REFUSAL
 
 Label propagation written the way the algorithm defines it, as a per-round
 majority (here minimum) vote over the previous round's labels:
@@ -376,11 +376,17 @@ rel component_index(node: text, idx: int).
 component_index(node, min(other_idx)) <- linked_index(node, other_idx).
 ```
 
-Graded against `networkx.connected_components`: matches. This is the degenerate
-end of community detection (it finds the three disconnected packages and nothing
-finer), and stating that is the point: **dl6 today reaches connected components
-and stops. Everything between components and Louvain needs either the ordered
-occurrence loop (`pre_occurrence_loop`) or a construct that does not exist.**
+Graded against `networkx.connected_components`: **matches, 4 components,
+sizes 26 / 19 / 16 / 1.** The three packages, plus `oracle_dump.pl`, which has
+in-degree 0 and out-degree 0 and is therefore its own component (a file nothing
+loads and which loads nothing inside the analysed set, worth a look on its own).
+
+This is the degenerate end of community detection: it recovers the disconnected
+packages and nothing finer, where Louvain splits the 26-file prolog component
+into 23 + 3. Stating that plainly is the point. **dl6 today reaches connected
+components and stops. Everything between components and Louvain needs an
+algorithm whose step reads state written earlier in the same step, which is the
+one shape the fixpoint model does not have.**
 
 ### 3d. A REAL ENGINE DEFECT found on the way
 
@@ -409,7 +415,7 @@ above; the fix is a shared-side check in the `0_program_check.pl` pattern.
 
 ---
 
-## 4. The counterfactual cut ("fake hops") — zero engine changes needed
+## 4. The counterfactual cut ("fake hops"): zero engine changes needed
 
 A cut is `cut(name, edge_set)`. Applying it deletes every edge in the set, adds
 one node `IFACE:<name>`, and adds `tail -> IFACE` for each distinct tail and
@@ -601,7 +607,7 @@ genuinely absent is ordering as an OUTPUT, which no metric here needs.
 
 ---
 
-## 5. Auto-search — exhaustive, and the ranking is degenerate on this codebase
+## 5. Auto-search: exhaustive, and the ranking is degenerate on this codebase
 
 The search space here is small enough that "smallest correct first" means no
 search at all: 6 folder boundaries at file granularity, 200-plus at symbol
@@ -619,7 +625,7 @@ method's next real test is a corpus with more than 62 files (section 7).
 
 ---
 
-## 6. Auto-numbering — the rename table, and every disagreement classified
+## 6. Auto-numbering: the rename table, and every disagreement classified
 
 ### 6a. How the number is derived
 
@@ -640,14 +646,14 @@ method's next real test is a corpus with more than 62 files (section 7).
 
 Decided by the dependency closure, not by taste.
 
-- **HAND ERROR** — a dependency path A -> B exists with `hand(A) < hand(B)`. The
+- **HAND ERROR**: a dependency path A -> B exists with `hand(A) < hand(B)`. The
   hand numbering contradicts itself; no metric is needed to see it. The DEPENDER
   carries the error, since raising the head would break its own consistent
   relations.
-- **SCALE SHIFT** — numbers differ, every dependency-implied order still holds
+- **SCALE SHIFT**: numbers differ, every dependency-implied order still holds
   under the hand numbering. The hand ladder is looser or offset. Not an error on
   either side.
-- **METRIC BLIND** — derived depth 0 with zero in-package dependencies while the
+- **METRIC BLIND**: derived depth 0 with zero in-package dependencies while the
   hand number is high. Candidate for a dependency the fact base cannot see;
   listed for adjudication with its out-of-package import count as evidence,
   never auto-called.
@@ -845,7 +851,7 @@ through the oracle: 62 of 62 prefixes match networkx, **0 mismatches**.
 
 ---
 
-## 7. SLOT-SCALE — measured, and the wall is much closer than 10k
+## 7. SLOT-SCALE: measured, and the wall is much closer than 10k
 
 Synthetic layered DAG (every edge runs to a strictly lower layer, 50 folders,
 fanout 3, 8 layers), depth plus cohesion plus one cut, both engines, capped.
@@ -920,6 +926,18 @@ spanning the whole repo, which the atlas does not cover.
 | **SLOT-CUT-GRANULARITY** | Both, answering different questions. Edge-set cuts answer "what interface should exist" (section 4a/4b). Node-relocation cuts answer "what is in the wrong folder" (4c), and on this codebase that is the one with the actionable answer. |
 | **SLOT-TYPE-AXIS** | Not applicable on this fact base and not manufactured: the atlas emits no `sig` records, and prolog has no types. The axis is per-plane and empty on four of six planes. Its shape when the extractor's sig family is projected: group symbols by the declared type of their interface binding. |
 | **SLOT-SCALE** | The referee scales (30,000 files in 0.84s). The dl6 expression walls between 300 and 1,000 files because depth rides an explicit transitive-closure rel, which is quadratic by definition. Numbers in section 7. |
+
+One slot the lab opened rather than closed, because the header did not name it
+and four ledger rows share it:
+
+**SLOT-SEQUENTIAL-STEP.** Louvain (A9), max-flow min-cut (A25), SCC condensation
+(A4) and cut depth under a cycle (A14) are all blocked by the same thing: a step
+that reads state written earlier in the SAME step. Three of the four should stay
+bought, and the lab says so. The fourth, condensation, is already a set-oriented
+fixpoint and is expressible today at the cost of a second closure, so the open
+question is not whether it can be spelled but whether it deserves a cheaper
+spelling given that the first closure is what walls at 1,000 files. That is a
+cost question the `pre_occurrence_loop` arc would answer alongside its own.
 
 ---
 
