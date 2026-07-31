@@ -1440,9 +1440,21 @@ sites but not against new code. **missing** = nothing.
   shell that backgrounds a child -> exit 124 and the BACKGROUNDED grandchild
   dead too (the process-group leg, which the orphaning one-liner fails);
   `capped_curl` against a socket that accepts and never answers -> curl's own
-  28 in 3s, where the uncapped request was still waiting at 8s.
+  28 in 3s, where the uncapped request was still waiting at 8s; and the bench
+  runner's DNF branch on a heavy cross-join cell under a 3s budget ->
+  `TSV2_DNF s3/4000 warmup timeout after 3 seconds` with the JSONL row
+  recording it, which is the receipt that the new 124 reads as a timeout where
+  the orphaning form's 142 used to.
   v6/tsv2/tests/serveCompileBudget.test.ts carries the compile door's, with
   its own two-part sabotage receipt.
+- THE MIS-SET BUDGET IS ITS OWN FAILURE, and this sweep produced one before it
+  produced a rail: a uniform 30s cap on every HTTP call in the served rails
+  killed `just atlas` at `program load returned 000`, because `POST /program`
+  is not a poll -- it holds the connection open for the whole ~256s compile.
+  Every served script therefore carries TWO budgets, `*_LOAD_BUDGET_S` (900s)
+  on the load POST and `*_HTTP_BUDGET_S` (10-60s) on the polls. Stating a
+  measured wall beside every default is what catches this class; running the
+  rail is what catches it when the stating does not.
 - RESIDUAL, named not fixed: `scripts/dl-trace.sh` and `scripts/verify.sh`
   still carry the orphaning one-liner on the v5 side, outside this sweep's
   scope.
