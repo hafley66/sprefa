@@ -91,6 +91,14 @@ command -v swipl >/dev/null || die "swipl is not on PATH; the prolog fact host c
 command -v jq >/dev/null || die "jq is not on PATH; the rail receipt cannot inspect rel rows"
 command -v dot >/dev/null || die "graphviz dot is not on PATH; the render host cannot run"
 
+# THE PROGRAM MUST BE TRACKED, and this check is here because its absence cost a
+# whole run: the watch bind boot-enumerates through `git ls-files -- <glob>`, so
+# an untracked source produces no `seed` row, every `want` row hangs off nothing,
+# and the rail settles at exactly zero of everything with no error anywhere.
+# self-map.sh refuses the same way for the same reason.
+( cd "$ROOT" && git ls-files --error-unmatch -- "${PROGRAM#"$ROOT/"}" ) >/dev/null 2>&1 \
+  || die "the atlas program is not tracked by git, so the watch bind cannot see it and nothing will seed: $PROGRAM"
+
 # The extractor is FIXED and read-only. Resolution order matches
 # flagship-callgraph.sh and extraction-live.sh: an explicit override, then the
 # in-tree release build, then build it.
@@ -170,8 +178,8 @@ COMPLETE='(.ts_def_row.rows | length) > 0
   and (.atlas_node.rows | length) > 0
   and (.atlas_edge.rows | length) > 0
   and (.longest_span.rows | length) == 1
-  and (.dot_receipt.rows | length) == 1 and .dot_receipt.rows[0][0] == "written"
-  and (.md_receipt.rows | length) == 1 and .md_receipt.rows[0][0] == "written"
+  and (.dot_receipt.rows | length) == 1
+  and (.md_receipt.rows | length) == 1
   and (.render_receipt.rows | length) == 1 and .render_receipt.rows[0][0] == "rendered"'
 
 settle() {

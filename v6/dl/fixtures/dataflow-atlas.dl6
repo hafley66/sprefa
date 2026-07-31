@@ -18,7 +18,7 @@
 #               mentions, the emitter's generated-file marker.
 #   sql         a REGEX host over one emitted module: (verb, table).
 #
-# Six BRIDGE rules join across the language gaps. Each one is marked BRIDGE and
+# Seven BRIDGE rules join across the language gaps. Each one is marked BRIDGE and
 # carries the reason it has to be written by hand: the fact it derives is one
 # that NEITHER extractor can see, because it lives in the gap between two
 # languages rather than inside either of them.
@@ -111,10 +111,17 @@ want_ts('v6/tsv2/serve/*.ts') <- seed(_, _).
 want_ts('v6/tsv2/runtime/*.ts') <- seed(_, _).
 want_ts('v6/tsv2/gen_emitted/callgraph_derivation_over_extraction.ts') <- seed(_, _).
 
+# `:(glob)` is git pathspec MAGIC and it is here for a measured reason: without
+# it `*` crosses slashes, so `v6/prolog/compile/*.pl` also swallows
+# `compile/test/` and `compile/scripts/`. `test/run_sql_check.pl` defines
+# `rel_ref/2` under the same name as `analyze.pl`, and a cross-file join on
+# name/arity then drew an arrow from the compiler into its own test harness and
+# back -- a false cycle in a graph whose longest path is only an answer while it
+# stays acyclic. With `:(glob)` the plane is the 27 files of the compiler front.
 rel want_pl(glob: text).
-want_pl('v6/prolog/compile/*.pl') <- seed(_, _).
-want_pl('v6/prolog/0_*.pl') <- seed(_, _).
-want_pl('v6/prolog/1_*.pl') <- seed(_, _).
+want_pl(':(glob)v6/prolog/compile/*.pl') <- seed(_, _).
+want_pl(':(glob)v6/prolog/0_*.pl') <- seed(_, _).
+want_pl(':(glob)v6/prolog/1_*.pl') <- seed(_, _).
 
 rel want_sh(glob: text).
 want_sh('v6/tsv2/scripts/*.sh') <- seed(_, _).
@@ -166,18 +173,29 @@ marker_file(path, digest, base) <- want_marker(glob), files(glob, path, digest, 
 # the construct the flagship rail documents as refused. The sed is part of every
 # one of the three templates so all three still group into one subprocess.
 #
+# THE LEADING DOT IS MANDATORY IN THAT PATTERN, and it is a defect fix with a
+# receipt. Matching any specifier and keeping its last segment made
+# `sprefa-store-engine/src/engine/types.ts` -- a BARE PACKAGE specifier naming a
+# file in a different package -- resolve to `v6/tsv2/runtime/types.ts`, because
+# both end in `types.ts`. The result was a module importing ITSELF, and the
+# rail's own cycle check refused the run by name: `1 node(s) reach themselves`.
+# Requiring `([.][^"]*/)` means only a RELATIVE specifier gets a `module_base`
+# at all, and a specifier with no base is dropped by the decode's
+# every-declared-column rule. Bare package imports are then absent from the
+# graph, which is correct: they name no file in this tree.
+#
 # BOTH `call` AND `type` FAMILIES, measured not assumed: with `--family call`
 # alone the cross-file import join resolved 10 edges, because CallF nodes are
 # callables only and most of what crosses a module boundary here is a `const`
 # namespace object or an interface. Adding `type` took the same join to 112.
 sh ts_def(path: text, digest: text) -> (record: text, family: text, kind: text, name: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"(([^"]*)/)?([^"/]*)"|"module":"\1\3","module_base":"\3"|'`.
+  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"([.][^"]*/)([^"/]*)"|"module":"\1\2","module_base":"\2"|'`.
 
 sh ts_site(path: text, digest: text) -> (record: text, family: text, callee: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"(([^"]*)/)?([^"/]*)"|"module":"\1\3","module_base":"\3"|'`.
+  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"([.][^"]*/)([^"/]*)"|"module":"\1\2","module_base":"\2"|'`.
 
 sh ts_spec(path: text, digest: text) -> (record: text, family: text, name: text, kind: text, module_base: text) =
-  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"(([^"]*)/)?([^"/]*)"|"module":"\1\3","module_base":"\3"|'`.
+  `: {digest}; "$DL_EXTRACT_BIN" --family call,type {path} | sed -E 's|"module":"([.][^"]*/)([^"/]*)"|"module":"\1\2","module_base":"\2"|'`.
 
 # The record filter is a CONSTANT IN ARGUMENT POSITION, never a guard: a guard
 # over a probe output variable is `unsupported_construct(unbound_head_var(_))`.
@@ -217,6 +235,36 @@ ts_import_edge(from_path, to_path, symbol_name) <-
 
 rel ts_crossing_symbol(path: text, symbol_name: text).
 ts_crossing_symbol(to_path, symbol_name) <- ts_import_edge(_, to_path, symbol_name).
+
+# ── the import that resolves to a FILE and not to a symbol, an EXTRACTOR GAP ──
+#
+# FINDING, and it is the one that cost this lane the most runs. The atlas's
+# longest path stopped inside TypeScript and would not reach the compiler, and
+# the reason is that `v6/tsv2/serve/4_http.ts` imports `ProgramCompiler` from
+# `./0_compile.ts` while `0_compile.ts`'s node records are exactly
+# `runSwipl`, `sourceDigest`, `sourcePath`, `modulePath` -- `ProgramCompiler` is
+# NOT among them. It is `export const ProgramCompiler: IProgramCompiler = { ...
+# }`, an interface-annotated namespace object, and neither the CallF nor the
+# TypeF node arm emits a node for that shape.
+#
+# That shape is not a corner case here: CLAUDE.md's own law says "important
+# functions are interface-bound, never bare `export function`", with the
+# namespace object as THE DEFAULT. So the pattern this codebase is required to
+# use is the pattern its own extractor does not name, and a symbol-level import
+# graph silently loses those edges.
+#
+# The atlas does not paper over it and does not drop the edge either: an import
+# whose name has no def row in the target file lands on the target's MODULE node
+# and is drawn as its own edge kind, so the count of them is visible in the
+# document and this reads as the measurement it is.
+rel ts_defines(path: text, symbol_name: text).
+ts_defines(path, name) <- ts_def_row(path, _, name).
+
+rel ts_import_unresolved(from_path: text, to_path: text, symbol_name: text).
+ts_import_unresolved(from_path, to_path, symbol_name) <-
+  ts_spec_row(from_path, symbol_name, module_base),
+  ts_file(to_path, _, module_base),
+  not(ts_defines(to_path, symbol_name)).
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PLANE 2 -- PROLOG, through library(prolog_xref)
@@ -271,6 +319,98 @@ pl_edge(from_path, from_pred, from_arity, to_path, to_pred, to_arity) <-
   pl_def_row(to_path, to_pred, to_arity),
   not(pl_def_row(from_path, to_pred, to_arity)).
 
+# ── the prolog module node, and the reason it exists ─────────────────────────
+#
+# The first working atlas drew ONLY predicate-to-predicate arrows, and the chain
+# from the CLI died one hop into prolog: `compile_dl6/2` calls `compile_program/6`,
+# which is LOCAL TO compile.pl, and the cross-file antijoin above (correctly)
+# drops it. Every prolog entry point is like that -- a public predicate calls
+# private helpers and those call out.
+#
+# Within-file calls cannot simply be added: they are recursive. Measured on this
+# corpus, adding every within-file call between two cross-file-visible predicates
+# adds 187 edges and 2 genuine back edges (`lower.pl:decode_slot/7 <->
+# decode_pattern_atoms/5`, `intern_relation_value/6 <->
+# rewrite_relation_arguments/6`), and a cyclic family turns the longest path from
+# an answer into a cap.
+#
+# So the prolog plane takes the SAME shape the TypeScript plane already has: a
+# MODULE node per file, `predicate -> its own module` residency, and
+# `module -> the predicate it calls in another file`. Entering a file is then one
+# node and what the file reaches is the file's cross-file call set, which is a
+# DAG here (measured: 0 back edges, 249 edges over 117 nodes, 12-hop chain).
+#
+# That measurement is also what narrowed `want_pl` to `:(glob)` pathspecs. With
+# `*` crossing slashes the scope swallowed `compile/test/` and `compile/scripts/`,
+# and `test/run_sql_check.pl` defines `rel_ref/2` under the same name as
+# `analyze.pl` -- a name collision that put a false arrow from the compiler into
+# its own test harness and back, 2 of the 4 back edges seen before the narrowing.
+rel pl_node(path: text, pred_name: text, arity: int).
+pl_node(to_path, to_pred, to_arity) <- pl_edge(_, _, _, to_path, to_pred, to_arity).
+pl_node(to_path, goal_name, arity) <- goal_target(_, to_path, goal_name, arity).
+pl_node(to_path, pred_name, arity) <- pl_dispatch_edge(_, to_path, pred_name, arity).
+
+# ── BRIDGE 7: the higher-order emitter dispatch, a gap INSIDE one language ────
+#
+# WHY IT IS BESPOKE, and this one is the sharpest gap the atlas found. The chain
+# from the CLI reached `compile.pl` and stopped: `compile.pl` never calls the
+# emitter. It calls `compile_fixture(Name, File, OutFile, emit_ts:emit_program)`
+# and the emitter runs through `call/6`. The target is a TERM PASSED AS AN
+# ARGUMENT, so prolog_xref reports no call at all -- correctly, because at the
+# source level there is none.
+#
+# That is not an accident of style. compile.pl's own header says the emitter is a
+# parameter precisely so `emit_rust.pl` can plug in later. The backend neutrality
+# the compiler is designed for is exactly what makes its most important edge
+# invisible to static analysis, and without this bridge the atlas cannot reach
+# the emitted module or a single SQL statement from `bop run`.
+#
+# THE REGEX IS NARROW ON PURPOSE, measured three ways. Matching any
+# `module:predicate` token yields 12 candidate edges and 5 back edges (files
+# mentioning `analyze:...` that analyze.pl already reaches). Adding "and xref did
+# not already report this call" still leaves 6. Requiring the qualified term to
+# sit in ARGUMENT POSITION -- preceded by `(` or `,` and followed by `)` or `,`,
+# which is what a callback looks like and what a goal never looks like -- yields
+# exactly ONE edge and zero back edges. One edge is the honest answer: this
+# codebase does higher-order dispatch in exactly one place.
+sh pl_dispatch(path: text, digest: text) -> (module_file: text, pred_name: text) =
+  `: {digest}; grep -ohE "[(,] *[a-z_][a-zA-Z0-9_]*:[a-z_][a-zA-Z0-9_]* *[),]" {path} | tr -d "(), " | tr ':' ' ' | awk '{ print $1 ".pl", $2 }' | sort -u`.
+
+rel pl_dispatch_row(from_path: text, module_file: text, pred_name: text).
+pl_dispatch_row(from_path, module_file, pred_name) <-
+  pl_file(from_path, digest, _), pl_dispatch(from_path, digest, module_file, pred_name).
+
+# "xref did not already see it" IS the definition of this bridge, so it is a
+# condition and not an optimisation. The projection rel exists because a
+# wildcard inside a negated atom silently answers nothing here -- see the
+# FINDING at `ts_defines`.
+rel pl_calls_name(path: text, callee: text).
+pl_calls_name(path, callee) <- pl_call_row(path, _, _, callee, _).
+
+rel pl_dispatch_edge(from_path: text, to_path: text, pred_name: text, arity: int).
+pl_dispatch_edge(from_path, to_path, pred_name, arity) <-
+  pl_dispatch_row(from_path, module_file, pred_name),
+  pl_file(to_path, _, module_file),
+  pl_def_row(to_path, pred_name, arity),
+  not(pl_calls_name(from_path, pred_name)),
+  from_path \== to_path.
+
+# ── the ONE within-file prolog call the atlas draws, and why only one ────────
+#
+# BRIDGE 5 lands on the predicate that HOLDS the generated-header text, and that
+# predicate is called only from inside its own file, so without this rule the
+# emitter is a dead end and the chain never reaches the emitted module or the
+# SQL. The edge is drawn from emit_ts.pl's MODULE node rather than from the
+# calling predicate, which keeps it out of the residency family: the marker
+# predicate gets no `-> its own module` arrow, so `module -> marker -> module`
+# cannot close. Its only way out is BRIDGE 5, which leaves prolog.
+rel marker_call_edge(path: text, callee: text, callee_arity: int).
+marker_call_edge(path, pred_name, arity) <-
+  marker_pred(path, pred_name),
+  pl_file(path, _, _),
+  pl_call_row(path, _, _, pred_name, arity),
+  pl_def_row(path, pred_name, arity).
+
 # ═════════════════════════════════════════════════════════════════════════════
 # PLANE 3 -- SHELL, and the two TypeScript files that spawn processes
 # ═════════════════════════════════════════════════════════════════════════════
@@ -290,11 +430,25 @@ pl_edge(from_path, from_pred, from_arity, to_path, to_pred, to_arity) <-
 #   extract  a mention of the fixed extractor, by env var or by crate name.
 #   marker   the generated-module header text, present in exactly two places in
 #            two different languages -- see BRIDGE 5.
+#   markerpred  the prolog clause head the marker text sits inside.
+#
+# COMMENT LINES ARE DROPPED for the goal, tool, entry and extract records, and
+# that filter is a DEFECT FIX with a receipt. Without it the atlas drew
+# `v6/tsv2/runtime/types.ts -> compile.pl#compile_dl6/2`, a cross-language spawn
+# arrow whose entire evidence was a doc comment on `IProgramCompiler` that
+# happens to say the words `swipl` and `compile_dl6`. It was on the reported
+# longest path. `^[[:space:]]*([/][/]|[/][*]|[*]|#|%)` covers line comments,
+# block-comment openers and continuations in all four languages here, and after
+# it exactly two TypeScript files still claim to spawn swipl: `cli/bop.ts` and
+# `serve/0_compile.ts`, which are the two that do.
+#
+# The marker records are deliberately NOT filtered: the marker is a comment in
+# the emitted module by construction, which is the whole point of BRIDGE 5.
 #
 # `: {digest};` is a no-op that puts the content digest into the command line,
 # so the witness changes when the file does.
 sh text_scan(path: text, digest: text) -> (record: text, token: text) =
-  `: {digest}; grep -ohE "[a-z][a-z0-9]*(_[a-z0-9]+)+" {path} | sort -u | sed -E 's/^/goal /'; grep -ohE "(swipl|node|dot|git|cargo|jq|curl|python3|sqlite3)" {path} | sort -u | sed -E 's/^/tool /'; grep -ohE "[A-Za-z0-9_./-]+[.](ts|sh|pl|dl6|py|rs)" {path} | sort -u | sed -E 's|^|entry |'; grep -ohE "(DL_EXTRACT_BIN|sprefa-extract)" {path} | sort -u | sed -E 's/^/extract /'; grep -qE "GENERATED by v6/prolog/compile" {path} && printf "marker generated_by_v6_prolog_compile\n"; true`.
+  `: {digest}; grep -vE "^[[:space:]]*([/][/]|[/][*]|[*]|#|%)" {path} | grep -ohE "[a-z][a-z0-9]*(_[a-z0-9]+)+" | sort -u | sed -E 's/^/goal /'; grep -vE "^[[:space:]]*([/][/]|[/][*]|[*]|#|%)" {path} | grep -ohE "(swipl|node|dot|git|cargo|jq|curl|python3|sqlite3)" | sort -u | sed -E 's/^/tool /'; grep -vE "^[[:space:]]*([/][/]|[/][*]|[*]|#|%)" {path} | grep -ohE "[A-Za-z0-9_./-]+[.](ts|sh|pl|dl6|py|rs)" | sort -u | sed -E 's|^|entry |'; grep -vE "^[[:space:]]*([/][/]|[/][*]|[*]|#|%)" {path} | grep -ohE "(DL_EXTRACT_BIN|sprefa-extract)" | sort -u | sed -E 's/^/extract /'; grep -qE "GENERATED by v6/prolog/compile" {path} && printf "marker generated_by_v6_prolog_compile\n"; awk '/^[a-z_][a-zA-Z0-9_]*[(: ]/ { head = $0; sub(/[(: ].*/, "", head) } /GENERATED by v6.prolog.compile/ { if (head != "") print "markerpred", head }' {path}; true`.
 
 # The scanned set is deliberately NOT the prolog plane: a prolog file mentions
 # its own predicate names on every line, so scanning it would turn the goal
@@ -319,6 +473,16 @@ extract_mention(path, extract_token) <- scan_file(path, digest), text_scan(path,
 
 rel marker_mention(path: text, marker_token: text).
 marker_mention(path, marker_token) <- scan_file(path, digest), text_scan(path, digest, 'marker', marker_token).
+
+# The `markerpred` record names the prolog PREDICATE the marker text sits inside,
+# tracked by the awk state machine as the last clause head seen before the
+# matching line. It exists because the atlas's own integrity check refused the
+# first draft of BRIDGE 5: that draft anchored the edge on `emit_program_text/2`,
+# a name this reader INVENTED and no `pred_defined` row backed, and
+# `edge_without_node` printed it by name. `header_lines/2` is the real answer and
+# the extractor found it.
+rel marker_pred(path: text, pred_name: text).
+marker_pred(path, pred_name) <- scan_file(path, digest), text_scan(path, digest, 'markerpred', pred_name).
 
 # ── the commander verb table ─────────────────────────────────────────────────
 #
@@ -399,8 +563,12 @@ node_meta(node_id, 'typescript', path, base, 'component') <-
 node_meta(node_id, 'typescript', path, name, 'box') <-
   ts_def_row(path, _, name), node_id := concat(['ts:', path, '#', name]).
 
-# Prolog: one node per predicate, no module node -- xref gives a REAL caller, so
-# the prolog plane draws predicate to predicate and never file to file.
+# Prolog: one module node per file and one node per predicate. xref gives a REAL
+# caller, so the predicate-to-predicate arrows below are facts and not the
+# co-occurrence guess the TypeScript plane has to avoid; the module node is what
+# carries a chain THROUGH a file whose entry predicate calls private helpers.
+node_meta(node_id, 'prolog', path, base, 'component') <-
+  pl_file(path, _, base), node_id := concat(['pl:', path, '#module']).
 node_meta(node_id, 'prolog', path, label_text, 'box') <-
   pl_def_row(path, name, arity),
   node_id := concat(['pl:', path, '#', name, '/', arity]),
@@ -423,7 +591,7 @@ node_meta(node_id, 'extractor', 'records', record_kind, 'plaintext') <-
   extract_record(record_kind), node_id := concat(['ex:record:', record_kind]).
 
 # ═════════════════════════════════════════════════════════════════════════════
-# EDGES -- six of them are BRIDGES and every bridge says why
+# EDGES -- seven of them are BRIDGES and every bridge says why
 # ═════════════════════════════════════════════════════════════════════════════
 
 rel atlas_edge(from_id: text, to_id: text, edge_kind: text).
@@ -441,16 +609,56 @@ atlas_edge(from_id, to_id, 'import') <-
   from_id := concat(['ts:', from_path, '#module']),
   to_id := concat(['ts:', to_path, '#', symbol_name]).
 
+atlas_edge(from_id, to_id, 'import_unnamed') <-
+  ts_import_unresolved(from_path, to_path, _),
+  from_id := concat(['ts:', from_path, '#module']),
+  to_id := concat(['ts:', to_path, '#module']).
+
 atlas_edge(from_id, to_id, 'resides') <-
   ts_crossing_symbol(path, symbol_name),
   from_id := concat(['ts:', path, '#', symbol_name]),
   to_id := concat(['ts:', path, '#module']).
 
-# ── within prolog: the real call edge ────────────────────────────────────────
+# A CLI action function is a symbol node that NOTHING imports -- it is reached
+# from the verb table, not from another module -- so `ts_crossing_symbol` does
+# not cover it and without this clause the path from `bop run` is ONE HOP LONG.
+# Measured: the first end-to-end run reported `LONGEST=1` with a 491-node graph,
+# which is what a dangling entry looks like from the outside.
+atlas_edge(from_id, to_id, 'resides') <-
+  cli_command(_, action_name, path),
+  ts_def_row(path, _, action_name),
+  from_id := concat(['ts:', path, '#', action_name]),
+  to_id := concat(['ts:', path, '#module']).
+
+# ── within prolog: the real call edge, at both granularities ─────────────────
+# Predicate to predicate is what xref actually reports and it is drawn as such.
+# Module to predicate is what carries a chain THROUGH a file: an entry predicate
+# reaching a cross-file call by way of private helpers is not one xref row, and
+# the file is the smallest node that honestly stands for "somewhere in here".
 atlas_edge(from_id, to_id, 'calls') <-
   pl_edge(from_path, from_pred, from_arity, to_path, to_pred, to_arity),
   from_id := concat(['pl:', from_path, '#', from_pred, '/', from_arity]),
   to_id := concat(['pl:', to_path, '#', to_pred, '/', to_arity]).
+
+atlas_edge(from_id, to_id, 'calls') <-
+  pl_edge(from_path, _, _, to_path, to_pred, to_arity),
+  from_id := concat(['pl:', from_path, '#module']),
+  to_id := concat(['pl:', to_path, '#', to_pred, '/', to_arity]).
+
+atlas_edge(from_id, to_id, 'resides') <-
+  pl_node(path, pred_name, arity),
+  from_id := concat(['pl:', path, '#', pred_name, '/', arity]),
+  to_id := concat(['pl:', path, '#module']).
+
+atlas_edge(from_id, to_id, 'calls') <-
+  marker_call_edge(path, callee, callee_arity),
+  from_id := concat(['pl:', path, '#module']),
+  to_id := concat(['pl:', path, '#', callee, '/', callee_arity]).
+
+atlas_edge(from_id, to_id, 'bridge_dispatch') <-
+  pl_dispatch_edge(from_path, to_path, pred_name, arity),
+  from_id := concat(['pl:', from_path, '#module']),
+  to_id := concat(['pl:', to_path, '#', pred_name, '/', arity]).
 
 # ── BRIDGE 1: commander verb -> its action function ──────────────────────────
 # WHY IT IS BESPOKE: the TypeScript extractor sees `"run"` as a string literal
@@ -476,11 +684,18 @@ atlas_edge(from_id, to_id, 'bridge_verb') <-
 rel spawns_swipl(path: text).
 spawns_swipl(path) <- tool_mention(path, 'swipl').
 
-atlas_edge(from_id, to_id, 'bridge_spawn') <-
+# The join itself, shared by BRIDGE 2 and BRIDGE 3 and read once more by
+# `pl_node` (a goal predicate is an entry point, so nothing inside prolog makes
+# it a node and the residency arrow has to come from here).
+rel goal_target(from_path: text, to_path: text, goal_name: text, arity: int).
+goal_target(from_path, to_path, goal_name, arity) <-
   goal_mention(from_path, goal_name),
   spawns_swipl(from_path),
+  pl_def_row(to_path, goal_name, arity).
+
+atlas_edge(from_id, to_id, 'bridge_spawn') <-
+  goal_target(from_path, to_path, goal_name, arity),
   ts_file(from_path, _, _),
-  pl_def_row(to_path, goal_name, arity),
   from_id := concat(['ts:', from_path, '#module']),
   to_id := concat(['pl:', to_path, '#', goal_name, '/', arity]).
 
@@ -491,10 +706,8 @@ atlas_edge(from_id, to_id, 'bridge_spawn') <-
 # `script_invokes_swipl(script, goal)` joined against `pred_defined`, and it is
 # the join that turns two token streams into one arrow.
 atlas_edge(from_id, to_id, 'bridge_invoke') <-
-  goal_mention(from_path, goal_name),
-  spawns_swipl(from_path),
+  goal_target(from_path, to_path, goal_name, arity),
   sh_file(from_path, _, _),
-  pl_def_row(to_path, goal_name, arity),
   from_id := concat(['sh:', from_path]),
   to_id := concat(['pl:', to_path, '#', goal_name, '/', arity]).
 
@@ -525,12 +738,20 @@ atlas_edge(from_id, to_id, 'bridge_run') <-
 # a prolog file that WRITES the marker to a TypeScript file that CARRIES it is
 # the whole bridge, and it is the one edge in this atlas that crosses from a
 # string literal in one language to a comment in another.
+#
+# The prolog END of the arrow is `header_lines/2`, and it is EXTRACTED, not
+# named: the scanner's `markerpred` record reports the clause head the marker
+# text sits inside, and `pl_def_row` supplies its arity. The first draft wrote a
+# predicate name from memory instead; `edge_without_node` caught it on the first
+# run and printed the invented name. That is the integrity rel earning its keep.
 atlas_edge(from_id, to_id, 'bridge_emit') <-
   marker_mention(from_path, marker_token),
   pl_file(from_path, _, _),
+  marker_pred(from_path, pred_name),
+  pl_def_row(from_path, pred_name, arity),
   marker_mention(to_path, marker_token),
   gen_file(to_path, _, _),
-  from_id := concat(['pl:', from_path, '#emit_program_text/2']),
+  from_id := concat(['pl:', from_path, '#', pred_name, '/', arity]),
   to_id := concat(['ts:', to_path, '#module']).
 
 # ── BRIDGE 6: everything that touches the fixed extractor ────────────────────
@@ -652,6 +873,58 @@ on_longest(node_id, depth_index) <-
 rel longest_level(depth_index: int, node_list: text).
 longest_level(depth_index, group_concat(node_id, ' | ')) <- on_longest(node_id, depth_index).
 
+# ── the CLI-to-SQLite chain, which is the question the atlas was built for ───
+#
+# THE RELS BELOW ARE NAMED `db_*` AND NOT `sqlite_*`, and that is a REAL ENGINE
+# DEFECT written down rather than worked around. `lower.pl` names a table after
+# its rel, and SQLite reserves every identifier beginning with `sqlite_`, so a
+# rel called `sqlite_level` compiles CLEANLY through both doors and then dies at
+# DDL time with `SQLITE_ERROR: object name reserved for internal use:
+# sqlite_level`. Worse than the error: the served process does not survive it.
+# The POST to /program returned curl code 000 with no body, because the failure
+# escaped the load path and killed the server instead of answering 400.
+#
+# Two things are owed and neither is this lane's to fix: a load-time refusal for
+# a rel name SQLite will not accept, and a load path that answers an error
+# instead of exiting. Receipt: the server log line above, reproduced twice.
+#
+# The longest path above is whatever the graph's longest chain happens to be.
+# This one is the specific claim: from `bop run` to a SQLite TABLE, through
+# every language in between. It is the same machinery restricted at the far end,
+# and it is reported separately because "the longest chain" and "the chain that
+# reaches the database" are two different answers and only one of them is the
+# headline.
+rel db_table_node(node_id: text).
+db_table_node(node_id) <- sql_table(table_name), node_id := concat(['sql:', table_name]).
+
+# Both aggregates read a SINGLE atom, for the delta-local reason recorded at
+# `forward_positive`: an aggregate's group columns must be bound by every
+# positive body atom on its own, so the join gets its own rel first.
+rel entry_reach_db(node_id: text, hops: int).
+entry_reach_db(node_id, hops) <- entry_reach(node_id, hops), db_table_node(node_id).
+
+rel db_span(span: int).
+db_span(max(hops)) <- entry_reach_db(_, hops).
+
+rel reach_db(node_id: text, hops: int).
+reach_db(node_id, hops) <- reach(node_id, target_id, hops), db_table_node(target_id).
+
+rel onward_to_db(node_id: text, hops: int).
+onward_to_db(node_id, max(hops)) <- reach_db(node_id, hops).
+
+rel on_db_path(node_id: text, depth_index: int).
+on_db_path(node_id, depth_index) <-
+  forward_depth(node_id, depth_index),
+  onward_to_db(node_id, onward),
+  db_span(span),
+  total := depth_index + onward,
+  total == span.
+on_db_path(node_id, depth_index) <-
+  forward_depth(node_id, depth_index), db_table_node(node_id), db_span(depth_index).
+
+rel db_level(depth_index: int, node_list: text).
+db_level(depth_index, group_concat(node_id, ' | ')) <- on_db_path(node_id, depth_index).
+
 # ═════════════════════════════════════════════════════════════════════════════
 # COUNTS -- everything the document states, derived rather than typed
 # ═════════════════════════════════════════════════════════════════════════════
@@ -719,6 +992,7 @@ plane_colour('extractor', '#0f766e') <- seed(_, _).
 
 rel edge_style(edge_kind: text, style_text: text).
 edge_style('import', 'color="#1d4ed8"') <- seed(_, _).
+edge_style('import_unnamed', 'color="#1d4ed8",style=dashed') <- seed(_, _).
 edge_style('resides', 'color="#93c5fd",arrowhead=none') <- seed(_, _).
 edge_style('calls', 'color="#15803d"') <- seed(_, _).
 edge_style('statement', 'color="#be123c"') <- seed(_, _).
@@ -730,6 +1004,7 @@ edge_style('bridge_invoke', 'color="#b45309",penwidth=3') <- seed(_, _).
 edge_style('bridge_run', 'color="#b45309",penwidth=3') <- seed(_, _).
 edge_style('bridge_emit', 'color="#b45309",penwidth=3') <- seed(_, _).
 edge_style('bridge_extract', 'color="#b45309",penwidth=3') <- seed(_, _).
+edge_style('bridge_dispatch', 'color="#b45309",penwidth=3') <- seed(_, _).
 
 # A node on a longest path is filled; every other node is plain. The highlight
 # is derived, so it moves when the graph does.
@@ -838,12 +1113,14 @@ bridge_reason('bridge_invoke', 'the same gap from the shell side: a shell has no
 bridge_reason('bridge_run', 'a `node "$SERVE"` invocation names a file through a shell variable; the path token joined against the TS file set is the only extractable trace') <- seed(_, _).
 bridge_reason('bridge_emit', 'the emitted module does not exist until the compiler runs; the join is the generated-header text, a string literal in prolog and a comment in TypeScript') <- seed(_, _).
 bridge_reason('bridge_extract', 'the fixed extractor is reached through the env var DL_EXTRACT_BIN: no call, no import, no symbol') <- seed(_, _).
+bridge_reason('bridge_dispatch', 'a gap INSIDE one language: compile.pl passes `emit_ts:emit_program` as an ARGUMENT and runs it through call/6, so xref reports no call at all -- the backend neutrality the compiler is designed for is what hides its most important edge') <- seed(_, _).
 
 rel kind_row(line_text: text).
 kind_row(line_text) <- kind_edge_total(edge_kind, edges), bridge_reason(edge_kind, reason_text),
   line_text := concat(['| `', edge_kind, '` | ', edges, ' | ', reason_text, ' |']).
 kind_row(line_text) <- kind_edge_total(edge_kind, edges), not(bridge_reason(edge_kind, _)),
   line_text := concat(['| `', edge_kind, '` | ', edges, ' | auto-extracted, no bridge |']).
+bridge_reason('import_unnamed', 'EXTRACTOR GAP, not a bridge: the imported name has no node record in the target file. `export const X: IX = { ... }` -- the interface-bound namespace object CLAUDE.md mandates as the default -- emits no node, so the edge lands on the module') <- seed(_, _).
 rel kind_rows(body_text: text).
 kind_rows(group_concat(line_text, '\n')) <- kind_row(line_text).
 md_line('doc', 150, body_text) <- kind_rows(body_text).
@@ -878,6 +1155,23 @@ rel hop_rows(body_text: text).
 hop_rows(group_concat(line_text, '\n', depth_index)) <- hop_row(depth_index, line_text).
 md_line('doc', 290, body_text) <- hop_rows(body_text).
 
+md_line('doc', 292, '') <- seed(_, _).
+md_line('doc', 293, '## `bop run` to an executed SQLite statement') <- seed(_, _).
+md_line('doc', 294, '') <- seed(_, _).
+md_line('doc', 295, line_text) <- db_span(span),
+  line_text := concat(['The chain the atlas was built to answer: **', span,
+                       ' hops** from the `run` subcommand to a table the emitted SQL touches, crossing commander, TypeScript, prolog and back into TypeScript before it reaches SQLite.']).
+md_line('doc', 296, '') <- seed(_, _).
+md_line('doc', 297, '| hop | node(s) |') <- seed(_, _).
+md_line('doc', 298, '|---|---|') <- seed(_, _).
+
+rel db_row(depth_index: int, line_text: text).
+db_row(depth_index, line_text) <- db_level(depth_index, node_list),
+  line_text := concat(['| ', depth_index, ' | `', node_list, '` |']).
+rel db_rows(body_text: text).
+db_rows(group_concat(line_text, '\n', depth_index)) <- db_row(depth_index, line_text).
+md_line('doc', 299, body_text) <- db_rows(body_text).
+
 md_line('doc', 300, '') <- seed(_, _).
 md_line('doc', 310, '## Fact volume behind the picture') <- seed(_, _).
 md_line('doc', 320, '') <- seed(_, _).
@@ -896,23 +1190,36 @@ md_document(document) <- md_section_text('doc', body_text), document := concat([
 # THE TWO OUTPUT EFFECTS
 # ═════════════════════════════════════════════════════════════════════════════
 
+# THE WRITE RETURNS A DIGEST, not the word `written`, and that is a defect fix
+# rather than a flourish. A host's answer is cached against its DEMAND ROW
+# (ruling salt_minting = content_addressed), and `render_dot('...dot',
+# '...svg')` has two CONSTANT columns: it is one demand row for the life of the
+# db, so it runs EXACTLY ONCE, on whatever the .dot happened to contain at that
+# tick. Measured on the first end-to-end run: a 491-node .dot beside a 14KB SVG
+# of a handful of boxes, because the render fired on an early partial document
+# and its demand never changed again.
+#
+# Returning `shasum` of what was written turns the write receipt into a
+# CONTENT-DERIVED value, and feeding it to the render as a third column makes
+# the render's demand row change whenever the document does. The dependency is
+# then real in both directions: the render cannot run before the write (it needs
+# the digest), and it must run again after every write that changes anything.
 sh write_file(path: text, document: text) -> (status: text) =
-  `printf '%s' "$document" > "$path"; printf '%s' written`.
+  `printf '%s' "$document" > "$path"; shasum -a 256 "$path" | cut -c1-16`.
 
-sh render_dot(dot_path: text, svg_path: text) -> (status: text) =
-  `dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s' rendered`.
+sh render_dot(dot_path: text, svg_path: text, source_digest: text) -> (status: text) =
+  `: {source_digest}; dot -Tsvg "$dot_path" -o "$svg_path" && printf '%s' rendered`.
 
-rel dot_receipt(status: text).
-dot_receipt(status) <- dot_document(document), write_file('v6/DATAFLOW-ATLAS.dot', document, status).
+rel dot_receipt(source_digest: text).
+dot_receipt(source_digest) <- dot_document(document), write_file('v6/DATAFLOW-ATLAS.dot', document, source_digest).
 
-rel md_receipt(status: text).
-md_receipt(status) <- md_document(document), write_file('v6/DATAFLOW-ATLAS.md', document, status).
+rel md_receipt(source_digest: text).
+md_receipt(source_digest) <- md_document(document), write_file('v6/DATAFLOW-ATLAS.md', document, source_digest).
 
-# The render's demand row cannot be minted before the write has answered, which
-# is what sequences the two effects: `dot` reads the file `write_file` produced.
 rel render_receipt(status: text).
 render_receipt(status) <-
-  dot_receipt('written'), render_dot('v6/DATAFLOW-ATLAS.dot', 'v6/DATAFLOW-ATLAS.svg', status).
+  dot_receipt(source_digest),
+  render_dot('v6/DATAFLOW-ATLAS.dot', 'v6/DATAFLOW-ATLAS.svg', source_digest, status).
 
 ? edge_without_node(node_id).
 ? cycle_node(node_id).
