@@ -56,8 +56,8 @@
   "graded": "\"4\"",
   "survives": "\"4\"",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"\\\"4\\\"\""
+  "label": "doors_disagree",
+  "detail": "oracle \"\\\"4\\\"\" vs emitter \"4\""
  },
  {
   "id": "cell_arrival__int__plain_text",
@@ -136,8 +136,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"1\""
  },
  {
   "id": "cell_arrival__int__wide_int",
@@ -416,8 +416,8 @@
   "graded": "4",
   "survives": "4",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"4\\\"\" vs oracle \"4\""
+  "label": "doors_disagree",
+  "detail": "oracle \"4\" vs emitter \"\\\"4\\\"\""
  },
  {
   "id": "cell_arrival__text__float",
@@ -436,8 +436,8 @@
   "graded": "1.5",
   "survives": "1.5",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1.5\\\"\" vs oracle \"1.5\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1.5\" vs emitter \"\\\"1.5\\\"\""
  },
  {
   "id": "cell_arrival__text__numeric_text",
@@ -536,8 +536,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_arrival__text__wide_int",
@@ -556,8 +556,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"9007199254740992\\\"\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"\\\"9007199254740992\\\"\""
  },
  {
   "id": "cell_arrival__text__float_integral",
@@ -576,8 +576,8 @@
   "graded": "1",
   "survives": "1.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"1\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_arrival__text__neg_zero",
@@ -596,8 +596,8 @@
   "graded": "0",
   "survives": "-0.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"0\\\"\" vs oracle \"0\""
+  "label": "doors_disagree",
+  "detail": "oracle \"0\" vs emitter \"\\\"0\\\"\""
  },
  {
   "id": "cell_arrival__bool__int",
@@ -815,9 +815,9 @@
   "doorLogsDisagree": false,
   "graded": "4",
   "survives": "4",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"4\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_arrival__json__float",
@@ -835,9 +835,9 @@
   "doorLogsDisagree": false,
   "graded": "1.5",
   "survives": "1.5",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1.5\" vs oracle \"1.5\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_arrival__json__numeric_text",
@@ -935,7 +935,7 @@
   "survives": "true",
   "verdict": "DIVERGENT",
   "label": "oracle_only_refusal",
-  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored ABSENT"
+  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored 1"
  },
  {
   "id": "cell_arrival__json__wide_int",
@@ -954,8 +954,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"9007199254740992\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"9007199254740992\""
  },
  {
   "id": "cell_arrival__json__float_integral",
@@ -973,9 +973,9 @@
   "doorLogsDisagree": false,
   "graded": "1",
   "survives": "1.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"1\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed 1.0, graded 1"
  },
  {
   "id": "cell_arrival__json__neg_zero",
@@ -993,9 +993,9 @@
   "doorLogsDisagree": false,
   "graded": "0",
   "survives": "-0.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"0\" vs oracle \"0\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed -0.0, graded 0"
  },
  {
   "id": "cell_arrival__list_text__int",
@@ -1013,9 +1013,9 @@
   "doorLogsDisagree": false,
   "graded": "4",
   "survives": "4",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"4\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_arrival__list_text__float",
@@ -1033,9 +1033,9 @@
   "doorLogsDisagree": false,
   "graded": "1.5",
   "survives": "1.5",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1.5\" vs oracle \"1.5\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_arrival__list_text__numeric_text",
@@ -1133,7 +1133,7 @@
   "survives": "true",
   "verdict": "DIVERGENT",
   "label": "oracle_only_refusal",
-  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored ABSENT"
+  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored 1"
  },
  {
   "id": "cell_arrival__list_text__wide_int",
@@ -1152,8 +1152,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"9007199254740992\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"9007199254740992\""
  },
  {
   "id": "cell_arrival__list_text__float_integral",
@@ -1171,9 +1171,9 @@
   "doorLogsDisagree": false,
   "graded": "1",
   "survives": "1.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"1\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed 1.0, graded 1"
  },
  {
   "id": "cell_arrival__list_text__neg_zero",
@@ -1191,9 +1191,9 @@
   "doorLogsDisagree": false,
   "graded": "0",
   "survives": "-0.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"0\" vs oracle \"0\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed -0.0, graded 0"
  },
  {
   "id": "cell_arrival__undeclared__int",
@@ -1212,8 +1212,8 @@
   "graded": "4",
   "survives": "4",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"4\\\"\" vs oracle \"4\""
+  "label": "doors_disagree",
+  "detail": "oracle \"4\" vs emitter \"\\\"4\\\"\""
  },
  {
   "id": "cell_arrival__undeclared__float",
@@ -1232,8 +1232,8 @@
   "graded": "1.5",
   "survives": "1.5",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1.5\\\"\" vs oracle \"1.5\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1.5\" vs emitter \"\\\"1.5\\\"\""
  },
  {
   "id": "cell_arrival__undeclared__numeric_text",
@@ -1332,8 +1332,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_arrival__undeclared__wide_int",
@@ -1352,8 +1352,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"9007199254740992\\\"\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"\\\"9007199254740992\\\"\""
  },
  {
   "id": "cell_arrival__undeclared__float_integral",
@@ -1372,8 +1372,8 @@
   "graded": "1",
   "survives": "1.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"1\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_arrival__undeclared__neg_zero",
@@ -1392,8 +1392,8 @@
   "graded": "0",
   "survives": "-0.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"0\\\"\" vs oracle \"0\""
+  "label": "doors_disagree",
+  "detail": "oracle \"0\" vs emitter \"\\\"0\\\"\""
  },
  {
   "id": "cell_level_head__int__int",
@@ -7052,8 +7052,8 @@
   "graded": "\"4\"",
   "survives": "\"4\"",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"\\\"4\\\"\""
+  "label": "doors_disagree",
+  "detail": "oracle \"\\\"4\\\"\" vs emitter \"4\""
  },
  {
   "id": "cell_join_column__int__plain_text",
@@ -7132,8 +7132,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"1\""
  },
  {
   "id": "cell_join_column__int__wide_int",
@@ -7412,8 +7412,8 @@
   "graded": "4",
   "survives": "4",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"4\\\"\" vs oracle \"4\""
+  "label": "doors_disagree",
+  "detail": "oracle \"4\" vs emitter \"\\\"4\\\"\""
  },
  {
   "id": "cell_join_column__text__float",
@@ -7432,8 +7432,8 @@
   "graded": "1.5",
   "survives": "1.5",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1.5\\\"\" vs oracle \"1.5\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1.5\" vs emitter \"\\\"1.5\\\"\""
  },
  {
   "id": "cell_join_column__text__numeric_text",
@@ -7532,8 +7532,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_join_column__text__wide_int",
@@ -7552,8 +7552,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"9007199254740992\\\"\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"\\\"9007199254740992\\\"\""
  },
  {
   "id": "cell_join_column__text__float_integral",
@@ -7572,8 +7572,8 @@
   "graded": "1",
   "survives": "1.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"1\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_join_column__text__neg_zero",
@@ -7592,8 +7592,8 @@
   "graded": "0",
   "survives": "-0.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"0\\\"\" vs oracle \"0\""
+  "label": "doors_disagree",
+  "detail": "oracle \"0\" vs emitter \"\\\"0\\\"\""
  },
  {
   "id": "cell_join_column__bool__int",
@@ -7811,9 +7811,9 @@
   "doorLogsDisagree": false,
   "graded": "4",
   "survives": "4",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"4\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_join_column__json__float",
@@ -7831,9 +7831,9 @@
   "doorLogsDisagree": false,
   "graded": "1.5",
   "survives": "1.5",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1.5\" vs oracle \"1.5\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_join_column__json__numeric_text",
@@ -7931,7 +7931,7 @@
   "survives": "true",
   "verdict": "DIVERGENT",
   "label": "oracle_only_refusal",
-  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored ABSENT"
+  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored 1"
  },
  {
   "id": "cell_join_column__json__wide_int",
@@ -7950,8 +7950,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"9007199254740992\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"9007199254740992\""
  },
  {
   "id": "cell_join_column__json__float_integral",
@@ -7969,9 +7969,9 @@
   "doorLogsDisagree": false,
   "graded": "1",
   "survives": "1.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"1\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed 1.0, graded 1"
  },
  {
   "id": "cell_join_column__json__neg_zero",
@@ -7989,9 +7989,9 @@
   "doorLogsDisagree": false,
   "graded": "0",
   "survives": "-0.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"0\" vs oracle \"0\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed -0.0, graded 0"
  },
  {
   "id": "cell_join_column__list_text__int",
@@ -8009,9 +8009,9 @@
   "doorLogsDisagree": false,
   "graded": "4",
   "survives": "4",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"4\" vs oracle \"4\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_join_column__list_text__float",
@@ -8029,9 +8029,9 @@
   "doorLogsDisagree": false,
   "graded": "1.5",
   "survives": "1.5",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1.5\" vs oracle \"1.5\""
+  "verdict": "IDENTICAL",
+  "label": "lossless",
+  "detail": ""
  },
  {
   "id": "cell_join_column__list_text__numeric_text",
@@ -8129,7 +8129,7 @@
   "survives": "true",
   "verdict": "DIVERGENT",
   "label": "oracle_only_refusal",
-  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored ABSENT"
+  "detail": "both oracle doors refuse (dl6 golden_oracle, golden ); emitter compiled and stored 1"
  },
  {
   "id": "cell_join_column__list_text__wide_int",
@@ -8148,8 +8148,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"9007199254740992\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"9007199254740992\""
  },
  {
   "id": "cell_join_column__list_text__float_integral",
@@ -8167,9 +8167,9 @@
   "doorLogsDisagree": false,
   "graded": "1",
   "survives": "1.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"1\" vs oracle \"1\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed 1.0, graded 1"
  },
  {
   "id": "cell_join_column__list_text__neg_zero",
@@ -8187,9 +8187,9 @@
   "doorLogsDisagree": false,
   "graded": "0",
   "survives": "-0.0",
-  "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"0\" vs oracle \"0\""
+  "verdict": "SILENT_COERCION",
+  "label": "value_changed",
+  "detail": "fed -0.0, graded 0"
  },
  {
   "id": "cell_join_column__undeclared__int",
@@ -8208,8 +8208,8 @@
   "graded": "4",
   "survives": "4",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"4\\\"\" vs oracle \"4\""
+  "label": "doors_disagree",
+  "detail": "oracle \"4\" vs emitter \"\\\"4\\\"\""
  },
  {
   "id": "cell_join_column__undeclared__float",
@@ -8228,8 +8228,8 @@
   "graded": "1.5",
   "survives": "1.5",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1.5\\\"\" vs oracle \"1.5\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1.5\" vs emitter \"\\\"1.5\\\"\""
  },
  {
   "id": "cell_join_column__undeclared__numeric_text",
@@ -8328,8 +8328,8 @@
   "graded": "true",
   "survives": "true",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"true\""
+  "label": "doors_disagree",
+  "detail": "oracle \"true\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_join_column__undeclared__wide_int",
@@ -8348,8 +8348,8 @@
   "graded": "9007199254740992",
   "survives": "9007199254740993",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"9007199254740992\\\"\" vs oracle \"9007199254740992\""
+  "label": "doors_disagree",
+  "detail": "oracle \"9007199254740992\" vs emitter \"\\\"9007199254740992\\\"\""
  },
  {
   "id": "cell_join_column__undeclared__float_integral",
@@ -8368,8 +8368,8 @@
   "graded": "1",
   "survives": "1.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"1\\\"\" vs oracle \"1\""
+  "label": "doors_disagree",
+  "detail": "oracle \"1\" vs emitter \"\\\"1\\\"\""
  },
  {
   "id": "cell_join_column__undeclared__neg_zero",
@@ -8388,8 +8388,8 @@
   "graded": "0",
   "survives": "-0.0",
   "verdict": "DIVERGENT",
-  "label": "emitter_modes_disagree",
-  "detail": "incremental \"ABSENT\" vs naive \"\\\"0\\\"\" vs oracle \"0\""
+  "label": "doors_disagree",
+  "detail": "oracle \"0\" vs emitter \"\\\"0\\\"\""
  },
  {
   "id": "cell_seed__join_cross_type__int",
