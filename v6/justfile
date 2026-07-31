@@ -181,6 +181,19 @@ golden-flex:
 self-map:
 	bash {{v6}}/tsv2/scripts/self-map.sh
 
+# THE DATAFLOW ATLAS: four language planes auto-extracted (sprefa-extract over
+# TypeScript, library(prolog_xref) over prolog, regex hosts over shell and over
+# one emitted module's SQL), joined across the language gaps by six named bridge
+# rules, and rendered by graphviz. v6/dl/fixtures/dataflow-atlas.dl6 derives
+# every node, edge, count and the whole DOT text; the script owns only process
+# lifecycle and the two env names the hosts read.
+# The .dot is byte-stable across runs and the recipe PROVES it by running twice
+# and comparing (that is most of the wall time). NOT in green-all yet.
+# (expect: ATLAS HOLDS, CYCLES=0 ORPHANS=0, exit 0; ~2min, two full runs,
+#  spawns one extractor process per TS file and one swipl per .pl file)
+atlas:
+	bash {{v6}}/tsv2/scripts/atlas.sh
+
 # v6/GETTING-STARTED.md, EXECUTED. Every marked block on that page is replayed
 # in one persistent shell (so the backgrounded `bop serve` and the exports
 # survive across blocks, exactly as a reader's terminal does) and its captured
