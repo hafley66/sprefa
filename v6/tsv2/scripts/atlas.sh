@@ -36,24 +36,26 @@
 #   BRIDGE 2 DELETED. In a scratch copy of dataflow-atlas.dl6 the
 #   `atlas_edge(..., 'bridge_spawn')` rule -- the TypeScript-module-to-prolog-
 #   predicate arrow that recovers `swipl -g compile_dl6(...)` from a template
-#   literal -- was commented out and nothing else was touched.
+#   literal -- was deleted verbatim and nothing else was touched. Both runs
+#   through this script, `ATLAS_PROGRAM` pointing at the copy:
 #
-#   Measured, both runs through this script:
-#     clean      NODES=<see the counts block printed below> LONGEST=<n>
-#     sabotaged  the same node set MINUS the prolog plane's entire reachable
-#                cone from the CLI, and LONGEST drops by the length of that
-#                cone. The `cli` -> `typescript` -> `prolog` -> `typescript`
-#                -> `sqlite` chain becomes `cli` -> `typescript`, because
-#                bridge_spawn is the ONLY arrow from the served process into
-#                the compiler's own language.
-#   The exact numbers for both runs are printed by this script's counts block
-#   and recorded in v6/DATAFLOW-ATLAS.md's own tables, which is why they are
-#   not frozen into this comment: they move when the code moves, and a frozen
-#   number here would be the stale thing the rail exists to prevent.
+#     clean      NODES=421 EDGES=809 LONGEST=19 CYCLES=0 ORPHANS=0
+#                `bop run` to a SQLite table: 12 hops
+#     sabotaged  NODES=421 EDGES=807 LONGEST=11 CYCLES=0 ORPHANS=0
+#                `bop run` to a SQLite table: THE TABLE IS EMPTY
+#
+#   TWO EDGES. That is the whole cost of the sabotage, and it takes the longest
+#   path from 19 hops to 11 and erases the CLI-to-database answer completely,
+#   because `bridge_spawn` is the only arrow from the served process into the
+#   compiler's own language: without it prolog, the emitted module and every
+#   SQLite table become unreachable from the CLI in one stroke.
 #
 #   The discriminating part: the sabotage removes a RULE, not a node list. A
 #   renderer that hardcoded the pipeline would have drawn the same picture and
-#   proven nothing.
+#   proven nothing. The node count does NOT move, either -- the nodes are still
+#   drawn, they are simply no longer reachable -- so an assertion on node count
+#   alone would have passed the sabotage. The reachability answer is what
+#   discriminates.
 
 set -uo pipefail
 
@@ -91,13 +93,18 @@ command -v swipl >/dev/null || die "swipl is not on PATH; the prolog fact host c
 command -v jq >/dev/null || die "jq is not on PATH; the rail receipt cannot inspect rel rows"
 command -v dot >/dev/null || die "graphviz dot is not on PATH; the render host cannot run"
 
-# THE PROGRAM MUST BE TRACKED, and this check is here because its absence cost a
-# whole run: the watch bind boot-enumerates through `git ls-files -- <glob>`, so
-# an untracked source produces no `seed` row, every `want` row hangs off nothing,
-# and the rail settles at exactly zero of everything with no error anywhere.
-# self-map.sh refuses the same way for the same reason.
-( cd "$ROOT" && git ls-files --error-unmatch -- "${PROGRAM#"$ROOT/"}" ) >/dev/null 2>&1 \
-  || die "the atlas program is not tracked by git, so the watch bind cannot see it and nothing will seed: $PROGRAM"
+# THE WATCHED SOURCE MUST BE TRACKED, and this check is here because its absence
+# cost a whole run: the watch bind boot-enumerates through `git ls-files --
+# <glob>`, so an untracked source produces no `seed` row, every `want` row hangs
+# off nothing, and the rail settles at exactly zero of everything with no error
+# anywhere. self-map.sh refuses the same way for the same reason.
+#
+# It is the WATCHED PATH that is checked and not `$PROGRAM`, because those are
+# two different things: a sabotage run loads an edited scratch copy through
+# `ATLAS_PROGRAM` while the seed still hangs off the tracked fixture.
+WATCHED="v6/dl/fixtures/dataflow-atlas.dl6"
+( cd "$ROOT" && git ls-files --error-unmatch -- "$WATCHED" ) >/dev/null 2>&1 \
+  || die "the watched source is not tracked by git, so the watch bind cannot see it and nothing will seed: $WATCHED"
 
 # The extractor is FIXED and read-only. Resolution order matches
 # flagship-callgraph.sh and extraction-live.sh: an explicit override, then the

@@ -52,6 +52,22 @@
 #   coalesce_no_output
 #       coalesce's output variable may appear only in the coalesce atom and the
 #       head, which is why `bwd` reads `bwd_positive` through its own rel.
+#   unsupported_construct(aggregate_ordinal_not_int(_, text))
+#       `group_concat(x, sep, x)` is refused: an ordered aggregate's ordinal
+#       must be an int. It is also unnecessary -- the TWO-argument form already
+#       lowers to `group_concat(x, sep ORDER BY x)` (lower.pl:2894), so a fold
+#       ordered by its own value needs no third argument and no ordinal column.
+#   unsupported_construct(aggregate_group_not_delta_local(_))
+#       an aggregate's GROUP columns must be bound by EVERY positive body atom
+#       on its own, because the emitter seeds the scope table once per body atom
+#       from that atom's delta rows. Three aggregates here read a join, so each
+#       join gets its own rel and the aggregate reads a single atom.
+#
+# TWO DEFECTS THIS PROGRAM FOUND AND DID NOT FIX (each recorded where it bit):
+#   a rel named `sqlite_*` compiles clean and then KILLS THE SERVED PROCESS at
+#   DDL time -- see the note above `db_table_node`;
+#   a negation that answers zero where the same negation over a projection rel
+#   answers correctly, cause NOT identified -- see the note above `ts_defines`.
 #
 # The recursive longest-path shape the brief asked to attempt COMPILED, first
 # try, with no refusal at all: see `reach` below. What it needed instead was a
@@ -257,6 +273,17 @@ ts_crossing_symbol(to_path, symbol_name) <- ts_import_edge(_, to_path, symbol_na
 # whose name has no def row in the target file lands on the target's MODULE node
 # and is drawn as its own edge kind, so the count of them is visible in the
 # document and this reads as the measurement it is.
+# AN UNEXPLAINED OBSERVATION, recorded because it is not yet a finding and must
+# not be written as one. This rel exists because
+# `not(ts_def_row(to_path, _, symbol_name))` produced ZERO rows on real data
+# while `not(ts_defines(to_path, symbol_name))` over the same data produced the
+# right ones; the two runs differed in nothing else. The obvious reading -- a
+# wildcard inside a negated atom -- was then MEASURED AND REFUTED: a minimal
+# program with the identical shape (a wildcard between two bound columns bound
+# by two different preceding atoms) answers correctly on both spellings. So the
+# trigger is something else about `ts_def_row` (two clauses, both fed by a probe
+# response) and it is NOT identified. The projection rel stays because it works;
+# the cause is open, and this comment is the whole of what is known.
 rel ts_defines(path: text, symbol_name: text).
 ts_defines(path, name) <- ts_def_row(path, _, name).
 
@@ -381,9 +408,8 @@ pl_dispatch_row(from_path, module_file, pred_name) <-
   pl_file(from_path, digest, _), pl_dispatch(from_path, digest, module_file, pred_name).
 
 # "xref did not already see it" IS the definition of this bridge, so it is a
-# condition and not an optimisation. The projection rel exists because a
-# wildcard inside a negated atom silently answers nothing here -- see the
-# FINDING at `ts_defines`.
+# condition and not an optimisation. The projection rel follows the shape used
+# at `ts_defines` for the reason recorded there.
 rel pl_calls_name(path: text, callee: text).
 pl_calls_name(path, callee) <- pl_call_row(path, _, _, callee, _).
 
