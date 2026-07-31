@@ -251,7 +251,9 @@ bench:
 # satisfy, tick-log byte-diff vs the oracle as the referee, standings over the
 # real programs + the s1/s2/s3 shapes. Gates the rust lowering (phase 0 of
 # plans/2026-07-31-rust-course.md). Contract + buy-verdict: v6/bench-cli/CONTRACT.md
-# (expect: BENCH-CLI timed=13 disqualified=1 hash-agreement=OK, exit 0)
+# (expect: BENCH-CLI timed=11 disqualified=3 hash-agreement=OK, exit 0 -- the
+#  3 disqualified are s1/10k, s2/10k and s3/1k, where the swipl REFERENCE
+#  engine walls, so no engine can be graded there. ~4 min, mostly those walls.)
 bench-cli:
 	cd {{v6}}/bench-cli && bash bench.sh
 

@@ -252,7 +252,12 @@ for index in $(seq 0 $((case_count - 1))); do
         process.argv.slice(1);
       let perf = {};
       try { perf = JSON.parse(fs.readFileSync(file, "utf8")); } catch { perf = {}; }
-      const walls = wallsText.trim().split(/\s+/).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+      // filter(length) BEFORE Number(): "".split(/\s+/) is [""], and
+      // Number("") is 0, which is finite -- so an engine that was never run
+      // reported `wall_ms 0` instead of N/A. A fabricated zero in a standings
+      // table is precisely what this contract exists to prevent.
+      const walls = wallsText.trim().split(/\s+/).filter((t) => t.length > 0)
+        .map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
       const median = walls.length === 0 ? null : walls[Math.floor((walls.length - 1) / 2)];
       process.stdout.write(JSON.stringify({
         case: name, family, engine, verdict, input_hash: hash, note,
@@ -272,7 +277,8 @@ for index in $(seq 0 $((case_count - 1))); do
 
     printf '   %-8s %-11s' "$ENGINE" "${VERDICT:-error}"
     [ -n "$WALLS" ] && printf ' wall(median)=%s' "$(node -e '
-      const w = process.argv[1].trim().split(/\s+/).map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
+      const w = process.argv[1].trim().split(/\s+/).filter((t) => t.length > 0)
+        .map(Number).filter(Number.isFinite).sort((a,b)=>a-b);
       process.stdout.write(w.length ? String(w[Math.floor((w.length-1)/2)]) : "-");' "$WALLS")"
     printf '\n'
     unset VERDICT
