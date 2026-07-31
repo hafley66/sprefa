@@ -14,14 +14,14 @@ excerpt per compiled fixture).
 
 ## Totals (current)
 
-Refreshed by the PAIRWISE + D3 lane (2026-07-31) from its own sweep artifacts,
-both emitter modes. The two new fixtures are the pairwise cadence pair
-(`pairwise_reads_state_at_the_departure_tick`,
-`pairwise_pairs_adjacent_values_when_the_source_idles`), which pin the
-finalize-plus-read spelling as DEFINED at both cadences rather than fixing
-anything. The prose sections below this one are historical and were written
-against the 110-fixture corpus; the numbers here and in the two tables that
-follow come from `out/manifest.json` + `out/run-results.json`.
+Refreshed by the FILES/REPOS PART 2 lane (2026-07-31) from its own sweep
+artifacts, both emitter modes. Its two new fixtures are both NAMED REFUSALS
+(`duplicate_host_name_is_refused`, `repo_on_bind_watch_is_refused`), so they
+land in UNSUPPORTED by design and move nothing else: the manifest diff reported
+`restated=0 args=0 bucket_moved=0 added=2 removed=0` in both modes. The prose
+sections below this one are historical and were written against the
+110-fixture corpus; the numbers here and in the two tables that follow come
+from `out/manifest.json` + `out/run-results.json`.
 
 One caveat about that raw data, found while regenerating: `manifest.json` is
 not byte-stable across sweeps. Refusal reasons carrying an unbound term print
@@ -31,20 +31,20 @@ below are stable; the file's diff is not a signal.
 
 | bucket | count |
 |---|---|
-| fixtures swept | 267 |
-| UNSUPPORTED (compiler refuses, named construct) | 76 |
+| fixtures swept | 281 |
+| UNSUPPORTED (compiler refuses, named construct) | 85 |
 | compiler crashes | 0 |
-| compiled (lowering + emission succeeded) | 191 |
-| — of which IDENTICAL (tick log byte-identical to oracle) | 190 |
+| compiled (lowering + emission succeeded) | 196 |
+| — of which IDENTICAL (tick log byte-identical to oracle) | 195 |
 | — of which WRONG (diff vs oracle) | 0 |
 | — of which EMITTED_CRASH (emitted module died, oracle completed) | 0 |
 | — of which REJECTION (oracle throws on this schedule too) | 1 |
 
-IDENTICAL + rejection + UNSUPPORTED + crashes = 190 + 1 + 76 + 0 = 267.
+IDENTICAL + rejection + UNSUPPORTED + crashes = 195 + 1 + 85 + 0 = 281.
 
 Both emitter modes agree row for row for compiled fixtures: the incremental
-default and `SPREFA_TSV2_EMITTER_MODE=naive` produce the same 190/0/0/1. The
-final-state grading leg reports `final_identical=190`, `final_wrong=0`,
+default and `SPREFA_TSV2_EMITTER_MODE=naive` produce the same 195/0/0/1. The
+final-state grading leg reports `final_identical=195`, `final_wrong=0`,
 `no_oracle_final=1` (the one rejection-path fixture, which has no oracle final
 state to diff).
 
