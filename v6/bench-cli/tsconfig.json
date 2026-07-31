@@ -14,6 +14,6 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["adapters/**/*.ts", "report.ts", "schedule-gen.ts"],
+  "include": ["adapters/**/*.ts", "proof.ts", "report.ts", "schedule-gen.ts"],
   "exclude": ["node_modules", "out"]
 }
