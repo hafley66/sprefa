@@ -39,8 +39,8 @@ _input hash `a7b2708ed448737b` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 114 | N/A | 0 | N/A | 41.2 | N/A |
-| tsv2 | identical | 6.971 | 104 | 4 | 145 | 136.3 | N/A |
+| oracle | reference | 114 | N/A | 0 | N/A | 39.7 | N/A |
+| tsv2 | identical | 6.915 | 106 | 4 | 145 | 134.3 | N/A |
 
 ### callgraph_unused
 
@@ -49,8 +49,8 @@ _input hash `283b9cf68aaa550c` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 118 | N/A | 0 | N/A | 40.9 | N/A |
-| tsv2 | identical | 8.382 | 104 | 5 | 212 | 133.3 | N/A |
+| oracle | reference | 114 | N/A | 0 | N/A | 39.6 | N/A |
+| tsv2 | identical | 8.437 | 105 | 5 | 212 | 135 | N/A |
 
 ### flow_reach_recursive
 
@@ -59,8 +59,8 @@ _input hash `5eb25369a351dba6` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 112 | N/A | 0 | N/A | 41.3 | N/A |
-| tsv2 | identical | 4.909 | 112 | 2 | 58 | 133.5 | N/A |
+| oracle | reference | 115 | N/A | 0 | N/A | 39.4 | N/A |
+| tsv2 | identical | 4.929 | 110 | 2 | 58 | 133 | N/A |
 
 ### flow_sig_owner_join
 
@@ -69,8 +69,8 @@ _input hash `727407f9996e02ec` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 115 | N/A | 0 | N/A | 41 | N/A |
-| tsv2 | identical | 5.155 | 111 | 1 | 56 | 136.6 | N/A |
+| oracle | reference | 114 | N/A | 0 | N/A | 39.5 | N/A |
+| tsv2 | identical | 5.345 | 116 | 1 | 56 | 134.2 | N/A |
 
 ### diag_seven_ticks
 
@@ -79,8 +79,8 @@ _input hash `566c9e6904354be3` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 117 | N/A | 0 | N/A | 40.7 | N/A |
-| tsv2 | identical | 30.861 | 119 | 7 | 988 | 139.7 | N/A |
+| oracle | reference | 122 | N/A | 0 | N/A | 40 | N/A |
+| tsv2 | identical | 30.716 | 116 | 7 | 988 | 142.6 | N/A |
 
 ### clock_rel_join_storms
 
@@ -89,8 +89,8 @@ _input hash `6a906448c5a75f1f` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 117 | N/A | 0 | N/A | 41 | N/A |
-| tsv2 | identical | 17.887 | 114 | 7 | 540 | 133.7 | N/A |
+| oracle | reference | 121 | N/A | 0 | N/A | 39.8 | N/A |
+| tsv2 | identical | 18.398 | 109 | 7 | 540 | 137.1 | N/A |
 
 ### match_classify
 
@@ -99,8 +99,8 @@ _input hash `f71e559ddab60233` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 130 | N/A | 0 | N/A | 40.7 | N/A |
-| tsv2 | identical | 4.089 | 106 | 1 | 38 | 136.6 | N/A |
+| oracle | reference | 114 | N/A | 0 | N/A | 40.5 | N/A |
+| tsv2 | identical | 4.164 | 109 | 1 | 38 | 134.4 | N/A |
 
 ### aggregate_retraction
 
@@ -109,8 +109,8 @@ _input hash `25705d70571dc370` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 118 | N/A | 0 | N/A | 41.1 | N/A |
-| tsv2 | identical | 5.357 | 100 | 3 | 77 | 135.9 | N/A |
+| oracle | reference | 113 | N/A | 0 | N/A | 39.3 | N/A |
+| tsv2 | identical | 5.509 | 107 | 3 | 77 | 133 | N/A |
 
 ### enum_tag_view
 
@@ -119,8 +119,8 @@ _input hash `b4ce6a6ec7a079fb` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 109 | N/A | 0 | N/A | 40.9 | N/A |
-| tsv2 | identical | 4.219 | 101 | 2 | 54 | 136.2 | N/A |
+| oracle | reference | 117 | N/A | 0 | N/A | 40.4 | N/A |
+| tsv2 | identical | 4.282 | 103 | 2 | 54 | 137.1 | N/A |
 
 ## Scale shapes
 
@@ -130,8 +130,8 @@ _input hash `aaa19a529a175aa6` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 1326 | N/A | 0 | N/A | 41.3 | N/A |
-| tsv2 | identical | 33.132 | 103 | 11 | 246 | 141.7 | N/A |
+| oracle | reference | 1359 | N/A | 0 | N/A | 39.6 | N/A |
+| tsv2 | identical | 33.578 | 103 | 11 | 246 | 147.3 | N/A |
 
 ### s1/10k
 
@@ -139,7 +139,7 @@ _input hash `0cff8edfe11fdec3` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | error | N/A | N/A | 0 | N/A | N/A | N/A |
+| oracle | error | N/A | N/A | N/A | N/A | N/A | N/A |
 | tsv2 | no_reference | N/A | N/A | N/A | N/A | N/A | N/A |
 
 ### s2/1k
@@ -148,8 +148,8 @@ _input hash `cbc057b61af18b57` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | reference | 2232 | N/A | 0 | N/A | 41.5 | N/A |
-| tsv2 | identical | 23.996 | 105 | 11 | 414 | 138.8 | N/A |
+| oracle | reference | 2240 | N/A | 0 | N/A | 40.2 | N/A |
+| tsv2 | identical | 24.775 | 109 | 11 | 414 | 141.5 | N/A |
 
 ### s2/10k
 
@@ -157,7 +157,7 @@ _input hash `b0cb70503efeb162` (all engines must match)_
 
 | engine | verdict | wall ms | compile ms | ticks | stmts | peak RSS MB | db bytes |
 |---|:---:|---:|---:|---:|---:|---:|---:|
-| oracle | error | N/A | N/A | 0 | N/A | N/A | N/A |
+| oracle | error | N/A | N/A | N/A | N/A | N/A | N/A |
 | tsv2 | no_reference | N/A | N/A | N/A | N/A | N/A | N/A |
 
 ### s3/1k

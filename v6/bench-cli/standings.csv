@@ -1,29 +1,29 @@
 case,family,engine,verdict,wall_ms,compile_ms,ticks,statements,peak_rss_mb,db_bytes,input_hash,note
-callgraph_derivation,program,oracle,reference,114,N/A,0,N/A,41.2,N/A,a7b2708ed448737b,the alpha flagship rail: def/call/calls derivation over extracted facts
-callgraph_derivation,program,tsv2,identical,6.971,104,4,145,136.3,N/A,a7b2708ed448737b,the alpha flagship rail: def/call/calls derivation over extracted facts
-callgraph_unused,program,oracle,reference,118,N/A,0,N/A,40.9,N/A,283b9cf68aaa550c,flagship anti-monotone leg: unused inverts with the call set
-callgraph_unused,program,tsv2,identical,8.382,104,5,212,133.3,N/A,283b9cf68aaa550c,flagship anti-monotone leg: unused inverts with the call set
-flow_reach_recursive,program,oracle,reference,112,N/A,0,N/A,41.3,N/A,5eb25369a351dba6,recursive transitive closure over resolved edges -- the DAG-reach shape PERF-REPORT benches in rust
-flow_reach_recursive,program,tsv2,identical,4.909,112,2,58,133.5,N/A,5eb25369a351dba6,recursive transitive closure over resolved edges -- the DAG-reach shape PERF-REPORT benches in rust
-flow_sig_owner_join,program,oracle,reference,115,N/A,0,N/A,41,N/A,727407f9996e02ec,dataflow: signature-owner join types the resolved callee
-flow_sig_owner_join,program,tsv2,identical,5.155,111,1,56,136.6,N/A,727407f9996e02ec,dataflow: signature-owner join types the resolved callee
-diag_seven_ticks,program,oracle,reference,117,N/A,0,N/A,40.7,N/A,566c9e6904354be3,"the LSP diag rail end to end, seven ticks"
-diag_seven_ticks,program,tsv2,identical,30.861,119,7,988,139.7,N/A,566c9e6904354be3,"the LSP diag rail end to end, seven ticks"
-clock_rel_join_storms,program,oracle,reference,117,N/A,0,N/A,41,N/A,6a906448c5a75f1f,largest schedule in the identical corpus; the tick-phase-alignment case
-clock_rel_join_storms,program,tsv2,identical,17.887,114,7,540,133.7,N/A,6a906448c5a75f1f,largest schedule in the identical corpus; the tick-phase-alignment case
-match_classify,program,oracle,reference,130,N/A,0,N/A,40.7,N/A,f71e559ddab60233,match block sugar through the shared expansion
-match_classify,program,tsv2,identical,4.089,106,1,38,136.6,N/A,f71e559ddab60233,match block sugar through the shared expansion
-aggregate_retraction,program,oracle,reference,118,N/A,0,N/A,41.1,N/A,25705d70571dc370,count/min/max under arrivals AND retraction
-aggregate_retraction,program,tsv2,identical,5.357,100,3,77,135.9,N/A,25705d70571dc370,count/min/max under arrivals AND retraction
-enum_tag_view,program,oracle,reference,109,N/A,0,N/A,40.9,N/A,b4ce6a6ec7a079fb,enum variant rels round-trip through the derived tag view
-enum_tag_view,program,tsv2,identical,4.219,101,2,54,136.2,N/A,b4ce6a6ec7a079fb,enum variant rels round-trip through the derived tag view
-s1/1k,scale,oracle,reference,1326,N/A,0,N/A,41.3,N/A,aaa19a529a175aa6,
-s1/1k,scale,tsv2,identical,33.132,103,11,246,141.7,N/A,aaa19a529a175aa6,
-s1/10k,scale,oracle,error,N/A,N/A,0,N/A,N/A,N/A,0cff8edfe11fdec3,
+callgraph_derivation,program,oracle,reference,114,N/A,0,N/A,39.7,N/A,a7b2708ed448737b,the alpha flagship rail: def/call/calls derivation over extracted facts
+callgraph_derivation,program,tsv2,identical,6.915,106,4,145,134.3,N/A,a7b2708ed448737b,the alpha flagship rail: def/call/calls derivation over extracted facts
+callgraph_unused,program,oracle,reference,114,N/A,0,N/A,39.6,N/A,283b9cf68aaa550c,flagship anti-monotone leg: unused inverts with the call set
+callgraph_unused,program,tsv2,identical,8.437,105,5,212,135,N/A,283b9cf68aaa550c,flagship anti-monotone leg: unused inverts with the call set
+flow_reach_recursive,program,oracle,reference,115,N/A,0,N/A,39.4,N/A,5eb25369a351dba6,recursive transitive closure over resolved edges -- the DAG-reach shape PERF-REPORT benches in rust
+flow_reach_recursive,program,tsv2,identical,4.929,110,2,58,133,N/A,5eb25369a351dba6,recursive transitive closure over resolved edges -- the DAG-reach shape PERF-REPORT benches in rust
+flow_sig_owner_join,program,oracle,reference,114,N/A,0,N/A,39.5,N/A,727407f9996e02ec,dataflow: signature-owner join types the resolved callee
+flow_sig_owner_join,program,tsv2,identical,5.345,116,1,56,134.2,N/A,727407f9996e02ec,dataflow: signature-owner join types the resolved callee
+diag_seven_ticks,program,oracle,reference,122,N/A,0,N/A,40,N/A,566c9e6904354be3,"the LSP diag rail end to end, seven ticks"
+diag_seven_ticks,program,tsv2,identical,30.716,116,7,988,142.6,N/A,566c9e6904354be3,"the LSP diag rail end to end, seven ticks"
+clock_rel_join_storms,program,oracle,reference,121,N/A,0,N/A,39.8,N/A,6a906448c5a75f1f,largest schedule in the identical corpus; the tick-phase-alignment case
+clock_rel_join_storms,program,tsv2,identical,18.398,109,7,540,137.1,N/A,6a906448c5a75f1f,largest schedule in the identical corpus; the tick-phase-alignment case
+match_classify,program,oracle,reference,114,N/A,0,N/A,40.5,N/A,f71e559ddab60233,match block sugar through the shared expansion
+match_classify,program,tsv2,identical,4.164,109,1,38,134.4,N/A,f71e559ddab60233,match block sugar through the shared expansion
+aggregate_retraction,program,oracle,reference,113,N/A,0,N/A,39.3,N/A,25705d70571dc370,count/min/max under arrivals AND retraction
+aggregate_retraction,program,tsv2,identical,5.509,107,3,77,133,N/A,25705d70571dc370,count/min/max under arrivals AND retraction
+enum_tag_view,program,oracle,reference,117,N/A,0,N/A,40.4,N/A,b4ce6a6ec7a079fb,enum variant rels round-trip through the derived tag view
+enum_tag_view,program,tsv2,identical,4.282,103,2,54,137.1,N/A,b4ce6a6ec7a079fb,enum variant rels round-trip through the derived tag view
+s1/1k,scale,oracle,reference,1359,N/A,0,N/A,39.6,N/A,aaa19a529a175aa6,
+s1/1k,scale,tsv2,identical,33.578,103,11,246,147.3,N/A,aaa19a529a175aa6,
+s1/10k,scale,oracle,error,N/A,N/A,N/A,N/A,N/A,N/A,0cff8edfe11fdec3,
 s1/10k,scale,tsv2,no_reference,N/A,N/A,N/A,N/A,N/A,N/A,0cff8edfe11fdec3,
-s2/1k,scale,oracle,reference,2232,N/A,0,N/A,41.5,N/A,cbc057b61af18b57,
-s2/1k,scale,tsv2,identical,23.996,105,11,414,138.8,N/A,cbc057b61af18b57,
-s2/10k,scale,oracle,error,N/A,N/A,0,N/A,N/A,N/A,b0cb70503efeb162,
+s2/1k,scale,oracle,reference,2240,N/A,0,N/A,40.2,N/A,cbc057b61af18b57,
+s2/1k,scale,tsv2,identical,24.775,109,11,414,141.5,N/A,cbc057b61af18b57,
+s2/10k,scale,oracle,error,N/A,N/A,N/A,N/A,N/A,N/A,b0cb70503efeb162,
 s2/10k,scale,tsv2,no_reference,N/A,N/A,N/A,N/A,N/A,N/A,b0cb70503efeb162,
 s3/1k,scale,oracle,error,N/A,N/A,N/A,N/A,N/A,N/A,cde50d7bedee3c16,the memory-wall cell: 1000x1000 = 1M combined rows; SCALE.md records tsv2 DNF here
 s3/1k,scale,tsv2,no_reference,N/A,N/A,N/A,N/A,N/A,N/A,cde50d7bedee3c16,the memory-wall cell: 1000x1000 = 1M combined rows; SCALE.md records tsv2 DNF here

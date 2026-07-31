@@ -287,3 +287,10 @@ done
 
 echo ""
 node --experimental-transform-types report.ts "$RECORDS"
+REPORT_EXIT=$?
+[ "$REPORT_EXIT" -eq 0 ] || exit "$REPORT_EXIT"
+# Floor gate: a run where NOTHING got timed is a broken rig, never a pass
+# (measured 2026-07-31: a missing node_modules symlink error'd all 14 cells
+# and the recipe still exited 0).
+grep -q '^tsv2,\|,tsv2,' standings.csv && grep -q 'identical' standings.csv \
+  || { echo "BENCH-CLI FLOOR: zero timed cells -- rig is broken, not slow"; exit 1; }
