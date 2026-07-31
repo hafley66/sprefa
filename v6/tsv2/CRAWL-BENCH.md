@@ -45,7 +45,7 @@ scratch `DL_STATE_DIR`, then runs `target/release/dl <program> --db <scratch>`.
 ## v6 leg
 
 The v6 program is generated in the scratch directory. It declares the existing
-enumerate host shape from `v6/dl/fixtures/enumerate-hosts.dl6` and an extraction
+files host shape from `v6/dl/fixtures/files-hosts.dl6` and an extraction
 host with this command shape:
 
 ```text
@@ -89,7 +89,7 @@ comparable served-engine statement trace in this invocation.
   org fan-out spelling; the script performs one shell-level repo loop and
   sends host demands for each repo.
 - v5 resolves `HEAD` files from each Git tree and uses the Git revision identity
-  in the returned row. The v6 enumerate host reads the working-tree path list
+  in the returned row. The v6 files host reads the working-tree path list
   and hashes each working-tree file with `git hash-object`.
 - The v5 glob is one globset expression, `**/*.{go,ts,tsx}`. The v6 leg sends
   three Git pathspec demands, `**/*.go`, `**/*.ts`, and `**/*.tsx`, and unions

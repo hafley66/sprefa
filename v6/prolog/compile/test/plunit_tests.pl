@@ -2366,8 +2366,12 @@ test(reserved_word_refusal_payloads) :-
 % registry projection the walk uses.
 test(every_reserved_body_word_refuses_at_both_doors) :-
     findall(Functor/Arity,
-            ( surface(Functor/Arity, _, _, _, reserved),
-              integer(Arity),
+            ( surface(Functor/Signature, _, _, _, reserved),
+              % A variadic reserved row bans the WORD at every arity the world
+              % spells it (scan is four and five in v5), so the probe picks one
+              % concrete arity rather than skipping the row: skipping is how
+              % `scan` would have shipped uncovered by this test.
+              ( integer(Signature) -> Arity = Signature ; Arity = 4 ),
               functor(Probe, Functor, Arity),
               body_surface_for_term(Probe, _, _, _, _, _) ),
             Reserved),

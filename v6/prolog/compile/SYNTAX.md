@@ -152,6 +152,7 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
 | `type_decl/2` | `decl` | `no_refs` | `decl(struct_type)` | `live` |
 | `set/0` | `decl` | `no_refs` | `decl(refuse(removed_word))` | `refused` |
+| `scan/variadic` | `world` | `no_refs` | `goal(refuse(removed_word))` | `reserved` |
 | `match/2` | `sugar` | `no_refs` | `block(match_arms)` | `live` |
 | `sh_decl/4` | `world` | `no_refs` | `decl(host_plan)` | `live` |
 | `probe/4` | `world` | `no_refs` | `wrapper(host_probe,lower)` | `live` |

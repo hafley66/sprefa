@@ -68,7 +68,7 @@
 # Tracked files only, because `GlobWatch` boot-enumerates through
 # `git ls-files -- <glob>`; the digest is then read from the WORKING TREE, so
 # an unstaged edit re-fires and an untracked file is invisible. Both halves are
-# the enumerate ruling applied to the watcher, not a new policy.
+# the files ruling applied to the watcher, not a new policy.
 bind watch(glob: text, path: text, digest: text).
 
 rel source(path: text, digest: text).

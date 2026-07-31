@@ -50,6 +50,7 @@ expected_absent(sg_pattern/3,   'registry status `refused`').
 expected_absent(group_concat/1, 'registry status `refused`').
 expected_absent(tagged_brace/1, 'reserved').
 expected_absent(set/0,          'removed word').
+expected_absent(scan/variadic,  'reserved removed word').
 expected_absent(zip/2,          'reserved').
 expected_absent(subscribe/1,    'reserved lifecycle wrappers').
 expected_absent(unsubscribe/1,  'reserved lifecycle wrappers').

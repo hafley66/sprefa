@@ -160,7 +160,7 @@ expect "stage 0  diag_v5 empty (GREEN)"          "$(read_rel diag_v5 6,0,1)" ""
 
 # ═══ THE WHITESPACE-DECODE COLLAPSE, now a REGRESSION GUARD ════════════════
 # This block was written as a DEFECT WITNESS: c0 holds exactly TWO matching
-# files and `enumerate_at` declares exactly TWO output columns, and
+# files and `files_at` declares exactly TWO output columns, and
 # serve/1_hosts.ts `parseWhitespace` used to try the one-value-per-line reading
 # FIRST whenever those two numbers matched, so a two-file answer -- and only a
 # two-file answer -- decoded into ONE row whose `path` was the whole first line

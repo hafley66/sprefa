@@ -65,7 +65,7 @@
 #                                                   // incremental emitter writes
 #
 # ── the file set: the PINNED twin, because a graded corpus is a pinned corpus ──
-# `enumerate_at` is copied verbatim from fixtures/enumerate-hosts.dl6 (the landed
+# `files_at` is copied verbatim from fixtures/files-hosts.dl6 (the landed
 # phase-2 feed). The pinned form is the one this rail wants: the rev fixes the
 # answer, so the witness caches forever and two runs of the rig read the same
 # tree by construction rather than by hoping nothing was edited between them.
@@ -76,7 +76,7 @@
 # DOES cross `/` and `**` requires at least one directory component, so the same
 # file set is `src/*.rs` here. The rig asserts the two file sets are equal before
 # it grades anything.
-sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
 
 # ── the facts: two relational projections over one extractor invocation ──────
@@ -105,7 +105,7 @@ rel want_at(rev: text, glob: text).
 
 # ── the corpus, v5's `seen`/`scan` ────────────────────────────────────────────
 rel file(path: text, digest: text).
-file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
+file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 
 # ── the extractor's node lines, as their own rel ──────────────────────────────
 # The digest is a host input that the command template ignores. It participates

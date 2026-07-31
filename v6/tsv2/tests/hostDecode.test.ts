@@ -74,7 +74,7 @@ test("sh host: a JSON object stream projects by NAME, and a record missing a dec
 
 /**
  * A GRID host: N answers, each one line carrying exactly the declared column
- * count as whitespace-separated fields. This is the shipped `enumerate_at`
+ * count as whitespace-separated fields. This is the shipped `files_at`
  * shape verbatim (`printf '%s %s\n' "$entry" "$oid"` per tracked path), reduced
  * to a hermetic `seq` so the cardinality is the demand row.
  */
@@ -90,7 +90,7 @@ listing(count, path, digest) <- want(count), files(count, path, digest).
 
 /**
  * D1: the line-per-column reading is a GUESS, and it used to win whenever the
- * line count happened to equal the column count. `enumerate_at` declares two
+ * line count happened to equal the column count. `files_at` declares two
  * output columns, so a two-file answer -- and only a two-file answer -- was
  * folded into ONE row whose `path` was the whole first line and whose `digest`
  * was the whole second. Correct at one file, correct at three, silently wrong

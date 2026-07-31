@@ -15,7 +15,7 @@
 
 rel span(start: int, end: int).
 
-sh enumerate_at(rev: text, glob: text) -> (path: text, digest: text) =
+sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
   `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
 
 sh df_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text) =
@@ -37,7 +37,7 @@ sh resolve_at(rev: text, glob: text) -> (caller_path: text, caller_name: text, c
 
 rel want_at(rev: text, glob: text).
 rel file(path: text, digest: text).
-file(path, digest) <- want_at(rev, glob), enumerate_at(rev, glob, path, digest).
+file(path, digest) <- want_at(rev, glob), files_at(rev, glob, path, digest).
 
 rel df_node(path: text, at: span, kind: text).
 df_node(path, at, kind) <-

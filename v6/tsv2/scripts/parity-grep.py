@@ -16,8 +16,8 @@ CONTRACT, so the .dl6 side can be read without reading this file:
 
       THE REV IS WHY THIS ARGUMENT EXISTS AT ALL. An `sh` host's witness is
       content-addressed over its INPUT COLUMNS, so a worktree-only host caches
-      its first answer for the life of the db (enumerate-hosts.dl6 states this
-      about its own `enumerate`). A rail that must show a diagnostic APPEARING
+      its first answer for the life of the db (files-hosts.dl6 states this
+      about its own `files`). A rail that must show a diagnostic APPEARING
       and RETRACTING across commits therefore cannot ask a worktree host twice
       -- it asks a rev-pinned host once per rev, and each commit is a new
       witness by construction.

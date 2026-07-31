@@ -1397,6 +1397,13 @@ reserved_construct_in_body(Body, Construct) :-
 
 reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
                         lifecycle_arm(Functor)) :- !.
+% A word the language REMOVED rather than never had. Reported as
+% removed_word(Word) so 0_refusal_messages.pl can name the replacement
+% construct instead of only the deleted spelling; `set` set the precedent and
+% `scan` (ruling files_naming) is the second.
+reserved_construct_name(LowerRole, Functor, removed_word(Functor)) :-
+    sub_term(refuse(removed_word), LowerRole),
+    !.
 reserved_construct_name(_, Functor, Functor).
 
 % engine.pl's check_occurrence_conflicts (called once per OCCURRENCE, across

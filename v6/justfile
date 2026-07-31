@@ -147,11 +147,11 @@ comment-rails:
 	bash {{v6}}/tsv2/scripts/comment-rails.sh
 	bash {{v6}}/tsv2/scripts/comment-parity.sh
 
-# the file-set feed against THIS repo: enumerate = git ls-files exactly, zero
-# node_modules rows, enumerate_at reports git's own blob oids
-# (expect: ENUMERATE HOSTS HOLD, exit 0; needs a populated node_modules)
-enumerate:
-	cd {{v6}}/tsv2 && bash scripts/enumerate.sh
+# the file-set feed against THIS repo: files = git ls-files exactly, zero
+# node_modules rows, files_at reports git's own blob oids
+# (expect: FILES HOSTS HOLD, exit 0; needs a populated node_modules)
+files:
+	cd {{v6}}/tsv2 && bash scripts/files.sh
 
 # sustained assert/retract churn on one served program; process memory,
 # sqlite page count, and statements/tick must all stay flat post-warmup
@@ -242,7 +242,7 @@ multirepo-golden:
 
 # STOPPING-POINT PROGRAM #3: git pre-commit --changed, the biome-style
 # recent-change-lines gating, spelled as ordinary rules. "Which files are NEW
-# since a base revision" is a join between two rev-pinned `enumerate_at` host
+# since a base revision" is a join between two rev-pinned `files_at` host
 # answers with `not/1` over the base side; three finding classes ride it
 # (banned pattern in a new file, missing required header, whole-tree ratchet
 # above a committed ceiling) and land in v5's own 9-column diag_v5 schema.
@@ -331,4 +331,4 @@ bench-cli:
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
 # everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live enumerate flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
+green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
