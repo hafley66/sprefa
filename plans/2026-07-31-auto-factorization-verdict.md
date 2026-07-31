@@ -1007,6 +1007,31 @@ measurement rather than the measurement worked around.
 
 ---
 
+## 11b. The dl6 programs, for recovery after lab death
+
+Six programs. They are the durable artefact of the ledger and each is small
+enough to re-read rather than re-derive. Recover with
+`git show <lab commit>:v6/prolog/labs/auto_factorization/<name>`; the landing
+commit records the hash.
+
+| program | derives | ledger rows |
+|---|---|---|
+| `factorize.dl6` | `reach`, `cycle_file`, `file_depth`, folder cohesion, `file_prefix` | A1, A2, A3, A19 |
+| `numbering.dl6` | cohesion on all four axes, exact `modularity_scaled`, `folder_depth`, `folder_cycle`, `hand_violation`, `derived_violation`, `metric_blind` | A5, A6, A7, A17, A18, A19, A20, A21, A22 |
+| `components.dl6` | `linked`, `component`, `component_size` by min-index label | A10 |
+| `cuts.dl6` | `dep_after`, `edges_after`, `reach_after`, `cycle_after`, `max_depth_after` | A12, A13, A15 |
+| `rank.dl6` | `dense_rank`, `competition_rank`, `best_cut` | A16 |
+| `lpa.dl6` | nothing; it is the refusal receipt | A8 |
+| `min_text_repro.dl6` | nothing; four lines, the `min`-over-text defect | A11 |
+
+Two candidates worth promoting to conformance fixtures on their own merits,
+because both pin behaviour nothing else pins: `min_text_repro.dl6` as a refusal
+fixture once the engine mirror lands (finding 3), and the `und_internal_filled`
+shape from `numbering.dl6` as the worked example of the empty-group idiom
+(finding 9), which today exists nowhere.
+
+---
+
 ## 12. What a follow-up arc would do
 
 Nothing in this lab is applied and nothing should be applied from it without the
