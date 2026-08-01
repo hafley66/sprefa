@@ -13,7 +13,6 @@
 | [AGENTS.md](AGENTS.md) | 103 | v6 — AGENTS.md (start here; stay out of everything else) |
 | [ARCH-MAP.md](ARCH-MAP.md) | 666 | v6 architecture map |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
-| [DATAFLOW-ATLAS.md](DATAFLOW-ATLAS.md) | 110 | The v6 dataflow atlas |
 | [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
 | [GETTING-STARTED.md](GETTING-STARTED.md) | 397 | Getting started with v6 |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
@@ -21,6 +20,7 @@
 | [README.md](README.md) | 110 | V6 |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
+| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -66,6 +66,7 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -127,18 +128,6 @@
 119:## Why each algorithm, tied to the goal
 134:## How the oracles map to this (the running proof)
 150:## What ships vs what is a teacher
-```
-
-### DATAFLOW-ATLAS.md
-```
-1:# The v6 dataflow atlas
-4:## The five views
-18:## Nodes per plane
-29:## Edges per kind
-47:## Edges between planes
-61:## The longest path, hop by hop
-88:## `bop run` to an executed SQLite statement
-108:## Fact volume behind the picture
 ```
 
 ### DECISIONS.md
@@ -259,6 +248,16 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
+```
+
+### bench-cli/out/STANDINGS.md
+```
+1:# bench-cli standings
+17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
+50:## Real programs
+52:### callgraph_derivation
+62:## Scale shapes
+65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -966,6 +965,14 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md

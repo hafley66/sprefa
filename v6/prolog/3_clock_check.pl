@@ -427,7 +427,7 @@ delayed_recurrence_nodes(Program, Dependencies, DelayedNodes) :-
 %   | 20 |    1,201,719,860 | 51,103 |          57,188 |    3.5 |
 %
 % The old column doubles per k; the new one adds ~2,800 inferences per
-% diamond. dataflow-atlas.dl6 is that shape in the wild:
+% diamond. The 2026-07-31 filesystem-fold program was that shape in the wild:
 % a sixteen-rel filesystem fold that four different file depths enter, and its
 % compile went 30 s to 9 m 40 s at an 8 GB stack, dying with `Stack limit
 % (1.0Gb) exceeded` inside this predicate's setof at the served compiler's

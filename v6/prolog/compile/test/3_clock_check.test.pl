@@ -169,7 +169,7 @@ clock_check_inferences(Program, Count) :-
 % The chain rail above stayed green through the whole path-enumeration era,
 % because a chain has exactly one route and simple-path enumeration is linear
 % on it. The cost that actually bit is a function of the number of PARALLEL
-% mid-chain routes, and nothing measured that until dataflow-atlas.dl6 walked
+% mid-chain routes, and nothing measured that until a filesystem-fold program walked
 % off the cliff in production (ARCH clock_check_path_blowup): its compile went
 % 30 s to 9 m 40 s, then died with `Stack limit (1.0Gb) exceeded` inside
 % clock_violation/2 at the served compiler's default stack.

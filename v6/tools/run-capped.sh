@@ -100,7 +100,7 @@ capped_curl() {
 # command. That form exists for the one caller that cannot source anything --
 # an `sh` host template inside a .dl6 program, which is a single shell line the
 # engine runs. Templates reach it through an exported path variable, the same
-# way dataflow-atlas.dl6's hosts reach DL_EXTRACT_BIN and ATLAS_XREF_FACTS
+# way .dl6 host templates reach exported path variables like DL_EXTRACT_BIN
 # (fillTemplate escapes `$` in any value it splices, so a path arriving as a
 # rel column could never expand).
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
