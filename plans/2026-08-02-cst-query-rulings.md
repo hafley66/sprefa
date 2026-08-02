@@ -66,6 +66,92 @@ flowchart TB
   classDef unbuilt stroke-dasharray: 5 5
 ```
 
+## Worked example — one query through every stage
+
+Task: flag every call to a deprecated function. `deprecated(callee_name)` is an
+ordinary 10-row rel; the pattern is structural.
+
+**Stage 1 — dl6 surface (the unbuilt sugar, proposed spelling):**
+
+```
+rel deprecated_call(file_path: text, call_start: int, call_end: int, callee_name: text).
+deprecated_call(file_path, call_start, call_end, callee_name) <-
+  file(file_path, content_digest),
+  ts("(call_expression function: (identifier) @callee_name)",
+     file_path, content_digest, callee_name, call_start, call_end),
+  deprecated(callee_name).
+# rx lowering: file$.pipe(mergeMap(f => tsHost.probe(f, queryText)))
+#   .pipe(joinLatest(deprecated$), map(toRow)) -- capture rows stream in,
+#   the deprecated join filters AFTER the host returns (the acked caveat)
+```
+
+**Stage 2 — what the DCG parses that string into (real vocabulary,
+`1_host_expand.pl:424-478`):**
+
+```prolog
+ts_query([
+  node(call_expression, [
+    field(function,
+      capture(callee_name, node(identifier, [])))
+  ])
+])
+```
+
+**Stage 3 — what `ts_pattern_text/2` emits (byte-for-byte the tree-sitter
+query language):**
+
+```scheme
+(call_expression function: (identifier) @callee_name)
+```
+
+**Stage 4 — the demand row and its cache identity (engine side, ruling 3):**
+
+```sql
+-- the planner plants demand (ruling 2: LAZY)
+cst_need('src/api.c', 'b3:9f2ac...', 'c')
+
+-- effect_cache identity, fire-once per witness:
+-- full_digest = mix('extract', 'src/api.c', 'b3:9f2ac...', 'c',
+--                   grammar_hash('c', '0.38'), '(call_expression ...)')
+INSERT INTO effect_cache(full_digest, identity_digest, host, state, requested_tick)
+VALUES (0x7c31..., 0x11a0..., 'extract', 'pending', 42)
+ON CONFLICT(full_digest) DO NOTHING;   -- hit = zero spawn, rows already in db
+```
+
+**Stage 5 — what sprefa-extract answers (one parse, rayon, stateless):**
+
+```json
+{"record":"match","capture":"callee_name","start":1042,"end":1051,"text":"old_hash_fn"}
+{"record":"match","capture":"callee_name","start":2210,"end":2222,"text":"legacy_alloc"}
+```
+
+**Stage 6 — a containment query needs NO host at all (nested-set, decision 7):**
+
+```
+# every return statement inside a function body: pure indexed range join
+rel fn_return(fn_id: int, ret_id: int).
+fn_return(fn_id, ret_id) <-
+  node(fn_id, "function_declaration", file_path, fn_lo, fn_hi, _),
+  node(ret_id, "return_statement",   file_path, ret_lo, ret_hi, _),
+  fn_lo < ret_lo, ret_hi < fn_hi.
+# rx lowering: combineLatest([fnNode$, retNode$]).pipe(filter(containment))
+# EXPLAIN law: SEARCH node USING INDEX (file, lo) -- never SCAN
+```
+
+**Stage 7 — the rewrite is just rows into the staged-writes path (decision 9):**
+
+```
+# replace each deprecated callee span with its successor name
+splice(file_path, call_start, call_end, replacement_name) <-
+  deprecated_call(file_path, call_start, call_end, callee_name),
+  successor(callee_name, replacement_name).
+# rx lowering: depCall$.pipe(joinLatest(successor$))
+#   -> stage rows in-tick; apply arm drains between ticks (concatMap)
+```
+
+Same shape end to end: the green-all CLAUDE.md stamp, this codemod, and the
+README op-table all reduce to stage 6/7 rows over different sources.
+
 ## Picture 2 — decision dependencies, with today's rulings
 
 ```mermaid
