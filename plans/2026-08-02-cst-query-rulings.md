@@ -85,6 +85,15 @@ deprecated_call(file_path, call_start, call_end, callee_name) <-
 #   the deprecated join filters AFTER the host returns (the acked caveat)
 ```
 
+> NOTE (user question 2026-08-02): the STRING ruling concerns the HOST WIRE
+> only — what the compiler emits to the matcher. The SURFACE spelling above is
+> a placeholder and is NOT ruled. Open options: (a) quoted pattern parsed at
+> compile (v5 `ast` precedent — never a pass-through blob: compiler parses to
+> the stage-2 term, refuses unmapped shapes, binds @captures to dl variables);
+> (b) native unquoted S-expr in the dl6 grammar (syntax errors with positions,
+> more DCG work); (c) bare ts_query term form (exists, verbose). All three
+> lower through the same term -> text path.
+
 **Stage 2 — what the DCG parses that string into (real vocabulary,
 `1_host_expand.pl:424-478`):**
 
