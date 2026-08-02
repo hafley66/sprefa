@@ -63,7 +63,10 @@
 :- use_module('../../conformance/engine',
               [ trigger_items/2, body_finalize_ref/2,
                 body_latest_ref/2, body_pre_ref/2,
-                check_program/1 ]).
+                check_program/1,
+                % The aggregate-operand residue is a RUN-time guard, so the
+                % unit pinning it has to reach the run loop and not the door.
+                run_program/5 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
 :- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1, json_capture_type/2 ]).
@@ -2522,6 +2525,87 @@ test(compiler_refuses_aggregate_in_edge_head) :-
     door_verdict(compiler, Prog, CompilerVerdict),
     OracleVerdict == aggregate_in_edge_head,
     CompilerVerdict == unsupported_construct(aggregate_in_edge_head(total/1)).
+
+% ── the aggregate operand's own type ────────────────────────────────────────
+%
+% FAIL-FIRST RECEIPT, the same program at the two doors before this class:
+%
+%   compiler  unsupported_construct(aggregate_operand_not_number(min,_34934,text))
+%   oracle    error(type_error(evaluable, alpha/0),
+%                   context(lists:min_list/3, _))
+%
+% lower.pl has refused a non-numeric sum/avg/min/max operand since the
+% expression lift; the reference engine had no statement about it and reached
+% lists:min_list/3, so the door that DEFINES the language answered with a SWI
+% arithmetic error against a library predicate the author never wrote.
+%
+% All four numeric aggregates, because compile_aggregate_number_operand/5 is
+% one predicate with one condition and the shared class mirrors that set
+% rather than the two spellings the defect was found through.
+test(numeric_aggregate_over_a_text_column_refuses_at_the_oracle_door) :-
+    forall(member(Kind, [sum, avg, min, max]),
+           ( Operand =.. [Kind, Tag],
+             Head =.. [m, Operand],
+             Prog = prog([ col_type(src/2, id, int),
+                           col_type(src/2, tag, text) ],
+                         [ (Head <- src(_Id, Tag)) ]),
+             door_verdict(oracle, Prog, OracleVerdict),
+             OracleVerdict == aggregate_operand_not_number(Kind, src/2, tag,
+                                                           text) )).
+
+% The compiler is UNCHANGED by the class above: its refusal is inferred, not
+% declared, so it lives at lowering and its check gate still accepts. Pinned
+% so the shared trigger cannot quietly migrate the compiler's diagnostic from
+% lower.pl to the door and change both its phase and its payload.
+test(the_compiler_keeps_refusing_the_same_program_at_lowering,
+     [throws(unsupported_construct(aggregate_operand_not_number(min, _, text)))]) :-
+    Prog = prog([ col_type(src/2, id, int), col_type(src/2, tag, text) ],
+                [ (m(min(Tag)) <- src(_Id, Tag)) ]),
+    door_verdict(compiler, Prog, accepted),
+    Term = fixture(min_over_a_text_column, Prog, [], [[ +src(1, alpha) ]], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
+% The residue the shared class cannot reach. 0_program_check.pl sees prog/2
+% and no literal witnesses, so an UNDECLARED text column passes the door on
+% both sides; the compiler then refuses off its own inference and the engine
+% has only the value in hand. Named at the value, in the shape group_concat's
+% aggregate_value_not_text/1 guard beside it already uses.
+test(an_undeclared_text_operand_is_named_by_the_engine_value_guard) :-
+    Prog = prog([], [ (m(min(Tag)) <- src(_Id, Tag)) ]),
+    door_verdict(oracle, Prog, accepted),
+    catch(run_program(Prog, [], [[ +src(1, alpha), +src(2, beta) ]], _, _),
+          Thrown, true),
+    Thrown == aggregate_value_not_number(min, alpha).
+
+% int and float operands are what the class is carving text OUT of, so both
+% stay accepted -- including float, which column_storage/3 answers separately
+% from int and which a memberchk against [int] alone would have refused.
+test(numeric_operand_columns_stay_accepted_at_both_doors) :-
+    IntProg = prog([ col_type(star_row/2, repo, text),
+                     col_type(star_row/2, stars, int) ],
+                   [ (stat(Repo, sum(Stars), min(Stars), max(Stars)) <-
+                        star_row(Repo, Stars)) ]),
+    door_verdict(oracle, IntProg, IntOracle),
+    door_verdict(compiler, IntProg, IntCompiler),
+    IntOracle == accepted,
+    IntCompiler == accepted,
+    FloatProg = prog([ col_type(score/2, group, text),
+                       col_type(score/2, value, float) ],
+                     [ (mean(Group, avg(Value)) <- score(Group, Value)) ]),
+    door_verdict(oracle, FloatProg, FloatOracle),
+    door_verdict(compiler, FloatProg, FloatCompiler),
+    FloatOracle == accepted,
+    FloatCompiler == accepted.
+
+% count is not in the set: it counts derivations and never evaluates the
+% operand, so a text column under it is a legal program at both doors and
+% json_arm.pl:hits_are_counted_per_group is exactly that program.
+test(count_over_a_text_column_stays_accepted) :-
+    Prog = prog([ col_type(hit/2, path, text), col_type(hit/2, line, text) ],
+                [ (hits(Path, count(Line)) <- hit(Path, Line)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    OracleVerdict == accepted.
 
 % A plain edge head is untouched by the aggregate-edge closure.
 test(plain_edge_head_still_accepted_by_both_doors) :-

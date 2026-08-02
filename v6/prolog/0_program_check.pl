@@ -498,6 +498,58 @@ program_violation(aggregate_not_implemented, prog(_, Rules),
     implemented_aggregates(Implemented),
     !.
 
+% A numeric aggregate reading a column whose declared type is not a number.
+% sum/avg/min/max are exactly the set lower.pl runs through
+% compile_aggregate_number_operand/5, and it refuses each one on the same
+% condition; this is that statement on the shared trigger so the reference
+% engine answers it too. Before this class the oracle reached
+% level_eval.pl:agg_compute/3 and died inside lists:min_list/3 with
+% error(type_error(evaluable, alpha/0), ...), which is not an answer about
+% the program at all.
+%
+% SCOPE, stated, and it is the same scope the two column-type conflict classes
+% above already state: only DECLARED types take part. 0_program_check.pl sees
+% prog/2 and never the literal witnesses analyze.pl infers from, so an
+% UNDECLARED text column stays outside this class on the oracle door while the
+% compiler still refuses it off inference. That residue is caught one layer
+% down by level_eval.pl's own value guard, which names it rather than throwing
+% a SWI evaluable error.
+%
+% The operand must be a bare variable. min(A + B) and friends are the
+% compiler's expression typing, which has no shared statement, and unwrapping
+% one level further is the mistake rule_head_column_variable/6 records having
+% made against nine struct fixtures.
+program_violation(aggregate_operand_not_number, prog(Decls, Rules),
+                  operand(Kind, BodyRef, BodyColumn, BodyType)) :-
+    type_definitions(Decls, Types),
+    declared_column_table(Decls, Types, Rules, Table),
+    Table \== [],
+    member(Rule, Rules),
+    Rule = (Head <- _),
+    compound(Head),
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    nonvar(Arg),
+    numeric_aggregate_operand(Arg, Kind, Operand),
+    var(Operand),
+    rule_body_column_variable(Table, Rule, BodyVariable,
+                              BodyRef, BodyColumn, BodyType),
+    BodyVariable == Operand,
+    \+ number_column_type(Types, BodyType),
+    !.
+
+numeric_aggregate_operand(Arg, Kind, Operand) :-
+    functor(Arg, Kind, 1),
+    memberchk(Kind, [sum, avg, min, max]),
+    arg(1, Arg, Operand).
+
+% column_storage/3 cuts on its first two arguments and throws on an
+% unrecognized type, so the storage has to land in a fresh variable and be
+% compared afterwards (the same shape column_type_assignable/3 uses).
+number_column_type(Types, Type) :-
+    column_storage(Types, Type, Storage),
+    memberchk(Storage, [int, float]).
+
 % The aggregate rows that lower, sorted: the registry's own answer to "what
 % can I write instead".
 implemented_aggregates(Names) :-

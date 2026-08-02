@@ -154,6 +154,11 @@ engine_check_order([ key_position_out_of_range,
                      % about an edge program; this one is level rules only.
                      aggregate_head_shape,
                      aggregate_not_implemented,
+                     % After the two classes about the aggregate WORD itself:
+                     % this one is about the column that word reads, and only
+                     % has a question to ask once the word is one both doors
+                     % evaluate.
+                     aggregate_operand_not_number,
                      finalize_in_level_rule,
                      latest_in_level_rule,
                      pre_in_level_rule ]).
@@ -206,6 +211,14 @@ engine_refusal(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
 engine_refusal(aggregate_not_implemented,
                unimplemented(Ref, Signature, Implemented),
                aggregate_not_implemented(Ref, Signature, Implemented)).
+% Same NAME as lower.pl's own refusal, different payload, the way keyed_log_rel
+% already differs by door. The compiler's middle argument is the compiled
+% operand EXPRESSION, which for a plain column variable is an unbound variable
+% and names nothing; this door has the declared column in hand and says which
+% one it is.
+engine_refusal(aggregate_operand_not_number,
+               operand(Kind, Ref, Column, Type),
+               aggregate_operand_not_number(Kind, Ref, Column, Type)).
 engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
 engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
 engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
