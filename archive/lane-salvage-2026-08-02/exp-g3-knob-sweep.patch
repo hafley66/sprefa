@@ -1,0 +1,121 @@
+diff --git a/v6/sprefa-store/EXPERIMENT-G3-KNOBS.md b/v6/sprefa-store/EXPERIMENT-G3-KNOBS.md
+new file mode 100644
+index 00000000..bc49f88f
+--- /dev/null
++++ b/v6/sprefa-store/EXPERIMENT-G3-KNOBS.md
+@@ -0,0 +1,90 @@
++# Experiment G3 — knob sweep toward Goal X: faster cycle-safe retract
++
++You are `codex` (gpt-5.6-terra, medium). Work ONLY in this worktree
++(`/Users/chrishafley/projects/sprefa-wt-g3-knob-sweep`), crate `v6/sprefa-store`
++(own `[workspace]` — `cd v6/sprefa-store` first).
++
++## Goal X
++
++Make `cascade::retract_dred` faster WITHOUT changing its result. This is a
++RESEARCH sweep: try ~10 knobs one at a time, measure each against a fixed
++baseline, and report which move the needle. You are producing a findings table,
++not a merge — but DO leave any clearly-winning knob applied + committed.
++
++## The profile you are optimizing against (already measured)
++
++At 960k nodes the retract is 100% CPU, ZERO disk I/O (fully page-cached +
++temp_store=MEMORY), ZERO network. Access paths are already optimal (index seeks).
++The only non-seek cost the plans show is `USE TEMP B-TREE FOR DISTINCT` on the 3
++hot frontier-expansion joins. So the knobs most likely to help are ones that cut
++per-round materialization or bytecode work, NOT I/O knobs (measure them anyway to
++CONFIRM they do nothing).
++
++Read `src/cascade.rs` (the statements), `examples/profile_dred.rs` (how to
++measure I/O + rounds), and `examples/explain_plans.rs` (how to read plans).
++
++## Baseline + measurement protocol (do this FIRST, pin the numbers)
++
++Baseline = current `retract_dred` at 960k and 2.9M:
++```
++cd v6/sprefa-store
++cargo build --release --example profile_dred
++DL_MEMCAP_MB=2048 ./target/release/examples/profile_dred 6 160000 0   # 960k
++DL_MEMCAP_MB=2048 ./target/release/examples/profile_dred 6 480000 0   # 2.9M
++```
++Record `retract wall` ms (run each 3x, report min/median — do NOT trust one run).
++For EVERY knob you must ALSO prove the survivor set is byte-identical: use the
++hermetic hash harness — the out_hash must not change:
++```
++cargo build --release --example perf_report
++DL_MEMCAP_MB=2048 ./target/release/examples/perf_report sqlite-dred-loop 6 160000 0
++# baseline out_hash at 960k = dd6a707234617ea5 ; at 2.9M = 454c5271a7e5a260
++```
++A knob that changes out_hash is REJECTED, no matter how fast. Gun stays pointed
++(DL_MEMCAP_MB set) on every run.
++
++## The knobs to sweep (do each in isolation, revert before the next)
++
++Measure delta-ms at 960k for each; keep the ones that help, note the ones that do
++nothing (that is a finding too — e.g. I/O knobs should be flat since I/O is zero):
++
++1. **DISTINCT → INSERT OR IGNORE**: drop `SELECT DISTINCT` on the 3 frontier
++   joins and rely on the `cx_next` / `cx_frontier` PRIMARY KEY to dedup via
++   `INSERT OR IGNORE`. Kills the `USE TEMP B-TREE FOR DISTINCT`. (Most promising.)
++2. **`key IN (SELECT ...)` → `UPDATE ... FROM`**: rewrite the 4 kill/mark UPDATEs
++   as `UPDATE cx_row SET weight=0 FROM cx_frontier WHERE cx_row.key=cx_frontier.key`
++   (SQLite 3.33+). Compare plans + ms.
++3. **cache_size**: sweep `PRAGMA cache_size` = -65536 / -262144 / -1048576
++   (64MB/256MB/1GB). (Expect ~flat past db-fits-in-cache; confirm.)
++4. **mmap_size**: sweep 0 / 268435456 / 1073741824 / 4294967296.
++5. **page_size**: 4096 vs 8192 vs 16384 (must be set BEFORE schema create).
++6. **journal_mode** for the retract: WAL vs MEMORY vs OFF (retract makes no
++   durable rows we need to survive a crash mid-op — safe to test OFF here).
++7. **synchronous**: OFF vs NORMAL during the retract.
++8. **threads**: `PRAGMA threads=4` (helps the sort/temp-b-tree steps, if any).
++9. **WITHOUT ROWID on the working tables** (cx_frontier/cx_next/cx_cone are single
++   INTEGER PK already = rowid tables; try WITHOUT ROWID and compare).
++10. **Frontier ping-pong**: instead of `DELETE cx_frontier; INSERT ... FROM cx_next`
++    each round, alternate two tables so you drop 2 statements/round. (Structural.)
++
++Bonus if time: combine the top-2 winners and measure the stack.
++
++## Constraints
++
++- Never change the RESULT of `retract_dred` (out_hash gate above).
++- Do not touch `retract` (counting) or `retract_dred_cte`.
++- No new dependencies. No CTEs (measured slower already).
++- The full `cargo test --release` must stay green after any knob you KEEP.
++
++## Style laws
++
++Descriptive names; no em dashes; no `eprintln!`; N+1 forbidden; no
++`provenance`/`substrate`/`load-bearing`/`regime` identifiers.
++
++## Communicate back
++
++Write `v6/sprefa-store/EXPERIMENT-G3-KNOBS-RESULT.md`: a ranked table with columns
++`knob | 960k ms (min/median, 3 runs) | 2.9M ms | out_hash unchanged? | verdict`,
++the baseline row on top, one line per knob, and a final "what to keep" section.
++Commit any winning knob you applied (with the full test suite green) on this
++branch. Do not touch other crates or the main checkout.
+diff --git a/v6/sprefa-store/src/cascade.rs b/v6/sprefa-store/src/cascade.rs
+index 1e10506a..fef0c0e1 100644
+--- a/v6/sprefa-store/src/cascade.rs
++++ b/v6/sprefa-store/src/cascade.rs
+@@ -98,6 +98,9 @@ pub async fn create_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
+     // SQLite's own C heap (the memcap gun is blind to it — measured separately in
+     // sqlite_reach's highwater); mmap is not a heap allocation at all.
+     db.execute_unprepared("PRAGMA cache_size=-262144; PRAGMA mmap_size=1073741824;").await?;
++    if let Ok(pragmas) = std::env::var("DL_CASCADE_PRAGMAS") {
++        db.execute_unprepared(&pragmas).await?;
++    }
+     // cx_row is a ROWID table clustered on `key` (INTEGER PRIMARY KEY = the
+     // rowid alias): the key costs zero extra bytes and every lookup is a native
+     // rowid search. tag/id ride along as plain output columns. cx_dep collapses
+@@ -281,8 +284,8 @@ pub async fn assert(db: &DatabaseConnection, seeds: &[(i64, i64)]) -> Result<u64
+         exec(
+             &txn,
+             "DELETE FROM cx_next; \
+-             INSERT INTO cx_next(key) \
+-             SELECT DISTINCT d.child_key \
++             INSERT OR IGNORE INTO cx_next(key) \
++             SELECT d.child_key \
+              FROM cx_frontier f CROSS JOIN cx_dep d ON d.parent_key = f.key \
+                CROSS JOIN cx_row r ON r.key = d.child_key \
+              WHERE r.weight = 0",

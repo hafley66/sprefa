@@ -899,10 +899,9 @@ fill_free_slots :590 is the current exact-fill gate).
   ENFORCED 2026-07-29 on "support" (user: datalog-paper jargon, out):
   the concept is refCount, row-granular (count of derivations keeping a
   row alive; zero = teardown; cycles never reach zero = the Rc leak).
-  Prose uses refCount NOW; identifier rename queued (rust store
-  supportEdges/supportPlan/retractThroughSupport, lowerSql supportPlan,
-  P3 emitter names) -- luna-shaped mechanical sweep, dispatch on word or
-  fold into the next emitter-touching arc.
+  Prose uses refCount NOW; identifier rename EXECUTED 2026-08-02 (opus
+  lane t2-refcount, 25 files across prolog/store-js/store-rust/tsv2,
+  byte-goldens untouched; ARCH row refcount_rename).
 - **Every .dl snippet shown to the user carries its intended pure-rxjs
   lowering** (user-set 2026-07-28: "if u cant then we are not right"). A
   construct whose rx lowering cannot be written is a design defect.
@@ -1507,3 +1506,44 @@ c26b4e0e, worktree+branch removed, flow_interproc_port unblocked);
 watcher dep RULED fs_watch_until_bench_regression (rulings.pl: TS
 host binding is temporary, rust one day; @parcel/watcher = the
 one-adapter swap taken only on a measured bench regression).
+
+### FLASH-VS-OPUS LANE WAVE MERGED (2026-08-02, branch codex/rel-ref-file-span-lab, UNPUSHED)
+(Sessions 2026-07-30..08-01 are ledgered in ARCH.pl task rows + chat_log,
+not here; this section resumes at the lane wave.) Head-to-head:
+opencode/deepseek-flash4-0731 onboarded as a delegation lane
+(~/.config/opencode/opencode.json pins deepinfra allow_fallbacks:false +
+reasoning high); 5 queued tasks x {flash, opus} = 10 worktrees at
+~/projects/sprefa-lanes/<t1..t5>/<model>, identical briefs, no commits,
+REPORT.md contract. Scoreboard
+plans/2026-08-02-flash-vs-opus-lane-report.md: flash = excellent
+brief-follower, weak skeptic -- won nothing, usable on 3/5 mechanical
+tasks ($0.78 for 5 lanes, ~$1.05 the night); opus falsified 3
+coordinator-fed claims, headline = the DEAF WATCHER non-bug (coordinator
+filed an engine defect TWICE; opus t3: bop run self-exits after
+BOP_RUN_IDLE_MS=2000 idle, bop.ts:165, and the receipt scripts' 3s polls
+were talking to a dead process; surviving real finding = cold-boot host
+spawn ~1s/subprocess). MERGED next sitting, 7 commits, zero conflicts,
+coordinator re-ran the full battery on the merged tree: conformance
+281/0, plunit 276/276, TEXT_DOOR 196/196/0, sweep regen zero byte drift
+(gen_emitted/SCOREBOARD/manifest), tsv2 128/1skip, store js 74/74,
+lsp_exit 3/3, prolog-lint 1. Contents: session bank a1c6edaf (10-second
+law into standing laws; dataflow-rail.dl6 -- one recursive watch glob =
+scope AND existence rel, 157 edges == bash referee, dangling antijoin
+fired live, compile 17ms; 5 research docs: flash4 partition, refusal
+inventory 245 decisions/65% weak-trail, taskmine v5+v6,
+prolog-in-haskell); t4 failure-modes classes 39+40; t1
+aggregate_operand_not_number refusal (2 layers, both doors); t2
+support->refCount rename (25 files, vocabulary-law debt executed); t3
+watchRealSource.test.ts; t5 v5 LSP exit hang FIXED (finish_lsp drops
+transport instead of IoThreads::join, exit-code contract, 3 regression
+tests -- ARCH row v5_lsp_exit_hang done). New ARCH rows:
+aggregate_text_refusal, refcount_rename done;
+cap_self_pgroup_inversion, watch_bind_hazards unbuilt. NOT merged,
+intact on disk: 5 flash worktrees, flash-prolog extractor worktree
+(targeted the WRONG crate -- v5 src/graph/typegraph, not
+v6/sprefa-extract), every REPORT.md. AWAITING USER: prolog folder
+names/numbering (plans/2026-08-01-flash4-partition-research.md +
+before/after trees in chat), flash-prolog fate (redo/keep/drop),
+bop-run-idle vs rail receipts (serve for watch programs, or --forever),
+refusal re-eval kickoff (plans/2026-08-01-refusal-inventory.md,
+lab-shaped per item), push + tag.

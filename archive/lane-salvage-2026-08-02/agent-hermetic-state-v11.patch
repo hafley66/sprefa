@@ -1,0 +1,106 @@
+diff --git a/plans/2026-07-21-hermetic-state-isolation.md b/plans/2026-07-21-hermetic-state-isolation.md
+new file mode 100644
+index 00000000..31ef2697
+--- /dev/null
++++ b/plans/2026-07-21-hermetic-state-isolation.md
+@@ -0,0 +1,100 @@
++# Hermetic state isolation for `dl` (daemon + no-daemon)
++
++Date: 2026-07-21. Base: v11 tip 6a2df31b.
++
++## The two live defects
++
++1. **No honored state-home override.** Agents/tests were told to sandbox with
++   `DL_STATE_DIR=<scratch>`. `DL_STATE_DIR` is not read anywhere. The only knob
++   `daemon_home()` (src/daemon/home.rs:12) honors is `XDG_STATE_HOME`. Every
++   "sandboxed" run wrote under the real `~/.local/state/sprefa`.
++
++2. **`--check`/`--diag-json`/`--lsp` silently retarget the real root db.**
++   `want_default` (src/cli/mod.rs:421) attaches a file-scoped read-shaped run to
++   the real per-root db whenever the daemon is enabled. Failure-modes class 29.
++   The daemon path compounds it: `run_check_via_daemon` sends `{"root"}` and the
++   daemon ticks/writes the real served db even if `--db :memory:` was passed,
++   because eligibility keys on `db_path.is_none() || db_defaulted`.
++
++## Precedence table (state home)
++
++| rank | source | shape |
++|------|--------|-------|
++| 1 | explicit `--db <path>` | names the db file directly, bypasses the home entirely |
++| 2 | `--attach` (new) / discovery (no positional) | resolves to `<home>/roots/<key>/db.sqlite` |
++| 3 | `DL_STATE_DIR` env | IS the sprefa state dir itself (no `/sprefa` suffix) |
++| 4 | `XDG_STATE_HOME` env | `<XDG_STATE_HOME>/sprefa` |
++| 5 | platform default | `$HOME/.local/state/sprefa` |
++
++`--db` is db-level (rank 1). Ranks 3-5 resolve the *home*; rank 2 decides
++whether a defaulted invocation reaches into that home's real root db at all.
++
++## A. One resolver — src/daemon/home.rs
++
++```rust
++pub fn daemon_home() -> PathBuf
++//   if let Some(dir) = env DL_STATE_DIR { return PathBuf::from(dir) }   // rank 3
++//   base = env XDG_STATE_HOME | $HOME/.local/state | "."                // rank 4/5
++//   base.join("sprefa")
++```
++
++Every hot-path caller (`root_db_path`, `socket_path`, `pid_path`,
++`roots_json_path`, why/events/invlog/gc/health/trace) already routes through
++`daemon_home()`, so they inherit the override with no per-site change.
++
++Two peripheral readers of `XDG_STATE_HOME` compute the setup-manifest path
++independently (src/setup.rs:347, src/setup/manifest.rs:92 via `state_home()`).
++Route both through `daemon_home().join("setup-manifest.json")` so the knob does
++not disagree between the roots db and the setup manifest. No behavior change
++under `XDG_STATE_HOME` (both resolve to `<XDG>/sprefa/setup-manifest.json`).
++
++Build-vs-buy: no crate. This is `env::var_os` + one `PathBuf::join`; a config
++crate (figment/config) would be dead weight for a single ordered env lookup.
++
++## B. `--check` never silently writes the real root — src/cli/mod.rs
++
++New `Cli.attach: bool` (`--attach`): opt in to the real served-root db from a
++file-scoped run. Rewrite the db-defaulting block (416-431):
++
++```rust
++// let attach_served = programs.is_empty() || cli.attach;   // rank 2
++// if attach_served && dir.is_dir() {
++//     db = Some(root_db_path(&root)); db_defaulted = true;   // real root
++// } else if cli.check || cli.diag_json || cli.lsp {
++//     db = Some(":memory:".into());   // ephemeral, hermetic; NOT db_defaulted
++// }
++```
++
++Why `:memory:` (not `None`) for the file-scoped read-shaped case: `run_check`/
++`run_file` daemon eligibility is `(db_path.is_none() || db_defaulted) &&
++programs.len() <= 1`. A concrete `:memory:` makes both terms false, so the run
++stays fully in-process and never reaches the daemon that would write the real
++served db. Closes class 29 through cli/mod.rs alone (no lib.rs edit). Discovery
++arm unchanged; `--attach` restores warm-cache on purpose; explicit `--db` wins.
++
++## C. Daemon / no-daemon parity
++
++File-scoped `--check` uses `:memory:` in both modes -> in-process engine scans
++the same source tree, same `diag` rows. Honest semantic note: the daemon path
++returns last-committed diag rows for the *served program set* (one tick stale);
++for a file-scoped ephemeral check both re-scan from cold, so parity is exact for
++that shape (the shape the tests assert). `--attach`/discovery differ by warmth
++by design.
++
++## D. Rail + tests
++
++- Rail `.dl/state-home-single-source.dl` (warning, no waiver rel): static-scan
++  `src/**/*.rs` for `XDG_STATE_HOME`/`DL_STATE_DIR` env reads outside the single
++  resolver `src/daemon/home.rs`. The scattered-knob shape is what let a
++  "sandboxed" run escape onto the real home. Warning-only per the 2026-07-11
++  outage law.
++- Tests `tests/it/hermetic_state.rs`: (1) DL_STATE_DIR redirects a written fact;
++  (2) file-scoped `--check` writes only the scratch home, real-home roots count
++  unchanged; (3) same `--check` diagnostic count daemon vs `--no-daemon`.
++- `tests/it/util.rs`: `hermetic_env` helper stamps DL_STATE_DIR + XDG_STATE_HOME
++  + HOME + SPREFA_CONFIG.
++
++## Ownership
++Edits: home.rs, cli/mod.rs, setup.rs + setup/manifest.rs, tests/it/util.rs,
++tests/it/hermetic_state.rs (new), .dl/state-home-single-source.dl (new), README +
++`--help`. No touch to graph/**, dataflow.rs, decls.rs, db.rs.

@@ -1,0 +1,511 @@
+diff --git a/REPORT.md b/REPORT.md
+new file mode 100644
+index 00000000..a56272fd
+--- /dev/null
++++ b/REPORT.md
+@@ -0,0 +1,162 @@
++# REPORT: v5 `dl --lsp` hangs on exit after answering shutdown
++
++Worktree: `/Users/chrishafley/projects/sprefa-lanes/t5-lsphang/flash`
++Branch: `lane/t5-lsphang-flash` (no commits made)
++
++## Root cause
++
++The LSP message loop in `src/lsp.rs` never handled the `exit` JSON-RPC
++notification. In `run_lsp`, the `for msg in &connection.receiver` loop's
++`Message::Notification` arm only matched `textDocument/didSave` and
++`textDocument/didOpen`; the `exit` method fell through to `_ => None` and the
++loop kept iterating.
++
++Termination depended on two fragile lsp-server 0.7.9 side effects instead of
++an explicit loop exit:
++
++1. `shutdown` was the only explicit break, and only via
++   `connection.handle_shutdown(&req)?` (src/lsp.rs:326-336). That convenience
++   sends the response and then blocks in a 30s `recv_timeout` waiting for
++   `exit`. If the `exit` delivery races the reader thread's zero-capacity
++   channel rendezvous against this loop (or the client holds stdin open), the
++   process does not terminate.
++2. EOF termination came only from the stdio reader thread dropping its channel
++   sender (`LspServerReader` in lsp-server's `stdio.rs`), which this loop never
++   verified. That is a race, not a contract.
++
++Consequence: a client that sends `shutdown -> exit` and closes stdin would, on
++the racing interleaving, leave the process alive forever (no timeout on the
++`exit` path). Disclosed at the LSP-diags arc (2026-07-29), not patched.
++
++Pre-fix behavior (manual stdio, scripted session), reproduced standalone:
++
++```
++shutdown -> exit, stdin kept open : HANG (no exit in 10s)   [repro_drain: also HANG]
++exit -> EOF (no shutdown)         : exit code 0             [spec wants 1]
++EOF only                          : exit code 0             [spec wants non-zero]
++```
++
++## Fix (src/lsp.rs)
++
++Minimal, no restructuring:
++
++- Track `let mut shutdown_seen = false;` before the loop (src/lsp.rs:210).
++- On `handle_shutdown` returning true, set `shutdown_seen = true; break;`
++  (src/lsp.rs:326-336) — keeps the shutdown-first path.
++- Handle the `exit` notification as an explicit loop terminator in the
++  `Message::Notification` arm (src/lsp.rs:342-348): `if not.method == "exit" { break; }`.
++  This removes reliance on the reader thread's channel-sender drop. EOF still
++  terminates via the loop ending when the reader disconnects.
++- After `drop(connection); io_threads.join()?;` return per the LSP 3.15 exit
++  contract: `Ok(())` exit 0 if `shutdown` was seen first, else
++  `Err(anyhow!(...))` exit 1 (src/lsp.rs:380-391).
++
++The `--diag-db` read loop (`run_diag_db_mode`) had the same defect (notes only
++handled `Request`, ignored `exit`) and got the equivalent fix (src/lsp.rs:499-523).
++
++Resulting exit codes: shutdown-first -> 0; exit-without-shutdown -> 1; EOF
++without shutdown -> 1.
++
++## Regression test
++
++`tests/it/lsp_exit.rs` (registered in `tests/it/main.rs` as `mod lsp_exit;`),
++mirroring the existing `lsp_protocol.rs` stdio-framing pattern:
++
++- `shutdown_then_exit_then_eof_terminates_with_code_0` — the named hang: sends
++  shutdown, waits for the shutdown response (priming the message loop), sends
++  exit, closes stdin, asserts the process exits with code 0 within a strict
++  15s window (a hang fails it via timeout).
++- `exit_without_shutdown_terminates_with_code_1` — exit-before-shutdown contract.
++
++`EXIT_TIMEOUT = 15s`; `PRIME_TIMEOUT = 90s` (cold first-start on a fresh db can
++be slow, kept separate from the hang window so startup slowness never trips the
++hang assertion).
++
++Pre-fix the exit-code test fails deterministically (`exit` without shutdown
++returned 0, not 1); the hang is a load-dependent race and only manifests
++intermittently, which is why the test carries the strict exit timeout
++per the repo's macOS timeout convention.
++
++## Validation
++
++### 1. Regression test (post-fix)
++
++```
++$ nice -n 10 cargo test --test it lsp_exit 2>&1 | tail -8
++     Running tests/it/main.rs (target/debug/deps/it-d1fa607b08030195)
++
++running 2 tests
++test lsp_exit::exit_without_shutdown_terminates_with_code_1 ... ok
++test lsp_exit::shutdown_then_exit_then_eof_terminates_with_code_0 ... ok
++
++test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1018 filtered out; finished in 2.07s
++```
++
++Pre-fix (src/lsp.rs reverted via stash, `lsp_exit` run against pre-fix build):
++
++```
++test lsp_exit::shutdown_then_exit_then_eof_terminates_with_code_0 ... ok
++test lsp_exit::exit_without_shutdown_terminates_with_code_1 ... FAILED
++  assertion `left == right` failed: exit without shutdown must be code 1
++  left: 0   right: 1
++test result: FAILED. 1 passed; 1 failed
++```
++
++### 2. Manual stdio transcripts
++
++Pre-fix (release built from pre-fix source):
++
++```
++shutdown -> exit, stdin kept open : HANG (no exit in 10s)
++shutdown -> exit -> EOF           : exit code 0   (escaped via EOF reader-drop race)
++exit -> EOF (no shutdown)         : exit code 0   [spec: 1]
++EOF only                          : exit code 0   [spec: non-zero]
++```
++
++Earlier clean reproduction (pre-fix binary, real stdio, `examples/lint-imports.dl`):
++
++```
++shutdown_exit_open     HANG (alive 12s, out_lines=2)  // shutdown response already sent
++shutdown_exit_close    HANG (alive 12s, out_lines=2)
++exit_only_close        exited code 0
++eof_only               exited code 0
++```
++
++Post-fix (release built from fixed source):
++
++```
++shutdown -> exit -> EOF          : exit code 0 in 0.34s
++exit -> EOF (no shutdown)        : exit code 1 in 0.04s
++EOF only (no messages)           : exit code 1 in 0.03s
++shutdown -> exit, stdin kept open: exit code 0   (no hang)
++```
++
++### 3. Clean final release build
++
++```
++$ nice -n 10 cargo build --release 2>&1 | tail -1
++[=======================> ] 649/650: dl(bin)
++$ ls -la target/release/dl
++-rwxr-xr-x 1 chrishafley staff 67814192 Aug  2 00:42 target/release/dl
++```
++
++### 4. No regression in existing LSP integration tests
++
++```
++$ nice -n 10 cargo test --test it lsp_ 2>&1 | tail -3
++test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 988 filtered out; finished in 3.59s
++```
++
++## Files touched
++
++- `src/lsp.rs` — the fix (main loop + `run_diag_db_mode` loop): exit-code flag,
++  explicit `exit` notification break, post-loop exit-code decision, EOF
++  termination.
++- `tests/it/lsp_exit.rs` — new regression test.
++- `tests/it/main.rs` — registered `mod lsp_exit;`.
++
++> Note: commands >10s in this environment — `cargo build --release` and
++> `cargo test` link steps took ~10-56s; the `lsp_exit` and `lsp_` test runs
++> themselves finished in 2-4s. The LSP server's cold first-start on a fresh db
++> also took multiple seconds (up to ~24s once); the test's priming timeout
++> accounts for that.
+diff --git a/src/lsp.rs b/src/lsp.rs
+index 6899deed..ce57f885 100644
+--- a/src/lsp.rs
++++ b/src/lsp.rs
+@@ -203,6 +203,14 @@ pub fn run_lsp(
+             .spawn(move || spawn_daemon_subscriber(root_clone, push_sender))?;
+     }
+ 
++    // LSP exit contract: the process exits 0 if a `shutdown` request was
++    // received before the session ends, 1 otherwise. Track that here — the
++    // session ends when the client sends `exit`, closes stdin (EOF), or we
++    // answer `shutdown`. Previously the loop relied on `handle_shutdown`'s
++    // internal wait for the `exit` notification (a 30s recv_timeout) and on
++    // the stdio reader thread dropping its channel sender, neither of which
++    // reliably terminates the loop — `exit` was never handled here at all.
++    let mut shutdown_seen = false;
+     for msg in &connection.receiver {
+         // Synthetic internal notification: daemon pushed diag_changed. The
+         // `paths` field carries the watcher's changed paths (absolute); empty
+@@ -318,13 +326,27 @@ pub fn run_lsp(
+                         }
+                     }
+                     _ => {
++                        // `handle_shutdown` answers the request AND blocks
++                        // until the client's `exit` notification (the lsp-server
++                        // convenience), so the `exit` below never surfaces here
++                        // in the shutdown-first flow. Record that shutdown was
++                        // seen so the post-loop exit-code decision stays 0.
+                         if connection.handle_shutdown(&req)? {
++                            shutdown_seen = true;
+                             break;
+                         }
+                     }
+                 }
+             }
+             Message::Notification(not) => {
++                // `exit`: the client is done with us. Terminate the loop here,
++                // explicitly, instead of relying on the stdio reader thread
++                // dropping its channel sender (which races this loop and was the
++                // source of the shutdown-then-hang). Exit code is decided after
++                // the loop by whether `shutdown` was seen first.
++                if not.method == "exit" {
++                    break;
++                }
+                 let touched: Option<PathBuf> = match not.method.as_str() {
+                     "textDocument/didSave" => {
+                         serde_json::from_value::<DidSaveTextDocumentParams>(not.params)
+@@ -355,7 +377,15 @@ pub fn run_lsp(
+     }
+     drop(connection);
+     io_threads.join()?;
+-    Ok(())
++    // LSP exit-code contract: 0 if `shutdown` was received before the session
++    // ended, 1 otherwise (the client sent `exit` or EOF'd without shutdown).
++    if shutdown_seen {
++        Ok(())
++    } else {
++        Err(anyhow::anyhow!(
++            "LSP session ended without a shutdown request (exiting 1)"
++        ))
++    }
+ }
+ 
+ /// The workspace root the client declared in `initialize` — `rootUri`, else the
+@@ -466,14 +496,29 @@ fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf)
+         .name("dl-lsp-diag-db-poll".into())
+         .spawn(move || diag_db_poll_loop(diag_db_path, cwd, sender))?;
+ 
++    let mut shutdown_seen = false;
+     for msg in &connection.receiver {
+-        if let Message::Request(req) = msg {
+-            if connection.handle_shutdown(&req)? {
+-                break;
++        match msg {
++            Message::Request(req) => {
++                if connection.handle_shutdown(&req)? {
++                    shutdown_seen = true;
++                    break;
++                }
+             }
++            // `exit` (or a bare connection close / EOF): the client is done —
++            // terminate instead of relying on the reader thread dropping its
++            // channel sender. Same fix as the main loop above.
++            Message::Notification(not) if not.method == "exit" => break,
++            _ => {}
+         }
+     }
+-    Ok(())
++    if shutdown_seen {
++        Ok(())
++    } else {
++        Err(anyhow::anyhow!(
++            "LSP session ended without a shutdown request (exiting 1)"
++        ))
++    }
+ }
+ 
+ /// Background poll loop for `--diag-db`: every 500ms, check `PRAGMA
+diff --git a/tests/it/lsp_exit.rs b/tests/it/lsp_exit.rs
+new file mode 100644
+index 00000000..847d0932
+--- /dev/null
++++ b/tests/it/lsp_exit.rs
+@@ -0,0 +1,227 @@
++//! Regression rail for the `dl --lsp` shutdown hang (LSP-diags arc, 2026-07-29).
++//!
++//! Defect: the server answered the `shutdown` request, then HUNG instead of
++//! exiting when the client sent `exit` and closed stdin. The main message loop
++//! in src/lsp.rs never handled the `exit` notification (it fell through and the
++//! loop kept iterating), relying on lsp-server's internal `handle_shutdown`
++//! wait and on the stdio reader thread dropping its channel sender — a race that
++//! leaves the process alive.
++//!
++//! Contract under test (LSP 3.15 exit): after `exit`, the server process must
++//! terminate — exit code 0 if `shutdown` was received first, 1 otherwise. EOF
++//! on stdin with no `exit` must also terminate.
++//!
++//! The test drives the real binary over stdio. It primes by waiting for the
++//! `shutdown` response (guaranteeing the message loop + `handle_shutdown` were
++//! reached), THEN times the actual exit in a strict window — so slow cold-start
++//! never trips the hang assertion; only a genuine post-shutdown hang does.
++
++use std::fs;
++use std::io::{BufRead, BufReader, Read, Write};
++use std::path::{Path, PathBuf};
++use std::process::{Child, ChildStdout, Command, Stdio};
++use std::sync::mpsc;
++use std::time::{Duration, Instant};
++
++const DL: &str = env!("CARGO_BIN_EXE_dl");
++// Priming: how long to wait for the server to reach the message loop (answer
++// initialize + shutdown). Cold-first-start on a fresh db can be slow.
++const PRIME_TIMEOUT: Duration = Duration::from_secs(90);
++// The actual exit-after-shutdown window. Post-fix the process must exit well
++// inside this; pre-fix it hangs here (the test fails via the timeout).
++const EXIT_TIMEOUT: Duration = Duration::from_secs(15);
++
++fn sandbox(tag: &str) -> PathBuf {
++    let dir = std::env::temp_dir().join(format!("lsp_exit_{tag}"));
++    let _ = fs::remove_dir_all(&dir);
++    fs::create_dir_all(&dir).unwrap();
++    dir
++}
++
++/// A spawned `dl --lsp` over stdio. Frames come off a reader thread into `rx`.
++struct Session {
++    child: Child,
++    rx: mpsc::Receiver<String>,
++}
++
++impl Session {
++    /// Spawn with `--db` (hermetic; also keeps `--lsp`'s daemon subscriber off
++    /// a real daemon). cwd is the sandbox root so `WORK` scans the tiny root,
++    /// not the checkout the test binary lives in. stdout is drained so a
++    /// publish back-pressure deadlock is never confused with the exit hang.
++    fn spawn(prog: &Path, root: &Path, db: &Path) -> Session {
++        let mut child = Command::new(DL)
++            .arg(prog)
++            .args(["--lsp", "--db", db.to_str().unwrap()])
++            .current_dir(root)
++            .env("DL_NO_DAEMON", "1")
++            .stdin(Stdio::piped())
++            .stdout(Stdio::piped())
++            .stderr(Stdio::piped())
++            .spawn()
++            .expect("spawn dl --lsp");
++        let stdout = child.stdout.take().unwrap();
++        let (tx, rx) = mpsc::channel();
++        std::thread::spawn(move || read_frames(stdout, tx));
++        Session { child, rx }
++    }
++
++    fn send_json(&mut self, v: serde_json::Value) {
++        let body = serde_json::to_vec(&v).unwrap();
++        let stdin = self.child.stdin.as_mut().unwrap();
++        write!(stdin, "Content-Length: {}\r\n\r\n", body.len()).unwrap();
++        stdin.write_all(&body).unwrap();
++        stdin.flush().unwrap();
++    }
++
++    fn close_stdin(&mut self) {
++        // Dropping the child's stdin handle closes the pipe, giving the server
++        // EOF on its read side.
++        let _ = self.child.stdin.take();
++    }
++
++    /// Wait (up to `timeout`) for one received frame whose raw text contains
++    /// `needle`. Returns true on match.
++    fn recv_until(&self, needle: &str, timeout: Duration) -> bool {
++        let t0 = Instant::now();
++        while t0.elapsed() < timeout {
++            match self.rx.recv_timeout(timeout - t0.elapsed()) {
++                Ok(frame) => {
++                    if frame.contains(needle) {
++                        return true;
++                    }
++                }
++                Err(_) => return false,
++            }
++        }
++        false
++    }
++
++    /// Wait for the child to exit within `timeout`, returning its code.
++    /// Returns None if it is still alive when the window elapses.
++    fn wait_exit(&mut self, timeout: Duration) -> Option<i32> {
++        let t0 = Instant::now();
++        while t0.elapsed() < timeout {
++            match self.child.try_wait().unwrap_or(None) {
++                Some(st) => return st.code(),
++                None => std::thread::sleep(Duration::from_millis(25)),
++            }
++        }
++        None
++    }
++}
++
++impl Drop for Session {
++    /// Never leak a live server: on any assertion failure / timeout, reap the
++    /// child if it is still running.
++    fn drop(&mut self) {
++        if self.child.try_wait().ok().flatten().is_none() {
++            let _ = self.child.kill();
++            let _ = self.child.wait();
++        }
++    }
++}
++
++/// Read Content-Length framed JSON-RPC text off stdout, forward each frame into
++/// the channel. Exits when the stream closes.
++fn read_frames(stdout: ChildStdout, tx: mpsc::Sender<String>) {
++    let mut r = BufReader::new(stdout);
++    loop {
++        let mut len = 0usize;
++        loop {
++            let mut line = String::new();
++            if r.read_line(&mut line).unwrap_or(0) == 0 {
++                return;
++            }
++            let trimmed = line.trim_end();
++            if trimmed.is_empty() {
++                break;
++            }
++            if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
++                len = rest.trim().parse().unwrap_or(0);
++            }
++        }
++        if len == 0 {
++            continue;
++        }
++        let mut buf = vec![0u8; len];
++        if r.read_exact(&mut buf).is_err() {
++            return;
++        }
++        if tx.send(String::from_utf8_lossy(&buf).into_owned()).is_err() {
++            return;
++        }
++    }
++}
++
++fn initialize(s: &mut Session, root: &Path) {
++    s.send_json(serde_json::json!({
++        "jsonrpc":"2.0","id":1,"method":"initialize",
++        "params":{"processId":serde_json::Value::Null,
++                  "rootUri": format!("file://{}", root.to_str().unwrap()),
++                  "capabilities":{}}
++    }));
++    s.send_json(serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
++    assert!(
++        s.recv_until("\"id\":1", PRIME_TIMEOUT),
++        "server never answered initialize within {PRIME_TIMEOUT:?}"
++    );
++}
++
++/// A tiny program + scanned file so `WORK` resolves to a 1-file root.
++fn write_fixture(root: &Path) -> PathBuf {
++    fs::create_dir_all(root.join("src")).unwrap();
++    fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
++    let prog = root.join("p.dl");
++    fs::write(
++        &prog,
++        "rel seen(p: file).\nseen(p) <- scan(\"WORK\", \"src/**/*.rs\", p, rev).\n",
++    )
++    .unwrap();
++    prog
++}
++
++/// Regression for the hang: shutdown -> exit -> close stdin must terminate with
++/// code 0 quickly. Pre-fix this HANGS after answering shutdown (test fails on
++/// the EXIT_TIMEOUT window); post-fix it exits cleanly.
++#[test]
++fn shutdown_then_exit_then_eof_terminates_with_code_0() {
++    let root = sandbox("shutdown");
++    let prog = write_fixture(&root);
++    let db = root.join("lsp.db");
++    let mut s = Session::spawn(&prog, &root, &db);
++    initialize(&mut s, &root);
++
++    // Send shutdown and answer it (priming the message loop + handle_shutdown).
++    s.send_json(serde_json::json!({"jsonrpc":"2.0","id":99,"method":"shutdown","params":{}}));
++    assert!(
++        s.recv_until("\"id\":99", PRIME_TIMEOUT),
++        "server never answered shutdown within {PRIME_TIMEOUT:?}"
++    );
++    // Now the client sends exit and closes stdin. The server must not hang.
++    s.send_json(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
++    s.close_stdin();
++
++    let code = s.wait_exit(EXIT_TIMEOUT).expect(
++        "server did not exit within {EXIT_TIMEOUT:?} after shutdown+exit — hang (pre-fix)",
++    );
++    assert_eq!(code, 0, "shutdown-first exit must be code 0");
++}
++
++/// Contract: exit WITHOUT a prior shutdown must terminate with code 1 (and not
++/// hang). Pre-fix this exited 0 (spec-wrong) or hung; post-fix it is code 1.
++#[test]
++fn exit_without_shutdown_terminates_with_code_1() {
++    let root = sandbox("exit-only");
++    let prog = write_fixture(&root);
++    let db = root.join("lsp.db");
++    let mut s = Session::spawn(&prog, &root, &db);
++    initialize(&mut s, &root);
++
++    s.send_json(serde_json::json!({"jsonrpc":"2.0","method":"exit","params":{}}));
++    s.close_stdin();
++
++    let code = s.wait_exit(EXIT_TIMEOUT)
++        .expect("server did not exit within {EXIT_TIMEOUT:?} after exit+EOF");
++    assert_eq!(code, 1, "exit without shutdown must be code 1");
++}
+diff --git a/tests/it/main.rs b/tests/it/main.rs
+index 2923e5ef..ccb1c9c4 100644
+--- a/tests/it/main.rs
++++ b/tests/it/main.rs
+@@ -107,6 +107,7 @@ mod lattice;
+ mod lex_utf8;
+ mod lint_no_touch;
+ mod log_cap_sweep;
++mod lsp_exit;
+ mod lsp_hierarchy;
+ mod lsp_hook_event;
+ mod lsp_protocol;

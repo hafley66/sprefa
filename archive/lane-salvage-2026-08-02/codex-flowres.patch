@@ -1,0 +1,89 @@
+diff --git a/plans/2026-07-30-flow-parity-residue-findings.md b/plans/2026-07-30-flow-parity-residue-findings.md
+new file mode 100644
+index 00000000..b04044bb
+--- /dev/null
++++ b/plans/2026-07-30-flow-parity-residue-findings.md
+@@ -0,0 +1,83 @@
++# flow parity residue findings
++
++## Execution status
++
++STOP: the v6 flow server cannot load its declared JavaScript dependencies, so
++the four paired relation inputs required for row classification do not exist.
++
++The required base check passed:
++
++```text
++git rev-parse HEAD
++6c3a7e2d26854a4a646a578b672dd6a18f54c6d0
++```
++
++The v5 leg completed hermetically on every attempt that reached it:
++
++```text
++PASS  pinned corpus: 13 files at <scratch revision>
++PASS  v5 hermetic leg: 13 files
++```
++
++The server failures were:
++
++| rig attempt | stopping dependency |
++| ---: | --- |
++| 2 | `rxjs` absent from the tsv2 module-resolution tree |
++| 3 | temporary resolver reached `rxjs` ESM, whose extensionless internal imports fail under Node 24 |
++| 4 | `sprefa-store-engine` absent from the tsv2 module-resolution tree |
++
++`sprefa-store-engine` is present as in-tree source at
++`v6/sprefa-store/js`, but it imports `@libsql/client`. No installed
++`@libsql/client` or `better-sqlite3` package was found in this workspace or
++the available sibling worktrees. The missing package tree prevents v6 startup
++before the program, arrivals, or flow relations execute.
++
++Full end-to-end runs consumed: 4 of 6. Two runs remain. No additional run was
++made because the unresolved dependency failure occurs before any v6 relation
++rows can be emitted.
++
++## Partial classification table
++
++These counts are the supplied pre-run receipts. The bucket counts cannot be
++measured without paired row TSVs.
++
++| rel | v5-only | v6-only | extraction-input | referee key gap | engine defect | unclassified |
++| --- | ---: | ---: | ---: | ---: | ---: | ---: |
++| flow_edge | 118 | unavailable | 0 | 0 | 0 | 118 |
++| flow_reach | unavailable | unavailable | 0 | 0 | 0 | unavailable |
++| flow_param_type | unavailable | unavailable | 0 | 0 | 0 | unavailable |
++| flow_node_type | unavailable | unavailable | 0 | 0 | 0 | unavailable |
++
++Supplied aggregates: `flow_edge` v5=2772, v6=3114, matched=2654;
++`flow_node_type` v6=58, matched=33; `flow_param_type` matched=35.
++
++## Call-target blocker receipt
++
++| key set | count |
++| --- | ---: |
++| v5 targets | 200 |
++| v6 targets | 168 |
++| matched | 113 |
++| v5-only | 87 |
++| v6-only | 55 |
++
++No current call-target rows were emitted, so the 142 supplied unmatched target
++keys cannot be assigned to extraction-input, referee key gap, or engine
++defect.
++
++## Referee diffs made
++
++None. The permitted referee files are unchanged. No observed row establishes
++an additional key translation.
++
++## Defect repros
++
++None. The paired v5/v6 relation rows were not produced.
++
++## Skips
++
++| item | reason |
++| --- | --- |
++| Per-row classification for all four query relations | v6 server startup is blocked by missing `rxjs`, `sprefa-store-engine`, and then its `@libsql/client` dependency chain. |
++| Referee-side normalization changes | no v6 rows exist for comparison. |

@@ -1,0 +1,9 @@
+diff --git a/.dl/.gitignore b/.dl/.gitignore
+index 3a4054cb..8ee7147e 100644
+--- a/.dl/.gitignore
++++ b/.dl/.gitignore
+@@ -2,3 +2,4 @@ cache.db*
+ daemon.log
+ daemon-fg.log
+ daemon.pid
++index.scip*

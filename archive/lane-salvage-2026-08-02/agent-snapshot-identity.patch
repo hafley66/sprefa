@@ -1,0 +1,1157 @@
+diff --git a/plans/2026-07-20-snapshot-identity.md b/plans/2026-07-20-snapshot-identity.md
+new file mode 100644
+index 00000000..bd740a3e
+--- /dev/null
++++ b/plans/2026-07-20-snapshot-identity.md
+@@ -0,0 +1,569 @@
++# Snapshot identity: interning `(repo, rev)` as one id
++
++Status: PLAN ONLY. Written before implementation, per the planning protocol.
++Branch: `snapshot-identity` off `v11` (24782c3d).
++
++Three previously-separate tasks were folded into this arc: repo-scoping the
++unscoped rebuild deletes, adding a `repo` column to the rels lacking one, and
++interning `(repo, rev)`. Section 0 records where the arc's stated premises did
++not survive measurement, because two of the three tasks change shape once the
++receipts are in.
++
++---
++
++## 0. Receipts, and where the stated premises were wrong
++
++Every number below was measured on this worktree at 24782c3d.
++
++### 0.1 "~80 built-in rels carry `rev` with no `repo`" is wrong. It is 12.
++
++Full census of all 112 catalogued built-in rels (`src/engine/decls.rs` plus the
++20 `RelKind` impls under `src/rels/`):
++
++| bucket | count | rels |
++|---|---|---|
++| both `repo` and `rev` | 7 | `file`, `type_edge_rev`, `type_entity_rev`, `call_def_rev`, `df_node_repo_rev`, `const_value_rev`, `file_lines` |
++| `rev`, no `repo` | **12** | `module_import`, `module_edge_rev`, `module_unresolved_rev`, `crate_edge`, `module_binding_resolved_rev`, `module_binding_rev`, `type_link_rev`, `call_edge_rev`, `df_node_rev`, `df_arg_rev`, `df_field_rev`, `df_lit_rev` |
++| `repo`, no `rev` | 25 | `scip_want`, `rev_cmp_want`, `checkout`, `checkout_done`, `checkout_plan`, `type_edge`, `type_entity`, `doc_comment`, `doc_tag`, `call_def`, `call_site`, `df_node_repo`, `const_value`, `doc_node`, `doc_ref`, `head`, `rev_advanced`, `git_ref`, `rev_behind`, `scip_def`, `scip_ref`, `scip_edge`, `scip_occurrence`, `scip_binding`, `repo` |
++| neither | 68 | `df_node`, `df_edge`, `call_edge`, `type_link`, `module_edge`, `node`, `child`, `string`, `ref`, … |
++
++7 + 12 + 25 + 68 = 112. Verified.
++
++The consequence is that the "add a `repo` column to the 80 rels lacking it"
++sub-task does not exist as stated. The real shape is:
++
++- 12 rels genuinely need their repo half. Small, tractable.
++- **68 rels carry NEITHER coordinate.** These are the actually-unscopeable ones,
++  and no amount of `(repo, rev)` interning reaches them, because they have no
++  coordinate column to replace. This is the larger problem the arc's framing hid.
++  It is called out here rather than silently absorbed; see section 6.
++
++### 0.2 `Type::Rev` is real; `Type::Repo` is still vestigial.
++
++`Type` (`src/ast.rs:5`) is `{ Text, Int, Path, File, Dir, Repo, Rev }`.
++21 columns are typed `Type::Rev` (20 in `decls.rs` — the arc said 19, the
++undercount is `decls.rs:13`, which types both `id` and `oid` as `Type::Rev` on
++one line — plus `src/rels/filelines.rs:33`).
++
++**Zero** columns anywhere are typed `Type::Repo`. Every `repo` column in every
++built-in decl is `Type::Text`. `Type::Repo` parses (`ast.rs:23`), ranks in the
++type arena (`type_arena.rs:227`) and is accepted as a coordinate type
++(`engine/mod.rs:1268,1276`), and is used by nothing. The repo half never got the
++treatment the rev half got in a0a0ff25.
++
++### 0.3 The delete census: not ~30, about 90, and the dominant idiom is worse than unscoped.
++
++Full enumeration is in section 5. The headline correction:
++
++- Only **three** delete sites in the entire tree are repo-scoped:
++  `meta.rs:1319` (`_file`, scoped by both `repo` and `rev`),
++  `source_rows.rs:46` (`_prov`), `source_rows.rs:53` (`_where_bytes`).
++- `src/db.rs:1285`, inside `Db::reload_rel`, is `DELETE FROM {table}` with **no
++  WHERE clause at all**. It is reached through `Engine::refresh_rel`
++  (`src/engine/mod.rs:953-983`), which fans out to ~60 distinct `rel_*` tables.
++  The arc was right that a previous audit missed it; it is not merely
++  unscoped, it is the single delete that most of the engine's writes go through.
++- A second family (`derive.rs:484,510,546,1129,1544,2113,2114,2364,2477`) does
++  full-table wipes of derived rel heads, also with no WHERE.
++- A third family IS rev-scoped but repo-blind: `extract/mod.rs:695,725,1054,1120,1137`
++  and `storage/call.rs:527,769-781`. Two repos sitting on the same branch name
++  cross-contaminate here today. This is the family snapshot identity fixes
++  outright, because a snapshot id is already repo-qualified.
++
++### 0.4 A deterministic pre-existing failure, in this arc's own subject matter.
++
++`cargo test --test it` is NOT green on v11. The arc's stated baseline (962
++passed, 0 failed) does not reproduce on a clean tree.
++
++`flow_xlang::spec_op_resolves_across_languages` fails deterministically:
++
++```
++git cat-file failed for 24782c3d…:rust/src/handler.rs (… missing)
++```
++
++RCA. `read_content` (`src/engine/mod.rs:1131-1137`) picks the read path from the
++rev TEXT alone, and its doc comment (mod.rs:1118-1122) claims this is sound
++because "a rev WITHOUT the `+` marker is byte-identical on disk and in the git
++object". The claim holds only when `root` IS the repo root. The test builds
++`Engine::new(conn, <repo>/bench/flow)`, so:
++
++- `resolve_rev` shells `git -C bench/flow rev-parse HEAD`, getting the *sprefa*
++  repo's HEAD. On a clean tree there is no `+`.
++- `read_content` therefore takes the git-object branch, and calls
++  `git -C bench/flow cat-file <oid>:rust/src/handler.rs`.
++- git resolves `<oid>:<path>` relative to the REPO ROOT, not to `-C`. The correct
++  path is `bench/flow/rust/src/handler.rs`.
++
++Confirmed directly:
++
++```
++$ git -C bench/flow cat-file -e <oid>:rust/src/handler.rs
++fatal: path 'rust/src/handler.rs' does not exist in '<oid>'
++$ git -C bench/flow cat-file -e <oid>:bench/flow/rust/src/handler.rs
++(exists)
++```
++
++The defect is masked on the main working tree because that tree is dirty, so the
++rev carries `+` and the filesystem branch is taken. It surfaces on any clean
++checkout. It is exactly a `(repo, rev)` identity bug: the scan root is conflated
++with the repo root, and the resolved rev is not qualified by the repo it came
++from. Snapshot identity is the structural fix (section 3.4).
++
++Two further failures in the same full-suite run,
++`daemon::source_burst_coalesces_into_one_tick` and
++`db_ratio::daemon_boot_emits_db_ratio_for_the_served_root`, both PASS when run
++in isolation and did not recur on a second full run (6 failed, then 3 failed).
++They are load-sensitive flakes, not regressions.
++
++The greenness of that test is a function of working-tree cleanliness, not of
++correctness. One environment variable flips it, on the same commit:
++
++```
++$ DL_REV_OVERRIDE=24782c3d…                 # clean, no marker
++test result: FAILED. 0 passed; 2 failed
++$ DL_REV_OVERRIDE=24782c3d…+                # dirty marker
++test result: ok. 2 passed; 0 failed
++```
++
++This also explains the arc's quoted baseline of "962 passed, 0 failed": that
++number was measured on a dirty working tree, where every scan takes the
++filesystem branch and the git-object path is never exercised.
++
++Measured on this worktree:
++
++| suite | baseline (clean tree, no edits) | after stage 1 |
++|---|---|---|
++| `cargo test --lib` | 628 passed, 0 failed, 1 ignored | **645 passed, 0 failed**, 1 ignored (17 new) |
++| `cargo test --test it` | 959 passed, **3 failed**, 36 ignored (run 1: 956/6) | **962 passed, 0 failed**, 36 ignored |
++| `dl .dl/ --parse-only` | exit 0 | exit 0 |
++
++The it-suite moving from 3 failed to 0 failed is NOT a fix. Stage 1 added files
++to the tree, which made it dirty, which masked `flow_xlang` again by exactly the
++mechanism above. Recorded here so the number is not mistaken for progress.
++
++---
++
++## 1. Type signatures
++
++```rust
++// src/engine/snapshot.rs (new)
++
++/// The interned identity of one (repo, rev) pair: the coordinate every fact
++/// row is stamped with. One integer where two columns stood.
++///
++/// Content-addressed, like `StringId::of`, so it is derivable in memory with
++/// no database round trip and is stable across database files. Domain-separated
++/// from `StringId` so a snapshot id can never collide with the `StringId` of
++/// some unrelated text that happens to hash the same way.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
++pub(crate) struct SnapshotId(u64);
++
++impl SnapshotId {
++    /// The zero snapshot: no repo, no rev. Mirrors `StringId::EMPTY` /
++    /// `FileId::SYNTHETIC` so an unstamped row is distinguishable from a
++    /// legitimately-stamped one rather than silently aliasing repo "".
++    pub(crate) const NONE: Self;
++
++    /// Mint from the two halves. `repo_slug` is the logical slug
++    /// (`Engine::resolve_repo` -> `.0`), NOT a filesystem path; `rev` is the
++    /// resolved revision, never an alias.
++    ///
++    /// NOT `format!("{repo}:{rev}")`. The two halves are length-prefixed into a
++    /// canonical byte string before hashing, so ("ab","c") and ("a","bc") are
++    /// distinct inputs. A separator character is not a key; a length prefix is.
++    pub(crate) fn of(repo_slug: &str, rev: &RevId) -> Self;
++
++    /// Same, from a stored rev text rather than a live `RevId`. For the read-back
++    /// seams (`_file`, migration) that hold text, not a resolved rev.
++    pub(crate) fn of_text(repo_slug: &str, rev_text: &str) -> Self;
++
++    /// The i64 cell value. Same convention as `StringId::sqlite`.
++    pub(crate) fn sqlite(self) -> i64;
++    pub(crate) fn from_sqlite(value: i64) -> Self;
++}
++
++/// A minted SnapshotId together with the two halves it was minted from, queued
++/// for the batched `_snapshot` flush. The `Sym`/`SymSink` shape, restated: the
++/// ONLY way to get a storable snapshot id is through the sink, so an id can
++/// never land in a row without its (repo, rev) decode row landing too.
++#[derive(Default)]
++pub(crate) struct SnapshotSink {
++    pending: Vec<(SnapshotId, String, String)>,
++    flushed: bool,
++}
++
++impl SnapshotSink {
++    pub(crate) fn new() -> Self;
++    pub(crate) fn intern(&mut self, repo_slug: &str, rev: &RevId) -> SnapshotId;
++    pub(crate) fn drain(&mut self) -> Vec<(SnapshotId, String, String)>;
++}
++
++// src/db.rs
++
++impl Db {
++    /// Flush every queued snapshot in ONE `INSERT OR IGNORE`. The N+1 law: the
++    /// sink collects, this writes once. Interns the two halves into `_strings`
++    /// through the existing `SymSink` in the same pass.
++    pub fn flush_snapshots(&self, sink: &mut SnapshotSink) -> Result<()>;
++
++    /// Replace a rel's rows for ONE snapshot, instead of wiping the table.
++    /// The repo-scoped successor to `reload_rel`.
++    pub fn reload_rel_for_snapshot(
++        &self, table: &str, snap_col: &str, snap: SnapshotId,
++        cols: &[&str], rows: &[Vec<Value>],
++    ) -> Result<usize>;
++
++    /// Delete every row of `table` belonging to any snapshot of `repo_slug`.
++    /// The one seam a repo-scoped rebuild delete goes through.
++    pub fn delete_rel_for_repo(&self, table: &str, snap_col: &str, repo_slug: &str) -> Result<usize>;
++}
++```
++
++### Pseudo-code bodies
++
++```rust
++impl SnapshotId {
++    const NONE: Self = Self(0);
++
++    fn of(repo_slug: &str, rev: &RevId) -> Self {
++        // Self::of_text(repo_slug, &rev.text())
++        // rev.text() is the stored form, so an id minted from a live RevId and
++        // one minted from the same row read back are the same id by construction.
++    }
++
++    fn of_text(repo_slug: &str, rev_text: &str) -> Self {
++        // if repo_slug.is_empty() && rev_text.is_empty() { return Self::NONE }
++        // let mut bytes = Vec::with_capacity(...);
++        // bytes.extend(DOMAIN_SNAPSHOT);                 // domain separation
++        // bytes.extend((repo_slug.len() as u32).to_le_bytes());   // length prefix,
++        // bytes.extend(repo_slug.as_bytes());            //   not a separator char
++        // bytes.extend((rev_text.len() as u32).to_le_bytes());
++        // bytes.extend(rev_text.as_bytes());
++        // let id = hash64(&bytes);
++        // if id == 0 { Self(1) } else { Self(id) }   // never alias NONE
++    }
++}
++
++impl SnapshotSink {
++    fn intern(&mut self, repo_slug: &str, rev: &RevId) -> SnapshotId {
++        // let id = SnapshotId::of(repo_slug, rev);
++        // if id != SnapshotId::NONE {
++        //     self.pending.push((id, repo_slug.to_string(), rev.text()));
++        // }
++        // id
++    }
++}
++
++impl Db {
++    fn flush_snapshots(&self, sink: &mut SnapshotSink) -> Result<()> {
++        // let queued = sink.drain();
++        // if queued.is_empty() { return Ok(()) }
++        // let mut syms = SymSink::new();
++        // let rows = queued.map(|(id, repo, rev)| vec![
++        //     Value::Int(id.sqlite()),
++        //     Value::Int(syms.sym(&repo).cell()),
++        //     Value::Int(syms.sym(&rev).cell()),
++        // ]);
++        // self.flush_syms(&mut syms)?;                       // one write
++        // self.insert_rows_or_ignore("_snapshot", &["id","repo","rev"], &rows)  // one write
++        // Two statements total, regardless of how many snapshots were queued.
++    }
++
++    fn delete_rel_for_repo(&self, table, snap_col, repo_slug) -> Result<usize> {
++        // let repo_sym = StringId::of(repo_slug).sqlite();   // compile-time, no lookup
++        // self.exec_on(table, &format!(
++        //   "DELETE FROM {table} WHERE \"{snap_col}\" IN \
++        //    (SELECT id FROM _snapshot WHERE repo = {repo_sym})"))
++        // Indexed: _snapshot(repo) index feeds an integer IN-list against the
++        // rel's own snap index. No scan of the rel table.
++    }
++}
++```
++
++---
++
++## 2. Instance lifetimes
++
++| type | holds | lifetime | cleared when |
++|---|---|---|---|
++| `SnapshotId` | nothing; a `u64` value | VALUE type, copied freely, no state | n/a |
++| `SnapshotSink` | `Vec<(id, repo, rev)>` queued this pass | ONE per refresh pass, stack-local, mirrors `SymSink` exactly | drained by `Db::flush_snapshots`; debug-panics if dropped with pending entries unflushed (the `SymSink` silent-loss guard, restated) |
++| `_snapshot` table | every (repo, rev) ever stamped in this database | as long as the database file | never on a normal tick. Swept by the same reachability pass that sweeps `_strings` (`daemon/gc.rs:252`), not by any rel rebuild |
++| `WorktreeRev` (existing, `revid.rs`) | resolved worktree rev per repo root | ONE per `Engine`; cleared at each tick top and on a git event | unchanged by this arc |
++
++The critical lifetime statement: `_snapshot` rows OUTLIVE the rel rows that point
++at them, deliberately. A repo-scoped delete removes rel rows and leaves the
++`_snapshot` row standing, so a re-scan of the same (repo, rev) re-mints the same
++id — the id is a content hash, so this is automatic, not a lookup.
++
++---
++
++## 3. Storage layout, then reads and writes, then uniqueness
++
++### 3.1 Layout
++
++```sql
++CREATE TABLE IF NOT EXISTS _snapshot (
++    id   INTEGER PRIMARY KEY,   -- SnapshotId::sqlite(), a rowid alias
++    repo INTEGER NOT NULL,      -- StringId::of(repo_slug).sqlite()
++    rev  INTEGER NOT NULL       -- StringId::of(rev_text).sqlite()
++);
++CREATE INDEX IF NOT EXISTS idx__snapshot_repo ON _snapshot(repo);
++CREATE UNIQUE INDEX IF NOT EXISTS idx__snapshot_pair ON _snapshot(repo, rev);
++```
++
++Three integer columns, no text. `repo`/`rev` carry `StringId::of` hashes with no
++`REFERENCES _strings`, for the reason `_extract_digest` already documents at
++`meta.rs:222-227`: the hash is computed without interning, and `PRAGMA
++foreign_keys` is ON for some connections.
++
++`id` is an `INTEGER PRIMARY KEY` (rowid alias) rather than the `WITHOUT ROWID`
++composite that `_extract_digest` uses, and this is a deliberate divergence from
++the model the arc named. `_extract_digest` is keyed BY its composite and looked
++up by it. `_snapshot` is looked up by `id` on every join (the hot direction,
++which wants the rowid alias) and by `repo` only on the delete path (which the
++secondary index serves). A `WITHOUT ROWID` table keyed `(repo, rev)` would make
++the hot direction a secondary-index hop. The uniqueness the composite PK would
++have given is preserved by `idx__snapshot_pair`.
++
++The rel-side column, for each rel that carries a coordinate:
++
++```
++snap INTEGER NOT NULL DEFAULT 0     -- Type::Snap, SnapshotId::sqlite()
++```
++
++Storage-shape-identical to today's `Type::Rev` column, which is already an
++interned `StringId` stored as INTEGER (`Col::interned` at `ast.rs:64`,
++`Col::sql` at `ast.rs:65-67`). This is why the migration is mechanical: the
++column's SQLite type does not change, only what the integer means.
++
++### 3.2 Sequence of reads and writes, one tick
++
++```
++resolve_scan_bindings            repo.rs:297
++  -> resolve_repo / resolve_scan_repos     yields (slug, root)
++  -> resolve_rev                           yields RevId
++  -> snap = sink.intern(&slug, &rev)       MINT HERE, repo.rs:334 and repo.rs:407
++  -> ScanBinding { slug, root, rev, snap, glob, head_binds }
++
++reconcile.rs:44  iterates bindings
++  -> enumerate_with_hash(slug, root, rev, ...)     scan.rs:128, unchanged
++  -> per file: read_content(root, rev, path)       see 3.4
++  -> eval.rs:400-420 seeds the Bind with path/rev/head_binds
++       ADD: seed `snap` alongside, so a rule head can reference it
++
++flush
++  -> db.flush_syms(&mut syms)          existing, one statement
++  -> db.flush_snapshots(&mut sink)     NEW, two statements
++  -> db.insert_rows(rel, cols, rows)   existing, one statement per rel
++
++rebuild
++  -> reload_rel_for_snapshot(...)      replaces reload_rel's unscoped wipe
++```
++
++The mint point matters and is the whole design: at `repo.rs:334` and
++`repo.rs:407` the pair `(slug, rev)` is already sitting in one struct
++literal. The two halves are together in memory throughout extraction — `eval.rs`
++takes `repo` and `path` as ambient parameters right through the `Match`/`Ast`/
++`Sg` ops — and only split at the storage boundary. Interning at the binding is
++therefore not a new coupling; it is refusing to discard one that already exists.
++
++### 3.3 Uniqueness conditions
++
++1. `_snapshot.id` is unique by PK. Enforced.
++2. `(repo, rev)` is unique by `idx__snapshot_pair`. Enforced.
++3. `id` is a FUNCTION of `(repo, rev)`, by content hash. NOT enforced by the
++   schema; guaranteed by `SnapshotId::of` being the only constructor and by the
++   `INSERT OR IGNORE` never rewriting an existing row. A test pins it: minting
++   the same pair twice in two processes yields the same integer.
++4. `SnapshotId::NONE` (0) is never inserted into `_snapshot`. A rel row carrying
++   `snap = 0` is unstamped, and joins to nothing. Distinguishable from a row
++   stamped with repo `""`, which hashes to a nonzero id.
++5. Hash collision: 64-bit content hash over the whole corpus of (repo, rev)
++   pairs. The pair count is bounded by repos times revs scanned, order 10^3.
++   Birthday bound is negligible and this is the SAME exposure `StringId::of`
++   already carries for every interned string in the database, at a far larger
++   cardinality. No new class of risk; a pre-existing one, restated at lower N.
++
++### 3.4 What this does for `read_content`, and for the 0.4 defect
++
++Today `read_content(root, rev, path)` takes a scan root and a bare rev text and
++guesses. With a snapshot in hand the read path stops guessing, because a snapshot
++resolves to `(repo_slug, rev_text)` and `repo_slug` resolves to a repo root via
++`repo_roots()` (`engine/mod.rs:835`), which is the *repo* root, not the scan
++root. The prefix `scan_root.strip_prefix(repo_root)` is then computable, which is
++exactly the missing `bench/flow/` in 0.4.
++
++That fix is NOT free-riding on this arc; it needs `read_content` to take a
++snapshot instead of `(root, rev)`, and every caller updated. It is staged
++explicitly in section 6 rather than folded in silently.
++
++---
++
++## 4. Where the four layers disagree
++
++The protocol says these layers may disagree. They do, in three places, and the
++disagreements are the actual design decisions. None of them should be resolved
++by an agent.
++
++### 4.1 Signatures say "replace two columns with one". Storage says arity breaks.
++
++`SnapshotId` replacing `(repo, rev)` is arity-preserving for the 12 rels in
++bucket (b) — one `rev` column becomes one `snap` column, and those rels silently
++GAIN their repo half, which is the arc's stated goal, achieved for free.
++
++For the 7 rels in bucket (a) it is an arity REDUCTION: `file(repo, rev, path,
++content)` becomes `file(snap, path, content)`. Every positional `.dl` atom
++against those 7 rels breaks. `file` in particular is the single most-used rel in
++the corpus.
++
++Two resolutions, both defensible, and the choice is the user's:
++
++- **(A) Reduce arity, provide `snapshot(snap, repo, rev)` as a builtin join rel.**
++  Honest 1NF. Breaks every `file(...)` call site in `.dl/`, `examples/`, `book/`,
++  and the test corpus. Large mechanical edit, fully rail-checkable.
++- **(B) Keep `repo`/`rev` as VIEW-projected columns over the stored `snap`.**
++  `rel_file` stores `snap`; `rel_file_txt` (the existing `_txt` view layer)
++  joins `_snapshot` and projects `repo`, `rev` back out. Zero surface breakage,
++  zero `.dl` edits. The cost is that the view layer, not the table, is what the
++  DSL sees, and a positional atom's column list is then computed rather than
++  declared.
++
++(B) preserves the surface and still gets the storage win and the scoped delete,
++because deletes hit the table. (A) is the cleaner model. I do not think an agent
++should pick; the surface-compatibility cost of (A) is a product decision.
++
++### 4.2 Storage says "one column". The DSL surface has no literal for it.
++
++A `Type::Rev` literal works because `"WORK"` and a sha are text the user can
++write, and `lower.rs:38` compiles a text literal in an interned position to
++`StringId::of(s).sqlite()` at compile time, no lookup. A snapshot has no natural
++text spelling. The only spellings are:
++
++- `"repo@rev"` — a `format!`-composite string, which is precisely what the arc's
++  own law bans. Rejected, even as surface-only, because it would immediately be
++  parsed back apart somewhere.
++- A `snap(Repo, Rev)` term function that lowers to the same domain-separated
++  hash at compile time. This is the coherent answer: the surface keeps two
++  terms, storage keeps one column, and the mapping is a compile-time function
++  with no round trip. It is also more machinery than the rest of the arc.
++
++Layer-1 signatures assume a snapshot is minted in Rust and never written by a
++user. That is true for every engine-emitted row and false for a hand-written
++`.dl` fact. Section 6 stages the term function separately.
++
++### 4.3 Lifetimes say "cache across ticks". Correctness says "not across a commit".
++
++`SnapshotId` is a pure function of its inputs, so it is safely cacheable
++forever. `RevId` is not: `WorktreeRev` is deliberately cleared at each tick top
++and on a git event (`revid.rs:157-166`), because a tick spanning `git commit`
++must use ONE oid throughout. The snapshot inherits that constraint from its rev
++half, not from itself. Any snapshot cache must therefore key on the RESOLVED rev
++and be seeded downstream of `WorktreeRev`, never memoize `(repo_slug, "WORK")`.
++Since `SnapshotId::of` takes a `&RevId` and `RevId::parse` refuses the alias
++(`revid.rs:96-110`), the type system already blocks the wrong version. Worth
++stating because a naive `HashMap<(String,String), SnapshotId>` keyed on the
++pre-resolution text would reintroduce the bug a0a0ff25 fixed.
++
++---
++
++## 5. The delete inventory
++
++Produced before any change, as required. ~90 sites; the ones that matter for
++repo scoping.
++
++### 5.1 Repo-scoped today (3 sites, the entire list)
++
++| site | statement |
++|---|---|
++| `src/engine/meta.rs:1319` | `DELETE FROM _file WHERE (repo, path, rev) IN (SELECT repo, path, rev FROM _stale_file)` |
++| `src/engine/source_rows.rs:46` | `DELETE FROM _prov WHERE (repo, path) IN (SELECT repo, path FROM _retract_path)` |
++| `src/engine/source_rows.rs:53` | `DELETE FROM _where_bytes WHERE (repo, path) IN (…)` |
++
++### 5.2 Unscoped whole-table wipes of `rel_*` (the primary target)
++
++| site | fn | statement |
++|---|---|---|
++| **`src/db.rs:1285`** | `Db::reload_rel` | `DELETE FROM {table}` — no WHERE. Fans out via `Engine::refresh_rel` (`engine/mod.rs:953-983`) to ~60 `rel_*` tables |
++| `src/engine/extract/call.rs:425` | call-family cold path | reaches `reload_rel` directly |
++| `src/engine/derive.rs:484` | `rebuild_derived` (mirror arm) | `DELETE FROM {tbl(head_rel)}` |
++| `src/engine/derive.rs:510` | `rebuild_derived` (component wipe) | `DELETE FROM {tbl(rel)}` — logged `"[derived] full wipe"` |
++| `src/engine/derive.rs:546` | `rebuild_derived` (orphan wipe) | `DELETE FROM {tbl(rel)}` |
++| `src/engine/derive.rs:1129` | `try_native_depth_walk` | `DELETE FROM {tbl(head_rel)}` |
++| `src/engine/derive.rs:1544` | `try_native_halt_bfs` | `DELETE FROM {tbl(head_rel)}` |
++| `src/engine/derive.rs:2113,2114` | `rebuild_closures` | SCC node/edge table wipes |
++| `src/engine/derive.rs:2364` | `eval_closure_seed_rule_inner` | `DELETE FROM {tbl(head)}` |
++| `src/engine/derive.rs:2477` | `eval_scc_rule_inner` | `DELETE FROM {tbl(head)}` |
++| `src/engine/derive.rs:201` | `eval_node2vec_rule` | `DELETE FROM {tbl(head)}` |
++| `src/engine/extract/mod.rs:594,598,605,612` | `rebuild_legacy_module_rels` | 4 whole-rel wipes |
++| `src/engine/extract/mod.rs:1311,1318,1325,1332` | `rebuild_legacy_type_rels` | 4 whole-rel wipes |
++| `src/engine/declare.rs:989,1013` | `true` / `every` refresh | singleton + ephemeral, wipe is correct by design |
++| `src/engine/rpc.rs:363` | `drain_rpc` | `DELETE FROM {tbl(out_rel)}` after drain |
++| `src/storage/call.rs:560-565,798` | baseline replace | 7 `_call_*` whole-table wipes |
++
++### 5.3 Rev-scoped but repo-BLIND (snapshot identity fixes these outright)
++
++| site | tables | statement shape |
++|---|---|---|
++| `src/engine/extract/mod.rs:695-700` | 6 module rels | `DELETE FROM {tbl} WHERE "rev" IN (SELECT sprf_sym(rev) FROM _module_refresh_rev)` |
++| `src/engine/extract/mod.rs:725-743` | 5 module rels | `WHERE "rev" = {rev_id} AND "file" IN {paths}` |
++| `src/engine/extract/mod.rs:1054` | generic | `refresh_rel_for_revs`, `WHERE "rev" IN (…)` |
++| `src/engine/extract/mod.rs:1118-1122` | 13 `REV_TWINS` rels | `sweep_gone_revs`, `WHERE "rev" NOT IN (…)` |
++| `src/engine/extract/mod.rs:1135-1139` | `_extract_digest` | `WHERE exe = ?1 AND rev NOT IN (…)` |
++| `src/storage/call.rs:769-781` | 6 `_call_*` | `WHERE rev_sid NOT IN (…)` |
++| `src/storage/call.rs:527-532` | `_call_edge_support` | `WHERE … a.rev_sid = …` |
++
++Each of these becomes correct by substituting `snap` for `rev`, with no added
++predicate: a snapshot is repo-qualified by construction. Two repos on branch
++`main` stop colliding. This family is the cleanest win in the arc.
++
++### 5.4 Scoped by something else, correctly (no action)
++
++`_reldigest`/`_derived_complete` by rel name (`meta.rs:1116,1245`,
++`declare.rs:347,363`), `_stmt_ms` by rel (`derive.rs:1835`), `_source_stage_*`
++by `stage_id` (`source_stage.rs:174-188,312-326`), `_write_ledger` by tick
++(`engine/mod.rs:922`), `_cold_node` by family (`cold_stage.rs:496`), node2vec
++caches by graph (`derive.rs:207-311`), `_strings` GC by global reachability
++(`daemon/gc.rs:252`, cross-repo by design), plus every TEMP scratch wipe.
++
++---
++
++## 6. Staging
++
++Ordered so each stage is independently landable and testable, and so the two
++user decisions in section 4 gate only the stages that need them.
++
++| stage | content | gated on |
++|---|---|---|
++| 1 | `src/engine/snapshot.rs`: `SnapshotId`, `SnapshotSink`, `_snapshot` DDL in `ensure_meta`, `Db::flush_snapshots`. Unit tests: determinism across processes, length-prefix distinguishes `("ab","c")` from `("a","bc")`, `NONE` never inserted, batched flush is 2 statements for N snapshots | nothing |
++| 2 | Mint at `repo.rs:334` and `repo.rs:407`; carry `snap` on `ScanBinding`; seed it into the `Bind` at `eval.rs:400-420`. No rel schema change yet — the id is minted and stored in `_snapshot`, unused by rels | stage 1 |
++| 3 | `Db::delete_rel_for_repo` + `reload_rel_for_snapshot`. Convert the 5.3 family (rev-scoped, repo-blind) to snapshot-scoped. 30 tables, all mechanical, all strictly more correct | stage 2 |
++| 4 | `Type::Snap` + the 12 bucket-(b) rels: `rev: Type::Rev` -> `snap: Type::Snap`, arity-preserving. These gain their repo half here | stage 3 |
++| 5 | The 7 bucket-(a) rels | **section 4.1 decision (A vs B)** |
++| 6 | `read_content` takes a snapshot; scan-root vs repo-root prefix computed rather than assumed. Fixes the 0.4 `flow_xlang` defect. Needs a failure-modes entry per the standing ledger law | stage 5 |
++| 7 | `snap(Repo, Rev)` surface term function, if hand-written snapshot facts are wanted at all | **section 4.2 decision** |
++| 8 | The 68 coordinate-less rels (section 0.1). Out of scope for this arc; needs its own plan. This is where the real unscopeability lives | separate arc |
++
++---
++
++## 7. Flagged, not touched
++
++- **`_prov`** (`src/engine/meta.rs:220`, plus `source_rows.rs:46,59`) violates the
++  banned-identifier law. Flagged as instructed; NOT renamed as part of this arc.
++  A rename touches the table name, 3 delete sites, and the `__src` join in
++  `source_rows.rs:59`. Its own small arc.
++- **Name collision**: `spine::RevId(u32)` (`src/spine.rs:11`) and
++  `engine::revid::RevId` (`src/engine/revid.rs:38`) are two unrelated types with
++  the same name. `spine::RevId` is near-dead — its only non-test uses are
++  `pipeline/full_sources.rs:266` and `extract/node.rs:261`. Adding `SnapshotId`
++  next to `spine::RepoId`/`spine::RevId` will compound the confusion. Recommend
++  deleting the vestigial `spine::RepoId`/`spine::RevId` pair, or renaming them,
++  before stage 1 lands.
++- **`src/identity.rs`** already defines `RepoIdentity`, `OwnerKey`, `FactKey`
++  with domain-separated blake3 canonical-byte encodings — exactly the design
++  discipline this plan proposes, written and never wired ("storage-independent…
++  wired later", `identity.rs:3-4`). `SnapshotId` should either be built ON that
++  module or the module should be deleted. Two parallel canonical-identity
++  schemes is the worse outcome than either.
++- **`engine/mod.rs:1056`** references `Engine::resolve_repo_root`, a function
++  that does not exist. Stale doc comment.
+diff --git a/src/db.rs b/src/db.rs
+index 85203327..5c153756 100644
+--- a/src/db.rs
++++ b/src/db.rs
+@@ -1293,6 +1293,75 @@ impl Db {
+         res
+     }
+ 
++    /// Replace a rel's rows for ONE snapshot, leaving every other snapshot's
++    /// rows in place. The repo-scoped successor to `reload_rel`, whose
++    /// `DELETE FROM {table}` above has no WHERE clause at all and is the reason
++    /// a rebuild cannot be scoped to one repo today.
++    ///
++    /// `snap_col` is the rel's snapshot column; `snap` the coordinate being
++    /// replaced. No index-drop fast path: that optimization is only sound for a
++    /// whole-table reload, and dropping a shared secondary index to rewrite one
++    /// snapshot's slice would deoptimize every other snapshot's reads.
++    pub fn reload_rel_for_snapshot(
++        &self,
++        table: &str,
++        snap_col: &str,
++        snap: crate::engine::snapshot::SnapshotId,
++        cols: &[&str],
++        rows: &[Vec<Value>],
++    ) -> Result<usize> {
++        tracing::debug!(table, snap = snap.sqlite(), rows = rows.len(), "[rel] snapshot reload");
++        self.exec_on(
++            table,
++            &format!("DELETE FROM {table} WHERE \"{snap_col}\" = {}", snap.sqlite()),
++        )?;
++        self.insert_rows(table, cols, rows)
++    }
++
++    /// Delete every row of `table` belonging to any snapshot of `repo_slug`.
++    /// The one seam a repo-scoped rebuild delete goes through.
++    ///
++    /// The repo predicate is a computed `StringId`, not a lookup: `StringId::of`
++    /// is a content hash, so this is a literal integer in the SQL and the plan
++    /// is `idx__snapshot_repo` feeding an integer IN-list against the rel's own
++    /// snapshot index. No scan of either table.
++    pub fn delete_rel_for_repo(&self, table: &str, snap_col: &str, repo_slug: &str) -> Result<usize> {
++        let repo = crate::engine::snapshot::repo_sym(repo_slug);
++        self.exec_on(
++            table,
++            &format!(
++                "DELETE FROM {table} WHERE \"{snap_col}\" IN \
++                 (SELECT id FROM _snapshot WHERE repo = {repo})"
++            ),
++        )
++    }
++
++    /// Flush every queued snapshot in ONE pass: one `_strings` write for the
++    /// two halves, one `_snapshot` write for the decode rows, regardless of how
++    /// many snapshots were queued. The N+1 law — the sink collects, this writes.
++    pub fn flush_snapshots(&self, sink: &mut crate::engine::snapshot::SnapshotSink) -> Result<usize> {
++        let queued = sink.drain();
++        if queued.is_empty() {
++            return Ok(0);
++        }
++        let mut syms = crate::spine::SymSink::new();
++        let rows: Vec<Vec<Value>> = queued
++            .iter()
++            .map(|(id, repo, rev)| {
++                vec![
++                    Value::Int(id.sqlite()),
++                    Value::Int(syms.sym(repo).cell()),
++                    Value::Int(syms.sym(rev).cell()),
++                ]
++            })
++            .collect();
++        // Halves first: a `_snapshot` row whose repo/rev ids do not resolve in
++        // `_strings` is an undecodable coordinate, so the text lands first and
++        // the pair that points at it second.
++        self.flush_syms(&mut syms)?;
++        self.insert_rows("_snapshot", &["id", "repo", "rev"], &rows)
++    }
++
+     /// Insert a set of rows in chunked multi-row `VALUES` statements — ONE logical
+     /// op (a few executes for very large N), never one-per-row. `INSERT OR IGNORE`.
+     pub fn insert_rows(&self, table: &str, cols: &[&str], rows: &[Vec<Value>]) -> Result<usize> {
+@@ -1690,6 +1759,154 @@ mod tests {
+         ).unwrap();
+     }
+ 
++    fn create_snapshot_table(db: &Db) {
++        db.exec_on(
++            "_snapshot",
++            "CREATE TABLE _snapshot (id INTEGER PRIMARY KEY, repo INTEGER NOT NULL, rev INTEGER NOT NULL);
++             CREATE INDEX idx__snapshot_repo ON _snapshot(repo);",
++        ).unwrap();
++    }
++
++    fn test_rev(oid_byte: char) -> crate::engine::revid::RevId {
++        crate::engine::revid::RevId::worktree(std::iter::repeat(oid_byte).take(40).collect::<String>(), false)
++    }
++
++    /// The N+1 law at the snapshot seam: N queued snapshots cost a FIXED two
++    /// statements (one `_strings`, one `_snapshot`), never one write per pair.
++    #[test]
++    fn flush_snapshots_writes_a_whole_batch_in_two_statements() {
++        let db = open(None).unwrap();
++        create_strings_table(&db);
++        create_snapshot_table(&db);
++
++        let mut sink = crate::engine::snapshot::SnapshotSink::new();
++        for slug in ["alpha", "beta", "gamma", "delta", "epsilon"] {
++            sink.intern(slug, &test_rev('a'));
++        }
++        db.tick_begin();
++        assert_eq!(db.flush_snapshots(&mut sink).unwrap(), 5);
++        // The N+1 screamer stays silent: no write key repeated per snapshot.
++        // A per-pair write loop would bump `INSERT _snapshot` five times.
++        assert!(
++            db.tick_end().is_none(),
++            "flushing 5 snapshots must not repeat any write statement"
++        );
++
++        let rows: i64 = db.query_one("_snapshot", "SELECT COUNT(*) FROM _snapshot", &[], |r| Ok(r.get(0)?)).unwrap();
++        assert_eq!(rows, 5);
++        // Both halves of every pair are decodable.
++        let texts: i64 = db.query_one("_strings", "SELECT COUNT(*) FROM _strings", &[], |r| Ok(r.get(0)?)).unwrap();
++        assert_eq!(texts, 6, "5 distinct slugs + 1 shared rev");
++    }
++
++    #[test]
++    fn flush_snapshots_is_idempotent_for_a_pair_already_stored() {
++        let db = open(None).unwrap();
++        create_strings_table(&db);
++        create_snapshot_table(&db);
++
++        let mut first = crate::engine::snapshot::SnapshotSink::new();
++        let id = first.intern("alpha", &test_rev('a'));
++        assert_eq!(db.flush_snapshots(&mut first).unwrap(), 1);
++
++        // Re-minting the same pair next tick yields the SAME id (content hash),
++        // and `INSERT OR IGNORE` leaves the single decode row standing.
++        let mut second = crate::engine::snapshot::SnapshotSink::new();
++        assert_eq!(second.intern("alpha", &test_rev('a')), id);
++        db.flush_snapshots(&mut second).unwrap();
++
++        let rows: i64 = db.query_one("_snapshot", "SELECT COUNT(*) FROM _snapshot", &[], |r| Ok(r.get(0)?)).unwrap();
++        assert_eq!(rows, 1, "the same pair must not accumulate decode rows");
++    }
++
++    /// The point of the whole arc: a rebuild delete that removes one repo's
++    /// rows and leaves every other repo's rows standing. `reload_rel`'s
++    /// unconditional `DELETE FROM {table}` cannot express this.
++    #[test]
++    fn delete_rel_for_repo_spares_every_other_repo() {
++        let db = open(None).unwrap();
++        create_strings_table(&db);
++        create_snapshot_table(&db);
++        db.exec_on("rel_probe", "CREATE TABLE rel_probe (snap INTEGER NOT NULL, path TEXT)").unwrap();
++
++        let mut sink = crate::engine::snapshot::SnapshotSink::new();
++        // Two repos, and two revs of the FIRST repo — so the delete is proven
++        // to sweep every snapshot of a repo, not just one coordinate.
++        let alpha_old = sink.intern("alpha", &test_rev('a'));
++        let alpha_new = sink.intern("alpha", &test_rev('b'));
++        let beta = sink.intern("beta", &test_rev('a'));
++        db.flush_snapshots(&mut sink).unwrap();
++
++        let rows: Vec<Vec<Value>> = [alpha_old, alpha_new, beta, beta]
++            .iter()
++            .map(|s| vec![Value::Int(s.sqlite()), Value::Text("src/lib.rs".into())])
++            .collect();
++        db.insert_rows("rel_probe", &["snap", "path"], &rows).unwrap();
++
++        assert_eq!(db.delete_rel_for_repo("rel_probe", "snap", "alpha").unwrap(), 2);
++
++        let left: i64 = db.query_one("rel_probe", "SELECT COUNT(*) FROM rel_probe", &[], |r| Ok(r.get(0)?)).unwrap();
++        assert_eq!(left, 2, "beta's rows must survive alpha's rebuild");
++        let stray: i64 = db.query_one(
++            "rel_probe",
++            &format!("SELECT COUNT(*) FROM rel_probe WHERE snap != {}", beta.sqlite()),
++            &[], |r| Ok(r.get(0)?),
++        ).unwrap();
++        assert_eq!(stray, 0, "every surviving row belongs to beta");
++    }
++
++    /// Two repos on the same branch name are the case the rev-scoped sweeps in
++    /// `extract/mod.rs` and `storage/call.rs` cannot tell apart today.
++    #[test]
++    fn two_repos_at_the_same_rev_are_distinct_snapshots() {
++        let db = open(None).unwrap();
++        create_strings_table(&db);
++        create_snapshot_table(&db);
++        db.exec_on("rel_probe", "CREATE TABLE rel_probe (snap INTEGER NOT NULL)").unwrap();
++
++        let mut sink = crate::engine::snapshot::SnapshotSink::new();
++        let shared = test_rev('a');
++        let alpha = sink.intern("alpha", &shared);
++        let beta = sink.intern("beta", &shared);
++        assert_ne!(alpha, beta, "the same rev in two repos is two snapshots");
++        db.flush_snapshots(&mut sink).unwrap();
++
++        let rows = vec![vec![Value::Int(alpha.sqlite())], vec![Value::Int(beta.sqlite())]];
++        db.insert_rows("rel_probe", &["snap"], &rows).unwrap();
++        assert_eq!(db.delete_rel_for_repo("rel_probe", "snap", "alpha").unwrap(), 1);
++        let left: i64 = db.query_one("rel_probe", "SELECT COUNT(*) FROM rel_probe", &[], |r| Ok(r.get(0)?)).unwrap();
++        assert_eq!(left, 1, "the twin repo at the identical rev must be untouched");
++    }
++
++    #[test]
++    fn reload_rel_for_snapshot_replaces_only_its_own_slice() {
++        let db = open(None).unwrap();
++        create_strings_table(&db);
++        create_snapshot_table(&db);
++        db.exec_on("rel_probe", "CREATE TABLE rel_probe (snap INTEGER NOT NULL, path TEXT)").unwrap();
++
++        let mut sink = crate::engine::snapshot::SnapshotSink::new();
++        let alpha = sink.intern("alpha", &test_rev('a'));
++        let beta = sink.intern("beta", &test_rev('a'));
++        db.flush_snapshots(&mut sink).unwrap();
++
++        let seed: Vec<Vec<Value>> = [(alpha, "a1"), (alpha, "a2"), (beta, "b1")]
++            .iter()
++            .map(|(s, p)| vec![Value::Int(s.sqlite()), Value::Text((*p).into())])
++            .collect();
++        db.insert_rows("rel_probe", &["snap", "path"], &seed).unwrap();
++
++        let fresh = vec![vec![Value::Int(alpha.sqlite()), Value::Text("a3".into())]];
++        db.reload_rel_for_snapshot("rel_probe", "snap", alpha, &["snap", "path"], &fresh).unwrap();
++
++        let mut paths: Vec<String> = db
++            .query_rows("rel_probe", "SELECT path FROM rel_probe", &[], |r| Ok(r.get::<_, String>(0)?))
++            .unwrap();
++        paths.sort();
++        assert_eq!(paths, vec!["a3".to_string(), "b1".to_string()],
++            "alpha's slice is replaced wholesale; beta's is untouched");
++    }
++
+     #[test]
+     fn flush_syms_skips_ids_already_persisted() {
+         let db = open(None).unwrap();
+diff --git a/src/engine/meta.rs b/src/engine/meta.rs
+index fcc36d60..07b16a69 100644
+--- a/src/engine/meta.rs
++++ b/src/engine/meta.rs
+@@ -236,6 +236,30 @@ impl Engine {
+                  PRIMARY KEY (exe, family, rev)
+              ) WITHOUT ROWID;
+              CREATE INDEX IF NOT EXISTS idx__extract_digest_rev ON _extract_digest(rev);
++             -- The interned (repo, rev) pair: one snapshot id per coordinate a
++             -- fact row can be stamped with. A DECODE table, never an allocator
++             -- — `id` is a content hash of the two halves (engine/snapshot.rs),
++             -- so it is derivable in memory and stable across database files,
++             -- and this table only answers which pair an id stood for.
++             --
++             -- `id` is an INTEGER PRIMARY KEY (rowid alias) rather than the
++             -- WITHOUT ROWID composite `_extract_digest` uses, deliberately:
++             -- every rel join enters by `id` (the hot direction, which wants
++             -- the rowid), and only the repo-scoped delete enters by `repo`,
++             -- which the secondary index serves. The uniqueness a composite PK
++             -- would have given is kept by idx__snapshot_pair.
++             --
++             -- `repo`/`rev` carry `StringId::of` hashes with no REFERENCES to
++             -- `_strings`, for the same reason `_extract_digest` documents
++             -- above: the hash is computed WITHOUT interning the text, and
++             -- `PRAGMA foreign_keys` is ON for some connections.
++             CREATE TABLE IF NOT EXISTS _snapshot (
++                 id   INTEGER PRIMARY KEY,
++                 repo INTEGER NOT NULL,
++                 rev  INTEGER NOT NULL
++             );
++             CREATE INDEX IF NOT EXISTS idx__snapshot_repo ON _snapshot(repo);
++             CREATE UNIQUE INDEX IF NOT EXISTS idx__snapshot_pair ON _snapshot(repo, rev);
+              -- Singleton: wall-clock second as of the last completed WORK-arm
+              -- walk in `enumerate_with_hash`. See `load_walk_ref_secs`.
+              CREATE TABLE IF NOT EXISTS _file_walk (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), ref_secs INTEGER NOT NULL DEFAULT 0);
+diff --git a/src/engine/mod.rs b/src/engine/mod.rs
+index 34bb2c38..26e015a4 100644
+--- a/src/engine/mod.rs
++++ b/src/engine/mod.rs
+@@ -46,6 +46,7 @@ mod repo;
+ mod results;
+ pub(crate) mod revid;
+ mod rpc;
++pub(crate) mod snapshot;
+ mod source_prepare;
+ mod source_rows;
+ #[cfg(test)]
+diff --git a/src/engine/snapshot.rs b/src/engine/snapshot.rs
+new file mode 100644
+index 00000000..7d38c77c
+--- /dev/null
++++ b/src/engine/snapshot.rs
+@@ -0,0 +1,277 @@
++//! Snapshot identity: the interned `(repo, rev)` pair.
++//!
++//! A revision belongs to a repository. Carrying the two as independent columns
++//! makes the repo half optional in practice, and 12 built-in rels ended up with
++//! a `rev` column and no `repo` at all — which is why the rebuild deletes that
++//! scope by `rev` (`extract/mod.rs` `sweep_gone_revs`, `storage/call.rs`
++//! `sweep_sqlite_gone_call_inputs`) cannot be scoped to a repo: two repos
++//! sitting on the same branch name are indistinguishable to them.
++//!
++//! A `SnapshotId` is the pair, interned once. One integer column replaces two,
++//! and every delete that scopes by it is repo-qualified for free.
++//!
++//! INV-1: a `SnapshotId` is a pure function of `(repo_slug, rev_text)`. It is
++//! derivable in memory with no database round trip and is stable across
++//! database files, exactly like `StringId::of`. `_snapshot` is a DECODE table,
++//! never an allocator.
++//!
++//! INV-2: the two halves are LENGTH-PREFIXED into the hashed bytes, never
++//! joined by a separator character. `format!("{repo}:{rev}")` as a key is a
++//! first-normal-form violation and would make `("ab", "c")` and `("a", "bc")`
++//! the same snapshot the moment a slug contained the separator.
++
++use crate::engine::revid::RevId;
++use crate::spine::{hash64, StringId};
++
++/// Domain tag, so a `SnapshotId` can never collide with the `StringId` of some
++/// unrelated text that happens to hash the same way. The two id spaces share
++/// `hash64` and both land in INTEGER columns, so they must not share inputs.
++const DOMAIN_SNAPSHOT: &[u8] = b"SPRFSNAP\x01";
++
++/// The interned identity of one (repo, rev) pair.
++///
++/// Lifetime: VALUE type, no state. Minted per scan binding, copied onto every
++/// row that binding produces, dropped with them.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
++pub(crate) struct SnapshotId(u64);
++
++impl SnapshotId {
++    /// The unstamped snapshot: no repo, no rev. Mirrors `StringId::EMPTY` and
++    /// `FileId::SYNTHETIC`, so a row that was never stamped is distinguishable
++    /// from one legitimately stamped with the empty repo slug (which hashes to
++    /// a nonzero id). Never written to `_snapshot`, so it joins to nothing.
++    pub(crate) const NONE: Self = Self(0);
++
++    /// Mint from a repo slug and a RESOLVED revision.
++    ///
++    /// `repo_slug` is the logical slug `Engine::resolve_repo` returns, not a
++    /// filesystem path. Taking `&RevId` rather than `&str` is the guard that
++    /// keeps the WORK alias out: `RevId` can only be built by resolution, so a
++    /// snapshot minted from one is never keyed on an unresolved alias.
++    pub(crate) fn of(repo_slug: &str, rev: &RevId) -> Self {
++        Self::of_text(repo_slug, &rev.text())
++    }
++
++    /// Mint from a stored rev text, for the read-back seams (`_file`, the
++    /// migration pass) that hold text rather than a resolved `RevId`.
++    ///
++    /// Callers here are responsible for the text being a stored rev and not an
++    /// alias; `RevId::parse` is the check where one is wanted.
++    pub(crate) fn of_text(repo_slug: &str, rev_text: &str) -> Self {
++        if repo_slug.is_empty() && rev_text.is_empty() {
++            return Self::NONE;
++        }
++        let mut bytes =
++            Vec::with_capacity(DOMAIN_SNAPSHOT.len() + 8 + repo_slug.len() + rev_text.len());
++        bytes.extend_from_slice(DOMAIN_SNAPSHOT);
++        push_len_prefixed(&mut bytes, repo_slug.as_bytes());
++        push_len_prefixed(&mut bytes, rev_text.as_bytes());
++        match hash64(&bytes) {
++            // Never alias the sentinel. One id is displaced onto its neighbour,
++            // which is a collision of exactly the same probability as any other
++            // pair and costs nothing to accept here.
++            0 => Self(1),
++            id => Self(id),
++        }
++    }
++
++    /// The id as it lives in a SQLite INTEGER cell: the u64 bit pattern
++    /// reinterpreted as i64. Same convention as `StringId::sqlite`, so a `snap`
++    /// column compares and joins as a single-word integer.
++    pub(crate) fn sqlite(self) -> i64 {
++        self.0 as i64
++    }
++
++    pub(crate) fn from_sqlite(value: i64) -> Self {
++        Self(value as u64)
++    }
++
++    pub(crate) fn is_none(self) -> bool {
++        self == Self::NONE
++    }
++}
++
++/// Length-prefix `field` into `out`. The prefix, not a separator byte, is what
++/// makes the concatenation injective (INV-2).
++fn push_len_prefixed(out: &mut Vec<u8>, field: &[u8]) {
++    out.extend_from_slice(&(field.len() as u64).to_le_bytes());
++    out.extend_from_slice(field);
++}
++
++/// Collects the (id, repo, rev) triples minted across one refresh pass, for a
++/// single batched `_snapshot` flush.
++///
++/// The `SymSink` shape restated: the only way to get a snapshot id that is
++/// GOING TO BE STORED is through `intern`, so an id can never land in a rel row
++/// without its decode row being queued alongside. `SnapshotId::of` stays public
++/// for the read-side (comparing against an id you are not writing).
++///
++/// Lifetime: ONE per refresh pass, stack-local, drained by `Db::flush_snapshots`.
++#[derive(Default)]
++pub(crate) struct SnapshotSink {
++    pending: Vec<(SnapshotId, String, String)>,
++    flushed: bool,
++}
++
++impl SnapshotSink {
++    pub(crate) fn new() -> Self {
++        Self::default()
++    }
++
++    /// Mint `(repo_slug, rev)` and queue its decode row.
++    pub(crate) fn intern(&mut self, repo_slug: &str, rev: &RevId) -> SnapshotId {
++        let id = SnapshotId::of(repo_slug, rev);
++        if !id.is_none() {
++            self.pending
++                .push((id, repo_slug.to_string(), rev.text()));
++        }
++        id
++    }
++
++    /// Drain every queued triple. Called once by `Db::flush_snapshots`.
++    pub(crate) fn drain(&mut self) -> Vec<(SnapshotId, String, String)> {
++        self.flushed = true;
++        std::mem::take(&mut self.pending)
++    }
++
++    pub(crate) fn is_empty(&self) -> bool {
++        self.pending.is_empty()
++    }
++}
++
++/// The `SymSink` silent-loss guard, restated: dropping a sink that still holds
++/// pending interns means a `snap` id may already sit in a rel row while its
++/// `_snapshot` decode row was never written, so the row's coordinate is
++/// unresolvable forever. Panic loud in debug rather than lose it quietly.
++impl Drop for SnapshotSink {
++    fn drop(&mut self) {
++        if cfg!(debug_assertions) && !self.pending.is_empty() && !self.flushed {
++            panic!(
++                "SnapshotSink dropped with {} pending intern(s) never flushed",
++                self.pending.len()
++            );
++        }
++    }
++}
++
++/// The `_strings` id of a repo slug, for the repo-scoped delete's WHERE clause.
++/// Computed, never looked up: `StringId::of` is a content hash.
++pub(crate) fn repo_sym(repo_slug: &str) -> i64 {
++    StringId::of(repo_slug).sqlite()
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    const OID: &str = "1234567890abcdef1234567890abcdef12345678";
++
++    fn rev() -> RevId {
++        RevId::worktree(OID, false)
++    }
++
++    #[test]
++    fn the_same_pair_mints_the_same_id_every_time() {
++        // INV-1: derivable with no database round trip, stable across files.
++        // Two independently-built ids, as two processes would produce.
++        assert_eq!(SnapshotId::of("sprefa", &rev()), SnapshotId::of("sprefa", &rev()));
++        assert_eq!(
++            SnapshotId::of_text("sprefa", OID),
++            SnapshotId::of("sprefa", &rev()),
++            "a live RevId and its stored text mint the same id"
++        );
++    }
++
++    #[test]
++    fn either_half_changing_changes_the_id() {
++        let base = SnapshotId::of("sprefa", &rev());
++        assert_ne!(base, SnapshotId::of("other-repo", &rev()));
++        assert_ne!(base, SnapshotId::of("sprefa", &RevId::worktree(OID, true)));
++    }
++
++    #[test]
++    fn the_dirty_marker_is_part_of_the_identity() {
++        // A dirty worktree is a different snapshot from its clean HEAD, because
++        // its bytes are different. The `+` rides into the hash via rev.text().
++        let clean = SnapshotId::of("sprefa", &RevId::worktree(OID, false));
++        let dirty = SnapshotId::of("sprefa", &RevId::worktree(OID, true));
++        assert_ne!(clean, dirty);
++    }
++
++    #[test]
++    fn a_shifted_boundary_between_the_halves_is_a_different_snapshot() {
++        // INV-2, the whole reason for the length prefix. Under a `format!`
++        // separator scheme these two collapse to one key the moment a slug
++        // contains the separator; under length prefixing they cannot.
++        assert_ne!(SnapshotId::of_text("ab", "c"), SnapshotId::of_text("a", "bc"));
++        assert_ne!(SnapshotId::of_text("a:b", "c"), SnapshotId::of_text("a", "b:c"));
++        assert_ne!(SnapshotId::of_text("", "ab"), SnapshotId::of_text("ab", ""));
++    }
++
++    #[test]
++    fn the_sentinel_is_reserved_and_never_minted() {
++        assert!(SnapshotId::NONE.is_none());
++        assert_eq!(SnapshotId::of_text("", ""), SnapshotId::NONE);
++        // An empty slug with a real rev is a REAL snapshot, not the sentinel:
++        // "unstamped" and "stamped with the empty repo" must stay distinct.
++        assert!(!SnapshotId::of_text("", OID).is_none());
++        assert!(!SnapshotId::of("sprefa", &rev()).is_none());
++    }
++
++    #[test]
++    fn sqlite_round_trips_through_the_i64_bit_pattern() {
++        let id = SnapshotId::of("sprefa", &rev());
++        assert_eq!(SnapshotId::from_sqlite(id.sqlite()), id);
++        assert_eq!(SnapshotId::from_sqlite(SnapshotId::NONE.sqlite()), SnapshotId::NONE);
++    }
++
++    #[test]
++    fn a_snapshot_id_is_not_the_string_id_of_either_half() {
++        // Domain separation: both id spaces run through hash64 and both land in
++        // INTEGER columns, so an accidental shared input would be a real bug.
++        let id = SnapshotId::of_text("sprefa", OID).sqlite();
++        assert_ne!(id, StringId::of("sprefa").sqlite());
++        assert_ne!(id, StringId::of(OID).sqlite());
++        assert_ne!(id, StringId::of(&format!("sprefa:{OID}")).sqlite());
++    }
++
++    #[test]
++    fn the_sink_queues_one_decode_row_per_intern() {
++        let mut sink = SnapshotSink::new();
++        assert!(sink.is_empty());
++        let first = sink.intern("sprefa", &rev());
++        let second = sink.intern("other", &rev());
++        let queued = sink.drain();
++        assert_eq!(queued.len(), 2);
++        assert_eq!(queued[0], (first, "sprefa".to_string(), OID.to_string()));
++        assert_eq!(queued[1].0, second);
++    }
++
++    #[test]
++    fn the_sink_agrees_with_the_bare_constructor() {
++        let mut sink = SnapshotSink::new();
++        assert_eq!(sink.intern("sprefa", &rev()), SnapshotId::of("sprefa", &rev()));
++        let _ = sink.drain();
++    }
++
++    #[test]
++    fn a_drained_sink_drops_clean() {
++        let mut sink = SnapshotSink::new();
++        sink.intern("sprefa", &rev());
++        let _ = sink.drain();
++        drop(sink); // must not panic
++    }
++
++    #[test]
++    #[should_panic(expected = "pending intern")]
++    fn dropping_a_sink_with_unflushed_interns_panics() {
++        let mut sink = SnapshotSink::new();
++        sink.intern("sprefa", &rev());
++        drop(sink);
++    }
++
++    #[test]
++    fn repo_sym_matches_the_intern_of_the_slug() {
++        assert_eq!(repo_sym("sprefa"), StringId::of("sprefa").sqlite());
++    }
++}
+diff --git a/src/spine.rs b/src/spine.rs
+index 241ff24d..46a468fe 100644
+--- a/src/spine.rs
++++ b/src/spine.rs
+@@ -302,7 +302,11 @@ pub fn normalize(value: &str) -> String {
+         .collect()
+ }
+ 
+-fn hash64(content: &[u8]) -> u64 {
++/// The spine's one content-hash primitive: blake3, truncated to its leading
++/// u64. Every id type in the engine (`StringId`, `FileId`, `SnapshotId`) is a
++/// domain-separated call to this, so they all share one collision story rather
++/// than each inventing a hash.
++pub(crate) fn hash64(content: &[u8]) -> u64 {
+     first_u64(blake3::hash(content).as_bytes())
+ }
+ 

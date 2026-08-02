@@ -1,0 +1,382 @@
+diff --git a/chat_log/20260722.0.v6-store-hermetic-perf-harness-dred-vs-dd-honest.md b/chat_log/20260722.0.v6-store-hermetic-perf-harness-dred-vs-dd-honest.md
+index ac3bb192..3e170588 100644
+--- a/chat_log/20260722.0.v6-store-hermetic-perf-harness-dred-vs-dd-honest.md
++++ b/chat_log/20260722.0.v6-store-hermetic-perf-harness-dred-vs-dd-honest.md
+@@ -1 +1 @@
+-20260722.2.v6-golden-data-1gb-cache-knob-mmap-redb-mermaid-map.md
++20260724.0.v6-sprefa-extract-ts-parity-gold-const-port.md
+diff --git a/chat_log/20260723.0.v6-sprefa-extract-golden-plan-1.md b/chat_log/20260723.0.v6-sprefa-extract-golden-plan-1.md
+new file mode 100644
+index 00000000..3cf2399b
+--- /dev/null
++++ b/chat_log/20260723.0.v6-sprefa-extract-golden-plan-1.md
+@@ -0,0 +1,118 @@
++# Session: v6-sprefa-extract-golden-plan-1 (continuation: the design lock)
++
++## Goal
++Finish the design of the `sprefa-extract` v6 crate (the leaf that turns a repo/corpus into graph facts), driving it from "type-math header" to a near-locked spec ready to implement. NOT implementation this session: distill the type system, settle the family/trait partitioning, the SCIP story, the CLI/streaming wire, the turnkey test plan, and reconcile every doc. Save to resume fresh for the build (commit 1 = the piping-proof CLI).
++
++## Current State
++Branch `plan/extract-golden-plan`, worktree `.claude/worktrees/extract-golden-plan`, tree clean, seed `cargo check` green. 7 commits this session on top of the prior session's `4de3357b`:
++- 7f27ad72 v6/plan: lock port + adapter rulings (Decision 9 adapter in main crate; Decision 10 port+clean, no buy-vs-buy gate)
++- 30e99e41 v6/seed: rewrite _7_tasks.rs as current-mind ledger
++- 8cbd495f v6/seed: unbind BlobSource from git (project=corpus, not repo)
++- 53de105f v6/seed: reconcile vs v5 sprawl; CST 5th family, turnkey tests, filesystem
++- e33eb4cc v6/seed: scope port to rust/ts/go; CLI + streaming wire (rxjs)
++- dd990366 v6/plan: reconcile golden plan to final state
++- 15cd1e52 v6/plan: strip em dashes
++The real crate `v6/sprefa-extract/` does NOT exist yet (commit 1 creates it).
++
++## Problem/Context
++Started the session mid-design with the prior session's 5 commits (seed type-math header + plan + async facade). This session pressure-tested and locked the design through a series of architectural questions. v5 sprawl: ~12.7K lines of per-lang extraction (rust/syn, ts/oxc, python/go/kotlin/tree-sitter) + scip + cst, with 3 kind reps, 4 span shapes, split identity (mint_sym/NodeIdx/WhereBytes), an eager engine, ~36GB RSS. The user wants max normalization WITHOUT false unification, rayon for CPU, sync core, reactivity elsewhere (RxJS prototype this iteration), a CLI that streams facts and races oxc, turnkey per-lang tests.
++
++## Solution/Approach (the locked design — canonical in _7_tasks.rs)
++The inversion stands: v5 mints coordinate strings inside the engine and writes rel tables; v6 emits span-addressed facts from a sync leaf and lets the store name them. This session's rulings:
++- D-families: families are TYPE-LEVEL. `Family` trait + marker structs (DfF/CallF/TypeF/ModuleF/CstF); `Node<F>`/`Edge<F>`; the `NodeKind`/`EdgeKind` SUMS DELETE. (Orthogonal axes aren't variants of one type; store splits by family anyway.) This killed the prefix-doubling smell the user flagged.
++- D-planes: 3 planes. RESOLUTION (Type|Call|Module, SCIP-wire, ratchet-able) + VALUE-FLOW (Df|Flow, native AST-only, the differentiator) + STRUCTURE (Cst, the lossless tree-sitter tree). Proved via a linear-independence argument that no family is a subset of another (Call needs cross-file resolution df lacks; Module is a family not a source; carries binding semantics SCIP/type flatten).
++- D-module: collapses. Resolution half -> SCIP namespace edges; binding half -> aux side metadata.
++- D-scip-wire: SCIP is a BIDIRECTIONAL wire (ScipOccurrence <-> Node<F>), not a one-way source. Our AST facts project OUT (joinable, ratchet-eligible); foreign indexers project IN. Round-trippable for the 3 resolution families ONLY (df/flow/cst/binding have no SCIP shape). Refines the user's "diet_scip" memory (v5 emitted facts in scip shape to join + ratchet best-producer).
++- D-ratchet: merge = per-fact best-producer-wins over N producers (Ast/Scip(&indexer)/Ghcacher). Producer tag rides the bundle, not the row. SCIP ground-truth for call/type/module is ONE rule, not the whole policy.
++- D-sync-only: the _6_facade async shell (ReactiveExtract/ProjectView) is CUT. Pure CPU + rayon; nothing awaits. Reactivity is the engine's (or the RxJS prototype's). SCIP build = std::process. (Supersedes the prior "sync core + async shell.")
++- D-adapter: the Node<F>->node_id / NameId->StrId / Span->file_bytes adapter lives ONCE in the main engine crate (doesn't exist yet; only sprefa-seed + sprefa-store exist).
++- D-port-clean, 3 langs: rust (syn), ts+js (oxc), go. python+kotlin deferred. Go has NO native Rust parser: Parser=tree-sitter, Project<F>/Resolve<F> walk the CST directly + scip-go. No buy-vs-buy gate.
++- D-concrete: concrete structs until a second impl.
++- identity: content-addressed, git-unbound. project = a corpus root (git worktree OR plain dir OR tarball); file = path + BlobHash; version (rev/now) is how bytes are FOUND, never the cache key. BlobSource is source-agnostic (GitShellout/Filesystem); git-fu (v5 repo.rs:1169 cat-file --batch, revid.rs) is ONE impl.
++- CPU trait factoring (one seam per dimension): Parser (syn/oxc/tree-sitter/ast-grep) / Project<F> (phase 1, content-keyed) / Resolve<F> (phase 2, project-keyed, reads ProjectCx) / Dispatch (ONE generic rayon orchestrator) / BlobSource / ScipSource. Closed vocabularies (kind enums, Producer, FamilyTag) stay enums; open extension points are traits.
++- CLI + streaming wire: a thin [[bin]] (clap + serde, NO tokio) wraps the sync lib, streams the FLAT tagged form (family, span, kind, name) as JSONL to stdout. Same flatten feeds the store seam + parity normalize (one flatten, three consumers). serde on the flat envelope, NOT on Node<F>. RxJS prototype drives it this iteration; the bin is also the purity-proof oracle vs biome/oxc.
++- turnkey tests: Tier-1 snapshot (one file + one fixture per lang; the codegen loop) + Tier-2 parity golden (v5-vs-v6 normalized diff; where v5's disparate inline tests unify behind the trait interface).
++
++## Tasks
++- [x] answer "parser buy-vs-buy": it's port+clean, inherit v5 roster, no gate (Decision 10)
++- [x] walk the meta typegraph; prove families are orthogonal axes (Call!⊂df, Module!⊂scip/type)
++- [x] fold the diet_scip refinement: SCIP bidirectional wire + ratchet
++- [x] define the uniform output (ExtractOutput) + Producer + ratchet
++- [x] /zoom 1 the meta map (7 strata)
++- [x] per-family trait system: delete NodeKind/EdgeKind sums, Family trait + Node<F>
++- [x] CPU trait factoring (Parser/Project<F>/Resolve<F>/Dispatch/BlobSource/ScipSource)
++- [x] BlobSource git-unbound; project=corpus; sync-only (cut facade)
++- [x] reconcile _7_tasks.rs vs v5 sprawl; CST 5th family; turnkey test plan; filesystem
++- [x] scope port to rust/ts/go; Go tree-sitter-only; CLI + streaming + rxjs
++- [x] reconcile the golden plan md to the final state; strip em dashes
++- [ ] (NEXT / build, fresh context) Commit 1: stand up v6/sprefa-extract/ crate; AstGrepParser + Project<CstF> (one Parser covers rust/ts/go); clap bin streaming flat JSONL with --bench; TS fixture + snapshot. The piping-proof easiest win, abides the seams.
++- [ ] Commits 2-4: oxc Parser TS + Project<TypeF> (oxc race) -> Project<CallF> -> Project<DfF> -> scip-typescript Resolve<*>
++- [ ] Commit 5: syn Parser + rust Project/Resolve
++- [ ] Commit 6: tree-sitter + scip-go
++- [ ] standing labs: arena-per-file RAM mastery; parallel dispatch + contention; flow_edge -> typed Flow<F>
++- [ ] mechanical: catch the seed code up to the per-family reshape (delete sums in _0_shape, cut _6_facade, add Family/Node<F>)
++
++## Files to Modify (next session, build phase)
++- v6/sprefa-extract/  NEW crate (does not exist; commit 1 creates it). Layout in _7_tasks.rs "Future filesystem": src/{lib,shape,family,rows,scip,seams,budget,project,output,wire,dispatch}.rs + src/lang/{rust,ts,go}.rs + src/bin/extract.rs + tests/{snapshot,golden_parity}.rs + fixtures/
++- v6/sprefa-seed/src/_3_extract/_0_shape.rs / _2_traits.rs / _6_facade.rs / mod.rs  (mechanical catch-up to per-family; delete NodeKind/EdgeKind sums, cut the facade)
++- v6/plans/2026-07-23-sprefa-extract-golden-plan.md  (the build sequence lives here; update as commits land)
++
++## Key Insights
++- Families are orthogonal axes, not variants: linear-independence proof (df is intra-procedural span-local; call is cross-file name-resolved; module is a family not a source and carries binding semantics; flow_edge is the diagonal joining df+call). Hence per-family types, never a sum.
++- CstF is a 5th family (the STRUCTURE plane): v5 cst.rs walk_cst enumerates the lossless named-node tree (node/child query rels, codemod anchors, spine). Coverage gap found in recon, closed. CstF kind is an OPEN interned grammar name (NameId), not a closed enum.
++- SCIP = bidirectional wire for the 3 RESOLUTION families only. df/flow/cst/binding have no SCIP shape and stay native. The ratchet governs the resolution plane; the "one query technique" goal is met by the in-memory _0_shape, not by forcing SCIP to carry value-flow.
++- The stdout JSONL wire = the store seam = the parity normalize: one flat tagged (family, span, kind, name) form, three consumers. serde on the flat envelope; Node<F> never crosses the seam or the stream.
++- ast-grep-as-Parser (not subprocess proxy) is what makes the piping proof abide the trait seams. ast-grep gives all 3 langs' grammars in one dep -> CstF piping proof lands for rust/ts/go at once.
++- "Don't leak the trait seams" = the wire is flat; Parser/Project<F>/Node<F> stay internal; the bin is the only public surface.
++- The user's banned-word + no-em-dash + dry style laws apply to docs too: both plan + ledger are at zero em dashes.
++- const_value: v5 brand [lit, template] (decls.rs:130); seed has 3 (+concat). Stays a Type-family aux. Reconcile variant count on port.
++
++## Open Questions
++- Commit 1 Parser lib: ast-grep (default; user floated it; skill covers API; one dep = 3 langs) vs tree-sitter directly (simpler API). Both abide. Lean ast-grep.
++- oxc arena AST API for Project<TypeF> (commit 2): confirm exact oxc AST walk at build time (perf:oxc-benchmarks / ast-grep skills).
++- git-fu lab: shellout vs libgit2 vs pack-index direct on linux-kernel-history class input (v5: shellout usually won).
++- k-CFA / node-level types / CFG-dominators: extract or engine? (evidence-gated frontier)
++- phase-2 placement (per-blob with prebuilt cx vs post-barrier) and the content-keyed phase-1 cache home (extract/engine/store): pin when the dispatch lab runs.
++
++## Context Files
++- v6/sprefa-seed/src/_3_extract/_7_tasks.rs  THE canonical current mind (scope, identity, 12 decisions, partitioning recon, family dimension, turnkey test plan, future filesystem, CLI/streaming, ExtractPlan proof tokens). Read first on resume.
++- v6/plans/2026-07-23-sprefa-extract-golden-plan.md  the narrative (recon, prior art, v5->v6 inversion) + the build sequence (commits 1-6 + standing labs).
++- v6/sprefa-seed/src/_3_extract/{_0_shape,_1_mask,_2_traits,_3_facts,_4_scip,_5_term,mod}.rs  the type math (still pre-refactor shape; REVISION notes point at per-family reshape).
++- v6/sprefa-store/src/{spine,tasks}.rs  the data model extract produces FOR + the parity-ledger pattern.
++- v5 (the port source): src/graph/typegraph/{rust/mod.rs,ts/mod.rs,go.rs}, src/cst.rs (walk_cst -> CstF), src/engine/decls.rs (kind brands), src/engine/repo.rs:1169 + revid.rs (git-fu), src/scip_import.rs, std/flow.dl:89.
++
++## Turn-by-turn Attribution Summary
++- (User) "when u say parser which bc we have shit loads of parser library integration code in v5 so expand on the buybuild goals... what are the main files for tracking here"
++- (Bot) Split parser-integration (~12.7K v5 lines) from the narrow buy-vs-buy (oxc-vs-ts for JS, syn-vs-ts for Rust); listed tracking files (plan, _3_extract/ header, store spine/tasks).
++- (User) "oh this is easy yes just port things and clean them up, we stop right at store integration, in the actual main crate we write the cross crate impl's there in 1 place"
++- (Bot) Recorded: Decision 9 (adapter in main crate), Decision 10 (port+clean); commit 7f27ad72.
++- (User) "idk if all that code is suppose to be that big, make sure there is a common trait for each language... walk me thru the type graph of the whole meta types"
++- (Bot) Read all seed files; drew the 4-stratum meta graph; showed families are NOT a trait axis in the seed (phase is).
++- (User) "how are calls not a subset of df and modules subset of scip/types? help me understand why or why not dont just fold to my whims... we had diet_scip mode"
++- (Bot) Linear-independence proof (Call!⊂df, Module!⊂scip/type); folded diet_scip as bidirectional wire + ratchet; drew the SCIP metagraph.
++- (User) "what if we figured out how to get df and flow into scip format so we could query as 1 technique?... modules are just statically inferred adhoc type system... enlighten me"
++- (Bot) Showed SCIP's symbol/occurrence/reference model can't carry value-flow without faking symbols; accepted module-as-namespace collapse; concluded uniform shape already lives in _0_shape, SCIP-wire for the 3 resolution families only.
++- (User) "what is uniform shape for output of scip/not-scip facts? that is fine"
++- (Bot) ExtractOutput (per-family bundles + aux) + Producer enum + ratchet; source identity on the bundle not the row.
++- (User) "hmm yes but lets /i:zoom 1"
++- (Bot) Z1 map of the uniform-shape model.
++- (User) "hmm not sure i love enums repeating prefix names, that smells like it should be a trait system mate"
++- (Bot) Agreed: delete NodeKind/EdgeKind sums; Family trait + Node<F>; family discriminant flat at the seam only.
++- (User) "this is hot, how are we going to traitfy/enums the parser/extraction/cpu heavy contracts again?"
++- (Bot) Z1 CPU factoring: Parser / Project<F> / Resolve<F> / Dispatch / BlobSource / ScipSource; enum-vs-trait rule.
++- (User) "also projects = repo, files = git file locations and content hashes. remember keep things purely graph theory and efficient rayon... if ur doing dumb things for sake of sync, stop and tell me why"
++- (Bot) Flagged the async facade as the dumb thing; cut _6_facade; sync-only; project=repo (later unbound).
++- (User) "we are capturing usage of git for getting rev files from blob efficiently... we want this layer to handle git-fu... track our current mind in the relevant tasks.rs"
++- (Bot) Rewrote _7_tasks.rs as the current-mind ledger; added BlobSource (cited v5 repo.rs:1169, revid.rs).
++- (User) "we may also not have files in a git repo mate, dont overbind to that"
++- (Bot) Unbound BlobSource from git (project=corpus; GitShellout/Filesystem); commit 8cbd495f.
++- (User) "okay typegraph me, how does the map of the types we are suggesting look"
++- (Bot) Z1 7-stratum typegraph map (atoms -> store seam) + runtime traversal.
++- (User) "reconcile our tasks.rs then this is almost a lock, double check ur partitioning... golden test... turnkey test plan... single file per lang... imagine the future filesystem"
++- (Bot) Recon (CstF 5th-family gap closed; per-lang uniform); reconciled _7_tasks.rs (CstF, turnkey tests, filesystem); commit 53de105f.
++- (User) "lets only bring over typescript/js, rust, and golang... go has no rust helper outside treesitter... shell out to stdout streaming of facts... run from literal rxjs prototype... needs clap and serde... does that wrench anything?"
++- (Bot) No wrench (confirms sync-only); 3-lang scope; Go tree-sitter-only; CLI+streaming flat wire (one flatten, three consumers); serde lib / clap bin / no tokio; commit e33eb4cc.
++- (User) "do we have enough of a plan... easiest win first, maybe ast-grep proxy to prove piping? whats that look like? race against oxc... oxc+scip typescript only then rust and go, min token but abide and do not leak the trait seams"
++- (Bot) Enough plan yes; showed ast-grep-as-Parser CstF (abides) vs subprocess proxy (leaks); commit sequence 1-6; --bench harness.
++- (User) "yes but update and reconcile all docs we are saving session to clear and resume w new context"
++- (Bot) Rewrote the golden plan md to final state (commit dd990366); stripped em dashes (15cd1e52); saving session.
+diff --git a/chat_log/20260723.1.v6-sprefa-extract-build-1-2.md b/chat_log/20260723.1.v6-sprefa-extract-build-1-2.md
+new file mode 100644
+index 00000000..37129846
+--- /dev/null
++++ b/chat_log/20260723.1.v6-sprefa-extract-build-1-2.md
+@@ -0,0 +1,164 @@
++# Session: v6-sprefa-extract-build-1-2 (the BUILD: commits 1-2 land + a TypeF decision ironed)
++
++## Goal
++Execute the locked v6 sprefa-extract design (prior session `-golden-plan-1` locked
++the type math). Build commits 1 (piping proof) and 2 (oxc TypeF), each ending
++green, then settle whether commit 2's callable-in-TypeF model is right. NOT a
++design session; the design was locked. Resume fresh for commit 3 (CallF + DfF).
++
++## Current State
++Branch `plan/extract-golden-plan`, worktree `.claude/worktrees/extract-golden-plan`.
++Real crate `v6/sprefa-extract/` NOW EXISTS (commit 1 created it). Build order
++1->2->3 confirmed fine. 3 new commits this session on top of prior `4de3357b`:
++- 6a29d920  commit 1   CstF via ast-grep (one dep = rust/ts/tsx/js/go grammars);
++             clap bin streaming flat JSONL + --bench; snapshot. Piping proof.
++- f3ceb4fa  commit 2a  Parser/Project seam -> arena-passing GAT (oxc's Program<'a>
++             borrows its Allocator; dispatch owns the arena across parse+project).
++- 4fbf9a68  commit 2b  OxcParser + Project<TypeF> (v5 ts_entities_from port).
++`cargo check` lib+bin green; `cargo test` green (CstF + TypeF snapshots, 246 facts
++off the TS fixture); `cargo tree` clean of tokio/sqlx/sea-orm/rusqlite/axum, clap
++bin-only-gated; public API names no store-id type. Seed `cargo check` green.
++
++## Problem/Context
++The prior session locked families as type-level (Family trait + Node<F>), 3 planes
++(RESOLUTION Type|Call|Module / VALUE-FLOW Df|Flow / STRUCTURE Cst), sync-only,
++port+clean v5 (rust/syn, ts/oxc, go/tree-sitter). This session: stand up the real
++crate and port. ast-grep/oxc/git-fu are v5-solved PORTS (carried v0->v6), NOT labs
++to relitigate (user corrected my framing of them as open questions). oxc's
++Program<'a> borrows its Allocator -> the Parser seam can't return an owned Parsed
++the way ast-grep does -> forced the GAT arena-passing generalization (commit 2a).
++A scip-typescript oracle run surfaced an apparent "callable in wrong family"
++question that, on reading v5's tests, turned out to be a deliberate design, not a
++bug (see Key Insights).
++
++## Solution/Approach
++- Commit 1: standalone workspace crate (mirrors sprefa-store pattern); atoms +
++  Family/CstF + Node<F>/Edge<F>/FamilyBundle<F> + flat wire (serde on the envelope,
++  not Node<F>) + Parser/Project traits + single-threaded dispatch + clap bin (--bench
++  parse/walk/serial; clap gated behind `cli` feature so lib tree excludes it).
++  AstGrepParser uses SupportLang::from_path; CstF walk ports v5 cst.rs walk_cst
++  (named-only, reparent unnamed) via ast-grep's Node API (is_named/kind/range/
++  children) — no raw tree-sitter, truest "ast-grep is the Parser."
++- Commit 2a: generalize Parser/Project to GAT — `type Arena; type Parsed<'a>`;
++  parse takes `&'a Self::Arena` + `content: &'a [u8]`. ast-grep: Arena=(); oxc:
++  Arena=oxc_allocator::Allocator, Parsed=Program<'a>. dispatch holds arena.
++- Commit 2b: OxcParser + TypeProjector porting v5 ts_entities_from -> Node<TypeF>
++  {span, TypeEntityKind, name}. TypeEntityKind(9) ported verbatim (class/interface/
++  alias/enum/function/method + struct/trait/const). Constructor + non-function
++  consts skipped (v5 rule). Type EDGES (field/impl/uses/param/returns) deferred to
++  Resolve<TypeF> (commit 4). oxc pinned 0.135 (== v5).
++- D-arrow-type (ironed decision, retracted an earlier "trim TypeEntityKind"): KEEP
++  Function/Method in TypeF. Rationale: v5 test ts_entities_kinds_lines_and_arrow_types
++  (v5 typegraph/ts/mod.rs:1275), line 1304 comment "a function IS a type: [A]=>B" —
++  the TypeF entity carries the arrow signature + owns param/returns/uses type-edges.
++  TypeF = the TYPE facet; CallF (commit 3) = the CALL facet (def/sites/resolution).
++  Two orthogonal projections of one declaration, NOT false unification.
++
++## Tasks
++- [x] commit 1: sprefa-extract crate + AstGrepParser + Project<CstF> + clap bin + snapshot
++- [x] commit 2a: generalize Parser/Project seam to arena-passing GAT
++- [x] commit 2b: OxcParser + Project<TypeF> (ts_entities_from port) + TypeF snapshot
++- [x] run the scip-typescript oracle on the fixture; reach the D-arrow-type verdict
++- [x] update _7_tasks.rs (BUILD STATUS + D-arrow-type) + the golden plan md
++- [ ] commit 3: Project<CallF> (call defs/sites) then Project<DfF> (value flow). Ports
++      v5 ts_call_defs_from / TsCallSites / ts_dataflow_from. The CALL facet + the value
++      facet. snapshot + (from commit 2) parity golden vs v5.
++- [ ] commit 2b PAYLOAD gap: emit the arrow-type (TypeExpr params/ret) + the
++      Param/Returns/Uses edges so TypeF callable entities are not skeletons. Lands at
++      resolution (commit 4 scip-typescript) OR a same-file edge pass. DECIDE timing.
++- [ ] const-value facet: port ts_const_facts_from (string-bearing consts -> TypeF
++      entity + const_value rows). origin-style non-string consts stay df value nodes.
++- [ ] Tier-2 parity gate (the plan's named correctness gate, currently UNBUILT):
++      capture-snapshot bridge (run v5 once at root, commit normalized output, v6
++      diffs) OR root parity crate. NOT byte-identical to scip by construction.
++- [ ] standing labs: arena-per-file RAM; parallel dispatch + contention; flow_edge -> Flow<F>
++- [ ] mechanical: catch seed _3_extract up to per-family (delete NodeKind/EdgeKind sums
++      in _0_shape, cut _6_facade, add Family/Node<F>). The real crate already has the
++      post-refactor shape; the seed is still pre-refactor.
++
++## Files to Modify (next session, commit 3 + the payload gap)
++- v6/sprefa-extract/src/lang/oxc.rs  ADD arrow-type payload to TypeProjector (the
++  TypeExpr params/ret via ts_fn_type port) +, for commit 3, split CallF/DfF walks.
++- v6/sprefa-extract/src/family.rs  ADD CallF (+CallNodeKind{Free,Method,Lambda},
++  CallEdgeKind) and DfF (+DfNodeKind(23), DfEdgeKind) markers.
++- v6/sprefa-extract/src/{wire,dispatch,lib,lang/mod}.rs  add flatten_call/flatten_df
++  + dispatch_call/dispatch_df + exports.
++- v6/sprefa-extract/src/bin/extract.rs  stream the new families.
++- v6/sprefa-extract/tests/{snapshot.rs, fixtures/ts/sample.*.snap}  new family snaps.
++- v6/sprefa-seed/src/_3_extract/_7_tasks.rs  + v6/plans/2026-07-23-...md  (the ledger;
++  BUILD STATUS + D-arrow-type now current).
++
++## Key Insights
++- ast-grep as Parser: SupportLang::from_path + AstGrep::new + Node API (is_named/
++  kind/range/children). One dep = rust/ts/tsx/js/go. The CstF walk stays inside
++  ast-grep's Node API (no raw tree-sitter). API verified at ast-grep-core 0.38.7
++  (pub type AstGrep<D> = Root<D>; StrDoc.tree is pub but Root.doc is pub(crate)).
++- The GAT seam is forced by oxc, not gold-plating: Program<'a> borrows Allocator +
++  source text, so it cannot be returned owned. ast-grep sets Arena=(); oxc sets
++  Arena=Allocator. The seed _2_traits designed for this (parse(&arena) -> Cst<'a>).
++- "A function IS a type" (D-arrow-type): functions/methods are TypeF entities to
++  carry arrow types + own signature type-edges. TypeF=type facet, CallF=call facet.
++  Two projections, not duplication. v5 test locks it. DO NOT trim TypeEntityKind.
++- scip-typescript (0.4.0, installed) is the Glean-class oracle BUT the diff is NOT
++  byte-identical: scip is a flat exhaustive symbol table; v5/v6 model callable
++  arrow-types in the type graph + exclude value-consts from TypeF. scip's `#`
++  suffix lumps interface/class/enum/alias (can't sub-discriminate; its kind field is
++  Unspecified) — so v6 is MORE granular on type-kind than scip. The real gate is
++  occurrence/resolution parity (commit 4 ratchet), not raw symbol diff.
++- Commit 2b's callable entities are SKELETONS: kinded but missing the arrow-type
++  payload + edges that justify their presence in TypeF. Honest sequencing gap, not
++  a bug. Surfaced by the user's "are these good or bad" question.
++- The current tests (Tier-1 self-snapshots) prove piping + determinism ONLY. They
++  compare to NOTHING (not v5, not scip). The plan's Tier-2 parity gate is unbuilt.
++- oxc identifier names: BindingIdentifier.name is Ident<'a>; StaticIdentifier.name
++  is an Atom; both .to_string()-able. push_entity takes impl AsRef<str>. (v5 proves
++  the accessor at this oxc version.)
++- bin eprintln for --bench stats is fine (v6 bin CLI UX, not v5 src/ daemon).
++
++## Open Questions
++- Arrow-type payload timing: fill it in BEFORE commit 3 (so TypeF callables aren't
++  empty shells) or during commit 4 (resolution)? User leaned "iron it out first" —
++  suggests filling the payload before stacking commit 3 on hollow entities.
++- Tier-2 bridge: capture-snapshot (preserves v6 isolation; recommended) vs root
++  parity crate (live but pulls v5 into the build).
++- const-value facet timing (string-values arc) relative to commit 3.
++- Git-fu BlobSource::GitShellout + the content-keyed phase-1 cache home (extract/
++  engine/store) — pin when the dispatch lab runs.
++
++## Context Files (re-read on resume)
++- v6/sprefa-extract/src/lang/{mod,astgrep,oxc}.rs  the two Parsers + projectors (oxc.rs
++  is where the arrow-type payload gap + commit-3 CallF/DfF splits land).
++- v6/sprefa-extract/src/{shape,family,rows,seams,wire,dispatch,lib}.rs  the post-
++  refactor type math (this IS the per-family shape; the seed is pre-refactor).
++- v6/sprefa-extract/tests/{snapshot.rs, fixtures/ts/sample.ts, *.snap}  the gate.
++- v6/sprefa-seed/src/_3_extract/_7_tasks.rs  THE canonical current mind (BUILD STATUS
++  + D-arrow-type + the 12 decisions). Read first.
++- v6/plans/2026-07-23-sprefa-extract-golden-plan.md  build sequence (commits 1-6).
++- v5 (port source): src/graph/typegraph/ts/mod.rs (ts_entities_from :438,
++  ts_edges_from :103, ts_entities_kinds_lines_and_arrow_types test :1275,
++  ts_function_param_return_and_body_edges :1315, ts_fn_type :909), src/cst.rs
++  walk_cst :27, src/sg.rs (SgRoot/AstGrep::new), src/graph/typegraph/mod.rs
++  (EntityKind/TypeEntity/TypeFacts, source_type_for :506).
++- Build/run: `cargo check --manifest-path v6/sprefa-extract/Cargo.toml` (lib);
++  `... --features cli` (bin); `cargo test ... --test snapshot`;
++  `UPDATE_SNAP=1 cargo test ... --test snapshot` (regenerate snaps).
++
++## Turn-by-turn Attribution Summary
++- (User) /load-session (no arg) -> loaded 20260723.0 (the design-lock session).
++- (Bot) Summarized the locked design + open questions; asked what to tackle first.
++- (User) ast-grep please; ast-grep/oxc/git-fu are v5 ports not labs; explain k-CFA + phase-2/cache.
++- (Bot) Explained k-CFA/CFG-dominators (engine-side, frontier) + phase-2/cache (pin at dispatch lab); located v5 ast-grep(sg.rs)/oxc(ts/*)/git-fu(repo.rs:1152/1169 + revid.rs).
++- (Bot) Read v5 sg.rs + cst.rs; loaded ast-grep-core skill; verified ast-grep 0.38.7 API (AstGrep=Root, Node.children/is_named/kind/range, SupportLang::from_path).
++- (Bot) Built commit 1: scaffolded v6/sprefa-extract (13 files); AstGrepParser + Project<CstF> porting walk_cst; clap bin + --bench; snapshot. Fixed 2 compile errors (fmt import, Language trait scope). Generated snap via UPDATE_SNAP. Green.
++- (User) "1 then 2".
++- (Bot) Commit 1 git-committed (6a29d920) + ticked plan/ledger. Started commit 2: read v5 ts_entities_from; found oxc Program<'a> borrows Allocator -> forced GAT seam generalization (commit 2a, f3ceb4fa, CstF still green). Then commit 2b: OxcParser + TypeProjector (TypeEntityKind 9 verbatim); fixed oxc Ident/Atom accessors (.to_string + impl AsRef<str>); enriched fixture; regenerated snaps. Green (246 facts). Committed (4fbf9a68).
++- (User) "what are tests saying compared to v5 source oracle or other known intraprocedural tool?"
++- (Bot) Honest: tests are self-snapshots, compare to NOTHING; plan's Tier-2 parity gate unbuilt. Laid out v5-is-callable oracle + the capture-snapshot bridge.
++- (User) "i mean like glean or actual scip or anything mate"
++- (Bot) Ran the real oracle: scip-typescript 0.4.0 on the fixture -> index.scip; parsed via throwaway scip-crate reader (/tmp, no repo pollution). Diffed: 5 name agreements, 3 divergences (sub/magnitude/origin). Noted scip lumps type-kinds (#) so v6 is MORE granular. Proposed wiring Tier-2.
++- (User) "can we figure it out first, should we keep these changes good or bad, need ironed out"
++- (Bot) (PREMATURE) recommended trimming TypeEntityKind to pure types, moving callables to CallF, calling commit 2's callable entities wrong-family.
++- (User) "we added those for a reason, does v5 tests say why?"
++- (Bot) Read v5 test ts_entities_kinds_lines_and_arrow_types (:1275, line 1304 "a function IS a type"). RETRACTED the trim recommendation: functions/methods are TypeF entities to carry arrow types + own signature edges (D-arrow-type); TypeF=type facet, CallF=call facet, two projections not duplication. Verdict: KEEP commits 1-2. Caveat: commit 2b callable entities are skeletons (no arrow-type payload yet; lands at commit 4); const-value facet unported.
++- (User) /save-session "we gotta compact but order fine 1->2->3, update tasks.rs/ts appropriately"
++- (Bot) Updated _7_tasks.rs (BUILD STATUS block + D-arrow-type decision) + plan md commit-2 receipt; saving session.
+diff --git a/chat_log/20260724.0.v6-sprefa-extract-ts-parity-gold-const-port.md b/chat_log/20260724.0.v6-sprefa-extract-ts-parity-gold-const-port.md
+new file mode 100644
+index 00000000..b32f8cac
+--- /dev/null
++++ b/chat_log/20260724.0.v6-sprefa-extract-ts-parity-gold-const-port.md
+@@ -0,0 +1,75 @@
++# Session: v6-sprefa-extract-ts-parity-gold-const-port
++
++## Goal
++Migrate v5's TS extraction fully into v6 (`sprefa-extract`) behind the uniform surface (`Source` / `Project<F>` / `ExtractOutput`), proven by a v5↔v6 parity golden. User-scoped this arc to **TS parity gold first**; rust (syn), go (tree-sitter+scip-go), and SCIP resolution (commit 4) are deferred follow-ons.
++
++## Current State
++Branch `plan/extract-golden-plan`. Three commits landed this session, all green (`cargo test` lib+bin+tests, `cargo tree` clean of tokio/sqlx/sea-orm/rusqlite/axum):
++- `78f919e8` **Epic U — the uniform surface**: `source.rs` (`Source` trait + `FamilyMask` + `ExtractOutput`) + `TsSource`/`AstgrepSource` behind a first-match `sources()`/`source_for()` roster. Collapsed 4 `dispatch_*` → one `dispatch(path,content,mask)`; 8 `flatten_*` → one `flatten`+`flatten_jsonl`; hand bin → `dispatch`+`flatten`+`--family`; 4 hand tests → one loop-driven `ts_uniform_surface` + roster test. `lang/oxc.rs` renamed `lang/ts.rs`.
++- `d192c63f` **Tier-2 parity gold (TS)**: `examples/v5_normalize.rs` (v5 in-process oracle) → committed `sample.v5.jsonl` → `tests/golden_parity.rs` twin-normalizes v6 `flatten` + diffs. Found + fixed ONE divergence: `CallKind::Free` tag `"free"`→`"function"` (v5 `call_def.kind`).
++- `eb4d8238` **const facet port (v5 model restored)**: `ConstWalker` (port of `ts_const_facts_from`) + `ConstValue`/`ConstKind` in `TypeFAux.consts` + `FlatFact::Const`. Added `consts.ts` fixture. Parity green: 5 Const entities + 11 const_value rows byte-match v5.
++
++## Problem/Context
++v5 extraction is a ~16.7K-line tangle (`mint_sym`, 3 span shapes, 3 kind reps, `NodeKind` sum) welded to sqlite; v6 rebuilds it as a normalized SYNC leaf (one byte `Span`, typed kinds, span-addressed identity, no DB). **v6 is a deliberately-isolated workspace** (its own `[workspace]`, "no v5 in the build graph") — so parity CANNOT be a live v5 link; it must be a **captured oracle**. v5's `TypeLang::extract/extract_calls/extract_dataflow` take just `(file, content)` → in-process, no DB, so the oracle is trivial to run. The const facet had been mis-framed as a false dichotomy ("consts stay df" → dropped the string-const entity v5 kept); user corrected: "do what 5 did."
++
++## Solution/Approach
++- **Uniform surface (Epic U)**: `Source` (name/matches/extract) is the `TypeLang` analog; `FamilyMask` gates families; `ExtractOutput` = one shared `Strings` + `Option<FamilyBundle<F>>` per family. Shared interner is byte-stable (flatten resolves NameId→&str at output). `TsSource::extract` = ast-grep for cst + ONE oxc parse feeding type/call/df.
++- **Captured-oracle parity**: `examples/v5_normalize.rs` (v5 root crate) runs `TsTypes.extract` in-process + emits canonical sorted tab-lines; committed as `<name>.v5.jsonl`; `golden_parity.rs` produces the SAME canonical lines from v6's `flatten` and asserts the PORTED set matches. **Coordinates**: df is byte-exact (v5 line+0-based-byte-col round-trips to v6 `Span.start`); type/call/const are line-exact (v5 drops byte offsets there, keeping only 1-based `line`). PORTED facets: type_node/type_sig/call_def/call_site/df_node/df_edge/const_value. DEFERRED v5-only: type_edge, df aux, docs. v6-only: cst (v5 has NO TS tree-sitter grammar → incomparable).
++- **Const port**: `ConstWalker` descends for string-bearing `const`/`as const` bindings → Const `Node<TypeF>` + `ConstValue` rows (lit cooked / template raw slice; object→dotted field paths; string-enum members key off enum entity). Driven from `TsSource::extract` (needs source bytes for template slices, which `Project::project` doesn't receive). v6 drops v5's scope/sym machinery (spans disambiguate).
++
++## Tasks
++- [x] Epic U uniform surface (`78f919e8`)
++- [x] Parity gold bridge + `golden_parity.rs` (`d192c63f`)
++- [x] Const facet port + `consts.ts` fixture (`eb4d8238`)
++- [ ] **type_edge** port — v5 emits AST-derived edges (field/impl/variant/uses/generic); v6 defers ALL type edges to `Resolve<TypeF>` commit 4 (SCIP). Decision pending: pull commit 4 forward, or port AST-edges in phase 1?
++- [ ] **rust (syn)** — `SynParser` + `RustSource` in roster; parity vs v5 `typegraph/rust`
++- [ ] **go (tree-sitter + scip-go)** — `TsParser` + `GoSource`
++- [ ] df aux (args/fields/lits/param_pos) — labels, not graph
++- [ ] docs facet
++
++## Files to Modify
++- v6 crate: `v6/sprefa-extract/src/{family,lang/ts,lang/astgrep,lang/mod,wire,source,dispatch,lib,seams,shape}.rs`, `src/bin/extract.rs`
++- tests: `v6/sprefa-extract/tests/{snapshot,golden_parity}.rs` + `tests/fixtures/ts/{sample,consts}.{ts,*.snap,*.v5.jsonl}`
++- oracle: `examples/v5_normalize.rs` (v5 root crate)
++- ledger: `v6/sprefa-seed/src/_3_extract/_7_tasks.rs` (BUILD STATUS)
++- plan: `v6/plans/2026-07-23-sprefa-extract-golden-plan.md`
++- v5 port source (read-only ref): `src/graph/typegraph/{mod,ts/mod,ts/flow}.rs`, `src/cst.rs`
++
++## Key Insights
++- **Parity = captured oracle, never a live link** (v6 workspace deliberately isolated; v5 is the sqlite/tokio disease).
++- **Span lossiness**: v5 keeps byte offsets only for cst + df; type/call/const/doc are line-only. Parity is byte-exact for df, line-exact elsewhere.
++- **v5 has NO TS tree-sitter grammar** → CST parity impossible; v6 cst (ast-grep) is v6-only.
++- **CallKind::Free** tag must be `"function"` (v5), not `"free"` (v6 coinage) — for parity + wire compat.
++- **Const false dichotomy corrected**: a string const is a declaration (TypeF Const entity) AND a value (df `let_bind` node) AND carries its text (`const_value`) — all three, like v5; the df node is separate and unaffected.
++- `TypeLang::extract(file, content)` needs no DB/ProjectCx → in-process oracle is trivial.
++- v6 needs none of v5's `mint_sym`/scope machinery — spans disambiguate.
++- `Project::project` doesn't receive source bytes → any facet needing raw slices (template text) must run from `TsSource::extract`.
++
++## Open Questions
++- **type_edge**: port AST-derived edges in phase 1, or keep deferred to `Resolve<TypeF>` (commit 4 / SCIP)? v5 emits them in `extract`; v6's design routes type edges through SCIP resolution. This is the biggest remaining TS gap (3 edges on consts.ts, 10 on sample.ts).
++- df aux (args/fields/lits): port (enables string-flow/arg-slot queries) or leave labels-only?
++- docs facet: port?
++
++## Context Files
++- `v6/sprefa-seed/src/_3_extract/_7_tasks.rs` — the BUILD STATUS ledger (canonical current mind; commits 1-3c + parity + const entries)
++- `v6/plans/2026-07-23-sprefa-extract-golden-plan.md` — the plan (Epic U stamped DONE; build sequence commits 1-6)
++- `v6/sprefa-extract/tests/golden_parity.rs` — the parity contract (PORTED set, canonical line format, CASES loop)
++- `examples/v5_normalize.rs` — the v5 oracle harness (canonical line format must match golden_parity twin-normalize)
++- `v6/sprefa-extract/src/lang/ts.rs` — TsSource + Type/Call/Df projectors + ConstWalker
++- `src/graph/typegraph/ts/mod.rs` — v5 TS extractor (port source for type_edge + remaining facets)
++
++## Turn-by-turn Attribution Summary
++- (User) After compact: "read the files please" — re-read the plan + ledger.
++- (LLM) Mapped the crate; implemented Epic U (uniform surface, collapsed dispatch/wire/bin/tests); committed `78f919e8`.
++- (User) "do we have an absolute parity map anywhere, show me ur results in a golden test where are they"
++- (LLM) Reported: no v5↔v6 parity map; only Tier-1 self-snapshot (`ts_uniform_surface`) + 4 snaps; the parity golden (`golden_parity.rs`) was designed-but-unwritten. Showed counts (cstf 421, dff 71, typef 17, callf 13 facts).
++- (User) "yes its time to go for gold on this yes, we want basically v5 extracted and cleaned up... migrate everything over thanks"
++- (LLM) Recon: v5/v6 are separate Cargo trees → captured-oracle required. Launched 2 Explore agents (sonnet) mapping v5 TS extraction surface + invocation/tests. AskUserQuestion on scope.
++- (User) Scope answer: "TS parity gold first" (rust/go/resolution deferred).
++- (LLM) Built `examples/v5_normalize.rs` + `golden_parity.rs`; first diff showed ONE divergence (CallKind::Free "free" vs "function"); reverted to "function"; parity green; committed `d192c63f`.
++- (User) "what is 2 use caveman speak"
++- (LLM) Explained decision #2 (const facet exclusion) in caveman speak.
++- (User) "can we do both wait what this was a terrible description"
++- (LLM) Corrected the false dichotomy: const = 3 orthogonal projections (TypeF Const entity + const_value + df node); v5 does all three; "both" yes, and actually all three.
++- (User) "do what 5 did, this is where 5 was correct"
++- (LLM) Ported const facet (`ConstWalker` + `ConstValue`/`ConstKind` + `FlatFact::Const`); added `consts.ts` fixture; parity green (5 Const entities + 11 const_value rows byte-match v5); committed `eb4d8238`.
