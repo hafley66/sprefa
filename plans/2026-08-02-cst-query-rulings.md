@@ -31,6 +31,60 @@ Every load-bearing citation below was coordinator-verified against the code.
    (tree_sitter_query)`, SYNTAX.md:330) should be a thin tree-sitter query
    wrapper in sprefa-extract, or a port of v5 `run_ts`.
 
+## Picture 1 — the ruled pipeline (solid = exists, dashed = unbuilt)
+
+```mermaid
+flowchart TB
+  subgraph COMPILER["prolog compiler (compile time)"]
+    SUGAR["S-expr sugar<br/>DCG in parse_dl.pl"]:::unbuilt --> TERM["ts_query/1 term<br/>registry.pl:193 live"]
+    TERM --> EMIT["ts_pattern_text/2<br/>1_host_expand.pl:414-478<br/>refuses unmapped shapes"]
+  end
+
+  subgraph ENGINE["engine runtime = TS + sqlite (demand, cache, joins, splice)"]
+    GOALS["query goals"] --> NEED["cst_need path,content_hash,lang"]:::unbuilt
+    FILES["files P  (eager = demand-set,<br/>same path, wider set)"] -.optional warm-up.-> NEED
+    NEED --> CACHE{"effect_cache<br/>digest = host + path + hash<br/>+ lang + grammar_hash + query"}
+    CACHE -- hit: zero spawn --> DB
+    CACHE -- miss --> FIRE["fire extract host"]
+    DB[("sqlite<br/>node id,kind,span<br/>child parent,child,ordinal,field")] --> JOINS["joins + derived typed views<br/>inside/has = interval containment<br/>lo_x &lt; lo_y AND hi_y &lt; hi_x"]
+    JOINS --> AGG["group_concat / json_group_array<br/>(landed, ordered_aggregate_arc)"]
+    AGG --> STAGE["splice rows path,start,end,text"]
+    STAGE --> APPLY["staged-writes apply arm"]
+  end
+
+  subgraph HOST["sprefa-extract = rust CPU workhorse (stateless, No DB, no async)"]
+    RUNNER["tree-sitter query runner<br/>port v5 run_ts eval.rs:1047<br/>or wrap ast-grep-core"]:::unbuilt
+    PARSE["ONE parse per file serves:<br/>CST facts + pattern matches + fixed families<br/>rayon parallel, in-run AstTreeCache"]
+    RUNNER --> PARSE
+    PARSE --> ROWS["JSONL match/fact rows"]
+  end
+
+  EMIT == "query text crosses the host boundary<br/>(compiler blind past here - acked caveat)" ==> RUNNER
+  FIRE --> RUNNER
+  ROWS --> DB
+
+  classDef unbuilt stroke-dasharray: 5 5
+```
+
+## Picture 2 — decision dependencies, with today's rulings
+
+```mermaid
+flowchart LR
+  D4["4 span = flat ints<br/>RULED"] --> D1["1 schema = generic<br/>node + child<br/>RULED"]
+  D1 --> D2["2 lowering = STRING<br/>RULED unanimous"]
+  D1 --> D5["5 demand = LAZY<br/>RULED unanimous"]
+  D5 --> D8["8 grammar hash<br/>in effect digest<br/>RULED"]
+  D2 --> D6["6 ts predicates<br/>ride the string"]
+  D2 --> D3["3 captures explode,<br/>aggregate via landed fold"]
+  D1 --> D7["7 inside/has =<br/>interval containment"]
+  D4 --> D9["9 rewrite =<br/>splice rows"]
+  D1 --> D10["10 trivia plane<br/>OPEN - A14"]:::open
+  CACHE2["caching = engine-side<br/>effect_cache RULED"] --> D5
+  EXEC["executor = sprefa-extract<br/>RULED"] --> D2
+
+  classDef open stroke-dasharray: 5 5
+```
+
 ## Consensus defaults carried from the first flash/kimi planning round
 
 - Schema: generic `node` + `child` (+ ordinal, field), typed views derived;
