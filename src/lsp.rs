@@ -100,10 +100,8 @@ pub fn run_lsp(
     // returns before any of the engine-boot code below executes, so the
     // default `--lsp` path (no `--diag-db`) is byte-for-byte unchanged.
     if let Some(diag_db_path) = diag_db {
-        run_diag_db_mode(&connection, &root, diag_db_path)?;
-        drop(connection);
-        io_threads.join()?;
-        return Ok(());
+        let clean_shutdown = run_diag_db_mode(&connection, &root, diag_db_path)?;
+        return finish_lsp(connection, io_threads, clean_shutdown);
     }
 
     // Storage-endgame L2: the defaulted db is the per-root db, keyed off the
@@ -203,6 +201,9 @@ pub fn run_lsp(
             .spawn(move || spawn_daemon_subscriber(root_clone, push_sender))?;
     }
 
+    // True only when the client sent `shutdown` before `exit`; that pair is the
+    // spec's exit-code-0 case, everything else (bare `exit`, stdin EOF) is 1.
+    let mut clean_shutdown = false;
     for msg in &connection.receiver {
         // Synthetic internal notification: daemon pushed diag_changed. The
         // `paths` field carries the watcher's changed paths (absolute); empty
@@ -319,6 +320,7 @@ pub fn run_lsp(
                     }
                     _ => {
                         if connection.handle_shutdown(&req)? {
+                            clean_shutdown = true;
                             break;
                         }
                     }
@@ -353,9 +355,42 @@ pub fn run_lsp(
             Message::Response(_) => {}
         }
     }
+    finish_lsp(connection, io_threads, clean_shutdown)
+}
+
+/// End an LSP session: drop the transport and settle the process exit code.
+/// `clean_shutdown` is true when the client sent `shutdown` before `exit`, which
+/// the LSP spec pins to exit code 0; anything else (a bare `exit`, stdin EOF) is
+/// exit code 1.
+///
+/// `IoThreads::join` is deliberately NOT called. Both background senders here —
+/// the daemon-push subscriber and the `--diag-db` poll thread — hold a clone of
+/// `connection.sender` for their whole life, and neither is interruptible (one
+/// blocks in a UDS SSE read, the other sleeps between polls and only notices a
+/// dead channel on its next send). lsp-server's writer thread ends only when
+/// every clone of that sender is gone, and `join` waits for the writer, so the
+/// join blocked forever after `exit` (sampled: main in `pthread_join`,
+/// `LspServerWriter` parked in `recv`, `dl-lsp-diag-db-poll` alive). Dropping
+/// the handles detaches those threads; the process tears them down on the way
+/// out. Messages are safe to abandon at this point: the outgoing channel is
+/// rendezvous, so every send but the last has already been written and flushed,
+/// and the last one is the shutdown response the client answered with `exit`.
+fn finish_lsp(
+    connection: Connection,
+    io_threads: lsp_server::IoThreads,
+    clean_shutdown: bool,
+) -> Result<()> {
     drop(connection);
-    io_threads.join()?;
-    Ok(())
+    drop(io_threads);
+    if clean_shutdown {
+        return Ok(());
+    }
+    // Mirrors the `--hook` arm in cli::dispatch_mode: `process::exit` skips
+    // `Drop`, so the invocation row and the chrome trace close explicitly.
+    crate::invlog::record_end_current(1);
+    tracing::info!(pid = std::process::id(), code = 1, "[process] end");
+    crate::trace::finish_chrome_trace();
+    std::process::exit(1);
 }
 
 /// The workspace root the client declared in `initialize` — `rootUri`, else the
@@ -455,8 +490,9 @@ struct DiagV5Row {
 /// Run the `--diag-db` message loop: spawn the poll thread, then block on the
 /// connection's receiver only long enough to answer `shutdown`/`exit` (no
 /// other request is meaningful in this mode — diagnostics arrive from the
-/// poll thread, not from editor events). Returns when the client shuts down.
-fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf) -> Result<()> {
+/// poll thread, not from editor events). Returns when the client shuts down or
+/// stdin closes; the bool is `finish_lsp`'s `clean_shutdown`.
+fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf) -> Result<bool> {
     // Relative paths in `diag_v5.path` resolve against the LSP process's own
     // cwd (the pinned contract), falling back to the resolved workspace root
     // if the cwd is unreadable for some reason.
@@ -469,11 +505,11 @@ fn run_diag_db_mode(connection: &Connection, root: &Path, diag_db_path: PathBuf)
     for msg in &connection.receiver {
         if let Message::Request(req) = msg {
             if connection.handle_shutdown(&req)? {
-                break;
+                return Ok(true);
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Background poll loop for `--diag-db`: every 500ms, check `PRAGMA

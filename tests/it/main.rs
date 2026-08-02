@@ -107,6 +107,7 @@ mod lattice;
 mod lex_utf8;
 mod lint_no_touch;
 mod log_cap_sweep;
+mod lsp_exit;
 mod lsp_hierarchy;
 mod lsp_hook_event;
 mod lsp_protocol;
