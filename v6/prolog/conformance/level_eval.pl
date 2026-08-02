@@ -248,13 +248,20 @@ template_arg_out(agg(Kind, _), Position, Group, Value) :-
     agg_compute(Kind, Contributions, Value).
 
 agg_compute(count, Contributions, Count) :- length(Contributions, Count).
-agg_compute(sum, Contributions, Sum) :- sum_list(Contributions, Sum).
+agg_compute(sum, Contributions, Sum) :-
+    require_aggregate_numbers(sum, Contributions),
+    sum_list(Contributions, Sum).
 agg_compute(avg, Contributions, Average) :-
+    require_aggregate_numbers(avg, Contributions),
     sum_list(Contributions, Sum),
     length(Contributions, Count),
     Average is Sum / Count.
-agg_compute(min, Contributions, Min) :- min_list(Contributions, Min).
-agg_compute(max, Contributions, Max) :- max_list(Contributions, Max).
+agg_compute(min, Contributions, Min) :-
+    require_aggregate_numbers(min, Contributions),
+    min_list(Contributions, Min).
+agg_compute(max, Contributions, Max) :-
+    require_aggregate_numbers(max, Contributions),
+    max_list(Contributions, Max).
 agg_compute(json_array, Contributions, Array) :- msort(Contributions, Array).
 agg_compute(json_group_array, Contributions, Array) :-
     maplist(json_canon, Contributions, Canonical),
@@ -275,6 +282,19 @@ agg_compute(json_object, Pairs, obj(Object)) :-
     pairs_keys(Object, Keys),
     ( sort(Keys, DistinctKeys), length(Keys, N), length(DistinctKeys, N)
     -> true ; throw(json_object_dup_key(Keys)) ).
+
+% The residue 0_program_check.pl's aggregate_operand_not_number cannot reach:
+% an UNDECLARED column carrying text into sum/avg/min/max. Without it
+% sum_list/2 and min_list/3 evaluate the term and the door answers
+% error(type_error(evaluable, alpha/0), context(lists:min_list/3, _)), which
+% says nothing about the program. Named here in the same shape as the two
+% value guards below, which are the group_concat and ordinal twins of it.
+require_aggregate_numbers(Kind, Values) :-
+    forall(member(Value, Values),
+           ( number(Value)
+           -> true
+           ;  throw(aggregate_value_not_number(Kind, Value))
+           )).
 
 require_aggregate_separator(Sep) :-
     ( nonvar(Sep), atomic(Sep), \+ number(Sep)
