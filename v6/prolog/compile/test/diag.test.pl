@@ -1,4 +1,4 @@
-% diag.test.pl : receipts for the dl6 diagnostic channel (labs/diag_channel).
+% diag.test.pl : receipts for the dl6 diagnostic channel (compile/test).
 %
 % The rail the lane exists to hold: the refusal term is the ONE source of
 % truth and gets TWO renderers. The human renderer (0_refusal_messages.pl) and
@@ -13,9 +13,10 @@
 :- use_module(library(plunit)).
 :- use_module(library(http/json)).
 
-:- use_module('diag', [ lsp_position/4, diag_record/3, diag_position/3 ]).
+:- use_module('../../diag',
+              [ lsp_position/4, diag_record/3, diag_position/3, diag_uri/2 ]).
 :- use_module('../../0_refusal_messages', [ refusal_inventory/1 ]).
-:- use_module('../../compile/parse_dl', [ parse_dl/4 ]).
+:- use_module('../parse_dl', [ parse_dl/4 ]).
 
 :- begin_tests(diag_channel).
 
@@ -64,6 +65,26 @@ test(record_round_trips_as_json) :-
              Parsed.get(range).get(start).get(line) ==
                  Record.get(range).get(start).get(line) )).
 
+% DEFECT 1 FAIL-FIRST: a refusal must resolve to the statement that DEFINES
+% the offending relation (its head), not to the FIRST statement that merely
+% mentions the relation. counter/2 is named by the valid mirror rule on line
+% 5 and by the offending counter rule on line 6; the diagnostic must land on
+% line 6. The prior test passes only because its program has one statement.
+test(refusal_resolves_offending_rule_not_earlier_mention) :-
+    Lines = [ "rel counter(name: text, total: int) key(1).",
+              "rel tick(name: text).",
+              "rel mirror(name: text, total: int).",
+              "",
+              "mirror(Name, Total) <- counter(Name, Total).",
+              "counter(Name, Total) <- tick(Name), Total = latest(1)." ],
+    atomic_list_concat(Lines, "\n", Text),
+    string_codes(Text, Codes),
+    catch(( parse_dl(Codes, _P, _B, _F) -> true ; true ), _E, true),
+    once(diag_position(unsupported_construct(keyed_level_head(counter/2)),
+                       Line, Column)),
+    Line == 6,
+    Column == 1.
+
 % A refusal naming the offending relation resolves to that statement's real
 % line and column. `t(X) <- finalize(s(X)).` sits on line 3, first column,
 % and finalize_in_level_rule(s/1) resolves there through the retention.
@@ -85,5 +106,14 @@ test(parse_error_position_is_exact_in_record) :-
     diag_record(dl_parse_error(statement, position(1, 5)), 'x.dl6', Record),
     Record.get(range).get(start).get(line) == 0,
     Record.get(range).get(start).get(character) == 4.
+
+% DEFECT 3: the JSON `uri` is an LSP file:// scheme URI, percent-encoded for
+% spaces and non-ASCII instead of a raw filesystem path. The document the text
+% door named is the one `at(File, ...)` carries.
+test(uri_is_percent_encoded_file_scheme) :-
+    once(diag_uri(unsupported_construct(
+                      at('/tmp/my résumé/notes file.dl6', 3, some_reason)),
+                  Uri)),
+    Uri == "file:///tmp/my%20r%C3%A9sum%C3%A9/notes%20file.dl6".
 
 :- end_tests(diag_channel).

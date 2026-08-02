@@ -32,7 +32,7 @@
               [ parse_dl_file/4,
                 parse_dl_line_for_reason/2
               ]).
-:- use_module('labs/diag_channel/diag', [emit_diag_file/2]).
+:- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane', [world_row_shape_violation/3]).
 
 :- op(1150, xfx, <-).

@@ -33,8 +33,9 @@
           ]).
 
 :- use_module(library(http/json)).
-:- use_module('../../0_refusal_messages', []).
-:- use_module('../../compile/parse_dl',
+:- use_module(library(uri), [uri_encoded/3]).
+:- use_module('0_refusal_messages', []).
+:- use_module('compile/parse_dl',
               [ statement_location_for_reason/3 ]).
 
 % ═══ LSP coordinate conversion (ONE predicate, tested) ═════════════════════
@@ -123,13 +124,21 @@ diag_record(Term, Uri, Record) :-
                 message: Message }.
 
 % The source a diagnostic names: the file the text door wrapped, else the file
-% the compiler most recently set for the channel, else unknown.
-diag_uri(unsupported_construct(at(File, _, _)), File).
-diag_uri(Term, File) :-
+% the compiler most recently set for the channel, else unknown. LSP reads the
+% field as a file:// scheme URI, so the filesystem path is percent-encoded
+% (spaces and non-ASCII) rather than concatenated raw.
+diag_uri(unsupported_construct(at(File, _, _)), Uri) :-
+    diag_file_uri(File, Uri).
+diag_uri(Term, Uri) :-
     diag_reason(Term, Reason),
     \+ (Reason = at(_, _, _)),
-    diag_current_file(File).
+    diag_current_file(File),
+    diag_file_uri(File, Uri).
 diag_uri(_, 'unknown').
+
+diag_file_uri(File, Uri) :-
+    uri_encoded(path, File, EncodedPath),
+    string_concat("file://", EncodedPath, Uri).
 
 % The channel's current blame file, held for diagnostics (parse errors, bare
 % refusals) whose term carries no at/3 wrapper.

@@ -56,7 +56,7 @@
             % checks the line table against a prefix walk at every index of a
             % text; parse_dl/4 alone only reaches positions a refusal lands on.
             remaining_line_column/3,
-            % Exported for the diag channel (labs/diag_channel/diag.pl): a
+            % Exported for the diag channel (diag.pl): a
             % refusal's underlying reason resolves through its relation
             % references to the offending statement's start line and column.
             % The line/column pair is read lazily, only when a diagnostic asks,
@@ -222,11 +222,28 @@ reason_relation_reference(Reason, Name/Arity) :-
 % references and line numbers only when a refusal asks: expanding each one into
 % its reference set costs one assert per relation the statement mentions, and
 % resolving its line costs a line-table lookup, on every successful parse.
+%
+% A refusal names the OFFENDING RULE, which is the rule that DEFINES the
+% reference (its head), so resolution tries the defining statement first. The
+% sub-term scan below it is only a fallback for a reference the refusal names
+% that no rule heads (a body relation), and it can therefore still pick an
+% earlier statement that merely mentions the relation.
+statement_location_for_reference(rule, Reference, Line, Column) :-
+    source_statement_fact(rule, Item, RemainingLength),
+    statement_head_reference(Item, Reference),
+    !,
+    remaining_line_column(RemainingLength, Line, Column).
 statement_location_for_reference(Kind, Reference, Line, Column) :-
     source_statement_fact(Kind, Item, RemainingLength),
     statement_reference(Kind, Item, Reference),
     !,
     remaining_line_column(RemainingLength, Line, Column).
+
+statement_head_reference((Head <- _), Name/Arity) :-
+    !,
+    functor(Head, Name, Arity).
+statement_head_reference((Head <+ _), Name/Arity) :-
+    functor(Head, Name, Arity).
 
 statement_line_for_reference(Kind, Reference, Line) :-
     statement_location_for_reference(Kind, Reference, Line, _Column).
