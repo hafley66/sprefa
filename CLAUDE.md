@@ -44,7 +44,8 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   `tracing` only; rare CLI-UX lines carry `@eprintln-ok`. `.dl/no-new-eprintln.dl`
   ratchets to zero.
 - **Labs run on OPUS only** (2026-07-29). Delegation lanes: codex per
-  `claude-research/commands/codex-delegate.md`; opencode flash for mechanical
+  `claude-research/skills_archive/commands/codex-delegate.md`; opencode flash
+  (per the live opencode-orchestration skill) for mechanical
   brief-following only (evidence: plans/2026-08-02-flash-vs-opus-lane-report.md).
 
 ## Worktree dispatch law (2026-07-28)
