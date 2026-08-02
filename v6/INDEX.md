@@ -26,6 +26,16 @@
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
 | [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 116 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
+| [hs-prolog/README.md](hs-prolog/README.md) | 121 | v6/hs-prolog: Prolog and its ecosystem, answered in Haskell |
+| [hs-prolog/demand/CONTRACT.md](hs-prolog/demand/CONTRACT.md) | 131 | Lane L3: what SWI powers does this repo actually use, and does Haskell have them |
+| [hs-prolog/demand/DEMAND.md](hs-prolog/demand/DEMAND.md) | 172 | L3 demand: which SWI powers, and does Haskell have them |
+| [hs-prolog/demand/REPORT.md](hs-prolog/demand/REPORT.md) | 84 | L3 hs demand: REPORT |
+| [hs-prolog/graph/BUY.md](hs-prolog/graph/BUY.md) | 80 | BUY: which Haskell candidate supplies the five graph jobs |
+| [hs-prolog/graph/CONTRACT.md](hs-prolog/graph/CONTRACT.md) | 141 | Lane L2: does Haskell give the same graph powers as the SWI standard library |
+| [hs-prolog/graph/REPORT.md](hs-prolog/graph/REPORT.md) | 211 | L2 hs graph: REPORT |
+| [hs-prolog/idioms/CONTRACT.md](hs-prolog/idioms/CONTRACT.md) | 154 | Lane L4: what professional Haskell actually does for logs, tracing, and debugging |
+| [hs-prolog/idioms/IDIOMS.md](hs-prolog/idioms/IDIOMS.md) | 395 | Haskell idioms that professional projects actually use |
+| [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -321,6 +331,142 @@
 93:## C. Soft-delete / weight>0 filtering — UNTESTED HYPOTHESIS
 97:### Reference 8: H1 — Soft-delete / tombstone
 110:## Conclusion
+```
+
+### hs-prolog/README.md
+```
+1:# v6/hs-prolog: Prolog and its ecosystem, answered in Haskell
+15:## Toolchain
+22:## What is here
+34:## Known defects, verified by the coordinator
+70:## Verified by sabotage, not by reading
+86:## The finding worth keeping
+106:## The SWI question this started from
+```
+
+### hs-prolog/demand/CONTRACT.md
+```
+1:# Lane L3: what SWI powers does this repo actually use, and does Haskell have them
+3:## Question this lane answers
+11:## Base
+20:## Ownership
+26:## Starting receipts (verified by the coordinator, extend them, do not trust them blindly)
+38:## Deliverable
+43:### DEMAND.md, table 1: the feature inventory
+60:### DEMAND.md, table 2: the Haskell answer per row
+75:### DEMAND.md, section 3: the three that decide it
+93:### DEMAND.md, section 4: the honest verdict
+98:## Build-vs-buy is a repo law
+103:## Toolchain
+111:## Style laws (repo-wide, enforced)
+119:## REPORT.md format
+```
+
+### hs-prolog/demand/DEMAND.md
+```
+1:# L3 demand: which SWI powers, and does Haskell have them
+7:## Table 1: the feature inventory
+52:## Table 2: the Haskell answer per row
+90:## Section 3: the three that decide it
+128:## Section 4: the honest verdict
+152:## Build-vs-buy notes (repo law)
+```
+
+### hs-prolog/demand/REPORT.md
+```
+1:# L3 hs demand: REPORT
+3:## Base proof
+8:## Probe build output
+46:## Table 2 verdict counts
+52:## The three that decide it
+64:## What I could not do
+```
+
+### hs-prolog/graph/BUY.md
+```
+1:# BUY: which Haskell candidate supplies the five graph jobs
+19:## Containers Data.Graph
+29:## FGL Data.Graph.Inductive
+42:## Algebraic-graphs
+52:## Hand-written over Data.Map
+62:## Verdict
+```
+
+### hs-prolog/graph/CONTRACT.md
+```
+1:# Lane L2: does Haskell give the same graph powers as the SWI standard library
+3:## Question this lane answers
+21:## Base
+30:## Ownership
+35:## Build-vs-buy comes FIRST, and it is a repo law
+57:## Deliverable
+68:## Grading: the differential, against SWI itself
+89:## Numbers, required
+99:## No-cheat rules
+111:## Toolchain
+117:## Style laws (repo-wide, enforced)
+126:## REPORT.md format
+```
+
+### hs-prolog/graph/REPORT.md
+```
+1:# L2 hs graph: REPORT
+3:## Base proof
+10:## Buy verdict
+26:## The differential
+153:## Numbers
+171:## Same powers? the five jobs
+196:## What I could not do
+```
+
+### hs-prolog/idioms/CONTRACT.md
+```
+1:# Lane L4: what professional Haskell actually does for logs, tracing, and debugging
+3:## Question this lane answers
+12:## Base
+21:## Ownership
+29:## The evidence rule, which is the point of this lane
+42:## Reference projects to clone
+60:## Deliverable
+65:### IDIOMS.md sections, in this order
+109:### The starter
+117:## Build-vs-buy is a repo law
+123:## Toolchain
+130:## Style laws (repo-wide, enforced)
+138:## REPORT.md format
+```
+
+### hs-prolog/idioms/IDIOMS.md
+```
+1:# Haskell idioms that professional projects actually use
+11:## 1. The application monad
+47:## 2. Logging
+103:## 3. Tracing
+118:## 4. Errors and exceptions
+159:## 5. Debugging a running process
+169:## 6. Profiling: time, allocation, peak memory (customer section)
+175:### `+RTS -s` lines, verbatim, GHC 9.14.1 (`probes/memprobe/Main.hs`, run with `+RTS -s`)
+199:### `+RTS -t --machine-readable`: the bench harness record
+225:### maximum residency vs `/usr/bin/time -l` maximum resident set size
+256:### Heap profiling
+272:### `-rtsopts`, `-threaded`, `-with-rtsopts`
+287:### GC knobs a benchmark must PIN
+307:## 7. Testing
+331:## 8. Project layout and tooling
+366:## 9. Unproven
+389:## What I could not do
+```
+
+### hs-prolog/idioms/REPORT.md
+```
+1:# L4 hs idioms: REPORT
+3:## Base proof
+10:## Corpus
+30:## Counted, not asserted
+79:## Starter output
+123:## The two memory numbers
+168:## Unproven
+176:## What I could not do
 ```
 
 ### plans/2026-07-19-reactive-style-port.md

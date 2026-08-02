@@ -1,0 +1,49 @@
+cabal-version: 3.0
+name: prolog-demand-probes
+version: 0.1.0.0
+synopsis: Compiled probes for SWI powers vs Haskell equivalents
+build-type: Simple
+
+common base
+  default-language: GHC2021
+  ghc-options: -Wall
+
+library
+  import: base
+  hs-source-dirs: src
+  exposed-modules:
+      Probe.DCG
+      Probe.Collections
+      Probe.Exceptions
+      Probe.Quant
+      Probe.Sugar
+      Probe.SugarDsl
+      Probe.Tabling
+      Probe.Graph
+      Probe.Printf
+      Probe.Plunit
+      Probe.Process
+  build-depends:
+      base
+    , containers
+    , logict
+    , mtl
+    , transformers
+    , text
+    , template-haskell
+    , parsec
+    , fgl
+    , process
+    , filepath
+      , bytestring
+
+executable probes
+  import: base
+  main-is: Main.hs
+  hs-source-dirs: app
+  build-depends:
+      base
+    , prolog-demand-probes
+    , containers
+    , text
+    , process

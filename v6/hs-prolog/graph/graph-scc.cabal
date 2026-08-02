@@ -1,0 +1,39 @@
+cabal-version:      2.4
+name:               graph-scc
+version:            0.1.0.0
+
+library
+  hs-source-dirs:   src
+  exposed-modules:  Graph
+  build-depends:    base >=4 && <5
+                  , containers
+                  , fgl
+                  , algebraic-graphs
+  default-language: Haskell2010
+
+executable graph-grader
+  hs-source-dirs:   app fixtures
+  main-is:          Main.hs
+  other-modules:    Golden
+  build-depends:    base >=4 && <5
+                  , graph-scc
+                  , containers
+  default-language: Haskell2010
+
+executable graph-timing
+  hs-source-dirs:   app
+  main-is:          Timing.hs
+  build-depends:    base >=4 && <5
+                  , graph-scc
+                  , containers
+                  , deepseq
+  default-language: Haskell2010
+
+executable buy-probe
+  hs-source-dirs:   app
+  main-is:          BuyProbe.hs
+  build-depends:    base >=4 && <5
+                  , containers
+                  , fgl
+                  , algebraic-graphs
+  default-language: Haskell2010

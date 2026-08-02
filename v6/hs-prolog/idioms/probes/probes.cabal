@@ -1,0 +1,17 @@
+cabal-version:      2.4
+name:               probes
+version:            0.1.0.0
+
+executable memprobe
+  main-is:          Main.hs
+  build-depends:    base >=4.14 && <5
+  hs-source-dirs:   memprobe
+  default-language: Haskell2010
+  ghc-options:      -O2 -rtsopts
+
+executable logprobe
+  main-is:          Main.hs
+  build-depends:    base >=4.14 && <5, co-log-core
+  hs-source-dirs:   logprobe
+  default-language: Haskell2010
+  ghc-options:      -O1 -rtsopts
