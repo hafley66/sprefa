@@ -20,7 +20,6 @@
 | [README.md](README.md) | 110 | V6 |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
-| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -59,6 +58,7 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 377 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 204 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
+| [prolog/labs/scc_extract/CONTRACT.md](prolog/labs/scc_extract/CONTRACT.md) | 172 | Lane L5: pluck Tarjan out of clpfd and make it callable |
 | [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 495 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -66,7 +66,6 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 46 | Ghcacher clock golden |
@@ -248,16 +247,6 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
-```
-
-### bench-cli/out/STANDINGS.md
-```
-1:# bench-cli standings
-17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
-50:## Real programs
-52:### callgraph_derivation
-62:## Scale shapes
-65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -903,6 +892,22 @@
 79:## Out of scope for fixtures
 ```
 
+### prolog/labs/scc_extract/CONTRACT.md
+```
+1:# Lane L5: pluck Tarjan out of clpfd and make it callable
+3:## The finding this lane acts on
+23:## Base
+32:## Ownership
+38:## The exact source to extract
+66:## The hard part, and a receipt so you do not start blind
+98:## Deliverable
+111:## Grading: differential against both existing implementations
+126:## Numbers
+138:## What the report must answer
+146:## Style laws (repo-wide, enforced)
+157:## REPORT.md format
+```
+
 ### prolog/labs/type_matrix/MATRIX.md
 ```
 1:# Type matrix -- generated, do not hand-edit
@@ -965,14 +970,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
