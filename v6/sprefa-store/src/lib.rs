@@ -726,7 +726,7 @@ impl RelStore {
     pub async fn assert(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::assert(&self.db, &self.ns, seeds).await
     }
-    /// Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds.
+    /// Counting retraction (fast, correct on ACYCLIC ref-count graphs). Returns rounds.
     pub async fn retract(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract(&self.db, &self.ns, seeds).await
     }
@@ -821,7 +821,7 @@ mod tests {
         let s = open().await;
         s.add_rows(&[(0, 0, 1), (1, 0, 1), (1, 1, 1), (1, 2, 1)]).await.unwrap();
         s.add_deps(&[
-            (0, 0, 1, 0), // file 0:0 supports derived 1:0
+            (0, 0, 1, 0), // file 0:0 is the refCount for derived 1:0
             (1, 0, 1, 1), // cycle in rel 1
             (1, 1, 1, 2),
             (1, 2, 1, 0),
@@ -920,7 +920,7 @@ mod tests {
     }
 
     // Epic 3 — two namespaces in ONE db are independent. Stamp the default ns and a
-    // "b_" ns into the same db, load the same little support graph into each, retract
+    // "b_" ns into the same db, load the same little ref-count graph into each, retract
     // the anchor in the DEFAULT ns only, and assert the b_ ns's survivors are UNTOUCHED
     // (no cross-talk between cx_row and b_cx_row). Proves the engine is namespace-
     // generic through the cascade, not just at the DDL.
@@ -931,7 +931,7 @@ mod tests {
         stamp(&db, &GraphNs::default()).await.unwrap();
         stamp(&db, &GraphNs::new("b_")).await.unwrap();
 
-        // Same support graph in each: (0,0) anchors (0,1) via one dep edge.
+        // Same ref-count graph in each: (0,0) anchors (0,1) via one dep edge.
         let ns = GraphNs::default();
         let nb = GraphNs::new("b_");
         crate::cascade::insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1)]).await.unwrap();

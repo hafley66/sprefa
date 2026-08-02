@@ -494,7 +494,7 @@ test("recursive stratum RETRACTS: killing the middle link retracts all 4 rows it
   try {
     await rt.commit(edbBatch({ parent: PARENT_ROWS }));
 
-    // bob -> carol is the sole support for 4 of the 6 closure rows: (alice,carol),
+    // bob -> carol is the sole refCount holder for 4 of the 6 closure rows: (alice,carol),
     // (alice,dana), (bob,carol), (bob,dana). The 2 survivors (alice,bob) and
     // (carol,dana) are supported by edges the retraction never touched — a full
     // recompute that "worked" by clearing the rel would show -6, not -4.
@@ -561,7 +561,7 @@ test("a text literal in a rule body matches through the string dictionary (the i
     // of alice is exactly the failure internProgramForStorage exists to prevent.
     assert.deepEqual(await rowsOf(rt, "child_of_bob"), [{ child_name: "alice" }]);
 
-    // ...and it retracts with its support.
+    // ...and it retracts with its last refCount.
     await rt.commit(edbBatch({}, { parent: [{ child_name: "alice", parent_name: "bob" }] }));
     assert.deepEqual(await rowsOf(rt, "child_of_bob"), []);
   } finally {
@@ -590,23 +590,23 @@ test("stratified negation: root(name) <- parent(_, name), !parent(name, _)", asy
 // ─────────────────────────────────────────────────────────────────────────────
 // The store's Z-set fact plane, wired (2026-07-25). Every fact now has an integer
 // address, `cascade.key(rel_tag, row_id)`, so `cx_row`/`cx_dep` can hold the model and
-// its support graph, and `cascade.retract_dred` can retract WITHOUT recomputing.
+// its ref-count graph, and `cascade.retract_dred` can retract WITHOUT recomputing.
 //
 // These tests are the gate before the tick is allowed to stop recomputing: the graph's
 // answer is checked against the recompute answer on the same input, cyclic case included.
 // ─────────────────────────────────────────────────────────────────────────────
 
-test("support graph IS sound for a single-atom rule: the row dies with its only parent", async () => {
+test("ref-count graph IS sound for a single-atom rule: the row dies with its only parent", async () => {
   const { rt, dbPath } = await bootFixture(buildLiteralAndNegationProgram());
   try {
     await rt.commit(edbBatch({ parent: PARENT_ROWS }));
     assert.deepEqual(await rowsOf(rt, "child_of_bob"), [{ child_name: "alice" }]);
 
     // `child_of_bob(child_name) <- parent(child_name, "bob")` has ONE positive body atom,
-    // so a binary edge expresses its support exactly: that parent row alone derives the
+    // so a binary edge expresses its refCount exactly: that parent row alone derives the
     // head row. Retracting it leaves the head with no live parent, and DRed's rederive
     // phase finds nothing to bring it back.
-    const { dead } = await rt.retractThroughSupport("parent", [{ child_name: "alice", parent_name: "bob" }]);
+    const { dead } = await rt.retractThroughRefCount("parent", [{ child_name: "alice", parent_name: "bob" }]);
     assert.deepEqual(
       dead.map((fact) => fact.rel).sort(),
       ["child_of_bob", "parent"],
@@ -617,18 +617,18 @@ test("support graph IS sound for a single-atom rule: the row dies with its only 
   }
 });
 
-test("KNOWN LIMIT: conjunctive (join) support is a hypergraph, cx_dep is a binary graph", async () => {
+test("KNOWN LIMIT: conjunctive (join) refCount is a hypergraph, cx_dep is a binary graph", async () => {
   const { rt, dbPath } = await bootFixture(buildAncestorProgram());
   try {
     await rt.commit(edbBatch({ parent: PARENT_ROWS }));
-    const { dead } = await rt.retractThroughSupport("parent", [{ child_name: "bob", parent_name: "carol" }]);
+    const { dead } = await rt.retractThroughRefCount("parent", [{ child_name: "bob", parent_name: "carol" }]);
     const deadAncestors = dead
       .filter((fact) => fact.rel === "ancestor")
       .map((fact) => `${String(fact.row.descendant_name)}->${String(fact.row.ancestor_name)}`)
       .sort();
 
     // RECOMPUTE says 4 rows die here (proven by the "recursive stratum RETRACTS" test
-    // above: ["ancestor", -4]). The support graph says 1. This test pins the GAP, so the
+    // above: ["ancestor", -4]). The ref-count graph says 1. This test pins the GAP, so the
     // day it closes we find out from the suite instead of from a wrong answer in
     // production.
     //
@@ -650,11 +650,11 @@ test("KNOWN LIMIT: conjunctive (join) support is a hypergraph, cx_dep is a binar
   }
 });
 
-test("support coverage is reported, not assumed: negation and aggregate heads carry no edges", async () => {
+test("refCount coverage is reported, not assumed: negation and aggregate heads carry no edges", async () => {
   const covered = await bootFixture(buildAncestorProgram());
   try {
     // Pure positive joins: fully covered, so the graph may be trusted for every head.
-    assert.deepEqual(covered.rt.supportCoverageGaps(), []);
+    assert.deepEqual(covered.rt.refCountCoverageGaps(), []);
   } finally {
     await covered.rt.dispose();
     cleanupDbFile(covered.dbPath);
@@ -662,7 +662,7 @@ test("support coverage is reported, not assumed: negation and aggregate heads ca
 
   const gapped = await bootFixture(buildLiteralAndNegationProgram());
   try {
-    const gaps = gapped.rt.supportCoverageGaps();
+    const gaps = gapped.rt.refCountCoverageGaps();
     // `root` has a negated body predicate: a row appearing in the negated rel DESTROYS a
     // derivation rather than adding one, so counting/DRed over that edge is unsound and
     // the pass refuses to emit it. `child_of_bob` is a pure positive join and is covered.

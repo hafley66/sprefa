@@ -177,21 +177,21 @@ fn theorem_2_retraction_is_subtraction() {
     assert_eq!(retract, insert.negate(), "a retraction is just a negated insert");
 }
 
-/// THEOREM 3 — Weight refcounts derivations; a row survives while any support
+/// THEOREM 3 — Weight refcounts derivations; a row survives while any refCount
 /// remains. A fact derived two independent ways has weight 2; retracting one
 /// derivation leaves weight 1 and the fact stays. No DRed, no re-derivation.
 /// This is exactly what `tests/cascade.rs` proves on disk.
 #[test]
 fn theorem_3_weight_refcounts_derivations() {
     let derived_twice = Zset::of(&[("fact", 1)]).add(&Zset::of(&[("fact", 1)]));
-    assert_eq!(derived_twice.weight(&"fact"), 2, "two supports -> weight 2");
+    assert_eq!(derived_twice.weight(&"fact"), 2, "two refCounts -> weight 2");
 
     let retract_one = derived_twice.add(&Zset::of(&[("fact", -1)]));
-    assert_eq!(retract_one.weight(&"fact"), 1, "one support left -> survives");
+    assert_eq!(retract_one.weight(&"fact"), 1, "one refCount left -> survives");
     assert!(!retract_one.is_empty());
 
     let retract_last = retract_one.add(&Zset::of(&[("fact", -1)]));
-    assert!(retract_last.is_empty(), "last support gone -> row dies");
+    assert!(retract_last.is_empty(), "last refCount gone -> row dies");
 }
 
 /// THEOREM 4 — `map` and `filter` are LINEAR: `f(a + b) = f(a) + f(b)`.

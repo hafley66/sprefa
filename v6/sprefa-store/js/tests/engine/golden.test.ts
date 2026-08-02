@@ -587,7 +587,7 @@ test("namespacing: two GraphNs in one db are independent", async () => {
   await firstValueFrom(cascade.create_schema(db, nb));
   await firstValueFrom(reconcile.create_schema(db, nb));
 
-  // Same support graph in each: (0,0) anchors (0,1) via one dep edge.
+  // Same ref-count graph in each: (0,0) anchors (0,1) via one dep edge.
   await firstValueFrom(
     cascade.insert_rows(db, ns, [
       [0, 0, 1],

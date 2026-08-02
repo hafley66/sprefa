@@ -170,7 +170,7 @@ async function explainLevel(
   };
 }
 
-async function explainSupport(
+async function explainRefCount(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
 ): Promise<{
@@ -251,8 +251,8 @@ async function main(): Promise<void> {
   const plans = await Promise.all(
     selectedPlan.levels.map((statement) => explainLevel(explainSeam, statement)),
   );
-  const supportPlans = await Promise.all(
-    selectedPlan.levels.map((statement) => explainSupport(explainSeam, statement)),
+  const refCountPlans = await Promise.all(
+    selectedPlan.levels.map((statement) => explainRefCount(explainSeam, statement)),
   );
   const edgePlans = await Promise.all(
     selectedPlan.edges.map((statement) => explainEdge(explainSeam, statement)),
@@ -308,7 +308,7 @@ async function main(): Promise<void> {
     plans,
     edgePlans,
     boundaryPlans,
-    supportPlans,
+    refCountPlans,
     incrementalSafe: selectedPlan.safe,
     reconcileEveryTick: selectedPlan.reconcileEveryTick,
     retractionGuard: selectedPlan.retractionGuard,

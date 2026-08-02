@@ -1175,7 +1175,7 @@ fn set_soft(resource: libc::c_int, want: u64) {
 pub mod benchgraph {
 //! One deterministic DAG generator, shared by both sides of the head-to-head so
 //! their INPUTS are byte-identical by construction. Nodes 0 and 1 are roots
-//! (no parents); every other node has mixed support so retracting root 0 leaves
+//! (no parents); every other node has mixed refCount so retracting root 0 leaves
 //! a non-trivial subset alive.
 
 /// `parents[node]` = the parent node ids. Nodes 0 and 1 are roots.
@@ -1240,7 +1240,7 @@ pub struct MultiGraph {
 /// its dependency depth; `tag = tier % 3`. Roots (tier 0) are relation 0.
 /// Consecutive tiers always differ mod 3, so EVERY edge crosses relations.
 /// Local ids restart per relation, so they collide across relations (only
-/// `(tag,id)` is unique). Two roots (0 and 1) with mixed support means
+/// `(tag,id)` is unique). Two roots (0 and 1) with mixed refCount means
 /// retracting root 0 kills the 0-lineage while the 1-lineage survives — real
 /// Z-set retraction with a non-trivial cross-relation cascade.
 pub fn gen_multi(layers: usize, width: usize) -> MultiGraph {
@@ -1293,16 +1293,16 @@ pub fn encode(tag: u32, id: i64) -> i64 {
 
 /// The proven layered graph, but with CYCLES injected so the counting cascade is
 /// provably WRONG and DRed/dd are provably right at scale. Back-edges point from a
-/// node to its own layer-`l-1` parent, forming a 2-cycle (parent supports child AND
-/// child supports parent). `back_stride` selects which nodes get a back-edge: every
+/// node to its own layer-`l-1` parent, forming a 2-cycle (parent refCounts child AND
+/// child refCounts parent). `back_stride` selects which nodes get a back-edge: every
 /// node where `(global_id) % back_stride == 0`, so `back_stride=1` makes every
 /// derived node cyclic and a large stride makes it sparse. `back_stride=0` = no
-/// back-edges (identical to `gen_multi`). Each back-edge adds a support, so the
+/// back-edges (identical to `gen_multi`). Each back-edge adds a refCount, so the
 /// ancestor's weight rises by one — real Z-set weight, not a boolean.
 ///
 /// Correctness consequence: a cycle whose only outside anchor is root 0 dies when
 /// root 0 is cut (no surviving anchor). Counting keeps it alive (phantom — the
-/// members mutually support each other, weight never reaches 0). DRed and dd kill
+/// members mutually refCount each other, weight never reaches 0). DRed and dd kill
 /// it. `oracle_survivors` is the independent referee.
 pub fn gen_multi_cyclic(layers: usize, width: usize, back_stride: usize) -> MultiGraph {
     let mut g = gen_multi(layers, width);
@@ -1322,7 +1322,7 @@ pub fn gen_multi_cyclic(layers: usize, width: usize, back_stride: usize) -> Mult
         local[gid] = per_tag[t] as i64;
         per_tag[t] += 1;
     }
-    // add back-support edges child -> first-parent, and bump the parent's weight.
+    // add back-refCount edges child -> first-parent, and bump the parent's weight.
     let mut extra_weight = std::collections::HashMap::<(u32, i64), i64>::new();
     for gid in 2..n {
         if gid % back_stride != 0 {
@@ -1339,7 +1339,7 @@ pub fn gen_multi_cyclic(layers: usize, width: usize, back_stride: usize) -> Mult
         }
         let (pt, pi) = (tag_of(p as usize), local[p as usize]);
         let (ct, ci) = (tag_of(gid), local[gid]);
-        // child supports parent (the back-edge that closes the cycle).
+        // child refCounts parent (the back-edge that closes the cycle).
         g.edges.push((ct, ci, pt, pi));
         *extra_weight.entry((pt, pi)).or_insert(0) += 1;
     }
@@ -1352,8 +1352,8 @@ pub fn gen_multi_cyclic(layers: usize, width: usize, back_stride: usize) -> Mult
 }
 
 /// Independent ground truth: after cutting `cut`, which rows are still supported?
-/// A row survives iff it is forward-reachable (over support edges) from a SURVIVING
-/// root — a root being any row with no incoming support edge (in-degree 0). This is
+/// A row survives iff it is forward-reachable (over ref-count edges) from a SURVIVING
+/// root — a root being any row with no incoming ref-count edge (in-degree 0). This is
 /// a dead-simple in-Rust BFS owing nothing to counting, DRed, dd, or SQLite, so it
 /// is the referee all three are checked against. Returns encoded survivor keys.
 pub fn oracle_survivors(g: &MultiGraph, cut: (u32, i64)) -> std::collections::BTreeSet<i64> {
@@ -1366,7 +1366,7 @@ pub fn oracle_survivors(g: &MultiGraph, cut: (u32, i64)) -> std::collections::BT
         adj.entry(pk).or_default().push(ck);
         has_parent.insert(ck);
     }
-    // roots = rows with no incoming support edge, minus the cut row.
+    // roots = rows with no incoming ref-count edge, minus the cut row.
     let mut frontier: VecDeque<i64> = VecDeque::new();
     let mut seen: BTreeSet<i64> = BTreeSet::new();
     for (t, i, _w) in &g.rows {

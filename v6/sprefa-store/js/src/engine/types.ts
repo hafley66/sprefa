@@ -177,7 +177,7 @@ export interface IRelStore {
   add_deps(edges: ReadonlyArray<readonly [number, number, number, number]>): Observable<QueryResult[]>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
   assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
-  /** Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds. */
+  /** Counting retraction (fast, correct on ACYCLIC ref-count graphs). Returns rounds. */
   retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Returns rounds. */
   retract_scc(seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
@@ -408,7 +408,7 @@ export type CreateAllTables = (db: SqliteDb) => Observable<void>;
 // ---- cascade (src/engine/engine.ts) ----------------------------------------
 
 /**
- * The FACT plane as free functions: Z-set weights over `cx_row`, support edges over
+ * The FACT plane as free functions: Z-set weights over `cx_row`, ref-count edges over
  * `cx_dep`. `IRelStore` is the object-shaped wrapper over exactly these.
  */
 export interface ICascadeApi {
@@ -429,7 +429,7 @@ export interface ICascadeApi {
   ): Observable<QueryResult[]>;
   /** Forward add: propagate aliveness from `seeds`. Returns rounds. */
   assert(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
-  /** Counting retraction. Fast, correct on ACYCLIC support graphs only. */
+  /** Counting retraction. Fast, correct on ACYCLIC ref-count graphs only. */
   retract(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;
   /** Counting retraction with an on-disk SCC-scoped nested fixpoint. Cycle-safe. */
   retract_scc(db: SqliteDb, ns: IGraphNs, seeds: ReadonlyArray<readonly [number, number]>): Observable<number>;

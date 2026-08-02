@@ -30,22 +30,22 @@ export interface Stratum {
 }
 
 /**
- * Support-graph emission for the Z-set fact plane. Keys are `tag * stride + row_id`,
+ * Ref-count graph emission for the Z-set fact plane. Keys are `tag * stride + row_id`,
  * so each rel table must carry a dense integer surrogate.
  *
  * Only rules that are pure positive joins get edges. A negated body predicate or an
- * aggregate head has non-monotone support, and counting retraction over such an edge
+ * aggregate head has non-monotone refCount, and counting retraction over such an edge
  * is unsound.
  */
-export interface SupportEdges {
+export interface RefCountEdges {
   readonly table: string;
   readonly tagOf: ReadonlyMap<string, number>;
   readonly stride: number;
   readonly surrogate: string;
 }
 
-export interface SupportReport {
-  readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
+export interface RefCountReport {
+  readonly rulesWithoutRefCount: readonly { readonly head: string; readonly reason: string }[];
 }
 
 /**
@@ -61,14 +61,14 @@ export type EvalProgram = (
   db: SqliteDb,
   prog: Program,
   tables: RelTables,
-  support?: SupportEdges,
+  refCount?: RefCountEdges,
   traceStatement?: TraceStatement,
-) => Observable<SupportReport>;
+) => Observable<RefCountReport>;
 
 export type RulesByHead = ReadonlyMap<string, readonly Rule[]>;
 export type RelDeclsByName = ReadonlyMap<string, RelDecl>;
 
-/** One positive body occurrence: its alias and the rel it reads. The support pass needs
+/** One positive body occurrence: its alias and the rel it reads. The ref-count pass needs
  *  this to name each parent row; the model SELECT does not use it. */
 export interface PositiveSource {
   readonly alias: string;
@@ -76,7 +76,7 @@ export interface PositiveSource {
 }
 
 /** The FROM / WHERE / variable-binding core of a rule, shared by the model SELECT and the
- *  support-edge emission so the two can never drift apart on join semantics. */
+ *  ref-count edge emission so the two can never drift apart on join semantics. */
 export interface CompiledJoin {
   readonly bound: ReadonlyMap<string, string>;
   readonly fromParts: readonly string[];
@@ -97,17 +97,17 @@ export interface CompiledSelect {
  * thread through every helper as parameters: the connection, the program, the table map,
  * the trace hook, and the derived stratification.
  */
-/** What the support pass produces before anything is executed. */
-export interface SupportPlan {
+/** What the ref-count pass produces before anything is executed. */
+export interface RefCountPlan {
   readonly statements: readonly SqlStatement[];
-  readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
+  readonly rulesWithoutRefCount: readonly { readonly head: string; readonly reason: string }[];
 }
 
 export interface IDatalogEvaluator {
   readonly db: SqliteDb;
   readonly program: Program;
   readonly tables: RelTables;
-  readonly support?: SupportEdges;
+  readonly refCount?: RefCountEdges;
   readonly trace?: TraceStatement;
   readonly rulesByHead: RulesByHead;
   readonly strata: readonly Stratum[];
@@ -118,7 +118,7 @@ export interface IDatalogEvaluator {
   rulesFor(relName: string): readonly Rule[];
 
   /** Emits exactly once, when every rule-headed table holds its current rowset. */
-  run(): Observable<SupportReport>;
+  run(): Observable<RefCountReport>;
 
   /** SQL building is synchronous: these return statements, not observables. Only `exec`
    *  and `runAll` touch the connection. */
@@ -133,7 +133,7 @@ export interface IDatalogEvaluator {
    *  fixpoint's growth signal. */
   mergeStatement(relName: string, delta: string): SqlStatement;
   createLikeStatements(name: string, like: RelTable): SqlStatement[];
-  supportPlan(support: SupportEdges): SupportPlan;
+  refCountPlan(refCount: RefCountEdges): RefCountPlan;
 
   /** The one place a list of SQL becomes execution. Emits once, when the last statement
    *  finishes; the per-statement results flow out. */

@@ -64,7 +64,7 @@ async fn main() {
         "UPDATE cx_row SET weight = weight - 1 WHERE key IN (1,2,3)").await;
     explain(&db, "retract seed frontier fill", false,
         "INSERT INTO cx_frontier SELECT key FROM cx_row WHERE key IN (1,2,3) AND weight <= 0").await;
-    explain(&db, "retract round: hits = children + lost-support count", false,
+    explain(&db, "retract round: hits = children + lost-refCount count", false,
         "INSERT INTO cx_hits(key,dec) SELECT d.child_key, count(*) FROM cx_frontier f \
          CROSS JOIN cx_dep d ON d.parent_key = f.key GROUP BY d.child_key").await;
     explain(&db, "retract round: decrement each hit child", true,

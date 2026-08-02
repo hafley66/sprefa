@@ -497,7 +497,7 @@ function sequenceWork<Item>(
  * (nextFrontier phase 1). The statement TEXT is emitter-owned and identical
  * on both passes; only where the +1 events are copied differs.
  */
-function reconcileSupportStatement(
+function reconcileRefCountStatement(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
   relations: readonly IIncrementalRelationPlan[],
@@ -830,8 +830,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     arrivals: IArrivalBatch,
   ): Observable<void> {
     if (arrivals.length === 0) return of(undefined);
-    const supportStatements = statements.filter((statement) => statement.aggregateSql !== null ? false : true);
-    if (supportStatements.length === 0 || relations.length === 0) return of(undefined);
+    const refCountStatements = statements.filter((statement) => statement.aggregateSql !== null ? false : true);
+    if (refCountStatements.length === 0 || relations.length === 0) return of(undefined);
     const reconcile = (): Observable<void> => {
       let sequence = 0;
       const nextSequence = (): number => {
@@ -839,8 +839,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         sequence += 1;
         return current;
       };
-      return sequenceWork(supportStatements, (statement) =>
-        reconcileSupportStatement(
+      return sequenceWork(refCountStatements, (statement) =>
+        reconcileRefCountStatement(
           seam,
           statement,
           relations,
@@ -972,7 +972,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         // corpus member that finally distinguished the two — a schedule
         // ending on its retraction tick minted one {"deltas":{}} drain the
         // oracle lacks (extraDrainTick.test.ts holds the fail-first receipt).
-        return reconcileSupportStatement(
+        return reconcileRefCountStatement(
           seam,
           statement,
           relations,

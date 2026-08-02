@@ -6,7 +6,7 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-% ITEM 1 FAIL-FIRST RECEIPT: support GROUP BY with bare integer literals.
+% ITEM 1 FAIL-FIRST RECEIPT: ref-count GROUP BY with bare integer literals.
 %
 % RED, before lower.pl wrapped integer literal grouping expressions:
 %   sqlite3 3.45.1:
@@ -35,7 +35,7 @@ fixture(groupby_two_bare_integer_literals,
         classified(beta, 0, 0) ]) ]).
 
 % ITEM 1b FAIL-FIRST RECEIPT: aggregate GROUP BY with bare integer literals.
-% The item-1 fix wrapped literals in support_group_exprs only;
+% The item-1 fix wrapped literals in ref_count_group_exprs only;
 % aggregate_group_exprs (scoped-delta insert + recompute) still emitted them
 % verbatim (altitude review finding 1, 2026-07-29).
 %

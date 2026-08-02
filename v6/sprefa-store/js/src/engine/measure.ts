@@ -18,7 +18,7 @@ import process from "node:process";
 // benchgraph — one deterministic DAG generator shared by both sides of the head-to-head
 // =============================================================================
 export namespace benchgraph {
-//! Nodes 0 and 1 are roots (no parents); every other node has mixed support so retracting
+//! Nodes 0 and 1 are roots (no parents); every other node has mixed refCount so retracting
 //! root 0 leaves a non-trivial subset alive. A multi-relation reference graph: THREE logical
 //! relations so the polymorphic `(tag, id)` key is load-bearing.
 
@@ -115,7 +115,7 @@ export function gen_multi_cyclic(layers: number, width: number, back_stride: num
     local[globalNodeId] = per_tag[tag]!;
     per_tag[tag]! += 1;
   }
-  // add back-support edges child -> first-parent, and bump the parent's weight.
+  // add back-refCount edges child -> first-parent, and bump the parent's weight.
   const extra_weight = new Map<string, number>();
   for (let globalNodeId = 2; globalNodeId < nodeCount; globalNodeId++) {
     if (globalNodeId % back_stride !== 0) continue;
@@ -139,8 +139,8 @@ export function gen_multi_cyclic(layers: number, width: number, back_stride: num
 
 /**
  * Independent ground truth: after cutting `cut`, which rows are still supported? A row
- * survives iff forward-reachable (over support edges) from a SURVIVING root (a row with no
- * incoming support edge). A dead-simple BFS owing nothing to counting, DRed, dd, or SQLite.
+ * survives iff forward-reachable (over ref-count edges) from a SURVIVING root (a row with no
+ * incoming ref-count edge). A dead-simple BFS owing nothing to counting, DRed, dd, or SQLite.
  * Returns encoded survivor keys, sorted ascending (matches the store's `alive_keys`).
  */
 export function oracle_survivors(g: MultiGraph, cut: readonly [number, number]): number[] {
