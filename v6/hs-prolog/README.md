@@ -58,10 +58,54 @@ The `containers` choice may still be right. The stated reason for eliminating
 fgl is not. Note the second line: fgl's `topsort` returned an order for a cyclic
 graph, so it shares the trap the report correctly caught in containers.
 
+**`graph/src/Graph.hs` is quadratic in two separate places.** Graph CONSTRUCTION
+uses `nub` at lines 37, 44, and 51; `nub` is O(n^2) because it needs only `Eq`,
+not `Ord`. Measured at N=16000: construction 757 ms against 13 ms for the actual
+SCC. Separately and worse, `indegree` at lines 113-115 is O(V^2) times average
+degree:
+
+    countIn n = length [ v | v <- graphNodes g, n `elem` neigh g v ]
+
+It sits on the hot path of both `graphTopologicalOrder` and `graphHasCycle` and
+is paid on every call. `graphHasCycle` on a chain measures 105 ms / 429 ms /
+1778 ms at N = 1000 / 2000 / 4000, four times per doubling. The fix is one pass
+over the edges. The 11 fixture shapes are too small to trigger either.
+
 **`demand/probes` exits 0 even when a probe prints FAIL.** `app/Main.hs` runs
 every probe group and never calls `exitFailure`. Confirmed by flipping a
 condition in `Probe/Tabling.hs`: the run printed `FAIL tabling-fixpoint` and
 still exited 0. Read the printed lines; the exit code proves nothing.
+
+**`idioms/starter` has no runnable grader.** `starter.cabal` declares a
+`test-suite starter-test` pointing at a nonexistent `test/Spec.hs` and depending
+on a nonexistent library named `starter`. `cabal build all` skips it silently and
+`cabal build starter-test` fails with Cabal-7127. Nothing in `idioms/` asserts at
+runtime.
+
+**`graph/graph-scc.cabal` carries dead dependencies.** The library stanza declares
+`fgl` and `algebraic-graphs`; `src/Graph.hs` imports neither. They are used only
+by the `buy-probe` executable.
+
+## The interp lane, on branch lane/hs-interp, not in this folder
+
+Its grader certifies that a goal produced at least one solution, never that the
+solution is right. `app/Main.hs:42` is `ok = not (null solutions)`. The fixtures
+encode exact expected values under SWI and the Haskell side does not compare
+against them, so every PASS in that grader means only "did not come back empty."
+
+One check is red at baseline. `Tabling.hs` derives ground facts by solving each
+tabled clause body with all variables free, but `edge(Eqs, From, Dep) :-
+member(eq(From,Expr), Eqs), idep(Expr, Dep)` needs `Eqs` bound, so no reach facts
+are derived at all. `counter_ok` therefore passes vacuously over an empty
+relation and `broken_rejected` fails. SWI passes both.
+
+## Correction to a correction
+
+The fgl note above says the report's reason for eliminating fgl is false. That is
+half right and the audit was right to narrow it. The modules the report names,
+`Query.SCC` and `Query.TopSort`, genuinely do not exist. The functions do, in
+`Data.Graph.Inductive.Query.DFS`, which is what makes the conclusion wrong rather
+than the module names.
 
 **`demand/probes/src/Probe/Sugar.hs:21` prints PASS unconditionally.** It is a
 Template Haskell probe, so compiling is itself the evidence, but the line asserts

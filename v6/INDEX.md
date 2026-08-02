@@ -26,7 +26,9 @@
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
 | [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 116 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
-| [hs-prolog/README.md](hs-prolog/README.md) | 121 | v6/hs-prolog: Prolog and its ecosystem, answered in Haskell |
+| [hs-prolog/AUDIT/CONTRACT.md](hs-prolog/AUDIT/CONTRACT.md) | 153 | Audit lane: hunt cheats and bad couplings in the Haskell work |
+| [hs-prolog/AUDIT/REPORT.md](hs-prolog/AUDIT/REPORT.md) | 213 | hs audit: REPORT |
+| [hs-prolog/README.md](hs-prolog/README.md) | 165 | v6/hs-prolog: Prolog and its ecosystem, answered in Haskell |
 | [hs-prolog/demand/CONTRACT.md](hs-prolog/demand/CONTRACT.md) | 131 | Lane L3: what SWI powers does this repo actually use, and does Haskell have them |
 | [hs-prolog/demand/DEMAND.md](hs-prolog/demand/DEMAND.md) | 172 | L3 demand: which SWI powers, and does Haskell have them |
 | [hs-prolog/demand/REPORT.md](hs-prolog/demand/REPORT.md) | 84 | L3 hs demand: REPORT |
@@ -333,15 +335,56 @@
 110:## Conclusion
 ```
 
+### hs-prolog/AUDIT/CONTRACT.md
+```
+1:# Audit lane: hunt cheats and bad couplings in the Haskell work
+3:## What this is
+13:## Base
+22:## What you own
+31:## Targets
+47:## The audit protocol, run every check on every target
+49:### 1. Sabotage every grader
+61:### 2. Find self-certifying assertions
+71:### 3. Check the oracles are independent
+79:### 4. Hunt accidental complexity
+92:### 5. Inappropriate couplings
+105:### 6. Claim-to-code drift
+113:## What you must NOT do
+122:## Toolchain
+129:## Style laws
+137:## REPORT.md format
+```
+
+### hs-prolog/AUDIT/REPORT.md
+```
+1:# hs audit: REPORT
+3:## Base proof
+11:## Restore proof
+24:## 1. Sabotage table
+45:## 2. Self-certifying assertions
+59:## 3. Oracle independence
+76:## 4. Accidental complexity
+92:## 5. Couplings
+111:## 6. Claim-to-code drift
+113:### graph/REPORT.md
+122:### demand/REPORT.md
+129:### idioms/REPORT.md
+145:### interp
+150:## Ranked findings
+197:## What I could not check
+```
+
 ### hs-prolog/README.md
 ```
 1:# v6/hs-prolog: Prolog and its ecosystem, answered in Haskell
 15:## Toolchain
 22:## What is here
 34:## Known defects, verified by the coordinator
-70:## Verified by sabotage, not by reading
-86:## The finding worth keeping
-106:## The SWI question this started from
+89:## The interp lane, on branch lane/hs-interp, not in this folder
+102:## Correction to a correction
+114:## Verified by sabotage, not by reading
+130:## The finding worth keeping
+150:## The SWI question this started from
 ```
 
 ### hs-prolog/demand/CONTRACT.md
