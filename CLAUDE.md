@@ -35,6 +35,12 @@ file keeps only the standing laws + currently-open work.
 - **Nothing seizes the machine**: CPU (QoS/nice), disk I/O (IOPOL_THROTTLE), and
   thread budget are all capped in `apply_daemon_budget`. First-run rebuild included.
   A change that can beachball the machine is a blocking defect, not a follow-up.
+- **The 10-second law** (user-set 2026-08-01): at this repo's current scale, any
+  operation that takes more than 10 seconds — test, receipt, compile, rail, script —
+  is violently wrong, a defect to investigate now, never a budget to normalize. The
+  one named exception is SCIP indexing. Caps and budgets state what a thing SHOULD
+  take. A program nobody measured does not get to grow slow quietly (the atlas died
+  of this). Applies to every agent at every level.
 - **The failure ledger is standing** (user-set 2026-07-18): every incident that
   bites us gets an entry in docs/failure-modes.md — incident receipt, law, rail
   status — following its "how a new rail gets born" pipeline (incident -> RCA ->

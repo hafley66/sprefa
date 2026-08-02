@@ -1,0 +1,40 @@
+# dataflow-rail.dl6 -- who points to who, derived, never hand-listed.
+#
+# One watch glob is the entire scope AND the file-existence rel: a moved file
+# retracts its watch row, every use_module edge that resolved to the old path
+# loses its target, and `dangling` gains a row. Inspect live:
+#   ? dangling(from_path, to_path).      the broken references, right now
+#   ? edge_total(edges).                 shrink floor: this number going down
+#                                        without file deletions is scope rot.
+#
+# Resolution happens in the sh host (dirname + optional .pl + ../ collapse)
+# because path arithmetic is bash's; existence is the watch plane's; the join
+# is this program's. library(...) targets are filtered at the host: they are
+# system modules, not repo dataflow.
+
+bind watch(glob: text, path: text, digest: text).
+
+rel pl_file(path: text, digest: text).
+pl_file(path, digest) <- watch('v6/prolog/**/*.pl', path, digest).
+
+sh pl_use(path: text, digest: text) -> (target_path: text) =
+  `: {digest}; dir=$(dirname {path}); grep -oE "use_module[(]'[^']+'|use_module[(][a-z_0-9]+" {path} | sed -E "s/^use_module[(]'?//; s/'$//" | while IFS= read -r t; do case "$t" in library) continue;; esac; p="$dir/$t"; case "$p" in *.pl) ;; *) p="$p.pl";; esac; while case "$p" in */../*) true;; *) false;; esac; do p=$(printf '%s' "$p" | sed 's|[^/][^/]*/[.][.]/||'); done; printf '%s\n' "$p"; done`.
+
+rel pl_edge(from_path: text, to_path: text).
+pl_edge(path, target_path) <- pl_file(path, digest), pl_use(path, digest, target_path).
+
+rel dangling(from_path: text, to_path: text).
+dangling(from_path, to_path) <- pl_edge(from_path, to_path), not(pl_file(to_path, _)).
+
+rel edge_total(edges: int).
+edge_total(count(from_path)) <- pl_edge(from_path, _).
+
+rel dangling_total(rows: int).
+dangling_total(count(from_path)) <- dangling(from_path, _).
+
+rel fan_in(to_path: text, writers: int).
+fan_in(to_path, count(from_path)) <- pl_edge(from_path, to_path).
+
+? dangling(from_path, to_path).
+? edge_total(edges).
+? dangling_total(rows).
