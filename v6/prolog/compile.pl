@@ -32,6 +32,7 @@
               [ parse_dl_file/4,
                 parse_dl_line_for_reason/2
               ]).
+:- use_module('labs/diag_channel/diag', [emit_diag_file/2]).
 :- use_module('0_type_plane', [world_row_shape_violation/3]).
 
 :- op(1150, xfx, <-).
@@ -195,12 +196,17 @@ check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     ).
 
 compile_dl6(File, OutFile) :-
-    run_compile_phase(parse,
-                      parse_dl_file(File, Prog, Bindings, Findings),
-                      ParseMeasurement),
-    ( Findings == []
-    -> true
-    ; throw(unsupported_construct(surface_findings(Findings)))
+    catch(
+        ( run_compile_phase(parse,
+                            parse_dl_file(File, Prog, Bindings, Findings),
+                            ParseMeasurement),
+          ( Findings == []
+          -> true
+          ; throw(unsupported_construct(surface_findings(Findings)))
+          ) ),
+        ParseError,
+        ( emit_diag_file(File, ParseError),
+          throw(ParseError) )
     ),
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
@@ -222,15 +228,18 @@ compile_dl6(File, OutFile) :-
 % script printed `broken.dl6:4`. One wrapper, two catch sites; the line comes
 % from parse_dl.pl's source_statement_fact/3, asserted by whichever
 % parse_dl_file/4 call preceded the compile.
-throw_text_door_error(_File, Error) :-
+throw_text_door_error(File, Error) :-
     Error = unsupported_construct(at(_, _, _)),
     !,
+    emit_diag_file(File, Error),
     throw(Error).
 throw_text_door_error(File, unsupported_construct(Reason)) :-
     ( parse_dl_line_for_reason(Reason, Line)
-    -> throw(unsupported_construct(at(File, Line, Reason)))
-    ;  throw(unsupported_construct(Reason))
-    ).
+    -> Emitted = unsupported_construct(at(File, Line, Reason))
+    ;  Emitted = unsupported_construct(Reason)
+    ),
+    emit_diag_file(File, Emitted),
+    throw(Emitted).
 throw_text_door_error(_File, Error) :-
     throw(Error).
 
