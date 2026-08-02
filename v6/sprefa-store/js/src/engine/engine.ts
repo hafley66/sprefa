@@ -174,8 +174,9 @@ export namespace cascade {
 //!   cx_row(key, weight)              key = tag*KEY_STRIDE + id (rowid cluster)
 //!   cx_dep(parent_key, child_key)    child depends on parent; WITHOUT ROWID
 //!
-//! Retraction is Z-set subtraction: `weight` = # of derivations supporting a row. A row
-//! dies only when weight reaches 0 (its LAST support is gone). The number of rounds is
+//! Retraction is Z-set subtraction: `weight` = refCount, the count of derivations
+//! keeping a row alive. A row
+//! dies only when weight reaches 0 (its LAST refCount is gone). The number of rounds is
 //! the DAG depth, not the row count.
 
 /** Rows per multi-row INSERT (inlined integer literals; the only limit is SQL length). */
@@ -257,7 +258,7 @@ export function insert_deps(
 
 /**
  * Retract `seeds` (each `(tag, id)` loses one unit of weight). Cascade the consequence
- * and return the number of rounds (= the depth reached). Acyclic support graphs only.
+ * and return the number of rounds (= the depth reached). Acyclic ref-count graphs only.
  */
 export function retract(
   db: Db,
@@ -277,7 +278,7 @@ function retract_body(
   const seed_in = `(${seed_vals})`;
 
   const round_work = (): Observable<QueryResult[]> =>
-    // 1. hits = the frontier's children + how many supports each loses now.
+    // 1. hits = the frontier's children + how many refCounts each loses now.
     exec(db, `DELETE FROM ${ns.hits}`).pipe(
       concatMap(() =>
         exec(
@@ -289,7 +290,7 @@ function retract_body(
          GROUP BY d.child_key`,
         ),
       ),
-      // 2. decrement each hit child by its lost-support count (indexed by rowid).
+      // 2. decrement each hit child by its lost-refCount count (indexed by rowid).
       concatMap(() =>
         exec(
           db,

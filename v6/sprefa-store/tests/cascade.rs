@@ -1,6 +1,6 @@
 //! ONE large golden test for the isolated manual cascade. Builds a wide DAG at
-//! scale where some rows have TWO supports, retracts one root, and proves:
-//!   - the correct transitive set dies, survivors with alternate support live
+//! scale where some rows have TWO refCounts, retracts one root, and proves:
+//!   - the correct transitive set dies, survivors with alternate refCount live
 //!   - retraction = subtraction (weight-2 rows drop to 1 and survive)
 //!   - the cascade is O(depth) statements, not O(rows), at 100k rows
 //!
@@ -52,7 +52,7 @@ async fn manual_cascade_retracts_by_subtraction_at_scale() {
         rows.push((2, j, 1)); // B[j]
         deps.push((0, 0, 1, j)); // r0 -> A[j]
         if even {
-            deps.push((0, 1, 1, j)); // r1 -> A[j]  (second support)
+            deps.push((0, 1, 1, j)); // r1 -> A[j]  (second refCount)
         }
         deps.push((1, j, 2, j)); // A[j] -> B[j]
     }

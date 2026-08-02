@@ -65,7 +65,7 @@ test("inTransaction: an erroring body rolls back and the connection keeps its TE
 
 test("inTransaction: the bracketed retract still cascades (chain kill)", async () => {
   const store = await firstValueFrom(RelStore.attach(createClient({ url: ":memory:", intMode: "bigint" })));
-  // Chain 1 -> 2 -> 3, single support each: retracting the root kills all three.
+  // Chain 1 -> 2 -> 3, single refCount each: retracting the root kills all three.
   await firstValueFrom(
     store.add_rows([
       [1, 1, 1],

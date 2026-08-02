@@ -19,7 +19,7 @@
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
-                canonical_column_expr/2, level_support_sql/4,
+                canonical_column_expr/2, level_ref_count_sql/4,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
@@ -507,12 +507,12 @@ test(edb_edge_trigger_keeps_naive_referee_available) :-
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
     derived_edge_carry_required(Plan, EdgeStatements, false).
 
-test(acyclic_support_count_statements_are_emitted) :-
+test(acyclic_ref_count_statements_are_emitted) :-
     lowered_for(shared_demand_refcount, Lowered),
     Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
     memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
-                        supportsql(ClearSql, SeedSql, UpdateSql,
+                        refcountsql(ClearSql, SeedSql, UpdateSql,
                                    CollectZeroSql, InsertNewSql),
                         none),
               LevelStatements),
@@ -522,7 +522,7 @@ test(acyclic_support_count_statements_are_emitted) :-
     CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__support_count" <= 0 RETURNING "target"',
     once(sub_atom(InsertNewSql, _, _, _, 'WHERE NOT EXISTS')).
 
-test(self_recursive_support_uses_recursive_cte_reseed) :-
+test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     RelPlans = [
         relplan(root/1, set, [node], none, [int]),
         relplan(edge/2, set, [parent, child], none, [int, int]),
@@ -532,9 +532,9 @@ test(self_recursive_support_uses_recursive_cte_reseed) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
     ],
-    level_support_sql(
+    level_ref_count_sql(
         RelPlans, path/1, Rules,
-        supportsql(_, SeedSql, _, _, _)),
+        refcountsql(_, SeedSql, _, _, _)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),

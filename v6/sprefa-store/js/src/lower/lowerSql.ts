@@ -19,8 +19,8 @@ import type {
   RelTables,
   RulesByHead,
   Stratum,
-  SupportEdges,
-  SupportReport,
+  RefCountEdges,
+  RefCountReport,
 } from "./types.ts";
 import type { AssertTrue, QueryResult, SqlStatement, SqlValue, SqliteDb, TraceStatement } from "../engine/types.ts";
 import { SqlRunner } from "../engine/sqlRunner.ts";
@@ -46,7 +46,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
     readonly db: SqliteDb,
     readonly program: Program,
     readonly tables: RelTables,
-    readonly support?: SupportEdges,
+    readonly refCount?: RefCountEdges,
     readonly trace?: TraceStatement,
   ) {
     const graph = buildRuleGraph(program);
@@ -101,7 +101,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
     return concat(...statements.map((statement) => this.exec(statement))).pipe(toArray());
   }
 
-  run(): Observable<SupportReport> {
+  run(): Observable<RefCountReport> {
     const settleModel = this.strata.reduce<Observable<QueryResult[]>>(
       (chain, stratum) =>
         chain.pipe(
@@ -116,8 +116,8 @@ export class DatalogEvaluator implements IDatalogEvaluator {
 
     return settleModel.pipe(
       concatMap(() => {
-        if (this.support === undefined) return of<SupportReport>({ rulesWithoutSupport: [] });
-        const plan = this.supportPlan(this.support);
+        if (this.refCount === undefined) return of<RefCountReport>({ rulesWithoutRefCount: [] });
+        const plan = this.refCountPlan(this.refCount);
         return this.runAll(plan.statements).pipe(map(() => plan));
       }),
     );
@@ -157,25 +157,25 @@ export class DatalogEvaluator implements IDatalogEvaluator {
     ];
   }
 
-  /** Support edges, one pass over the settled model. Per rule per positive body position:
+  /** Ref-count edges, one pass over the settled model. Per rule per positive body position:
    *  the (parent_key, child_key) pairs, joining back to the head table for its surrogate. */
-  supportPlan(support: SupportEdges): { statements: SqlStatement[]; rulesWithoutSupport: { head: string; reason: string }[] } {
+  refCountPlan(refCount: RefCountEdges): { statements: SqlStatement[]; rulesWithoutRefCount: { head: string; reason: string }[] } {
     {
-      const rulesWithoutSupport: { head: string; reason: string }[] = [];
+      const rulesWithoutRefCount: { head: string; reason: string }[] = [];
       const statements: SqlStatement[] = [];
       const tagOf = (relName: string): number => {
-        const tag = support.tagOf.get(relName);
+        const tag = refCount.tagOf.get(relName);
         if (tag === undefined) throw new Error(`lowerSql: no dense tag registered for rel '${relName}'`);
         return tag;
       };
 
       for (const rule of this.program.rules) {
         if (rule.headTerms.some((term) => term.kind === "hagg")) {
-          rulesWithoutSupport.push({ head: rule.head, reason: "aggregate head: support is not monotone in the body" });
+          rulesWithoutRefCount.push({ head: rule.head, reason: "aggregate head: refCount is not monotone in the body" });
           continue;
         }
         if (rule.body.some((predicate) => predicate.kind === "notrel")) {
-          rulesWithoutSupport.push({
+          rulesWithoutRefCount.push({
             head: rule.head,
             reason: "negated body predicate: a body row destroys rather than adds a derivation",
           });
@@ -183,7 +183,7 @@ export class DatalogEvaluator implements IDatalogEvaluator {
         }
         const compiled = this.compileRuleJoin(rule, new Map());
         if (compiled === null) {
-          rulesWithoutSupport.push({ head: rule.head, reason: "no positive body rel" });
+          rulesWithoutRefCount.push({ head: rule.head, reason: "no positive body rel" });
           continue;
         }
 
@@ -202,31 +202,31 @@ export class DatalogEvaluator implements IDatalogEvaluator {
           headMatch.push(`${headAlias}.${column} = ${boundColumnRef}`);
         });
         if (headBindingUnresolved) {
-          rulesWithoutSupport.push({ head: rule.head, reason: "head term is not bound by a positive body rel" });
+          rulesWithoutRefCount.push({ head: rule.head, reason: "head term is not bound by a positive body rel" });
           continue;
         }
 
-        const childKey = `${tagOf(rule.head)} * ${support.stride} + ${headAlias}.${quoteIdent(support.surrogate)}`;
+        const childKey = `${tagOf(rule.head)} * ${refCount.stride} + ${headAlias}.${quoteIdent(refCount.surrogate)}`;
         const fromClause = [...compiled.fromParts, `${quoteIdent(headTable.table)} ${headAlias}`].join(", ");
         const whereClause = [...compiled.where, ...headMatch];
 
         for (const source of compiled.positiveSources) {
-          const parentKey = `${tagOf(source.rel)} * ${support.stride} + ${source.alias}.${quoteIdent(support.surrogate)}`;
-          let sql = `INSERT OR IGNORE INTO ${quoteIdent(support.table)}(parent_key, child_key) SELECT ${parentKey}, ${childKey} FROM ${fromClause}`;
+          const parentKey = `${tagOf(source.rel)} * ${refCount.stride} + ${source.alias}.${quoteIdent(refCount.surrogate)}`;
+          let sql = `INSERT OR IGNORE INTO ${quoteIdent(refCount.table)}(parent_key, child_key) SELECT ${parentKey}, ${childKey} FROM ${fromClause}`;
           if (whereClause.length > 0) sql += ` WHERE ${whereClause.join(" AND ")}`;
           // compiled.where carries `?` placeholders; headMatch binds nothing, so the arg
           // order is exactly compiled.args. Pushing sql without them silently emptied the
-          // support graph while leaving the model query correct.
+          // ref-count graph while leaving the model query correct.
           statements.push({ sql, args: [...compiled.args] });
         }
       }
 
-      return { statements, rulesWithoutSupport };
+      return { statements, rulesWithoutRefCount };
     }
   }
 
   /** The FROM / WHERE / variable-binding core of a rule, shared by the model SELECT and
-   *  the support-edge emission so the two can never drift apart on join semantics. */
+   *  the ref-count edge emission so the two can never drift apart on join semantics. */
   compileRuleJoin(rule: Rule, bodyPositionOverrides: ReadonlyMap<number, string>): CompiledJoin | null {
     const bound = new Map<string, string>(); // var name -> "alias.column"
     const fromParts: string[] = [];
@@ -496,7 +496,7 @@ function sqlAgg(fn: AggFn): string {
 }
 
 /** Function-shaped entry point for callers that just want the evaluation run. */
-export const evalProgramSql: EvalProgram = (db, prog, tables, support, traceStatement) =>
-  defer(() => new DatalogEvaluator(db, prog, tables, support, traceStatement).run());
+export const evalProgramSql: EvalProgram = (db, prog, tables, refCount, traceStatement) =>
+  defer(() => new DatalogEvaluator(db, prog, tables, refCount, traceStatement).run());
 
 export type EvalProgramHolds = AssertTrue<typeof evalProgramSql extends EvalProgram ? true : false>;

@@ -376,7 +376,7 @@ fixture(demand_laziness_effect_rows,
 % 11. shared demand refcount (switch_flow.pl section 7.6, the sub_lifetimes
 % finding this whole lab traces back to: "demand is refcounted by IVM
 % support, not by the sub row"). Two scopes demand the same identity; one
-% dies and effect_call shows ZERO delta (the other's support alone keeps the
+% dies and effect_call shows ZERO delta (the other one's refCount alone keeps the
 % projection alive); only when the second dies does the projection follow.
 fixture(shared_demand_refcount,
   prog([ keyed(open_feed/2, [1]) ],

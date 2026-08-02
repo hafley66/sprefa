@@ -47,7 +47,7 @@ import { RelStore, Store, open_db } from "sprefa-store-engine/src/engine/lib.ts"
 import { evalProgramSql } from "sprefa-store-engine/src/lower/lowerSql.ts";
 import { RowCodec } from "./0_row.ts";
 import { PerfTrace } from "./0_trace.ts";
-import type { RelTable, RelTables, SupportEdges } from "sprefa-store-engine/src/lower/types.ts";
+import type { RelTable, RelTables, RefCountEdges } from "sprefa-store-engine/src/lower/types.ts";
 import type { Arg, BodyPred, LitValue, Program, RelDecl, Rule } from "sprefa-store-engine/src/lower/ast.ts";
 
 import { ROW_SURROGATE, ddl, relBaseColumns, rowDigest } from "./2_schema.ts";
@@ -87,11 +87,11 @@ export interface RuntimeState {
    *  them (`retract_dred`, `retract_scc`, `assert`). Every address is
    *  `cascade.key(rel_tag, row_id)`: two dense integers packed into one i64. */
   readonly relStore: RelStore;
-  /** How evalProgramSql should emit the support graph into `relStore`'s dep table. */
-  readonly supportEdges: SupportEdges;
-  /** Rules the support pass cannot cover soundly (negated body / aggregate head), so a
+  /** How evalProgramSql should emit the ref-count graph into `relStore`'s dep table. */
+  readonly refCountEdges: RefCountEdges;
+  /** Rules the ref-count pass cannot cover soundly (negated body / aggregate head), so a
    *  reader knows which heads must not be retracted through the graph. */
-  readonly rulesWithoutSupport: readonly { readonly head: string; readonly reason: string }[];
+  readonly rulesWithoutRefCount: readonly { readonly head: string; readonly reason: string }[];
   /** Mirrors the current content of every derived (IDB) rel as of the end of the last
    *  tick, in the TEXT surface (read back through the `rel_*` decode views). The diff
    *  the tick publishes is taken against this, which is what makes a derived row's
@@ -756,7 +756,7 @@ function resolveFactKeys(state: RuntimeState, keys: readonly number[]): Observab
  *  columns, so no row ever enters the JS heap here. */
 function refreshFactPlane(state: RuntimeState): Observable<QueryResult[]> {
   const rowTable = state.relStore.ns().row;
-  const stride = state.supportEdges.stride;
+  const stride = state.refCountEdges.stride;
   const statements = [...state.relTables].flatMap(([relName, table]) => {
     const tag = state.relTags.get(relName);
     if (tag === undefined) return [];
@@ -788,7 +788,7 @@ export function applyDerivedTxn(state: RuntimeState, outcome: EdbTickOutcome): O
             db,
             state.storageProgram,
             state.relTables,
-            state.supportEdges,
+            state.refCountEdges,
             PerfTrace.sqlTraceFor(outcome.tick),
           ).pipe(concatMap(() => refreshFactPlane(state)))
         : of([]);
@@ -977,16 +977,16 @@ export class DlRuntime implements IDlRuntime {
     // The store's Z-set fact plane. `attach` stamps cascade's cx_* and reconcile's rx_*
     // schema under the default namespace onto the same connection dl already owns.
     const relStore = await firstValueFrom(RelStore.attach(db));
-    const supportEdges: SupportEdges = {
+    const refCountEdges: RefCountEdges = {
       table: relStore.ns().dep,
       tagOf: relTags,
       stride: KEY_STRIDE,
       surrogate: ROW_SURROGATE,
     };
     // Report the coverage limit once, at boot, from the real rule set rather than from a
-    // guess: a negated body or an aggregate head has non-monotone support, so those heads
+    // guess: a negated body or an aggregate head has non-monotone refCount, so those heads
     // are not retractable through the graph.
-    const { rulesWithoutSupport } = await firstValueFrom(evalProgramSql(db, storageProgram, relTables, supportEdges));
+    const { rulesWithoutRefCount } = await firstValueFrom(evalProgramSql(db, storageProgram, relTables, refCountEdges));
 
     const derivedRelNames = config.bridge.program.rels.filter((decl) => decl.origin === "IDB").map((decl) => decl.name);
     const derivedTableMirror = new Map<string, Row[]>();
@@ -1006,8 +1006,8 @@ export class DlRuntime implements IDlRuntime {
       storageProgram,
       relTables,
       relStore,
-      supportEdges,
-      rulesWithoutSupport,
+      refCountEdges,
+      rulesWithoutRefCount,
       derivedTableMirror,
       reportsSubject: new Subject(),
       scratchClearedRows: 0,
@@ -1039,12 +1039,12 @@ export class DlRuntime implements IDlRuntime {
   }
 
   /**
-   * Retract `rows` from EDB rel `rel` THROUGH THE SUPPORT GRAPH, with no recompute:
+   * Retract `rows` from EDB rel `rel` THROUGH THE REF-COUNT GRAPH, with no recompute:
    * resolve each row to its dense surrogate, pack `cascade.key(rel_tag, row_id)`, seed
    * `cascade.retract_dred`, and report every fact that died.
    *
    * DRed (Delete-and-Rederive) is the cycle-safe variant, and that choice is not
-   * incidental. Row-level support in a least fixpoint over a CYCLIC EDB is itself cyclic
+   * incidental. Row-level refCount in a least fixpoint over a CYCLIC EDB is itself cyclic
    * (`ancestor` over a graph with a cycle supports itself round-trip), and counting
    * retraction cannot tell a live cycle from a dead one: DRed over-deletes the forward
    * cone, then rederives anything still reachable from a surviving row, so a dead cycle
@@ -1053,17 +1053,17 @@ export class DlRuntime implements IDlRuntime {
    * The dead set is measured, not inferred: `alive_keys()` before and after, differenced.
    * That reads the store's own answer rather than reconstructing what it should have done.
    *
-   * COVERAGE: heads listed in `rulesWithoutSupport` have non-monotone support (negated
+   * COVERAGE: heads listed in `rulesWithoutRefCount` have non-monotone refCount (negated
    * body predicate or aggregate head) and carry no edges, so they will not appear in the
-   * dead set even when they should. `supportCoverageGaps()` reports them. This is why the
+   * dead set even when they should. `refCountCoverageGaps()` reports them. This is why the
    * tick still recomputes; the graph path is proven against it before replacing it.
    */
-  async retractThroughSupport(rel: string, rows: readonly Row[]): Promise<{ rounds: number; dead: readonly DeadFact[] }> {
+  async retractThroughRefCount(rel: string, rows: readonly Row[]): Promise<{ rounds: number; dead: readonly DeadFact[] }> {
     const state = this.state;
     const decl = state.relDecls.get(rel);
-    if (!decl) throw new Error(`retractThroughSupport: unknown rel '${rel}'`);
+    if (!decl) throw new Error(`retractThroughRefCount: unknown rel '${rel}'`);
     const tag = state.relTags.get(rel);
-    if (tag === undefined) throw new Error(`retractThroughSupport: no dense tag for rel '${rel}'`);
+    if (tag === undefined) throw new Error(`retractThroughRefCount: no dense tag for rel '${rel}'`);
 
     const encoded = rows.map((row) =>
       encodeSurfaceRowByColumns(state.store, state.columnTypes, rel, decl.columns, row),
@@ -1082,10 +1082,10 @@ export class DlRuntime implements IDlRuntime {
     return { rounds, dead: await firstValueFrom(resolveFactKeys(state, deadKeys)) };
   }
 
-  /** Rules whose heads carry no support edges, so they are not retractable through the
+  /** Rules whose heads carry no ref-count edges, so they are not retractable through the
    *  graph. Empty means the whole program is covered. */
-  supportCoverageGaps(): readonly { readonly head: string; readonly reason: string }[] {
-    return this.state.rulesWithoutSupport;
+  refCountCoverageGaps(): readonly { readonly head: string; readonly reason: string }[] {
+    return this.state.rulesWithoutRefCount;
   }
 
   async rows(rel: string): Promise<Row[]> {

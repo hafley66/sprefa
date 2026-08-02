@@ -177,7 +177,7 @@ export class RelStore implements IRelStore {
   assert(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.assert(this._db, this._ns, seeds);
   }
-  /** Counting retraction (fast, correct on ACYCLIC support graphs). Returns rounds. */
+  /** Counting retraction (fast, correct on ACYCLIC ref-count graphs). Returns rounds. */
   retract(seeds: ReadonlyArray<readonly [number, number]>): Observable<number> {
     return cascade.retract(this._db, this._ns, seeds);
   }

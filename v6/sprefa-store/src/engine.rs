@@ -16,13 +16,13 @@ pub mod cascade {
 //! expresses every cross-table reference without per-relationship cascade
 //! wiring:
 //!
-//!   cx_row(tag, id, weight)              -- every row; weight = # of supports
+//!   cx_row(tag, id, weight)              -- every row; weight = refCount (# of derivations)
 //!   cx_dep(parent_tag,parent_id,         -- child depends on parent; deleting
 //!          child_tag, child_id)             the parent decrements the child
 //!
 //! Retraction is a Z-set subtraction: a row's `weight` is how many derivations
-//! support it. Removing a support decrements it; the row dies only when weight
-//! reaches 0 (its LAST support is gone) — so a row derived two ways survives the
+//! hold it. Dropping one decrements it; the row dies only when weight
+//! reaches 0 (its LAST refCount is gone) — so a row derived two ways survives the
 //! loss of one. That is why this is not naive reachability: a child dies when
 //! its last parent dies, never its first.
 //!
@@ -247,7 +247,7 @@ pub async fn retract(
         }
         rounds += 1;
 
-        // 1. hits = the frontier's children + how many supports each loses now.
+        // 1. hits = the frontier's children + how many refCounts each loses now.
         exec(&txn, &format!("DELETE FROM {}", ns.hits)).await?;
         exec(&txn,
             &format!("INSERT INTO {hits}(key,dec) \
@@ -259,7 +259,7 @@ pub async fn retract(
         )
         .await?;
 
-        // 2. decrement each hit child by its lost-support count (indexed by rowid).
+        // 2. decrement each hit child by its lost-refCount count (indexed by rowid).
         exec(&txn,
             &format!("UPDATE {row} SET weight = weight - \
                 (SELECT dec FROM {hits} h WHERE h.key = {row}.key) \
@@ -296,7 +296,7 @@ pub async fn retract(
 
 /// Cycle-correct two-pass retraction. The first pass captures and tentatively
 /// removes the affected cone. The second pass republishes cone members reached
-/// from surviving external support. PK tables perform deduplication, and each
+/// from surviving external refCount. PK tables perform deduplication, and each
 /// round fuses its weight, cone, and frontier mutations into one SQLite call.
 ///
 /// All graph state, scope, and frontiers live in SQLite tables. Rust only drives
@@ -391,8 +391,8 @@ async fn retract_scc_two_pass(
 
 // ============================================================================
 // CYCLE-SAFE PAIR (backported from the v6 labkit). The counting `retract` above
-// is correct only on an ACYCLIC support graph — on a cycle the members mutually
-// support each other and never hit weight 0 (a phantom: cut the anchor and the
+// is correct only on an ACYCLIC ref-count graph — on a cycle the members mutually
+// refCount each other and never hit weight 0 (a phantom: cut the anchor and the
 // cycle stays "alive"). These two treat `weight` as a BOOLEAN alive flag (0/1)
 // and compute reachability-from-roots exactly, which is what retraction was
 // always trying to approximate. Use this pair when the graph can contain cycles.

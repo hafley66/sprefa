@@ -891,7 +891,7 @@ incremental_level_statement_lines(LevelStatements, RelPlans, Lines) :-
         ], Lines).
 
 incremental_level_statement_entry_line(RelPlans,
-        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, SupportSql,
+        levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
                   AggregateSql), Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -909,12 +909,12 @@ incremental_level_statement_entry_line(RelPlans,
     % statement text is now the text sqlite receives, byte for byte.
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
-    support_sql_text(SupportSql, SupportText),
+    ref_count_sql_text(RefCountSql, RefCountText),
     aggregate_sql_text(AggregateSql, AggregateText),
     format(atom(Line),
            '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
            [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
-            SelectTemplate, RecomputeTemplate, SupportText, AggregateText]).
+            SelectTemplate, RecomputeTemplate, RefCountText, AggregateText]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -937,8 +937,8 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-support_sql_text(none, null) :- !.
-support_sql_text(supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql),
+ref_count_sql_text(none, null) :- !.
+ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql),
                  Text) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, CollectZeroSql, InsertNewSql],

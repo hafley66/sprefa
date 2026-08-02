@@ -1,11 +1,11 @@
 //! Lab: the incremental weight cascade computes the SAME survivor set as a
 //! from-scratch anti-join recompute. This pins the equivalence the book claims —
-//! the `weight` column is a cache of "has a surviving support", nothing more.
+//! the `weight` column is a cache of "still has a live refCount", nothing more.
 //!
 //! Method A (incremental, O(delta)): decrement weights, cascade the zeros.
 //! Method B (recompute, O(edges), the oracle): a row is alive iff it is
-//!   reachable from a surviving root over the ORIGINAL support edges — i.e. it
-//!   still has at least one live support transitively. Pure anti-join /
+//!   reachable from a surviving root over the ORIGINAL ref-count edges — i.e. it
+//!   still holds at least one live refCount transitively. Pure anti-join /
 //!   reachability, no weights.
 //! The two survivor sets must be identical for ANY graph.
 
@@ -37,16 +37,16 @@ async fn incremental_cascade_equals_from_scratch_recompute() {
     let ns = GraphNs::default();
     cascade::create_schema(&db, &ns).await.unwrap();
 
-    // ---- a non-trivial mixed-support DAG ------------------------------------
+    // ---- a non-trivial mixed-refCount DAG ------------------------------------
     // roots r0=(0,0), r1=(0,1)
-    // L1 (tag1): parent r0 always; ALSO r1 when j%3==0  -> mixed single/dual support
+    // L1 (tag1): parent r0 always; ALSO r1 when j%3==0  -> mixed single/dual refCount
     // L2 (tag2): parents L1[j] and L1[(j+1)%W]          -> two derived parents
-    // L3 (tag3): parent L2[j]                            -> single support
+    // L3 (tag3): parent L2[j]                            -> single refCount
     let mut rows: Vec<(i64, i64, i64)> = vec![(0, 0, 1), (0, 1, 1)];
     let mut deps: Vec<(i64, i64, i64, i64)> = Vec::new();
     for j in 0..W {
-        let l1_supports = if j % 3 == 0 { 2 } else { 1 };
-        rows.push((1, j, l1_supports));
+        let l1_ref_counts = if j % 3 == 0 { 2 } else { 1 };
+        rows.push((1, j, l1_ref_counts));
         rows.push((2, j, 2));
         rows.push((3, j, 1));
         deps.push((0, 0, 1, j)); // r0 -> L1[j]

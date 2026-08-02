@@ -16,7 +16,7 @@
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
 %                        KeyColumns, ProjectSql, WriteSql, DeltaProjectSql).
 %     LevelStatements  : list of levelstmt(HeadRef, DeleteSql, InsertSqls,
-%                        DeltaInsertSql, SupportSql) and
+%                        DeltaInsertSql, RefCountSql) and
 %                        retentionstmt(Ref, Limit, DeleteSql),
 %                        already in execution order (strat.pl:sql_rule_order/2).
 %     DeltaStatements  : list of deltastmt(Ref, SelectAllSql, DeltaTable,
@@ -121,7 +121,7 @@
 :- module(lower,
           [ lower_program/2, boot_statements/5, relplan_kind/3,
             compile_expr/4, compile_comparison/3,
-            canonical_column_expr/2, level_support_sql/4,
+            canonical_column_expr/2, level_ref_count_sql/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
@@ -189,8 +189,8 @@ departure_read_sql(Ref, Columns, Sql) :-
     format(atom(Sql), 'SELECT ~w FROM ~w ORDER BY "_phase", "_sequence"',
            [ColumnsSql, QuotedDepartureTable]).
 
-support_table_name(Name/_Arity, SupportTable) :-
-    format(atom(SupportTable), '__support_next_~w', [Name]).
+ref_count_table_name(Name/_Arity, RefCountTable) :-
+    format(atom(RefCountTable), '__support_next_~w', [Name]).
 
 quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -708,14 +708,14 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
     ),
     ( memberchk(Ref, LevelHeadedRefs)
-    -> SupportColumn = ', "__support_count" INTEGER NOT NULL DEFAULT 1'
-    ;  SupportColumn = ''
+    -> RefCountColumn = ', "__support_count" INTEGER NOT NULL DEFAULT 1'
+    ;  RefCountColumn = ''
     ),
     Ref = Name/_,
     ( declared_type_name(Types, Name)
     -> format(atom(Ddl),
               'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, ~w~w, UNIQUE (~w))',
-              [QuotedTable, ColumnsSql, SupportColumn, PkSql]),
+              [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
        dictionary_table_name(Name, ReferenceView),
        quote_ident(ReferenceView, QuotedReferenceView),
        relation_render_expr(Types, Columns, ColumnTypes, RenderExpr),
@@ -725,7 +725,7 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
        Ddls = [Ddl, ViewDdl]
     ;  format(atom(Ddl),
               'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
-              [QuotedTable, ColumnsSql, SupportColumn, PkSql]),
+              [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
        Ddls = [Ddl]
     ).
 
@@ -1714,7 +1714,7 @@ nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
 
 % ═══ level rule lowering ═════════════════════════════════════════════════════
-% levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, SupportSql):
+% levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql):
 % InsertSqls is a
 % LIST, one entry
 % per rule clause headed by HeadRef, not one levelstmt per rule -- the phase
@@ -1752,14 +1752,14 @@ take_same_head(_, Rules, [], Rules).
 
 level_statement_group(RelPlans, HeadRef-Rules,
                       levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                SupportSql, AggregateSql)) :-
+                                RefCountSql, AggregateSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
     maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls),
     partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
     ( AggregateRules == []
     -> level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
-       level_support_sql(RelPlans, HeadRef, Rules, SupportSql),
+       level_ref_count_sql(RelPlans, HeadRef, Rules, RefCountSql),
        AggregateSql = none
     ;  PlainRules \== []
     -> throw(unsupported_construct(aggregate_head_mixed_with_plain_clause(HeadRef)))
@@ -1770,7 +1770,7 @@ level_statement_group(RelPlans, HeadRef-Rules,
        % derivation, its group). Both slots are `none`; the emitter renders
        % them null and 1_incremental.ts dispatches on the aggregate plan.
        DeltaInsertSql = none,
-       SupportSql = none,
+       RefCountSql = none,
        (   avg_aggregate_rules(AggregateRules)
        ->  level_avg_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
        ;   level_aggregate_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
@@ -2292,47 +2292,47 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
     NextPosition is Position + 1,
     avg_accumulator_key_columns(Rest, NextPosition, More).
 
-level_support_sql(RelPlans, HeadRef, Rules,
-                  supportsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
+level_ref_count_sql(RelPlans, HeadRef, Rules,
+                  refcountsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
                              InsertNewSql)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
-    support_table_name(HeadRef, SupportTable),
-    quote_ident(SupportTable, QuotedSupportTable),
+    ref_count_table_name(HeadRef, RefCountTable),
+    quote_ident(RefCountTable, QuotedRefCountTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     qualified_equalities(HeadColumns, n, h, EqualityParts),
     atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
-    format(atom(ClearSql), 'DELETE FROM ~w', [QuotedSupportTable]),
+    format(atom(ClearSql), 'DELETE FROM ~w', [QuotedRefCountTable]),
     ( rules_read_head_recursively(HeadRef, Rules)
-    -> recursive_support_seed_sql(RelPlans, HeadRef, Rules,
-                                  QuotedSupportTable, HeadColumns,
+    -> recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules,
+                                  QuotedRefCountTable, HeadColumns,
                                   HeadColumnsSql, SeedSql)
-    ;  counted_support_seed_sql(RelPlans, Rules, QuotedSupportTable,
+    ;  counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
                                 HeadColumnsSql, SeedSql)
     ),
     format(atom(UpdateSql),
            'UPDATE ~w AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM ~w n WHERE ~w), 0))',
-           [QuotedHeadTable, QuotedSupportTable, EqualitySql]),
+           [QuotedHeadTable, QuotedRefCountTable, EqualitySql]),
     format(atom(CollectZeroSql),
            'DELETE FROM ~w WHERE "__support_count" <= 0 RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql]),
     format(atom(InsertNewSql),
            'INSERT INTO ~w (~w, "__support_count") SELECT ~w, n."__support_count" FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w) RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql,
-            QuotedSupportTable, QuotedHeadTable, EqualitySql, HeadColumnsSql]).
+            QuotedRefCountTable, QuotedHeadTable, EqualitySql, HeadColumnsSql]).
 
-counted_support_seed_sql(RelPlans, Rules, QuotedSupportTable,
+counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
                          HeadColumnsSql, SeedSql) :-
-    maplist(level_support_arm(RelPlans), Rules, SupportArms),
-    atomic_list_concat(SupportArms, ' UNION ALL ', SupportUnionSql),
+    maplist(level_ref_count_arm(RelPlans), Rules, RefCountArms),
+    atomic_list_concat(RefCountArms, ' UNION ALL ', RefCountUnionSql),
     format(atom(SeedSql),
            'INSERT INTO ~w (~w, "__support_count") SELECT ~w, sum("__support_count") FROM (~w) GROUP BY ~w',
-           [QuotedSupportTable, HeadColumnsSql, HeadColumnsSql,
-            SupportUnionSql, HeadColumnsSql]).
+           [QuotedRefCountTable, HeadColumnsSql, HeadColumnsSql,
+            RefCountUnionSql, HeadColumnsSql]).
 
-recursive_support_seed_sql(RelPlans, HeadRef, Rules, QuotedSupportTable,
+recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
                            HeadColumns, HeadColumnsSql, SeedSql) :-
     partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
     maplist(check_single_recursive_read(HeadRef), RecursiveRules),
@@ -2349,7 +2349,7 @@ recursive_support_seed_sql(RelPlans, HeadRef, Rules, QuotedSupportTable,
     quote_ident(HeadTable, QuotedHeadTable),
     format(atom(SeedSql),
            'INSERT INTO ~w (~w, "__support_count") WITH RECURSIVE ~w (~w) AS (~w) SELECT ~w, 1 FROM ~w',
-           [QuotedSupportTable, HeadColumnsSql, QuotedHeadTable,
+           [QuotedRefCountTable, HeadColumnsSql, QuotedHeadTable,
             HeadColumnsSql, RecursiveUnionSql, HeadColumnsSql,
             QuotedHeadTable]).
 
@@ -2406,7 +2406,7 @@ level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
               [SelectSql, FromSql, WhereSql])
     ).
 
-level_support_arm(RelPlans, Rule, SupportArm) :-
+level_ref_count_arm(RelPlans, Rule, RefCountArm) :-
     Rule = (Head <- Body),
     rule_head_ref(Rule, HeadRef),
     body_ref_uses(Body, Uses),
@@ -2420,15 +2420,15 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
     atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     head_select_list(Head, Bound, HeadColumns, AliasedSelectExprs),
-    support_group_exprs(Head, Bound, GroupExprs),
+    ref_count_group_exprs(Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
-    -> format(atom(SupportArm),
+    -> format(atom(RefCountArm),
               'SELECT ~w, count(*) AS "__support_count" FROM ~w GROUP BY ~w',
               [SelectSql, FromSql, GroupSql])
     ;  atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
-       format(atom(SupportArm),
+       format(atom(RefCountArm),
               'SELECT ~w, count(*) AS "__support_count" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
     ).
@@ -2438,9 +2438,9 @@ level_support_arm(RelPlans, Rule, SupportArm) :-
 % an expression while preserving its value, so only literal integer head
 % columns need a different spelling from head_select_list/4. Every variable,
 % atom, and compound head expression retains its existing emitted SQL bytes.
-% Shared by the support-count arm and both aggregate grouping arms
+% Shared by the ref-count arm and both aggregate grouping arms
 % (scoped-delta insert + recompute) so the SQLite grammar fact lives once.
-support_group_exprs(Head, Bound, GroupExprs) :-
+ref_count_group_exprs(Head, Bound, GroupExprs) :-
     Head =.. [_ | Args],
     maplist(group_expr(Bound), Args, GroupExprs).
 
@@ -3174,10 +3174,10 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
 % An aggregate head has no refCount table (aggsql/6 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
-support_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
-support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
-    support_table_name(HeadRef, SupportTable),
-    quote_ident(SupportTable, QuotedSupportTable),
+ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
+ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
+    ref_count_table_name(HeadRef, RefCountTable),
+    quote_ident(RefCountTable, QuotedRefCountTable),
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3186,7 +3186,7 @@ support_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
            'CREATE TEMP TABLE ~w (~w, "__support_count" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
-           [QuotedSupportTable, ColumnsSql, PrimaryKeySql]).
+           [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage
 % contract, so their delta reads use the quoted column directly. TEXT columns
@@ -3398,9 +3398,9 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
-    maplist(support_ddl(RelPlans), RuleLevelStatements, SupportDdlGroups),
+    maplist(ref_count_ddl(RelPlans), RuleLevelStatements, RefCountDdlGroups),
     maplist(aggregate_scope_ddl, RuleLevelStatements, AggregateScopeDdlGroups),
-    append(SupportDdlGroups, SupportDdl),
+    append(RefCountDdlGroups, RefCountDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
     findall(PreRef,
             ( member((_ <+ EdgeBody), Rules),
@@ -3413,7 +3413,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
-    append([RelationDdl, DeltaDdl, SupportDdl, AggregateScopeDdl, PreDdl,
+    append([RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl,
             TickDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 

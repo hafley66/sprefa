@@ -66,7 +66,7 @@
 %
 % * MIXED HEADS ARE SOUND (supersedes v5's one-rel-one-rule-kind law, which
 %   guarded rebuild_derived's DELETE-all recompute). Under count-IVM a row
-%   carries its support; injected and derived rows may share a head, and
+%   carries its refCount; injected and derived rows may share a head, and
 %   retraction subtracts per-origin. EDB/IDB is per-ROW origin, not a rel
 %   classification.
 %
