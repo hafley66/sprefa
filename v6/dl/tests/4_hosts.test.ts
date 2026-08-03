@@ -458,10 +458,9 @@ bad_result(path, out) <- file(path), failing?(path, out).
   }
 });
 
-// extract is CONSUME-ONLY and evolves on its own schedule, so this grades the
-// spine 4_ingest.ts actually reads (node|edge|sig|site|const, per record kind so a
-// miss names itself) and lets auxiliary kinds above it come and go. A bare total
-// would break on every additive extract change; it did, at 79 -> 82.
+// extract is CONSUME-ONLY and evolves on its own schedule, so this grades only
+// the spine 4_ingest.ts reads, per record kind so a miss names itself. Auxiliary
+// kinds above it are free to move; a bare row total is not.
 const ExtractSpineCounts: Readonly<Record<string, number>> = {
   node: 41,
   edge: 36,

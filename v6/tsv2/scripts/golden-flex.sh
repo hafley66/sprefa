@@ -70,17 +70,9 @@ say "PASS  compiled to gen_emitted/$MODULE.ts"
   || fail "schedule generation: $(cat "$WORK/sched.err")"
 
 # ── 3 + 4. cardinality and mode parity ──────────────────────────────────────
-# The four oracles run CONCURRENTLY, up front. Each reads the program and its
-# own schedule and writes only its own two files, so the legs share nothing;
-# they are four independent comparisons that the loop below happens to report in
-# order. Four swipl processes on a 12-core machine is a third of it, and wall
-# cost becomes the slowest leg (perturbed) rather than their sum. Nothing about
-# what is compared changes: the loop still reads $WORK/oracle.$leg.
-#
-# oracle_both/2 prints the tick log and the final line off ONE run_program/5.
-# The two-call form replayed the whole program twice per leg for the two halves
-# of one result; output is unchanged, proved byte-identical on all four legs
-# (zero 468 B, one 4954 B, many 183110 B, perturbed 189080 B).
+# The oracles run concurrently: each reads the program and its own schedule and
+# writes only its own two files, so the legs share nothing. The loop below is
+# unaffected and still reads $WORK/oracle.$leg in order.
 for leg in zero one many perturbed; do
   schedule="$WORK/golden-flex.$leg.json"
   [ -f "$schedule" ] || fail "no schedule for leg $leg"
@@ -88,9 +80,8 @@ for leg in zero one many perturbed; do
     cd "$COMPILE/scripts"
     swipl -q -l golden_oracle.pl -g "oracle_both('$GOLDEN', '$schedule')" -g halt \
       >"$WORK/oracle.$leg" 2>"$WORK/oracle.$leg.err" && rc=0 || rc=$?
-    # The exit code has to survive the background job: `set -e` would otherwise
-    # tear the subshell down before it could be recorded, and an empty output
-    # file is not a failure signal (the zero leg may legitimately produce one).
+    # `set -e` would kill the subshell before this line, and an empty output
+    # file is not a failure signal: the zero leg may legitimately produce one.
     printf '%s' "$rc" >"$WORK/oracle.$leg.rc"
   ) &
 done

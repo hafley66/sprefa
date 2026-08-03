@@ -127,14 +127,11 @@ reason_name(Reason, Name) :-
 %
 % No message-name list is duplicated here. A new registry refusal or named
 % compiler reason enters this inventory from its defining clause.
-% MEMOIZED. The scan reads every clause of every refusal source module, which
-% measures 0.3408 sec. refusal_inventory_name/1 sits under the umbrella
-% renderer, so unmemoized it runs once per rendered refusal: a third of a second
-% of source walking per line of text, twice per diagnostic once diag.pl renders
-% both channels. The answer is a function of loaded clause source alone, so it
-% is stable for as long as the twelve refusal_source_module/1 modules stay
-% loaded. A process that loads another one after a refusal has already rendered
-% must call refusal_inventory_forget/0.
+% MEMOIZED: the scan walks every clause of all twelve refusal_source_module/1
+% modules, and refusal_inventory_name/1 sits under the umbrella renderer, so
+% unmemoized it runs once per rendered refusal. The answer is a function of
+% loaded clause source alone. A process that loads another refusal source after
+% a refusal has rendered must call refusal_inventory_forget/0.
 :- dynamic refusal_inventory_memo/1.
 
 refusal_inventory(Inventory) :-

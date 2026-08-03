@@ -485,9 +485,8 @@ boundary_deltas(prog(Decls, _), Store0, Store, PrevAll, NextAll, Deltas) :-
             GoneStamped0),
     msort(GoneStamped0, GoneStamped),
     findall(-Row, member(_-Row, GoneStamped), LogRemovals),
-    % PrevAll and NextAll are ordsets: both are sort/2 output (tick/7 and
-    % run_program/5). Ordered difference is therefore a linear merge, and it
-    % yields the same rows in the same ascending order the nested scan did.
+    % PrevAll and NextAll are ordsets (both sort/2 output, tick/7 and
+    % run_program/5), so the difference is a linear merge in the same order.
     ord_subtract(PrevAll, NextAll, GoneRows),
     findall(-Row, ( member(Row, GoneRows), delta_ref_is_set(Decls, Row) ),
             SetRemovals),

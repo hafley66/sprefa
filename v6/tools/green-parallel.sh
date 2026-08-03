@@ -1,22 +1,13 @@
 #!/usr/bin/env bash
-# green-parallel.sh -- green-all's 31 legs, phased instead of one at a time.
+# green-parallel.sh -- green-all's 31 legs, phased. `just green-all-serial` is
+# the one-at-a-time fallback.
 #
-# Phase order is dictated by what each leg is sensitive to:
-#   scale-floor  alone, first, on a quiet machine: its verdict IS a wall reading.
-#   memory-soak  alone. It compares second-quarter to final-quarter rss, which
-#                only survives UNIFORM load: overlapping it with a ramp put the
-#                heavy phase in its final quarter and reddened rss_flat by 0.6%
-#                (106,891,182 -> 118,288,548 against a 117,580,300 ceiling).
-#   serial       legs that write gen_emitted/ or gen/scale_generated.ts, plus
-#                tsv2-test, whose bopRun.test.ts:25 times a boot against a 30s
-#                spawnSync budget and reddens on a merely busy machine.
-#   parallel     everything else, GREEN_PARALLEL_JOBS (default 6 of 12 cores).
-#
-# compile-speed and memory-soak gate on inferences and on flatness, not wall
-# clock, so load cannot move their verdicts. Every server leg gets its own port
-# below; two defaults collide (17571, 17591).
-#
-# Serial fallback: `just green-all-serial`.
+# A leg may only join the parallel phase if load cannot move its verdict:
+#   scale-floor   reads a wall clock. Alone, first, on a quiet machine.
+#   memory-soak   compares its final quarter to its second. Alone: a load ramp
+#                 lands in the final quarter and reddens rss_flat.
+#   serial phase  writes gen_emitted/ or gen/scale_generated.ts; tsv2-test
+#                 belongs here because bopRun.test.ts:25 times a boot.
 
 set -uo pipefail
 

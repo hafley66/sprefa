@@ -128,9 +128,8 @@ resolve_extract_bin() {
   crate="$(cd "$TSV2/../sprefa-extract" && pwd)"
   release="$crate/target/release/extract"
   if [ ! -x "$release" ]; then
-    say "building the in-tree release extractor (cargo build --release --features cli)"
-    (cd "$crate" && cargo build --release --features cli --bin extract) >"$WORK/cargo-extract.log" 2>&1 \
-      || fail "cargo build --bin extract failed: $(tail -5 "$WORK/cargo-extract.log")"
+    fail "no release extractor. A gate does not build; run:
+      cd $crate && cargo build --release --features cli --bin extract"
   fi
   [ -x "$release" ] || fail "no extract binary at $release"
   export DL_EXTRACT_BIN="$release"
@@ -142,9 +141,8 @@ resolve_v5_bin() {
   if [ -n "${DL_V5_BIN:-}" ] && [ -x "$DL_V5_BIN" ]; then say "v5 bin: $DL_V5_BIN (DL_V5_BIN)"; return; fi
   local release="$REPO/target/release/dl"
   if [ ! -x "$release" ]; then
-    say "building the in-tree release v5 engine (cargo build --release --bin dl)"
-    (cd "$REPO" && cargo build --release --bin dl) >"$WORK/cargo-dl.log" 2>&1 \
-      || fail "cargo build --bin dl failed: $(tail -5 "$WORK/cargo-dl.log")"
+    fail "no v5 dl binary. A gate does not build; run:
+      cd $REPO && cargo build --release --bin dl"
   fi
   [ -x "$release" ] || fail "no v5 dl binary at $release"
   DL_V5_BIN="$release"

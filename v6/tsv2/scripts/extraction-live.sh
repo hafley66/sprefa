@@ -98,9 +98,8 @@ resolve_extract_bin() {
   crate="$(cd "$TSV2/../sprefa-extract" && pwd)"
   release="$crate/target/release/extract"
   if [ ! -x "$release" ]; then
-    say "building the in-tree release extractor (cargo build --release --features cli)"
-    (cd "$crate" && cargo build --release --features cli --bin extract) >"$WORK/cargo.log" 2>&1 \
-      || fail "cargo build failed: $(tail -5 "$WORK/cargo.log")"
+    fail "no release extractor. A gate does not build; run:
+      cd $crate && cargo build --release --features cli --bin extract"
   fi
   [ -x "$release" ] || fail "no extract binary at $release"
   export DL_EXTRACT_BIN="$release"
