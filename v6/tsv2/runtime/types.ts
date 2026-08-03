@@ -426,6 +426,11 @@ export interface IBindPlan {
 export interface IQueryPlan {
   readonly rel: string;
   readonly arity: number;
+  /** One entry per position of the query atom: the pinned literal, or null
+   *  where the position is free. */
+  readonly columns: readonly (IRowValue | null)[];
+  /** The pinned positions, 0-based. These are the demand keys. */
+  readonly bound: readonly number[];
   readonly snapshot: "current";
 }
 

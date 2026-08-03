@@ -18,6 +18,7 @@
 :- module(host_expand,
           [ prepare_program/5,
             compile_host_decl/2,
+            compile_query/2,
             compile_ts_query/2,
             body_goals/2,
             reserved_host_column/1

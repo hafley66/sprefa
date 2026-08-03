@@ -42,7 +42,7 @@ import type {
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
@@ -53,7 +53,7 @@ type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatemen
 
 export const hostPlans: readonly IHostPlanData[] = [{ name: "tree_sitter", inputs: [{ name: "file_digest", type: "text" }, { name: "query", type: "text" }], outputs: [{ name: "capture", type: "text" }], template: "tree-sitter {file_digest} $query", demandRel: "__host_demand_tree_sitter", responseRel: "__host_response_tree_sitter", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [{ name: "interval", columns: [{ name: "period", type: "int" }, { name: "bucket", type: "int" }], literals: [], execution: "live_interval" }];
-export const queryPlans: readonly IQueryPlanData[] = [{ rel: "captured", arity: 1, snapshot: "current" }];
+export const queryPlans: readonly IQueryPlanData[] = [{ rel: "captured", arity: 1, columns: [null], bound: [], snapshot: "current" }];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {

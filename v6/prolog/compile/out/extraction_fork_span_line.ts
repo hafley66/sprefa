@@ -42,7 +42,7 @@ import type {
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   sql: string;
@@ -53,7 +53,7 @@ type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatemen
 
 export const hostPlans: readonly IHostPlanData[] = [{ name: "span_scan", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "line", type: "int" }, { name: "text", type: "text" }], template: "span {file_digest} $query_digest", demandRel: "__host_demand_span_scan", responseRel: "__host_response_span_scan", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [{ rel: "span_line", arity: 3, snapshot: "current" }];
+export const queryPlans: readonly IQueryPlanData[] = [{ rel: "span_line", arity: 3, columns: [null, null, null], bound: [], snapshot: "current" }];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {

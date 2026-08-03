@@ -350,6 +350,20 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth2_dot_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_member_dot_pattern",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_depth3_construct_and_read",
     "bucket": "identical",
     "detail": "",

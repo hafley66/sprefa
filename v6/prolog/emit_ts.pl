@@ -18,7 +18,7 @@
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2 ]).
-:- use_module('1_host_expand', [compile_host_decl/2]).
+:- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
 :- op(1150, xfx, <-).
@@ -286,7 +286,7 @@ local_types_lines(
     [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
       'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }',
       'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }',
-      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }',
+      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
       '  sql: string;',
@@ -308,9 +308,13 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
               bind_read_literals(Rules, Name, Columns, Literals)
             ),
             BindPlans),
-    findall(query_plan(Name/Arity, snapshot(current)),
-            ( member(query(Atom), Decls),
-              functor(Atom, Name, Arity)
+    % compile_query/2 is the ONE definition of the plan term; every query decl
+    % reaching here already went through it in prepare_program/5, so calling it
+    % again cannot introduce a refusal this door did not already raise.
+    findall(QueryPlan,
+            ( member(Query, Decls),
+              Query = query(_),
+              compile_query(Query, QueryPlan)
             ),
             QueryPlans),
     maplist(host_plan_json, HostPlans, HostRows),
@@ -417,10 +421,37 @@ bind_subterm(Term, Sub) :-
     arg(_, Term, Argument),
     bind_subterm(Argument, Sub).
 
-query_plan_json(query_plan(Name/Arity, snapshot(current)), Json) :-
+% `columns` is one entry per position of the query atom -- the pinned literal,
+% or null where the position is free -- and `bound` lists the pinned positions,
+% 0-based. Those positions are the demand keys a later consumer slices on, so
+% it reads (rel, arity, columns, bound) off this line and never re-parses the
+% surface.
+%
+% The atom comes out of the POST-expansion Decls of plan/6, so a position an
+% expansion phase has not reduced to a literal (a dot chain, an arithmetic
+% expression) is free here rather than a key: a key is a value, and this line
+% cannot invent one it does not hold.
+query_plan_json(query_plan(Name/Arity, columns(Args), snapshot(current)), Json) :-
     js_string(Name, NameJson),
-    format(atom(Json), '{ rel: ~w, arity: ~w, snapshot: "current" }',
-           [NameJson, Arity]).
+    maplist(query_column_text, Args, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColumnBody),
+    findall(Position,
+            ( nth0(Position, Args, Arg), query_column_pinned(Arg) ),
+            Bound),
+    atomic_list_concat(Bound, ', ', BoundBody),
+    format(atom(Json),
+           '{ rel: ~w, arity: ~w, columns: [~w], bound: [~w], snapshot: "current" }',
+           [NameJson, Arity, ColumnBody, BoundBody]).
+
+query_column_text(Arg, Text) :-
+    ( query_column_pinned(Arg)
+    -> param_text(Arg, Text)
+    ;  Text = null
+    ).
+
+query_column_pinned(Arg) :-
+    nonvar(Arg),
+    ( Arg = bool_lit(_) -> true ; atomic(Arg) ).
 
 host_columns_json(Columns, Json) :-
     maplist(host_column_json, Columns, Rows),
