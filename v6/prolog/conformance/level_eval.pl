@@ -176,16 +176,19 @@ relax_strata(Constraints, Cap, Strata0, Strata) :-
     ).
 
 plain_fixpoint(PlainLevel, Base, Tick, Known0, Level) :-
-    append(Base, Known0, Visible),
+    rows_index(Base, BaseIndex),
+    plain_fixpoint_(PlainLevel, BaseIndex, Tick, Known0, Level).
+
+plain_fixpoint_(PlainLevel, BaseIndex, Tick, Known0, Level) :-
     findall(EvaluatedHead,
             ( member((Head <- Body), PlainLevel),
-              solve(Body, ctx(Visible, [], Tick)),
+              solve(Body, ctx(rows(BaseIndex, Known0), [], Tick)),
               eval_head(Head, EvaluatedHead) ),
             Heads),
     append(Known0, Heads, Merged0),
     sort(Merged0, Merged),
     ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint(PlainLevel, Base, Tick, Merged, Level) ).
+    ; plain_fixpoint_(PlainLevel, BaseIndex, Tick, Merged, Level) ).
 
 
 agg_loop(PlainLevel, AggRules, Base, Tick, Known0, Level) :-
@@ -205,10 +208,16 @@ agg_rule_rows((Head <- Body), Visible, Tick, Row) :-
               maplist(head_arg_value, Template, Contribution) ),
             Bag),
     Bag \== [],
-    findall(GroupKey, ( member(Solution, Bag), group_key(Template, Solution, GroupKey) ), Keys0),
-    sort(Keys0, GroupKeys),
-    member(GroupKey, GroupKeys),
-    findall(Solution, ( member(Solution, Bag), group_key(Template, Solution, GroupKey) ), Group),
+    % One pass. Re-running group_key/3 over the whole bag once per key made
+    % this O(bag x keys); keysort/2 is stable so a group keeps the bag's order,
+    % and group_pairs_by_key/2 emits the keys in the same ascending order sort/2
+    % gave.
+    findall(GroupKey-Solution,
+            ( member(Solution, Bag), group_key(Template, Solution, GroupKey) ),
+            Keyed),
+    keysort(Keyed, KeyedSorted),
+    group_pairs_by_key(KeyedSorted, Groups),
+    member(GroupKey-Group, Groups),
     aggregate_args(Template, Group, Args),
     Row =.. [Name | Args].
 

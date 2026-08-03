@@ -4,7 +4,7 @@
 % reads a ctx(Visible, PreState, Tick) the tick layer builds.
 
 :- module(body,
-          [ rel_ref/2, solve/2, body_atoms/2, eval_expr/2, eval_head/2,
+          [ rel_ref/2, solve/2, rows_index/2, body_atoms/2, eval_expr/2, eval_head/2,
             json_canon/2, comparison_goal/1, substitute_goal/3,
             % Exported for the json_typed_capture agreement unit: this table
             % has a clause-for-clause twin in lower.pl and the two doors
@@ -15,6 +15,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
+:- use_module(library(assoc)).
 :- use_module('../0_body_walk', [walk_body/3]).
 :- use_module('../compile/registry',
               [expression/5, expression_for_term/5, surface_for_term/6]).
@@ -239,8 +240,8 @@ descendant_object(List, Descendant) :-
 solve(true, _) :- !.
 solve((Left, Right), Ctx) :- !, solve(Left, Ctx), solve(Right, Ctx).
 solve(not(Goal), Ctx) :- !, \+ solve(Goal, Ctx).
-solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), member(Atom, Visible).
-solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), member(Atom, PreState).
+solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), rows_member(Atom, Visible).
+solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), rows_member(Atom, PreState).
 solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
 solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
 % next/1 and combine are transparent registry-defined splice rows. Their
@@ -258,7 +259,33 @@ solve(decode(Expr, Pattern), _) :- !,
 solve(json_each(Expr, Element), _) :- !,
     eval_expr(Expr, List), is_list(List), member(Element, List).
 solve(Comparison, _) :- comparison_goal(Comparison), !, solve_comparison(Comparison).
-solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), member(Atom, Visible).
+solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), rows_member(Atom, Visible).
+
+% A body goal names one relation and the row list holds every relation, so an
+% unindexed member/2 makes a k-goal rule O(N^k) over the whole visible set.
+% rows_index/2 buckets a STABLE row list by Name/Arity; rows(Index, Growing)
+% keeps the fixpoint's accumulating half as a plain list, because rebuilding
+% the buckets per iteration costs more than the scan it saves. keysort/2 is
+% stable and the index half is enumerated first, so solution order matches what
+% append(Stable, Growing) fed member/2.
+rows_index(Rows, rows_index(Assoc, Rows)) :-
+    findall(Name/Arity-Row, ( member(Row, Rows), functor(Row, Name, Arity) ), Pairs),
+    keysort(Pairs, Sorted),
+    group_pairs_by_key(Sorted, Grouped),
+    list_to_assoc(Grouped, Assoc).
+
+rows_member(Atom, rows(Index, Growing)) :-
+    !,
+    ( rows_member(Atom, Index) ; member(Atom, Growing) ).
+rows_member(Atom, rows_index(Assoc, All)) :-
+    !,
+    (   var(Atom)
+    ->  member(Atom, All)
+    ;   functor(Atom, Name, Arity),
+        get_assoc(Name/Arity, Assoc, Rows),
+        member(Atom, Rows)
+    ).
+rows_member(Atom, Rows) :- member(Atom, Rows).
 
 % Left to right, backtracking across the whole list, which is what makes a
 % splice indistinguishable from writing the same goals separated by commas.
