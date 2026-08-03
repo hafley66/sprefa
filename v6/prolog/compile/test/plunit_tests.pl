@@ -2748,7 +2748,7 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                42-seq, 45-coalesce, 50-relation_edge].
+                42-seq, 44-dot, 45-coalesce, 50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
@@ -3639,3 +3639,214 @@ test(line_table_agrees_with_a_prefix_walk) :-
              ) )).
 
 :- end_tests(parse_error_positions).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% DOT MEMBER ACCESS
+%
+% `Receiver.field.sub` is the THIRD spelling of a ref-column read. The parser
+% keeps the chain as a nested dot_get/2 term so a surface program round-trips
+% (parse -> print -> parse) with the dot intact, and expansion phase 44-dot
+% (0_dot_expand.pl) rewrites every chain into the decode/2 nested-brace form
+% the lowering already ships, in HEAD arguments and BODY goals alike.
+%
+% FAIL-FIRST RECEIPT (captured on this branch with the parser, printer, and
+% expander reverted to feb14d8d): every parse test here threw
+% dl_parse_error(statement, position(...)) because there was no dot surface at
+% all, declared_phase_order failed on the missing 44-dot row, and the
+% expansion tests failed on unexpanded dot_get terms.
+
+:- begin_tests(dot_member_access).
+
+parsed_dot_rules(Source, Rules) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(_, Rules), _, [])).
+
+expanded_dot_rules(Source, Rules) :-
+    parsed_dot_rules(Source, Parsed),
+    expand_program(prog([], Parsed), prog(_, Rules), _).
+
+dot_refusal(Source, Refusal) :-
+    parsed_dot_rules(Source, Parsed),
+    catch(( expand_program(prog([], Parsed), _, _), Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught).
+
+% ── parse: the chain shape, head and body ────────────────────────────────────
+
+test(head_chain_parses_to_a_dot_get_nest) :-
+    parsed_dot_rules(
+        'dcoord(FileRec.at.name, Start, End) <- span(FileRec, Start, End).',
+        Rules),
+    Rules =@= [(dcoord(dot_get(dot_get(FileRec, at), name), Start, End) <-
+                    span(FileRec, Start, End))].
+
+test(single_field_parses_to_one_dot_get) :-
+    parsed_dot_rules('hit(FileRec.repo) <- file(FileRec, _).', Rules),
+    Rules =@= [(hit(dot_get(FileRec, repo)) <- file(FileRec, _))].
+
+test(bind_rhs_chain_parses_to_the_same_nest) :-
+    parsed_dot_rules(
+        'out(PathName) <- span(FileRec, _, _), PathName := FileRec.at.name.',
+        Rules),
+    Rules = [(out(Leaf) <- (span(Receiver, _, _),
+                            Leaf2 := dot_get(dot_get(Receiver2, at), name)))],
+    Leaf == Leaf2,
+    Receiver == Receiver2.
+
+% ── parse: the three other things a dot can be, all unchanged ────────────────
+
+test(statement_terminator_dot_still_terminates) :-
+    parsed_dot_rules('rel first(x: int).\nrel second(y: int).\nsecond(Value) <- first(Value).', Rules),
+    Rules =@= [(second(Value) <- first(Value))].
+
+test(chain_last_hop_still_leaves_the_statement_terminator) :-
+    parsed_dot_rules(
+        'out(PathName) <- span(FileRec, _, _), PathName := FileRec.at.\nout(Other) <- plain(Other).',
+        Rules),
+    Rules = [(out(_) <- (span(_, _, _), _ := dot_get(_, at))),
+             (out(_) <- plain(_))].
+
+test(bind_of_the_bare_variable_keeps_the_terminator_reading) :-
+    parsed_dot_rules('out(Leaf) <- source(Base), Leaf := Base.', Rules),
+    Rules = [(out(Leaf) <- (source(Base), Leaf2 := Base2))],
+    Leaf == Leaf2,
+    Base == Base2,
+    var(Leaf).
+
+test(spaced_dot_stays_a_syntax_error) :-
+    atom_codes('out(Leaf) <- source(Base), Leaf := Base . at.', Codes),
+    catch(( parse_dl(Codes, _, _, _), Outcome = parsed ),
+          dl_parse_error(_, _),
+          Outcome = refused),
+    Outcome == refused.
+
+test(float_literals_are_unaffected) :-
+    parsed_dot_rules('small(1.5).\nbig(-2.5e3).', Rules),
+    Rules = [(small(1.5) <- true), (big(-2500.0) <- true)].
+
+% ── print: the dot survives the round trip in both positions ─────────────────
+
+test(head_dot_round_trips_through_the_printer) :-
+    atom_codes('dcoord(FileRec.at.name, Start, End) <- span(FileRec, Start, End).', Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    once(sub_atom(Text, _, _, _, 'dcoord(FileRec.at.name, Start, End)')),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])),
+    Program =@= RoundTripped.
+
+test(bind_dot_round_trips_through_the_printer) :-
+    atom_codes('out(PathName) <- span(FileRec, _, _), PathName := FileRec.at.name.', Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    once(sub_atom(Text, _, _, _, 'PathName := FileRec.at.name')),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])),
+    Program =@= RoundTripped.
+
+% ── expansion: both spellings land on the brace program ──────────────────────
+
+test(bound_head_member_desugars_to_a_nested_decode) :-
+    expanded_dot_rules(
+        'dcoord(FileRec.at.name, Start, End) <- span(FileRec, Start, End).',
+        Rules),
+    Rules =@= [(dcoord(Leaf, Start, End) <-
+                   (span(FileRec, Start, End),
+                    decode(FileRec, {at: {name: Leaf}})))].
+
+test(head_dot_expands_to_the_brace_body_the_author_could_type) :-
+    expanded_dot_rules(
+        'dcoord(FileRec.at.name, Start, End) <- span(FileRec, Start, End).',
+        DotRules),
+    expanded_dot_rules(
+        'dcoord(PathName, Start, End) <- span(FileRec, Start, End), decode(FileRec, {at: {name: PathName}}).',
+        BraceRules),
+    DotRules =@= BraceRules.
+
+test(whole_rhs_bind_expands_to_the_brace_decode_goal) :-
+    expanded_dot_rules(
+        'dcoord(PathName, Start, End) <- span(FileRec, Start, End), PathName := FileRec.at.name.',
+        DotRules),
+    expanded_dot_rules(
+        'dcoord(PathName, Start, End) <- span(FileRec, Start, End), decode(FileRec, {at: {name: PathName}}).',
+        BraceRules),
+    DotRules =@= BraceRules.
+
+test(member_inside_a_relation_atom_decodes_after_that_atom) :-
+    expanded_dot_rules('out(Value) <- source(Rec), target(Rec.at), Value := 1.', Rules),
+    Rules =@= [(out(Value) <- (source(Rec), target(Leaf),
+                               decode(Rec, {at: Leaf}), Value := 1))].
+
+test(member_inside_a_bind_expression_decodes_before_the_bind) :-
+    expanded_dot_rules('big(Total) <- source(Rec), Total := Rec.count + 1.', Rules),
+    Rules =@= [(big(Total) <- (source(Rec),
+                               decode(Rec, {count: Leaf}),
+                               Total := Leaf + 1))].
+
+% The := boundary, both halves pinned as behavior rather than left implied.
+% A receiver bound by a LATER goal is still resolved: the desugared body is a
+% set of joins, and the compiled output is byte-identical to the brace twin's
+% (receipt in the lane's REPORT).
+test(receiver_bound_by_a_later_goal_still_resolves) :-
+    expanded_dot_rules(
+        'dcoord(PathName, Start, End) <- PathName := FileRec.at.name, span(FileRec, Start, End).',
+        Rules),
+    Rules =@= [(dcoord(PathName, Start, End) <-
+                   (decode(FileRec, {at: {name: PathName}}),
+                    span(FileRec, Start, End)))].
+
+% A dot chain on the LEFT of a bind is a READ, never a write: it desugars to
+% the same decode plus a bind of the leaf the brace spelling would, which the
+% lowering turns into a filter on the field.
+test(dot_on_the_bind_left_side_reads_it_and_never_writes) :-
+    expanded_dot_rules('out(Value) <- source(Rec), Rec.at := 1, Value := 1.', Rules),
+    Rules =@= [(out(Value) <- (source(Rec),
+                               decode(Rec, {at: Leaf}),
+                               Leaf := 1,
+                               Value := 1))].
+
+test(a_rule_without_a_dot_is_returned_unchanged) :-
+    Program = prog([], [(out(Value) <- source(Value))]),
+    expand_program(Program, prog(_, Rules), _),
+    Rules =@= [(out(Value2) <- source(Value2))].
+
+% ── refusals ─────────────────────────────────────────────────────────────────
+
+test(unbound_receiver_in_a_bind_refuses_by_name) :-
+    dot_refusal('out(Leaf) <- other(Rec), Leaf := Missing.at.', Refusal),
+    Refusal == unresolvable_member(at).
+
+test(unbound_receiver_in_the_head_refuses_by_name) :-
+    dot_refusal('dcoord(Missing.at.name, Start, End) <- span(FileRec, Start, End).',
+                Refusal),
+    Refusal == unresolvable_member('at.name').
+
+% The term door can write a chain rooted at an ATOM, which the text door
+% cannot: every bare identifier there is a variable.
+test(atom_rooted_chain_refuses_with_the_whole_path) :-
+    catch(( expand_program(prog([], [(hit(dot_get(dot_get(fileRec, at), name)) <-
+                                         file(_, _))]), _, _),
+            Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught),
+    Refusal == unresolvable_member('fileRec.at.name').
+
+% Text-door programs cannot reach member_not_a_goal: a dot chain at goal
+% position is a parse error, so the refusal is the term door's alone.
+test(dot_chain_at_goal_position_is_a_parse_error) :-
+    atom_codes('out(Value) <- source(Rec), Rec.at, Value := 1.', Codes),
+    catch(( parse_dl(Codes, _, _, _), Outcome = parsed ),
+          dl_parse_error(_, _),
+          Outcome = refused),
+    Outcome == refused.
+
+test(term_door_dot_chain_as_a_goal_refuses_by_name) :-
+    catch(( expand_program(prog([], [(out(Value) <-
+                                         (source(Rec), dot_get(Rec, at), Value := 1))]),
+                           _, _),
+            Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught),
+    Refusal == member_not_a_goal(at).
+
+:- end_tests(dot_member_access).

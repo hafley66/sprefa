@@ -278,6 +278,70 @@ fixture(relation_depth2_nested_decode_pattern,
     final(dcoord/3, [ dcoord('src/a.rs', 10, 20) ]),
     ticks(2) ]).
 
+% ═══ depth 2: the dot spelling, both positions ══════════════════════════════
+% Two TWINS of relation_depth2_nested_decode_pattern above, one per position
+% the dot is ruled into. HEAD: the chain sits in a head argument whose root is
+% bound by the body. BODY: the chain sits on the right of a bind. Expansion
+% phase 44-dot rewrites each into the brace fixture's last rule term for term,
+% so the three programs compile to byte-identical output and the expectations
+% here are the brace original's rows.
+fixture(relation_depth2_dot_read,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int),
+         col_type(dcoord/3, path_name, text),
+         col_type(dcoord/3, start, int), col_type(dcoord/3, end, int) ],
+       [ (repo(RepoName)  <- raw(RepoName, _, _, _)),
+         (fpath(PathName) <- raw(_, PathName, _, _)),
+         (file(repo(RepoName2), fpath(PathName2)) <-
+             raw(RepoName2, PathName2, _, _)),
+         (span(file(repo(RepoName3), fpath(PathName3)), Start, End) <-
+             raw(RepoName3, PathName3, Start, End)),
+         (dcoord(dot_get(dot_get(FileRec, at), name), Start2, End2) <-
+             span(FileRec, Start2, End2)) ]),
+  [],
+  [ [],
+    [ +raw(acme, 'src/a.rs', 10, 20) ] ],
+  [ deltas(dcoord/3, [ [], [ +dcoord('src/a.rs', 10, 20) ] ]),
+    final(dcoord/3, [ dcoord('src/a.rs', 10, 20) ]),
+    ticks(2) ]).
+
+fixture(relation_depth2_member_dot_pattern,
+  prog([ type_decl(repo,  [col(name, text)]),
+         col_type(repo/1, name, text),
+         type_decl(fpath, [col(name, text)]),
+         col_type(fpath/1, name, text),
+         type_decl(file,  [col(repo, repo), col(at, fpath)]),
+         col_type(file/2, repo, repo), col_type(file/2, at, fpath),
+         col_type(span/3, file, file),
+         col_type(span/3, start, int), col_type(span/3, end, int),
+         col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
+         col_type(raw/4, start, int), col_type(raw/4, end, int),
+         col_type(dcoord/3, path_name, text),
+         col_type(dcoord/3, start, int), col_type(dcoord/3, end, int) ],
+       [ (repo(RepoName)  <- raw(RepoName, _, _, _)),
+         (fpath(PathName) <- raw(_, PathName, _, _)),
+         (file(repo(RepoName2), fpath(PathName2)) <-
+             raw(RepoName2, PathName2, _, _)),
+         (span(file(repo(RepoName3), fpath(PathName3)), Start, End) <-
+             raw(RepoName3, PathName3, Start, End)),
+         (dcoord(PathName4, Start2, End2) <-
+             span(FileRec, Start2, End2),
+             PathName4 := dot_get(dot_get(FileRec, at), name)) ]),
+  [],
+  [ [],
+    [ +raw(acme, 'src/a.rs', 10, 20) ] ],
+  [ deltas(dcoord/3, [ [], [ +dcoord('src/a.rs', 10, 20) ] ]),
+    final(dcoord/3, [ dcoord('src/a.rs', 10, 20) ]),
+    ticks(2) ]).
+
 % ═══ depth 3: the spine's real shape ════════════════════════════════════════
 % located -> span -> file -> repo|fpath. The head builds three levels in one
 % term; the body reads three levels back out of one atom.
