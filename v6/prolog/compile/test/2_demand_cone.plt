@@ -7,6 +7,10 @@
 :- use_module(library(plunit)).
 :- use_module(library(lists)).
 :- use_module('../../2_demand_cone', [ demand_cone/4 ]).
+:- use_module('../../compile', [ program_plan/2 ]).
+:- use_module('../../lower', [ lower_program/2, boot_statements/5 ]).
+:- use_module('../../emit_ts', [ emit_program/5 ]).
+:- use_module('../parse_dl', [ parse_dl/4 ]).
 
 :- begin_tests(demand_cone).
 
@@ -50,5 +54,42 @@ test(negation_included) :-
     demand_cone(Decls, Rules, [gate(Name)], Cone),
     sort([gate/1, ok/1, blocked/1], Expect),
     Cone == Expect.
+
+% ── the wire: the cone reaches the emitted module ────────────────────────────
+
+% The hand-computed cone of this program: the query seeds job/2, job's one rule
+% body reads seed/2, and unread/1 is declared and reachable from nothing. The
+% emitted constant is what a lazy consumer would read; nothing consumes it yet,
+% so this line is the whole receipt that the compiler computed it at all.
+test(emitted_module_carries_the_hand_computed_cone) :-
+    string_codes(
+      "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n? job(7, secs).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    emitted_text(emitted_module_carries_the_hand_computed_cone,
+                 Program, Bindings, Text),
+    once(sub_atom(Text, _, _, _,
+                  'export const demandedRels: readonly string[] = ["job/2", "seed/2"];')),
+    !.
+
+% The compat rule at the emit seam: no query decl means no analysis entry
+% point, so every rel the program declares or mentions is on the demand side.
+test(zero_query_module_carries_every_rel) :-
+    string_codes(
+      "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    emitted_text(zero_query_module_carries_every_rel, Program, Bindings, Text),
+    once(sub_atom(Text, _, _, _,
+                  'export const demandedRels: readonly string[] = ["job/2", "seed/2", "unread/1"];')),
+    !.
+
+emitted_text(Name, Program, Bindings, Text) :-
+    program_plan(fixture(Name, Program, [], [], [])-Bindings, Plan),
+    lower_program(Plan, Lowered),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    emit_program(Name, Plan, Lowered, Boot, Text).
 
 :- end_tests(demand_cone).
