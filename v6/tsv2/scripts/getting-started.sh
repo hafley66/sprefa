@@ -157,6 +157,17 @@ def normalize(lines, bytes_too):
     text = re.sub(r"\b[0-9a-f]{64}\b", "<digest>", text)
     text = re.sub(r"\b[0-9a-f]{32}\b", "<program>", text)
     text = re.sub(r"\b\d{10}\b", "<epoch>", text)
+    # COMPILE-TRACE (compile.pl:388) is an always-on stderr line whose per-phase
+    # wall/inference pairs move every run. Its SHAPE is the documentable part.
+    # Scoped to the trace line so `exit 0` elsewhere stays an exact assertion --
+    # the runner's own status check cannot cover it, because every gs:run command
+    # ends in `echo "exit $?"` and so always exits 0 itself.
+    text = re.sub(
+        r"^(COMPILE-TRACE .*)$",
+        lambda match: re.sub(r"=\d+/\d+", "=<n>/<n>", match.group(1)),
+        text,
+        flags=re.M,
+    )
     if bytes_too:
         text = re.sub(r"\d+", "<n>", text)
     out = [line.rstrip() for line in text.split("\n")]

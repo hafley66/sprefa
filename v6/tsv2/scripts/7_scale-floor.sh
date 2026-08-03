@@ -29,6 +29,16 @@
 # until it catches nothing. 3x still catches a cratering (the naive path is
 # ~165x slower on this very cell), which is the failure this gate is for.
 #
+# The wall leg takes the MINIMUM of SCALE_FLOOR_WALL_SAMPLES runs, not one
+# sample and not the mean. One sample against a fixed reference makes the
+# verdict a coin flip whenever anything else is running: four consecutive runs
+# on unchanged code measured 49.55 / 46.57 / 20.73 / 19.19 ms per 1k, a 2.6x
+# spread straddling the 44.537 ceiling, two red and two green. The minimum is
+# the sample least contaminated by other processes, and it still has the gate's
+# teeth: a cratered plan is uniformly slower, so it raises the floor as well as
+# the mean. The mean would not work here, because one contended sample drags it
+# over the ceiling by itself.
+#
 # EVERY RUN APPENDS to goldens/scale-floor-history.jsonl so the curve exists
 # over time even on runs that pass.
 #
@@ -61,6 +71,14 @@
 #        ms/1k arrivals          <=44.537 ->    14.9988292  OK
 #      The count leg goes red with the wall leg green, so the deterministic
 #      half is not piggybacking on timing.
+#   3. Sabotage 1 re-run against the min-of-3 wall leg, to prove taking the
+#      floor did not cost the gate its teeth:
+#        stmts/tick set @10000   [37,41]  ->  [114]         FAIL
+#        ms/1k min of 3          <=44.537 ->  210.85945     FAIL
+#        samples                 210.85945 / 211.95017 / 212.091775
+#      A cratered plan is uniformly slow, so its three samples land within 1%
+#      of each other and the minimum is no escape. Contention is one-sided and
+#      the minimum drops it; a regression is two-sided and the minimum keeps it.
 #
 # Re-pin the reference numbers after a deliberate change:
 #   SCALE_FLOOR_WRITE=1 bash scripts/7_scale-floor.sh
@@ -82,6 +100,8 @@ rows="${SCALE_FLOOR_ROWS:-10000}"
 control_rows="${SCALE_FLOOR_CONTROL_ROWS:-1000}"
 # Wall multiplier. Loose on purpose: see the header.
 wall_multiplier="${SCALE_FLOOR_WALL_MULTIPLIER:-3}"
+# Wall samples. The gate reads the minimum; see the header for why not one.
+wall_samples="${SCALE_FLOOR_WALL_SAMPLES:-3}"
 write_reference="${SCALE_FLOOR_WRITE:-0}"
 
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/sprefa-scale-floor.XXXXXX")"
@@ -141,15 +161,31 @@ control_statements_set="$(jq -c '.statementCounts' "$control_receipt")"
 tick_count="$(jq -r '.tickCount' "$receipt")"
 incremental_safe="$(jq -r '.incrementalSafe' "$receipt")"
 
-# 3. informational leg: wall, RSS, final row counts
+# 3. wall leg: wall, RSS, final row counts, best of N.
+# The whole record travels with the winning sample, so the RSS and row counts
+# reported below belong to the run whose time is being gated, never a blend.
 record="$scratch/scale.jsonl"
-: > "$record"
-if ! node --experimental-transform-types "$here/scale-bench.ts" \
-     "$shape" "$rows" "$record" > "$scratch/bench.out" 2> "$scratch/bench.err"; then
-  echo "scale-floor: scale bench failed for $shape/$rows" >&2
-  tail -20 "$scratch/bench.err" >&2
-  exit 1
-fi
+best_record=""
+best_ms=""
+wall_samples_seen=()
+for sample in $(seq 1 "$wall_samples"); do
+  sample_record="$scratch/scale.$sample.jsonl"
+  : > "$sample_record"
+  if ! node --experimental-transform-types "$here/scale-bench.ts" \
+       "$shape" "$rows" "$sample_record" > "$scratch/bench.out" 2> "$scratch/bench.err"; then
+    echo "scale-floor: scale bench failed for $shape/$rows (sample $sample of $wall_samples)" >&2
+    tail -20 "$scratch/bench.err" >&2
+    exit 1
+  fi
+  sample_ms="$(jq -r '.ms_per_1k_arrivals' "$sample_record")"
+  wall_samples_seen+=("$sample_ms")
+  if [ -z "$best_record" ] || awk -v a="$sample_ms" -v b="$best_ms" 'BEGIN { exit !(a < b) }'; then
+    best_record="$sample_record"
+    best_ms="$sample_ms"
+  fi
+done
+cp "$best_record" "$record"
+wall_samples_json="$(printf '%s\n' "${wall_samples_seen[@]}" | jq -s '.')"
 
 total_wall_ms="$(jq -r '.total_wall_ms' "$record")"
 ms_per_1k="$(jq -r '.ms_per_1k_arrivals' "$record")"
@@ -212,7 +248,7 @@ wall_verdict="$(awk -v got="$ms_per_1k" -v ceiling="$wall_ceiling" \
   'BEGIN { print (got > ceiling) ? "FAIL" : "OK" }')"
 [ "$wall_verdict" = "OK" ] || status=1
 printf '%-26s %16s %16s   %s\n' \
-  "ms/1k arrivals (<=${wall_multiplier}x)" "$wall_ceiling" "$ms_per_1k" "$wall_verdict"
+  "ms/1k min of $wall_samples (<=${wall_multiplier}x)" "$wall_ceiling" "$ms_per_1k" "$wall_verdict"
 
 if [ "$statements_per_tick_set" != "$control_statements_set" ]; then
   echo
@@ -225,6 +261,8 @@ echo
 echo "── informational, NOT gated ──"
 printf 'total_wall_ms=%s  worker_rss_mb=%s  host_peak_mb=%s  reference_ms_per_1k=%s\n' \
   "$total_wall_ms" "$rss_mb" "$host_peak_mb" "$reference_ms_per_1k"
+printf 'ms_per_1k samples=%s  gated=%s (min)\n' \
+  "$(printf '%s ' "${wall_samples_seen[@]}")" "$ms_per_1k"
 
 mkdir -p "$(dirname "$history")"
 jq -c -n \
@@ -236,6 +274,7 @@ jq -c -n \
   --argjson ticks "$tick_count" \
   --argjson total_wall_ms "$total_wall_ms" \
   --argjson ms_per_1k_arrivals "$ms_per_1k" \
+  --argjson ms_per_1k_samples "$wall_samples_json" \
   --argjson worker_rss_mb "$rss_mb" \
   --argjson host_peak_mb "$host_peak_mb" \
   --arg verdict "$([ "$status" = 0 ] && echo pass || echo fail)" \

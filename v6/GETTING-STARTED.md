@@ -14,11 +14,12 @@ The receipt replays the blocks in a fresh temporary directory. Do the same:
 mkdir -p ~/bop-demo && cd ~/bop-demo
 ```
 
-Volatile values are written as placeholders — `<digest>` for a content hash,
-`<epoch>` for a wall-clock bucket, and `<n>` in the one block (`bop stats`)
-whose numbers are machine state rather than engine behaviour. Those are exactly
-the substitutions the receipt makes before diffing; everything else on the page,
-including every row of every relation, is compared literally.
+Volatile values are written as placeholders: `<digest>` for a content hash,
+`<epoch>` for a wall-clock bucket, and `<n>` in the two places whose numbers are
+machine state rather than engine behaviour (`bop stats`, and the compiler's
+`COMPILE-TRACE` timings). Those are exactly the substitutions the receipt makes
+before diffing; everything else on the page, including every row of every
+relation and every exit code, is compared literally.
 
 ---
 
@@ -95,11 +96,14 @@ Three things are happening.
   relation.
 
 Check it before running it. `check` compiles through the text door and boots
-nothing; silence plus exit 0 is the answer:
+nothing. Exit 0 is the answer; the `COMPILE-TRACE` line above it is the
+compiler's always-on per-phase timing, written to stderr on every compile as
+`wall_ms/inferences`, and is not a diagnostic:
 
 <!-- gs:run -->
 ```console
 $ "$BOP" check hello.dl6; echo "exit $?"
+COMPILE-TRACE program=hello parse=<n>/<n> plan=<n>/<n> lower=<n>/<n> boot=<n>/<n> emit=<n>/<n> write=<n>/<n> total=<n>/<n>
 exit 0
 ```
 
@@ -346,9 +350,17 @@ beat(bucket) <- interval(1, bucket).
 <!-- gs:run -->
 ```console
 $ "$BOP" check broken.dl6; echo "exit $?"
+{"code":"log_on_level_headed_rel/1","message":"<workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":3},"start": {"character":0,"line":3}},"severity":1,"source":"dl6","uri":"file://<workdir>/broken.dl6"}
 refusal: <workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```
+
+The JSON line is the diagnostic channel (`v6/prolog/diag.pl`), one LSP
+`Diagnostic` record per refusal, carrying the same message an editor would
+draw. It goes to stderr by default; set `DL6_DIAG_JSONL=<path>` to send it to a
+file instead, which is what a separate process watching for diagnostics wants.
+The human `refusal:` line below it is rendered from the same term, so the two
+cannot disagree.
 
 `log` declares an append-only relation, and `beat` is also the head of a
 derived rule (`<-`). Those two cannot both be true: a derived view is
@@ -365,6 +377,7 @@ through the compile script directly reports the same line:
 <!-- gs:run -->
 ```console
 $ bash "$SPREFA/v6/prolog/compile/scripts/compile_dl6.sh" broken.dl6 /dev/null; echo "exit $?"
+{"code":"log_on_level_headed_rel/1","message":"broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":3},"start": {"character":0,"line":3}},"severity":1,"source":"dl6","uri":"file://broken.dl6"}
 ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```

@@ -14,7 +14,7 @@
 | [ARCH-MAP.md](ARCH-MAP.md) | 666 | v6 architecture map |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 162 | v6 architecture — every graph algorithm, and why |
 | [DECISIONS.md](DECISIONS.md) | 176 | v6 pinned decisions — STOP re-deriving these |
-| [GETTING-STARTED.md](GETTING-STARTED.md) | 397 | Getting started with v6 |
+| [GETTING-STARTED.md](GETTING-STARTED.md) | 410 | Getting started with v6 |
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [READINESS.md](READINESS.md) | 189 | v5 golden use-cases: readiness |
 | [README.md](README.md) | 110 | V6 |
@@ -168,15 +168,15 @@
 ### GETTING-STARTED.md
 ```
 1:# Getting started with v6
-25:## 1. Setup
-71:## 2. Your first program
-127:## 3. Making it react to files
-144:# plan
-202:# notes
-223:# notes
-254:## 4. Reading relations
-314:## 5. Reading an error
-378:## 6. Where to go next
+26:## 1. Setup
+72:## 2. Your first program
+131:## 3. Making it react to files
+148:# plan
+206:# notes
+227:# notes
+258:## 4. Reading relations
+318:## 5. Reading an error
+391:## 6. Where to go next
 ```
 
 ### MAP.md
