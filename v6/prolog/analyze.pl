@@ -1153,6 +1153,7 @@ check_supported_subset_expanded(Program) :-
                               % already-refused program keeps its current
                               % diagnostic.
                               missing_retention,
+                              retention_head_conflict_risk,
                               aggregate_in_edge_head,
                               % Same slot engine.pl gives it, straight after
                               % the edge class it defers to. Ahead of
@@ -1226,6 +1227,8 @@ compiler_refusal(finalize_in_level_rule,  Ref, finalize_in_level_rule(Ref)).
 compiler_refusal(latest_in_level_rule,    Ref, latest_in_level_rule(Ref)).
 compiler_refusal(pre_in_level_rule,       Ref, pre_in_level_rule(Ref)).
 compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
+compiler_refusal(retention_head_conflict_risk, Ref-count(N),
+                 retention_head_conflict_risk(Ref, count(N))).
 % Named WITH the offending head reference, where the oracle's bare
 % aggregate_in_edge_head names nothing. A compiler refusal has to say which
 % rule to edit; the oracle's term is the one fixtures already pin.

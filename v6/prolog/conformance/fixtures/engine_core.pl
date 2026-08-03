@@ -222,6 +222,34 @@ fixture(log_on_level_headed_rel_rejected,
   [ [ +source_item(alpha) ] ],
   [ throws(log_on_level_headed_rel(derived_event/1)) ]).
 
+% Two arms on a BOUNDED log head: retention prunes at tick end, so the
+% surviving row is whichever arm ran last, which is source line order.
+fixture(retention_head_conflict_risk_rejected,
+  prog([ kind(ping/1, log),    keep(ping/1, all),
+         kind(journal/1, log), keep(journal/1, count(1)) ],
+       [ (journal(first)  <+ ping(_FirstArm)),
+         (journal(second) <+ ping(_SecondArm)) ]),
+  [],
+  [ [ +ping(e1) ] ],
+  [ throws(retention_head_conflict_risk(journal/1, count(1))) ]).
+
+% A bounded log head with exactly ONE edge arm is not the conflict shape: no
+% second arm can out-order it, so retention still prunes. FAIL-FIRST sibling of
+% retention_head_conflict_risk_rejected, and the sabotage canary for the SAME
+% trigger: if it reddens here, the trigger is too wide.
+fixture(retention_single_arm_still_prunes,
+  prog([ kind(ping/1, log),    keep(ping/1, all),
+         kind(journal/1, log), keep(journal/1, count(1)) ],
+       [ (journal(Payload) <+ ping(Payload)) ]),
+  [],
+  [ [ +ping(a) ], [ +ping(b) ], [ +ping(c) ] ],
+  [ deltas(journal/1, [ [ +journal(a) ],
+                        [ -journal(a), +journal(b) ],
+                        [ -journal(b), +journal(c) ],
+                        [] ]),
+    final(journal/1, [ journal(c) ]),
+    ticks(4) ]).
+
 % latest/1 in a level body reads the same Visible rows as a bare atom. The
 % marking has no level-rule meaning, so refuse it at load time.
 fixture(latest_in_level_rule_rejected,

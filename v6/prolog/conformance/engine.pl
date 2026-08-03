@@ -149,6 +149,7 @@ engine_check_order([ key_position_out_of_range,
                      log_on_level_headed_rel,
                      missing_retention,
                      keep_on_non_log_rel,
+                     retention_head_conflict_risk,
                      aggregate_in_edge_head,
                      % After the edge class, which is the more specific fact
                      % about an edge program; this one is level rules only.
@@ -205,6 +206,8 @@ engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
 engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
 engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
 engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
+engine_refusal(retention_head_conflict_risk, Ref-count(N),
+               retention_head_conflict_risk(Ref, count(N))).
 % The oracle names this one without a reference, and always has.
 engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
 engine_refusal(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).

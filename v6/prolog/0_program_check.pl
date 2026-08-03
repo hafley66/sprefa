@@ -439,6 +439,20 @@ program_violation(missing_retention, prog(Decls, _), Ref) :-
     member(kind(Ref, log), Decls),
     \+ memberchk(keep(Ref, _), Decls).
 
+% A bounded log head prunes at tick end, so with two or more edge arms the
+% surviving row is the one the last-running arm wrote, and arm order is source
+% order. Broader than the keyed sibling edge_head_conflict_risk, which requires
+% the arms to share a trigger ref because a keyed conflict is per occurrence:
+% this bound applies per TICK, so arms on different triggers still collide.
+% Every N, not only 1: with N kept and more arms than that, order still decides
+% which N survive.
+program_violation(retention_head_conflict_risk, prog(Decls, Rules), Ref-count(N)) :-
+    member(keep(Ref, count(N)), Decls),
+    relation_kind(Decls, Ref, log),
+    findall(Ref, ( member(Rule, Rules), Rule = (Head <+ _),
+                   head_ref(Head, Ref) ), Arms),
+    Arms = [_, _ | _].
+
 % An aggregate in an edge head. Aggregates are a grouped recomputation over a
 % bag of derivations; an edge rule fires per occurrence and has no bag. The
 % compiler accepted this until rank R2, letting a compound aggregate argument

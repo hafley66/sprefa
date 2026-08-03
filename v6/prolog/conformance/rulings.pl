@@ -542,5 +542,14 @@ ruling(org_fanout, repos_host_on_clock, user,
        'user 2026-07-31: "why is data from host gh org call on a timer of 1 day not enough" -- it is. Repo list = an ordinary sh host (gh org list) driven by a clock bind (1-day cadence), yielding repo(slug, root) rows; fan-out = ordinary joins + root columns on file feeds. Zero new constructs.').
 ruling(gen_word_banned, needs_rx_prolog_sql_name, user,
        'user 2026-07-31: "gen needs a new name i hate the name gen it was vibed into existence". The word gen is BANNED for the codegen-sink construct alongside scan; the templating card must propose names from rx/prolog/SQL vocabulary only (candidates to price: write/format/printf/render-class words).').
+% 2026-08-03. Two or more edge arms on a log head with keep(count(N)): the
+% surviving row is whichever arm ran last, and arm order is source line order.
+% The alternative was a documented contract, on the cross-rel drain order
+% precedent (stream_cards card 7a). Refused instead because everywhere else in
+% the language moving a rule up or down is safe, and the wanted semantics
+% already has a loud spelling: a keyed rel.
+ruling(bounded_log_arm_order, refuse_two_arms_on_bounded_log, user,
+       'user 2026-08-03: "refuse it". Named retention_head_conflict_risk(HeadRef, count(N)), sibling of the keyed edge_head_conflict_risk at analyze.pl:1350 and broader than it: no shared-trigger condition, because retention prunes at tick end rather than per occurrence, so arms on different triggers still collide. Covers count(N) for every N, not only count(1). Measured before ruling: ZERO tracked programs carry the shape, so the refusal breaks nothing.').
+
 ruling(repo_column_spelling, distinct_name_hosts, user,
        'user 2026-07-31: "we want A bc no magic strings repeated all the time since we dont have defaults or nulls" -- repo-scoped enumeration is its own host pair (repo_files(repo, glob, ...), repo_files_at(repo, rev, glob, ...)) beside the unscoped files/files_at, never a required leading column with a repeated cwd literal. Follows the repo_grep_at precedent and the no-defaults/no-nulls design line: a coordinate the program does not vary is a host the program does not name.').

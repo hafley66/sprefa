@@ -2397,6 +2397,41 @@ test(keep_on_non_log_rel_both_doors) :-
     OracleVerdict == keep_on_non_log_rel(state/1),
     CompilerVerdict == unsupported_construct(keep_on_non_log_rel(state/1)).
 
+% Two edge arms on a log head carrying a count bound. Retention prunes at tick
+% END across every write in the tick, so the surviving row is whichever arm ran
+% last, and arm order is source line order: swapping the two rules changes the
+% final state with no diagnostic. Measured at 80ba9db6, before the refusal
+% existed, the same program gave [journal(second)] and [journal(first)].
+%
+% Broader than its keyed sibling edge_head_conflict_risk on purpose. That one
+% requires the two arms to share a trigger ref, because a keyed conflict is per
+% OCCURRENCE; this bound is applied per TICK, so arms on different triggers
+% still collide.
+test(retention_head_conflict_risk_both_doors) :-
+    Prog = prog([ kind(ping/1, log),    keep(ping/1, all),
+                  kind(journal/1, log), keep(journal/1, count(1)) ],
+                [ (journal(first)  <+ ping(_FirstArm)),
+                  (journal(second) <+ ping(_SecondArm)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == retention_head_conflict_risk(journal/1, count(1)),
+    CompilerVerdict ==
+        unsupported_construct(retention_head_conflict_risk(journal/1, count(1))).
+
+% The same two arms on an UNBOUNDED log head stay accepted at both doors.
+% keep(all) makes arm order visible in the delta sequence and nowhere else, so
+% there is no survivor for order to decide. merge_batches_per_tick is the live
+% fixture of this shape and must not start refusing.
+test(two_arms_on_unbounded_log_stay_accepted_at_both_doors) :-
+    Prog = prog([ kind(ping/1, log), keep(ping/1, all),
+                  kind(journal/1, log), keep(journal/1, all) ],
+                [ (journal(first)  <+ ping(_FirstArm)),
+                  (journal(second) <+ ping(_SecondArm)) ]),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
+
 % An aggregate spelling NEITHER door implements. Same term at both doors,
 % because there is nothing for the two vocabularies to disagree about: the
 % word is not evaluable anywhere. The payload lists the aggregates that do

@@ -714,6 +714,13 @@
     "finalDetail": ""
   },
   {
+    "name": "retention_single_arm_still_prunes",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "now_reads_the_tick",
     "bucket": "identical",
     "detail": "",

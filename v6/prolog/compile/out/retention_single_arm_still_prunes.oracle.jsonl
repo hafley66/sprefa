@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"journal":{"add":[["a"]],"del":[]},"ping":{"add":[["a"]],"del":[]}}}
+{"tick":2,"deltas":{"journal":{"add":[["b"]],"del":[["a"]]},"ping":{"add":[["b"]],"del":[]}}}
+{"tick":3,"deltas":{"journal":{"add":[["c"]],"del":[["b"]]},"ping":{"add":[["c"]],"del":[]}}}
+{"tick":4,"deltas":{}}
