@@ -75,6 +75,7 @@
 :- ensure_loaded('0_graph.test.pl').
 % The diag channel's plunit receipts live with the module in labs/.
 :- ensure_loaded('diag.test.pl').
+:- ensure_loaded('2_demand_cone.plt').
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
