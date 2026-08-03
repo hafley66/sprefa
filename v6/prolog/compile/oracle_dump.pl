@@ -61,15 +61,17 @@ dump_final_state(OutDir, Name, Prog, Initial, Schedule) :-
                        format(Stream, "~w~n", [Line]),
                        close(Stream)).
 
+% keysort/2 on Ref-Row puts the rel names in the same ascending order sort/2 on
+% the bare refs did, in one pass over FinalAll instead of one pass per rel.
 final_state_line(FinalAll, Line) :-
-    findall(Ref, ( member(Row, FinalAll), rel_ref(Row, Ref) ), Refs0),
-    sort(Refs0, Refs),
-    findall(RelJson, ( member(Ref, Refs), final_rel_json(Ref, FinalAll, RelJson) ), RelJsons),
+    findall(Ref-Row, ( member(Row, FinalAll), rel_ref(Row, Ref) ), Pairs0),
+    keysort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Grouped),
+    findall(RelJson, ( member(Ref-Rows, Grouped), final_rel_json(Ref, Rows, RelJson) ), RelJsons),
     atomic_list_concat(RelJsons, ',', Inner),
     format(atom(Line), '{"final":{~w}}', [Inner]).
 
-final_rel_json(Name/Arity, FinalAll, Json) :-
-    findall(Row, ( member(Row, FinalAll), rel_ref(Row, Name/Arity) ), Rows),
+final_rel_json(Name/_Arity, Rows, Json) :-
     maplist(row_json, Rows, RowJsonsRaw),
     msort(RowJsonsRaw, RowJsons),
     atomic_list_concat(RowJsons, ',', Inner),

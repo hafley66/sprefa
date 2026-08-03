@@ -229,12 +229,15 @@ engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
 
 % Multiset: a Log rel's duplicate rows are distinct occurrences and stay
 % visible (store dedup would silently re-collapse what q1 preserves).
+% Direct recursion, not findall/member: this runs once per occurrence over the
+% whole store, so the findall bag was the single largest allocation in a tick.
 store_rows(Store, Rows) :-
-    findall(Row, ( member(Entry, Store), entry_row(Entry, Row) ), Rows0),
+    entry_rows(Store, Rows0),
     msort(Rows0, Rows).
 
-entry_row(srow(Row), Row).
-entry_row(lrow(_, Row), Row).
+entry_rows([], []).
+entry_rows([srow(Row) | Entries], [Row | Rows]) :- entry_rows(Entries, Rows).
+entry_rows([lrow(_, Row) | Entries], [Row | Rows]) :- entry_rows(Entries, Rows).
 
 log_stamps(Store, Ref, Stamps) :-
     findall(Stamp-Row,
@@ -346,17 +349,35 @@ absorb_set_arrival(_, Row, Store, [srow(Row) | Store], true).
 
 % ═══ edge firing, one occurrence at a time ══════════════════════════════════
 
-process_occurrences(_, _, _, [], Store, Store, []).
-process_occurrences(Prog, Tick, Frozen, [occ(_, Payload) | Rest], Store0, Store, Written) :-
-    Prog = prog(Decls, Rules),
-    Frozen = frozen(MidLevel, PrevLevel),
-    store_rows(Store0, StoreRows),
+% The trigger items are a property of the rule, not of the occurrence, so they
+% are walked once per tick. rule(Head, Body, Items) is copied as ONE term: the
+% items must stay bound into the body copy they came from (see trigger_items_).
+process_occurrences(Prog, Tick, Frozen, Occurrences, Store0, Store, Written) :-
+    Prog = prog(_, Rules),
+    findall(rule(Head, Body, Items),
+            ( member((Head <+ Body), Rules), trigger_items(Body, Items) ),
+            Edges),
+    process_occurrences_(Occurrences, Prog, Tick, Frozen, Edges, none, Store0, Store, Written).
+
+% An occurrence that writes nothing leaves the store term identical, and most
+% do, so the two whole-store views are rebuilt only when the store changed.
+% The guard is ==/2 on the store term itself, not on its rows.
+store_view(Store, _, view(Cached, Visible, PreState), view(Cached, Visible, PreState)) :-
+    Cached == Store, !.
+store_view(Store, frozen(MidLevel, PrevLevel), _, view(Store, Visible, PreState)) :-
+    store_rows(Store, StoreRows),
     append(StoreRows, MidLevel, Visible0), sort(Visible0, Visible),
-    append(StoreRows, PrevLevel, PreState0), sort(PreState0, PreState),
+    append(StoreRows, PrevLevel, PreState0), sort(PreState0, PreState).
+
+process_occurrences_([], _, _, _, _, _, Store, Store, []).
+process_occurrences_([occ(_, Payload) | Rest], Prog, Tick, Frozen, Edges,
+                     View0, Store0, Store, Written) :-
+    Prog = prog(Decls, _),
+    store_view(Store0, Frozen, View0, View),
+    View = view(_, Visible, PreState),
     findall(EvaluatedHead,
-            ( member((Head <+ Body), Rules),
-              copy_term((Head <+ Body), (HeadCopy <+ BodyCopy)),
-              trigger_items(BodyCopy, Items),
+            ( member(Edge, Edges),
+              copy_term(Edge, rule(HeadCopy, BodyCopy, Items)),
               occurrence_trigger(Payload, Items, BodyCopy, SolvableBody),
               solve(SolvableBody, ctx(Visible, PreState, Tick)),
               eval_head(HeadCopy, EvaluatedHead) ),
@@ -364,7 +385,7 @@ process_occurrences(Prog, Tick, Frozen, [occ(_, Payload) | Rest], Store0, Store,
     dedupe_keep_order(Derived0, Derived),
     check_occurrence_conflicts(Decls, Derived),
     apply_edge_writes(Prog, Tick, Derived, Store0, Store1, WrittenHere),
-    process_occurrences(Prog, Tick, Frozen, Rest, Store1, Store, WrittenRest),
+    process_occurrences_(Rest, Prog, Tick, Frozen, Edges, View, Store1, Store, WrittenRest),
     append(WrittenHere, WrittenRest, Written).
 
 check_occurrence_conflicts(Decls, Derived) :-
