@@ -70,6 +70,7 @@
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 377 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 204 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
+| [prolog/labs/scc_extract/CONTRACT.md](prolog/labs/scc_extract/CONTRACT.md) | 172 | Lane L5: pluck Tarjan out of clpfd and make it callable |
 | [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 495 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
@@ -1078,6 +1079,22 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
+```
+
+### prolog/labs/scc_extract/CONTRACT.md
+```
+1:# Lane L5: pluck Tarjan out of clpfd and make it callable
+3:## The finding this lane acts on
+23:## Base
+32:## Ownership
+38:## The exact source to extract
+66:## The hard part, and a receipt so you do not start blind
+98:## Deliverable
+111:## Grading: differential against both existing implementations
+126:## Numbers
+138:## What the report must answer
+146:## Style laws (repo-wide, enforced)
+157:## REPORT.md format
 ```
 
 ### prolog/labs/type_matrix/MATRIX.md
