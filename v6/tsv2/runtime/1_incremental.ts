@@ -16,6 +16,7 @@ import type {
   QueryResult,
   SqlStatement,
 } from "./types.ts";
+import { RuntimeTrace } from "./trace.ts";
 
 type DeltaEvent = {
   readonly rel: string;
@@ -319,9 +320,11 @@ function applyEdgeStatement(
   if (relation === undefined) {
     throw new Error(`incremental edge head relation missing: ${statement.headRel}`);
   }
+  const startedAt = RuntimeTrace.enabled ? performance.now() : 0;
   return seam.runner.execute(seam.db, statement.projectSql).pipe(
     concatMap((result) => {
       const rows = resultRows(result, statement.headColumns);
+      RuntimeTrace.rule(statement.ruleId, rows.length, performance.now() - startedAt);
       return statement.headKind === "log"
         ? applyLogEdge(seam, statement, relation, rows)
         : applyKeyedEdge(seam, statement, relation, rows);
@@ -420,9 +423,11 @@ function applyLevelStatement(
   if (statement.insertSql === null) {
     throw new Error(`incremental level statement has neither insertSql nor aggregateSql: ${statement.headRel}`);
   }
+  const startedAt = RuntimeTrace.enabled ? performance.now() : 0;
   return seam.runner.execute(seam.db, statement.insertSql).pipe(
     concatMap((result) => {
       const rows = resultRows(result, statement.headColumns);
+      RuntimeTrace.rule(statement.ruleId, rows.length, performance.now() - startedAt);
       if (rows.length === 0) return of(undefined);
       const events = rows.map(
         (row, sequence): DeltaEvent => ({ rel: statement.headRel, sign: 1, sequence, row }),

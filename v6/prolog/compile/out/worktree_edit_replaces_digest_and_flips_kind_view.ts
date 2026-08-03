@@ -252,11 +252,11 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "worktree_file", headKind: "set", headTableName: "worktree_file", headDeltaTableName: "__delta_worktree_file", headColumns: ["path", "digest", "kind"], keyIndices: [0], projectSql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "worktree_file", ruleId: "worktree_edit_replaces_digest_and_flips_kind_view:worktree_file/3#1", headKind: "set", headTableName: "worktree_file", headDeltaTableName: "__delta_worktree_file", headColumns: ["path", "digest", "kind"], keyIndices: [0], projectSql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "rust_file", headDeltaTableName: "__delta_rust_file", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, selectSql: `SELECT "path" FROM "rust_file"`, recomputeSql: `DELETE FROM "rust_file";
+  { headRel: "rust_file", ruleId: "worktree_edit_replaces_digest_and_flips_kind_view:rust_file/1#1", headDeltaTableName: "__delta_rust_file", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, selectSql: `SELECT "path" FROM "rust_file"`, recomputeSql: `DELETE FROM "rust_file";
 INSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`, supportSql: [`DELETE FROM "__support_next_rust_file"`, `INSERT INTO "__support_next_rust_file" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "worktree_file" b0 WHERE b0."kind" = 'rust' GROUP BY b0."path") GROUP BY "path"`, `UPDATE "rust_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_rust_file" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "rust_file" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "rust_file" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_rust_file" n WHERE NOT EXISTS (SELECT 1 FROM "rust_file" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 

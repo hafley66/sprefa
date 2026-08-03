@@ -237,7 +237,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "log_text", headKind: "set", headTableName: "log_text", headDeltaTableName: "__delta_log_text", headColumns: ["channel", "next"], keyIndices: [0], projectSql: `SELECT d0."channel" AS "channel", (b0."next" || d0."piece") AS "next" FROM "__frontier_append_line" d0, "__pre_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "log_text", ruleId: "concat_fold_reversed_arrival_reverses_result:log_text/2#1", headKind: "set", headTableName: "log_text", headDeltaTableName: "__delta_log_text", headColumns: ["channel", "next"], keyIndices: [0], projectSql: `SELECT d0."channel" AS "channel", (b0."next" || d0."piece") AS "next" FROM "__frontier_append_line" d0, "__pre_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

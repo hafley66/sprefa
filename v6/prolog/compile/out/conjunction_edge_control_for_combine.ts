@@ -250,8 +250,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "pair", headKind: "set", headTableName: "pair", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], keyIndices: [0], projectSql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "pair", headKind: "set", headTableName: "pair", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], keyIndices: [0], projectSql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "pair", ruleId: "conjunction_edge_control_for_combine:pair/2#1", headKind: "set", headTableName: "pair", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], keyIndices: [0], projectSql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "pair", ruleId: "conjunction_edge_control_for_combine:pair/2#2", headKind: "set", headTableName: "pair", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], keyIndices: [0], projectSql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

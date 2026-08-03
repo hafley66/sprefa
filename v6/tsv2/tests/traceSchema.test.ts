@@ -85,9 +85,10 @@ test("the tick and effect records the runtime publishes carry exactly the schema
     effectChannel.unsubscribe(onEffect);
   }
 
-  // The tick LINE adds the three drained arrays after the tick's own fields;
-  // the tick EVENT is that prefix, which is what the channel carries.
+  // The tick LINE adds the drained arrays (rules, effects, binds, watches)
+  // after the tick's own fields; the tick EVENT is that prefix, which is what
+  // the channel carries.
   const tickLineKeys = eventFields("tick_line");
-  assert.deepEqual(published.tick, tickLineKeys.slice(0, tickLineKeys.indexOf("effects")));
+  assert.deepEqual(published.tick, tickLineKeys.slice(0, tickLineKeys.indexOf("rules")));
   assert.deepEqual(published.effect, eventFields("effect"));
 });

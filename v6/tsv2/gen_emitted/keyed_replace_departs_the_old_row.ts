@@ -257,8 +257,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "latest", headKind: "set", headTableName: "latest", headDeltaTableName: "__delta_latest", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_from_poll" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "replaced_value", headKind: "log", headTableName: "replaced_value", headDeltaTableName: "__delta_replaced_value", headColumns: ["key", "old_value"], keyIndices: [], projectSql: `SELECT d0."key" AS "key", d0."value" AS "old_value" FROM "__departure_frontier_latest" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "latest", ruleId: "keyed_replace_departs_the_old_row:latest/2#1", headKind: "set", headTableName: "latest", headDeltaTableName: "__delta_latest", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_from_poll" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "replaced_value", ruleId: "keyed_replace_departs_the_old_row:replaced_value/2#1", headKind: "log", headTableName: "replaced_value", headDeltaTableName: "__delta_replaced_value", headColumns: ["key", "old_value"], keyIndices: [], projectSql: `SELECT d0."key" AS "key", d0."value" AS "old_value" FROM "__departure_frontier_latest" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

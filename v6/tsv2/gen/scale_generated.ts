@@ -32,23 +32,101 @@ import type {
   IIncrementalRelationPlan,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
 
+interface IHostColumnPlan { readonly name: string; readonly type: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
+
 interface IBootStatement {
   sql: string;
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
+
+export const hostPlans: readonly IHostPlanData[] = [];
+export const bindPlans: readonly IBindPlanData[] = [];
+export const queryPlans: readonly IQueryPlanData[] = [];
+export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => {
-    if (typeof value === "boolean") return value ? 1n : 0n;
-    return typeof value === "number" && Number.isInteger(value) ? BigInt(value) : value;
+  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+}
+
+const SAFE_INTEGER_LIMIT = 9007199254740991n;
+
+function wideIntegerWitness(value: unknown): boolean {
+  if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
+  if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
+  return false;
+}
+
+/** A json/list column arrives as the document TEXT, and the text is the
+ *  only place the int-versus-float distinction still exists: a JSON
+ *  number token with no `.` and no exponent IS an integer, which is
+ *  exactly how the prolog reader parses it. String contents are blanked
+ *  first so digits inside a string never read as a number. Unparseable
+ *  text is not this scan's business (the json arm below names it). */
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+
+function wideIntegerInJsonText(value: IRowValue): boolean {
+  if (typeof value !== "string") return wideIntegerWitness(value);
+  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
+    if (/[.eE]/.test(token)) continue;
+    const parsed = BigInt(token);
+    if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
+  }
+  return false;
+}
+
+function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+  return arrivals.map((arrival): IArrivalRow => {
+    const types = relColumnTypes[arrival.rel];
+    if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
+    const declared = relDeclaredColumnTypes[arrival.rel];
+    const row = arrival.row.map((value, index): IRowValue => {
+      const type = declared === undefined ? undefined : declared[index];
+      const scanned = type === "json" ? wideIntegerInJsonText(value)
+        : type === "float" ? false
+        : wideIntegerWitness(value);
+      if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
+      if (type === "bool") {
+        if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
+        return value;
+      }
+      if (type === "float") {
+        // SQLite REAL affinity: an integer widens, everything else is refused.
+        if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_finite_float`);
+        return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "int") {
+        if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_int`);
+        return value;
+      }
+      if (type === "text") {
+        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_text`);
+        return value;
+      }
+      if (type === "json") {
+        // The shared reader (compile/scripts/0_json_arrival.pl
+        // json_column_term/4) takes a document TEXT or a bare number,
+        // and refuses everything else. Same two shapes here.
+        if (typeof value === "number") return value;
+        if (typeof value !== "string") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`);
+        try { JSON.parse(value); } catch { throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_json`); }
+        return value;
+      }
+      return value;
+    });
+    return { ...arrival, row };
   });
 }
 
@@ -76,12 +154,14 @@ const ddl: readonly string[] = [
   `CREATE TABLE "head" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_change" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_change_sign" ON "__delta_change" ("_sign")`,
+  `CREATE INDEX "__delta_change_group" ON "__delta_change" ("key", "value")`,
   `CREATE TEMP TABLE "__frontier_change" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_change_phase" ON "__frontier_change" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_change" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_change_phase" ON "__next_frontier_change" ("_phase")`,
   `CREATE TEMP TABLE "__delta_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_head_sign" ON "__delta_head" ("_sign")`,
+  `CREATE INDEX "__delta_head_group" ON "__delta_head" ("key", "value")`,
   `CREATE TEMP TABLE "__frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_head_phase" ON "__frontier_head" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
@@ -91,6 +171,14 @@ const ddl: readonly string[] = [
 const relColumns: Record<string, readonly string[]> = {
   change: ["key", "value"],
   head: ["key", "value"],
+};
+
+const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+  change: ["text", "text"],
+  head: ["text", "text"],
+};
+
+const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
 const arrivalTargets: readonly string[] = ["change"];
@@ -105,10 +193,15 @@ type Snapshot = {
 
 function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    change: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "change"`, relColumns.change!),
-    head: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value" FROM "head"`, relColumns.head!),
+    change: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "change"`, relColumns.change!, relColumnTypes.change!),
+    head: selectRows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "head"`, relColumns.head!, relColumnTypes.head!),
   });
 }
+
+const finalSelect: Record<string, string> = {
+  change: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "change"`,
+  head: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "head"`,
+};
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
   change: { kind: "log", addSql: `INSERT INTO "change" ("key", "value") VALUES (?, ?)`, delSql: null },
@@ -137,12 +230,12 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "change", kind: "log", tableName: "change", deltaTableName: "__delta_change", frontierTableName: "__frontier_change", nextFrontierTableName: "__next_frontier_change", columns: ["key", "value"], arrivalAddSql: `INSERT INTO "change" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_change" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
-  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["key", "value"], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' THEN json_extract("key", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("key", '$.args')) || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' THEN json_extract("value", '$.fn') || '(' || (SELECT group_concat(value, ',') FROM json_each("value", '$.args')) || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "change", kind: "log", tableName: "change", deltaTableName: "__delta_change", frontierTableName: "__frontier_change", nextFrontierTableName: "__next_frontier_change", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "change" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_change" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
+  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["key", "value"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "head", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "head", ruleId: "scale_bench:head/2#1", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -191,6 +284,7 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
 function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return readSnapshot(seam).pipe(
     concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveHead_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
@@ -211,9 +305,11 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
   return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
     concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
     concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),
     concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
@@ -223,6 +319,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 }
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validateArrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
     return runNaiveTick(seam, arrivals);
   }
@@ -242,7 +339,13 @@ export const program: IGenProgramWithBoot = {
   name: "scale_bench",
   ddl,
   relColumns,
+  relColumnTypes,
   arrivalTargets,
   boot,
+  finalSelect,
+  hostPlans,
+  bindPlans,
+  queryPlans,
+  unsupportedExecution,
   tick: runTick,
 };

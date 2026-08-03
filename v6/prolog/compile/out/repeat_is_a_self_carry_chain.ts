@@ -235,8 +235,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "pulse", headKind: "log", headTableName: "pulse", headDeltaTableName: "__delta_pulse", headColumns: ["next"], keyIndices: [], projectSql: `SELECT 1 AS "next" FROM "__frontier_kick" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "pulse", headKind: "log", headTableName: "pulse", headDeltaTableName: "__delta_pulse", headColumns: ["next"], keyIndices: [], projectSql: `SELECT (d0."next" + 1) AS "next" FROM "__frontier_pulse" d0 WHERE d0."_phase" >= 0 AND (d0."next" < 3) ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "pulse", ruleId: "repeat_is_a_self_carry_chain:pulse/1#1", headKind: "log", headTableName: "pulse", headDeltaTableName: "__delta_pulse", headColumns: ["next"], keyIndices: [], projectSql: `SELECT 1 AS "next" FROM "__frontier_kick" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "pulse", ruleId: "repeat_is_a_self_carry_chain:pulse/1#2", headKind: "log", headTableName: "pulse", headDeltaTableName: "__delta_pulse", headColumns: ["next"], keyIndices: [], projectSql: `SELECT (d0."next" + 1) AS "next" FROM "__frontier_pulse" d0 WHERE d0."_phase" >= 0 AND (d0."next" < 3) ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

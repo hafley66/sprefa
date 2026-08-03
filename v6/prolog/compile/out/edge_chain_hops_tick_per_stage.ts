@@ -249,8 +249,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "stage_one", headKind: "log", headTableName: "stage_one", headDeltaTableName: "__delta_stage_one", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_source_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "stage_two", headKind: "log", headTableName: "stage_two", headDeltaTableName: "__delta_stage_two", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "stage_one", ruleId: "edge_chain_hops_tick_per_stage:stage_one/1#1", headKind: "log", headTableName: "stage_one", headDeltaTableName: "__delta_stage_one", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_source_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "stage_two", ruleId: "edge_chain_hops_tick_per_stage:stage_two/1#1", headKind: "log", headTableName: "stage_two", headDeltaTableName: "__delta_stage_two", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

@@ -235,7 +235,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "worktree_file", headKind: "set", headTableName: "worktree_file", headDeltaTableName: "__delta_worktree_file", headColumns: ["path", "digest", "kind"], keyIndices: [0], projectSql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "worktree_file", ruleId: "worktree_edit_identical_resave_is_silent:worktree_file/3#1", headKind: "set", headTableName: "worktree_file", headDeltaTableName: "__delta_worktree_file", headColumns: ["path", "digest", "kind"], keyIndices: [0], projectSql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

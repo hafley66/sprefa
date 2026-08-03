@@ -262,11 +262,11 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "closed_at", headKind: "log", headTableName: "closed_at", headDeltaTableName: "__delta_closed_at", headColumns: ["item", "tick"], keyIndices: [], projectSql: `SELECT d0."item" AS "item", (SELECT "n" FROM "__tick") AS "tick" FROM "__departure_frontier_mirror" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "closed_at", ruleId: "departed_fires_next_tick_on_retraction:closed_at/2#1", headKind: "log", headTableName: "closed_at", headDeltaTableName: "__delta_closed_at", headColumns: ["item", "tick"], keyIndices: [], projectSql: `SELECT d0."item" AS "item", (SELECT "n" FROM "__tick") AS "tick" FROM "__departure_frontier_mirror" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "mirror", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";
+  { headRel: "mirror", ruleId: "departed_fires_next_tick_on_retraction:mirror/1#1", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";
 INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__support_count") SELECT "item", sum("__support_count") FROM (SELECT b0."item" AS "item", count(*) AS "__support_count" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__support_count" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__support_count") SELECT "item", n."__support_count" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`], aggregateSql: null },
 ];
 

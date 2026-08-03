@@ -224,7 +224,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "seen", headDeltaTableName: "__delta_seen", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "seen" ("body") SELECT DISTINCT d0."body" FROM "__frontier_note" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
+  { headRel: "seen", ruleId: "json_string_control_escapes_are_valid_json:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "seen" ("body") SELECT DISTINCT d0."body" FROM "__frontier_note" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
 INSERT OR IGNORE INTO "seen" ("body") SELECT b0."body" FROM "note" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("body", "__support_count") SELECT "body", sum("__support_count") FROM (SELECT b0."body" AS "body", count(*) AS "__support_count" FROM "note" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."body" = h."body"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "body"`, `INSERT INTO "seen" ("body", "__support_count") SELECT "body", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."body" = h."body") RETURNING "body"`], aggregateSql: null },
 ];
 

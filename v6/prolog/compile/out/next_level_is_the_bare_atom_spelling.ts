@@ -222,7 +222,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "seen", headDeltaTableName: "__delta_seen", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "seen" ("value") SELECT DISTINCT d0."value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
+  { headRel: "seen", ruleId: "next_level_is_the_bare_atom_spelling:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "seen" ("value") SELECT DISTINCT d0."value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
 INSERT OR IGNORE INTO "seen" ("value") SELECT b0."value" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT b0."value" AS "value", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 

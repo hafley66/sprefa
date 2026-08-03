@@ -238,8 +238,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "thing", headKind: "set", headTableName: "thing", headDeltaTableName: "__delta_thing", headColumns: ["id", "payload", "born", "tick"], keyIndices: [0], projectSql: `SELECT d0."id" AS "id", d0."payload" AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0, "__pre_thing" b0 WHERE d0."_phase" >= 0 AND b0."id" = d0."id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "thing", headKind: "set", headTableName: "thing", headDeltaTableName: "__delta_thing", headColumns: ["id", "payload", "born", "tick"], keyIndices: [0], projectSql: `SELECT d0."id" AS "id", d0."payload" AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "thing" n0 WHERE n0."id" = d0."id") ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "thing", ruleId: "created_at_pinned_updated_at_advances:thing/4#1", headKind: "set", headTableName: "thing", headDeltaTableName: "__delta_thing", headColumns: ["id", "payload", "born", "tick"], keyIndices: [0], projectSql: `SELECT d0."id" AS "id", d0."payload" AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0, "__pre_thing" b0 WHERE d0."_phase" >= 0 AND b0."id" = d0."id" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "thing", ruleId: "created_at_pinned_updated_at_advances:thing/4#2", headKind: "set", headTableName: "thing", headDeltaTableName: "__delta_thing", headColumns: ["id", "payload", "born", "tick"], keyIndices: [0], projectSql: `SELECT d0."id" AS "id", d0."payload" AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "thing" n0 WHERE n0."id" = d0."id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

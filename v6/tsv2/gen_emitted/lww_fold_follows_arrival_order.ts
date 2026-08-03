@@ -237,7 +237,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "latest", headKind: "set", headTableName: "latest", headDeltaTableName: "__delta_latest", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_set_value" d0, "__pre_latest" b0 WHERE d0."_phase" >= 0 AND b0."key" = d0."key" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "latest", ruleId: "lww_fold_follows_arrival_order:latest/2#1", headKind: "set", headTableName: "latest", headDeltaTableName: "__delta_latest", headColumns: ["key", "value"], keyIndices: [0], projectSql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_set_value" d0, "__pre_latest" b0 WHERE d0."_phase" >= 0 AND b0."key" = d0."key" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

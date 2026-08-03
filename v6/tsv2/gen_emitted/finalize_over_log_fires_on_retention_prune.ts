@@ -244,7 +244,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "gone", headKind: "log", headTableName: "gone", headDeltaTableName: "__delta_gone", headColumns: ["ordinal", "payload"], keyIndices: [], projectSql: `SELECT d0."ordinal" AS "ordinal", d0."payload" AS "payload" FROM "__departure_frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "gone", ruleId: "finalize_over_log_fires_on_retention_prune:gone/2#1", headKind: "log", headTableName: "gone", headDeltaTableName: "__delta_gone", headColumns: ["ordinal", "payload"], keyIndices: [], projectSql: `SELECT d0."ordinal" AS "ordinal", d0."payload" AS "payload" FROM "__departure_frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

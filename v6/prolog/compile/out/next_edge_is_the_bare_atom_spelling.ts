@@ -235,7 +235,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "seen", headKind: "set", headTableName: "seen", headDeltaTableName: "__delta_seen", headColumns: ["value"], keyIndices: [0], projectSql: `SELECT d0."value" AS "value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "seen", ruleId: "next_edge_is_the_bare_atom_spelling:seen/1#1", headKind: "set", headTableName: "seen", headDeltaTableName: "__delta_seen", headColumns: ["value"], keyIndices: [0], projectSql: `SELECT d0."value" AS "value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

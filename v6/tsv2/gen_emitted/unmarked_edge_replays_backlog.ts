@@ -250,8 +250,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "sent", headKind: "log", headTableName: "sent", headDeltaTableName: "__delta_sent", headColumns: ["client", "item"], keyIndices: [], projectSql: `SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "sent", headKind: "log", headTableName: "sent", headDeltaTableName: "__delta_sent", headColumns: ["client", "item"], keyIndices: [], projectSql: `SELECT d0."client" AS "client", b0."item" AS "item" FROM "__frontier_subscriber" d0, "change_ev" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "sent", ruleId: "unmarked_edge_replays_backlog:sent/2#1", headKind: "log", headTableName: "sent", headDeltaTableName: "__delta_sent", headColumns: ["client", "item"], keyIndices: [], projectSql: `SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "sent", ruleId: "unmarked_edge_replays_backlog:sent/2#2", headKind: "log", headTableName: "sent", headDeltaTableName: "__delta_sent", headColumns: ["client", "item"], keyIndices: [], projectSql: `SELECT d0."client" AS "client", b0."item" AS "item" FROM "__frontier_subscriber" d0, "change_ev" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

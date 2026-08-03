@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "group_rels_json", headDeltaTableName: "__delta_group_rels_json", headColumns: ["group_name", "col2"], insertSql: null, selectSql: `SELECT "group_name", "col2" FROM "group_rels_json"`, recomputeSql: `DELETE FROM "group_rels_json";
+  { headRel: "group_rels_json", ruleId: "ordered_group_rels_json_head:group_rels_json/2#1", headDeltaTableName: "__delta_group_rels_json", headColumns: ["group_name", "col2"], insertSql: null, selectSql: `SELECT "group_name", "col2" FROM "group_rels_json"`, recomputeSql: `DELETE FROM "group_rels_json";
 INSERT OR IGNORE INTO "group_rels_json" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_group_rels_json"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_group_rels_json" ("group_name") SELECT DISTINCT d0."group_name" FROM "__delta_rel_catalog" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "group_rels_json" WHERE ("group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels_json") RETURNING "group_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "group_rels_json" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 WHERE (b0."group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels_json") GROUP BY b0."group_name" HAVING count(*) > 0 RETURNING "group_name", "col2"`], deltaMaintained: false } },
 ];
 

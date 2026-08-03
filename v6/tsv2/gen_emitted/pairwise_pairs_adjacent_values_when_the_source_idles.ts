@@ -243,7 +243,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "step", headKind: "log", headTableName: "step", headDeltaTableName: "__delta_step", headColumns: ["sensor", "previous", "current"], keyIndices: [], projectSql: `SELECT d0."sensor" AS "sensor", d0."previous" AS "previous", b0."previous" AS "current" FROM "__departure_frontier_reading" d0, "reading" b0 WHERE d0."_phase" >= 0 AND b0."sensor" = d0."sensor" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "step", ruleId: "pairwise_pairs_adjacent_values_when_the_source_idles:step/3#1", headKind: "log", headTableName: "step", headDeltaTableName: "__delta_step", headColumns: ["sensor", "previous", "current"], keyIndices: [], projectSql: `SELECT d0."sensor" AS "sensor", d0."previous" AS "previous", b0."previous" AS "current" FROM "__departure_frontier_reading" d0, "reading" b0 WHERE d0."_phase" >= 0 AND b0."sensor" = d0."sensor" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

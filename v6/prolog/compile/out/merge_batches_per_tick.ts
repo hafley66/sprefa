@@ -250,8 +250,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "out", headKind: "log", headTableName: "out", headDeltaTableName: "__delta_out", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_event_a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "out", headKind: "log", headTableName: "out", headDeltaTableName: "__delta_out", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_event_b" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "out", ruleId: "merge_batches_per_tick:out/1#1", headKind: "log", headTableName: "out", headDeltaTableName: "__delta_out", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_event_a" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "out", ruleId: "merge_batches_per_tick:out/1#2", headKind: "log", headTableName: "out", headDeltaTableName: "__delta_out", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_event_b" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

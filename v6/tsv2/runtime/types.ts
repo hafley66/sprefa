@@ -117,6 +117,9 @@ export interface IIncrementalRelationPlan {
 
 export interface IIncrementalEdgeStatement {
   readonly headRel: string;
+  /** "<program>:<name>/<arity>#<ordinal>", lower.pl:statement_rule_ids/3. What
+   *  a trace line names instead of counting statements. */
+  readonly ruleId: string;
   readonly headKind: "log" | "set";
   readonly headTableName: string;
   readonly headDeltaTableName: string;
@@ -150,6 +153,8 @@ export interface IAggregateLevelPlan {
 
 export interface IIncrementalLevelStatement {
   readonly headRel: string;
+  /** "<program>:<name>/<arity>#<ordinal>", lower.pl:statement_rule_ids/3. */
+  readonly ruleId: string;
   readonly headDeltaTableName: string;
   readonly headColumns: readonly string[];
   /** null exactly when `aggregateSql` is present. */
@@ -621,6 +626,13 @@ export interface IServeEffectEvent {
   readonly error?: string;
 }
 
+/** One emitted statement that ran, named by the rule it was lowered from. */
+export interface IServeRuleEvent {
+  readonly rule: string;
+  readonly rows: number;
+  readonly wall_ms: number;
+}
+
 export interface IServeBindEvent {
   readonly rel: string;
   readonly period: number;
@@ -639,9 +651,16 @@ export interface IServeWatchEvent {
 /** One JSONL line per tick: the tick's own span plus every effect, bind, and
  *  watcher firing observed since the previous line. */
 export interface IServeTickLine extends IServeTickEvent {
+  readonly rules: readonly IServeRuleEvent[];
   readonly effects: readonly IServeEffectEvent[];
   readonly binds: readonly IServeBindEvent[];
   readonly watches: readonly IServeWatchEvent[];
+}
+
+/** The runtime half of the trace spine. Publishes; never sinks. */
+export interface IRuntimeTrace {
+  readonly enabled: boolean;
+  rule(ruleId: string, rows: number, wallMs: number): void;
 }
 
 export interface IServeTrace {

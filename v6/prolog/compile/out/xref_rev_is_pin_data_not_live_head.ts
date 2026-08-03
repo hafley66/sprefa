@@ -281,8 +281,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "xref", headKind: "set", headTableName: "xref", headDeltaTableName: "__delta_xref", headColumns: ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind"], keyIndices: [0], projectSql: `SELECT d0."from_span_id" AS "from_span_id", d0."to_repo_id" AS "to_repo_id", d0."to_rev_id" AS "to_rev_id", d0."to_path" AS "to_path", 'none' AS "col5", d0."kind" AS "kind" FROM "__frontier_pin_extracted" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "head", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["repo_id", "rev_id"], keyIndices: [0], projectSql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "xref", ruleId: "xref_rev_is_pin_data_not_live_head:xref/6#1", headKind: "set", headTableName: "xref", headDeltaTableName: "__delta_xref", headColumns: ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind"], keyIndices: [0], projectSql: `SELECT d0."from_span_id" AS "from_span_id", d0."to_repo_id" AS "to_repo_id", d0."to_rev_id" AS "to_rev_id", d0."to_path" AS "to_path", 'none' AS "col5", d0."kind" AS "kind" FROM "__frontier_pin_extracted" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "head", ruleId: "xref_rev_is_pin_data_not_live_head:head/2#1", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["repo_id", "rev_id"], keyIndices: [0], projectSql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

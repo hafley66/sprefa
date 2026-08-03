@@ -264,8 +264,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "seen_count", headKind: "log", headTableName: "seen_count", headDeltaTableName: "__delta_seen_count", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_seen" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "heard_count", headKind: "log", headTableName: "heard_count", headDeltaTableName: "__delta_heard_count", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_heard" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "seen_count", ruleId: "set_dedups_log_stacks:seen_count/1#1", headKind: "log", headTableName: "seen_count", headDeltaTableName: "__delta_seen_count", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_seen" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "heard_count", ruleId: "set_dedups_log_stacks:heard_count/1#1", headKind: "log", headTableName: "heard_count", headDeltaTableName: "__delta_heard_count", headColumns: ["item"], keyIndices: [], projectSql: `SELECT d0."item" AS "item" FROM "__frontier_heard" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

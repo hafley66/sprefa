@@ -126,6 +126,9 @@
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
             departure_frontier_table_name/2, departure_read_sql/3,
+            % The rule naming every emitter renders into its statement plan,
+            % defined once so a second emitter reads it instead of guessing.
+            statement_rule_ids/3,
             % STRUCT-AS-ROWS: the storage plane's own names, exported so the
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
@@ -188,6 +191,36 @@ departure_read_sql(Ref, Columns, Sql) :-
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     format(atom(Sql), 'SELECT ~w FROM ~w ORDER BY "_phase", "_sequence"',
            [ColumnsSql, QuotedDepartureTable]).
+
+% ═══ rule identity ══════════════════════════════════════════════════════════
+% "<program>:<name>/<arity>#<ordinal>", the name a trace line uses to say WHICH
+% rule fired rather than how many statements ran.
+%
+% Ordinal is 1-based among the LOWERED STATEMENTS sharing a head ref, in
+% lowering order, which is not the same as clauses in the source: an edge rule
+% lowers to one statement per arm and gets one ordinal each, while a level
+% head's clauses fold into a single UNION'd insert (level_statement_group/3
+% hands the emitter a LIST under one head) and it is always #1. Separating
+% those would be a change to the plan, not to the naming.
+%
+% Stable under edits elsewhere in the file; it moves when two arms of one head
+% are reordered, which is the honest answer, since only their order tells them
+% apart. Built here rather than in emit_ts.pl so a second emitter reads the
+% numbering instead of reimplementing it.
+statement_rule_ids(Program, HeadRefs, RuleIds) :-
+    statement_ordinals(HeadRefs, [], Ordinals),
+    maplist(rule_id(Program), HeadRefs, Ordinals, RuleIds).
+
+rule_id(Program, Name/Arity, Ordinal, RuleId) :-
+    format(atom(RuleId), '~w:~w/~w#~w', [Program, Name, Arity, Ordinal]).
+
+statement_ordinals([], _, []).
+statement_ordinals([Ref | Rest], Seen0, [Ordinal | More]) :-
+    (   selectchk(Ref-Previous, Seen0, Seen1)
+    ->  Ordinal is Previous + 1
+    ;   Ordinal = 1, Seen1 = Seen0
+    ),
+    statement_ordinals(Rest, [Ref-Ordinal | Seen1], More).
 
 ref_count_table_name(Name/_Arity, RefCountTable) :-
     format(atom(RefCountTable), '__support_next_~w', [Name]).

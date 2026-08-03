@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "hits", headDeltaTableName: "__delta_hits", headColumns: ["path", "col2"], insertSql: null, selectSql: `SELECT "path", "col2" FROM "hits"`, recomputeSql: `DELETE FROM "hits";
+  { headRel: "hits", ruleId: "count_is_bag_of_derivations:hits/2#1", headDeltaTableName: "__delta_hits", headColumns: ["path", "col2"], insertSql: null, selectSql: `SELECT "path", "col2" FROM "hits"`, recomputeSql: `DELETE FROM "hits";
 INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_hits"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_hits" ("path") SELECT DISTINCT d0."path" FROM "__delta_hit" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "hits" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_hits") RETURNING "path", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 WHERE (b0."path") IN (SELECT "path" FROM "__agg_scope_hits") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "col2"`], deltaMaintained: false } },
 ];
 

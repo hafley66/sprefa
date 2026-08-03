@@ -264,8 +264,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "demand", headKind: "set", headTableName: "demand", headDeltaTableName: "__delta_demand", headColumns: ["args", "salt"], keyIndices: [0, 1], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt" FROM "__frontier_watch_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "response", headKind: "log", headTableName: "response", headDeltaTableName: "__delta_response", headColumns: ["args", "salt", "payload"], keyIndices: [], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "demand", ruleId: "identical_demand_dedups:demand/2#1", headKind: "set", headTableName: "demand", headDeltaTableName: "__delta_demand", headColumns: ["args", "salt"], keyIndices: [0, 1], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt" FROM "__frontier_watch_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "response", ruleId: "identical_demand_dedups:response/3#1", headKind: "log", headTableName: "response", headDeltaTableName: "__delta_response", headColumns: ["args", "salt", "payload"], keyIndices: [], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

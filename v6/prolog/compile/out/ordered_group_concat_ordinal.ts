@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "ordinal_joined", headDeltaTableName: "__delta_ordinal_joined", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "ordinal_joined"`, recomputeSql: `DELETE FROM "ordinal_joined";
+  { headRel: "ordinal_joined", ruleId: "ordered_group_concat_ordinal:ordinal_joined/2#1", headDeltaTableName: "__delta_ordinal_joined", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "ordinal_joined"`, recomputeSql: `DELETE FROM "ordinal_joined";
 INSERT OR IGNORE INTO "ordinal_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."ordinal") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_ordinal_joined"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_ordinal_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "ordinal_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordinal_joined") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "ordinal_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."ordinal") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordinal_joined") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], deltaMaintained: false } },
 ];
 

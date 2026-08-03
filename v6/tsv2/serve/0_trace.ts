@@ -18,10 +18,15 @@ const tickChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.tick);
 const effectChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.effect);
 const bindChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.bind);
 const watchChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.watch);
+// Published by the RUNTIME (runtime/trace.ts), which knows which rule a
+// statement came from and nothing about where the record should go.
+const ruleChannel = diagnostics_channel.channel(RUNTIME_CHANNEL_NAMES.rule);
 
+import { RUNTIME_CHANNEL_NAMES } from "../runtime/trace.ts";
 import type {
   IServeBindEvent as BindEvent,
   IServeEffectEvent as EffectEvent,
+  IServeRuleEvent as RuleEvent,
   IServeTickEvent as TickEvent,
   IServeTickLine,
   IServeTrace,
@@ -29,6 +34,7 @@ import type {
 } from "../runtime/types.ts";
 
 let logger: Logger | null = null;
+let pendingRules: RuleEvent[] = [];
 let pendingEffects: EffectEvent[] = [];
 let pendingBinds: BindEvent[] = [];
 let pendingWatches: WatchEvent[] = [];
@@ -36,6 +42,9 @@ let installed = false;
 
 function install(logPath: string): void {
   logger = pino({ base: null, timestamp: false }, pino.destination({ dest: logPath, sync: true }));
+  ruleChannel.subscribe((message) => {
+    pendingRules.push(message as RuleEvent);
+  });
   effectChannel.subscribe((message) => {
     pendingEffects.push(message as EffectEvent);
   });
@@ -47,7 +56,14 @@ function install(logPath: string): void {
   });
   tickChannel.subscribe((message) => {
     const event = message as TickEvent;
-    const line: IServeTickLine = { ...event, effects: pendingEffects, binds: pendingBinds, watches: pendingWatches };
+    const line: IServeTickLine = {
+      ...event,
+      rules: pendingRules,
+      effects: pendingEffects,
+      binds: pendingBinds,
+      watches: pendingWatches,
+    };
+    pendingRules = [];
     pendingEffects = [];
     pendingBinds = [];
     pendingWatches = [];

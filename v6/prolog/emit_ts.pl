@@ -12,7 +12,8 @@
 :- use_module(library(apply)).
 % relplan_kind/3 supplies trigger kind to the per-arm resolver.
 :- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
-                       departure_read_sql/3, struct_type_plans/2 ]).
+                       departure_read_sql/3, struct_type_plans/2,
+                       statement_rule_ids/3 ]).
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
@@ -858,17 +859,21 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
 
 position_index(Position, Index) :- Index is Position - 1.
 
-incremental_edge_statement_lines(EdgeStatements, RelPlans, Lines) :-
-    maplist(incremental_edge_statement_entry_line(RelPlans), EdgeStatements, EntryLines),
+incremental_edge_statement_lines(Program, EdgeStatements, RelPlans, Lines) :-
+    maplist(edge_statement_head_ref, EdgeStatements, HeadRefs),
+    statement_rule_ids(Program, HeadRefs, RuleIds),
+    maplist(incremental_edge_statement_entry_line(RelPlans), EdgeStatements, RuleIds, EntryLines),
     append(
         [ ['const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = ['],
           EntryLines,
           ['];']
         ], Lines).
 
+edge_statement_head_ref(edgestmt(HeadRef, _, _, _, _, _, _, _), HeadRef).
+
 incremental_edge_statement_entry_line(RelPlans,
         edgestmt(HeadRef, _TriggerRef, HeadColumns, KeyColumns, _ProjectSql,
-                 _WriteSql, DeltaProjectSql, _EdgeTriggerKind), Line) :-
+                 _WriteSql, DeltaProjectSql, _EdgeTriggerKind), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -877,22 +882,26 @@ incremental_edge_statement_entry_line(RelPlans,
     atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
     js_template(DeltaProjectSql, DeltaProjectTemplate),
     format(atom(Line),
-           '  { headRel: "~w", headKind: "~w", headTableName: "~w", headDeltaTableName: "~w", headColumns: ~w, keyIndices: [~w], projectSql: ~w },',
-           [HeadName, HeadKind, HeadName, DeltaTable, ColumnsText,
+           '  { headRel: "~w", ruleId: "~w", headKind: "~w", headTableName: "~w", headDeltaTableName: "~w", headColumns: ~w, keyIndices: [~w], projectSql: ~w },',
+           [HeadName, RuleId, HeadKind, HeadName, DeltaTable, ColumnsText,
             KeyIndicesText, DeltaProjectTemplate]).
 
-incremental_level_statement_lines(LevelStatements, RelPlans, Lines) :-
+incremental_level_statement_lines(Program, LevelStatements, RelPlans, Lines) :-
+    maplist(level_statement_head_ref, LevelStatements, HeadRefs),
+    statement_rule_ids(Program, HeadRefs, RuleIds),
     maplist(incremental_level_statement_entry_line(RelPlans),
-            LevelStatements, EntryLines),
+            LevelStatements, RuleIds, EntryLines),
     append(
         [ ['const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = ['],
           EntryLines,
           ['];']
         ], Lines).
 
+level_statement_head_ref(levelstmt(HeadRef, _, _, _, _, _), HeadRef).
+
 incremental_level_statement_entry_line(RelPlans,
         levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
-                  AggregateSql), Line) :-
+                  AggregateSql), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     memberchk(relplan(HeadRef, _, HeadColumns, _, _), RelPlans),
@@ -912,8 +921,8 @@ incremental_level_statement_entry_line(RelPlans,
     ref_count_sql_text(RefCountSql, RefCountText),
     aggregate_sql_text(AggregateSql, AggregateText),
     format(atom(Line),
-           '  { headRel: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
-           [HeadName, DeltaTable, ColumnsText, DeltaInsertTemplate,
+           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
+           [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, AggregateText]).
 
 incremental_retention_statement_lines([], []) :- !.
@@ -2038,8 +2047,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
-    incremental_edge_statement_lines(EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
-    incremental_level_statement_lines(RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
+    incremental_edge_statement_lines(Name, EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
+    incremental_level_statement_lines(Name, RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,
                                           IncrementalRetentionStatementLines),
     ( EdgeStatements == []

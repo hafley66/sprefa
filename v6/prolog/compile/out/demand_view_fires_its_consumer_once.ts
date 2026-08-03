@@ -252,11 +252,11 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "fetch_call", headKind: "log", headTableName: "fetch_call", headDeltaTableName: "__delta_fetch_call", headColumns: ["endpoint"], keyIndices: [], projectSql: `SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "fetch_call", ruleId: "demand_view_fires_its_consumer_once:fetch_call/1#1", headKind: "log", headTableName: "fetch_call", headDeltaTableName: "__delta_fetch_call", headColumns: ["endpoint"], keyIndices: [], projectSql: `SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "fetch_demand", headDeltaTableName: "__delta_fetch_demand", headColumns: ["endpoint"], insertSql: `INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_stale" d0 WHERE d0."_phase" >= 0 RETURNING "endpoint"`, selectSql: `SELECT "endpoint" FROM "fetch_demand"`, recomputeSql: `DELETE FROM "fetch_demand";
+  { headRel: "fetch_demand", ruleId: "demand_view_fires_its_consumer_once:fetch_demand/1#1", headDeltaTableName: "__delta_fetch_demand", headColumns: ["endpoint"], insertSql: `INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_stale" d0 WHERE d0."_phase" >= 0 RETURNING "endpoint"`, selectSql: `SELECT "endpoint" FROM "fetch_demand"`, recomputeSql: `DELETE FROM "fetch_demand";
 INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT b0."endpoint" FROM "stale" b0`, supportSql: [`DELETE FROM "__support_next_fetch_demand"`, `INSERT INTO "__support_next_fetch_demand" ("endpoint", "__support_count") SELECT "endpoint", sum("__support_count") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__support_count" FROM "stale" b0 GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "fetch_demand" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_fetch_demand" n WHERE n."endpoint" = h."endpoint"), 0))`, `DELETE FROM "fetch_demand" WHERE "__support_count" <= 0 RETURNING "endpoint"`, `INSERT INTO "fetch_demand" ("endpoint", "__support_count") SELECT "endpoint", n."__support_count" FROM "__support_next_fetch_demand" n WHERE NOT EXISTS (SELECT 1 FROM "fetch_demand" h WHERE n."endpoint" = h."endpoint") RETURNING "endpoint"`], aggregateSql: null },
 ];
 

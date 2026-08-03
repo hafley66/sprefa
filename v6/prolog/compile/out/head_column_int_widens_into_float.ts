@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "scaled", headDeltaTableName: "__delta_scaled", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "scaled" ("value") SELECT DISTINCT d0."count" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "scaled"`, recomputeSql: `DELETE FROM "scaled";
+  { headRel: "scaled", ruleId: "head_column_int_widens_into_float:scaled/1#1", headDeltaTableName: "__delta_scaled", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "scaled" ("value") SELECT DISTINCT d0."count" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "scaled"`, recomputeSql: `DELETE FROM "scaled";
 INSERT OR IGNORE INTO "scaled" ("value") SELECT b0."count" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_scaled"`, `INSERT INTO "__support_next_scaled" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT b0."count" AS "value", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."count") GROUP BY "value"`, `UPDATE "scaled" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_scaled" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "scaled" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "scaled" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_scaled" n WHERE NOT EXISTS (SELECT 1 FROM "scaled" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 

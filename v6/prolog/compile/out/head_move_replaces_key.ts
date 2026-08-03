@@ -236,7 +236,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "head", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["repo_id", "rev_id"], keyIndices: [0], projectSql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "head", ruleId: "head_move_replaces_key:head/2#1", headKind: "set", headTableName: "head", headDeltaTableName: "__delta_head", headColumns: ["repo_id", "rev_id"], keyIndices: [0], projectSql: `SELECT d0."repo_id" AS "repo_id", d0."rev_id" AS "rev_id" FROM "__frontier_head_move" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

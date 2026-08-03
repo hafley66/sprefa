@@ -254,8 +254,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "labelled", headKind: "log", headTableName: "labelled", headDeltaTableName: "__delta_labelled", headColumns: ["tree_id", "label"], keyIndices: [], projectSql: `SELECT d0."tree_id" AS "tree_id", b0."label" AS "label" FROM "__frontier_ping" d0, "name" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "labelled", headKind: "log", headTableName: "labelled", headDeltaTableName: "__delta_labelled", headColumns: ["tree_id", "label"], keyIndices: [], projectSql: `SELECT d0."tree_id" AS "tree_id", 'unnamed' AS "label" FROM "__frontier_ping" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "labelled", ruleId: "coalesce_in_edge_body_samples:labelled/2#1", headKind: "log", headTableName: "labelled", headDeltaTableName: "__delta_labelled", headColumns: ["tree_id", "label"], keyIndices: [], projectSql: `SELECT d0."tree_id" AS "tree_id", b0."label" AS "label" FROM "__frontier_ping" d0, "name" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "labelled", ruleId: "coalesce_in_edge_body_samples:labelled/2#2", headKind: "log", headTableName: "labelled", headDeltaTableName: "__delta_labelled", headColumns: ["tree_id", "label"], keyIndices: [], projectSql: `SELECT d0."tree_id" AS "tree_id", 'unnamed' AS "label" FROM "__frontier_ping" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

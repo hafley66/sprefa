@@ -235,7 +235,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "demand", headKind: "set", headTableName: "demand", headDeltaTableName: "__delta_demand", headColumns: ["args", "salt"], keyIndices: [0, 1], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt" FROM "__frontier_watch_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "demand", ruleId: "new_salt_refires_fresh_stream:demand/2#1", headKind: "set", headTableName: "demand", headDeltaTableName: "__delta_demand", headColumns: ["args", "salt"], keyIndices: [0, 1], projectSql: `SELECT d0."args" AS "args", d0."salt" AS "salt" FROM "__frontier_watch_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

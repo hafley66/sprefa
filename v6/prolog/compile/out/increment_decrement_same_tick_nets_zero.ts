@@ -252,8 +252,8 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "counter", headKind: "set", headTableName: "counter", headDeltaTableName: "__delta_counter", headColumns: ["name", "next"], keyIndices: [0], projectSql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_increment" d0, "__pre_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "counter", headKind: "set", headTableName: "counter", headDeltaTableName: "__delta_counter", headColumns: ["name", "next"], keyIndices: [0], projectSql: `SELECT d0."name" AS "name", (b0."next" - 1) AS "next" FROM "__frontier_decrement" d0, "__pre_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "counter", ruleId: "increment_decrement_same_tick_nets_zero:counter/2#1", headKind: "set", headTableName: "counter", headDeltaTableName: "__delta_counter", headColumns: ["name", "next"], keyIndices: [0], projectSql: `SELECT d0."name" AS "name", (b0."next" + 1) AS "next" FROM "__frontier_increment" d0, "__pre_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "counter", ruleId: "increment_decrement_same_tick_nets_zero:counter/2#2", headKind: "set", headTableName: "counter", headDeltaTableName: "__delta_counter", headColumns: ["name", "next"], keyIndices: [0], projectSql: `SELECT d0."name" AS "name", (b0."next" - 1) AS "next" FROM "__frontier_decrement" d0, "__pre_counter" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

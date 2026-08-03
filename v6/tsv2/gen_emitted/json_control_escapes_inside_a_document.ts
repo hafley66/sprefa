@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "echoed", headDeltaTableName: "__delta_echoed", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "echoed" ("body") SELECT DISTINCT d0."body" FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "echoed"`, recomputeSql: `DELETE FROM "echoed";
+  { headRel: "echoed", ruleId: "json_control_escapes_inside_a_document:echoed/1#1", headDeltaTableName: "__delta_echoed", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "echoed" ("body") SELECT DISTINCT d0."body" FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "echoed"`, recomputeSql: `DELETE FROM "echoed";
 INSERT OR IGNORE INTO "echoed" ("body") SELECT b0."body" FROM "raw_doc" b0`, supportSql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("body", "__support_count") SELECT "body", sum("__support_count") FROM (SELECT b0."body" AS "body", count(*) AS "__support_count" FROM "raw_doc" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "echoed" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_echoed" n WHERE n."body" = h."body"), 0))`, `DELETE FROM "echoed" WHERE "__support_count" <= 0 RETURNING "body"`, `INSERT INTO "echoed" ("body", "__support_count") SELECT "body", n."__support_count" FROM "__support_next_echoed" n WHERE NOT EXISTS (SELECT 1 FROM "echoed" h WHERE n."body" = h."body") RETURNING "body"`], aggregateSql: null },
 ];
 

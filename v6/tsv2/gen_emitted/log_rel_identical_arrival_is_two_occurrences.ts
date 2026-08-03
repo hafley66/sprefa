@@ -235,7 +235,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "fired", headKind: "log", headTableName: "fired", headDeltaTableName: "__delta_fired", headColumns: ["name"], keyIndices: [], projectSql: `SELECT d0."name" AS "name" FROM "__frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { headRel: "fired", ruleId: "log_rel_identical_arrival_is_two_occurrences:fired/1#1", headKind: "log", headTableName: "fired", headDeltaTableName: "__delta_fired", headColumns: ["name"], keyIndices: [], projectSql: `SELECT d0."name" AS "name" FROM "__frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

@@ -225,7 +225,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "ordered_values", headDeltaTableName: "__delta_ordered_values", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "ordered_values"`, recomputeSql: `DELETE FROM "ordered_values";
+  { headRel: "ordered_values", ruleId: "ordered_aggregate_retraction_rebuild:ordered_values/2#1", headDeltaTableName: "__delta_ordered_values", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "ordered_values"`, recomputeSql: `DELETE FROM "ordered_values";
 INSERT OR IGNORE INTO "ordered_values" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."ordinal") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_ordered_values"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_ordered_values" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "ordered_values" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_ordered_values") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "ordered_values" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."ordinal") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_ordered_values") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], deltaMaintained: false } },
 ];
 
