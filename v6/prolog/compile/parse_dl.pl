@@ -1574,8 +1574,31 @@ compound_or_var(E, Vars0, Vars, S0, S) :-
     ( peek(0'(, S2, S2)
     -> lit_dcg(`(`, S2, S3), call_args(Args, Vars0, Vars, S3, S4), ws0(S4, S5),
        lit_dcg(`)`, S5, S), E =.. [Name | Args]
-    ; get_or_make_var(Name, Vars0, E, Vars), S = S1
+    ; get_or_make_var(Name, Vars0, Receiver, Vars),
+      dot_chain(Receiver, S1, S, E)
     ).
+
+% Glued member access `Receiver.field` / `Receiver.a.b` on an identifier
+% receiver. The dot is GLUED: no whitespace before it (the probe runs on S1,
+% before ws0), and an identifier-start must follow. The statement-terminator
+% dot (whitespace or EOF after it) and a spaced `x . y` both stay out of this
+% route, and a float literal never arrives here (factor tries float_lit first,
+% and the dot of `1.5` needs a digit after it). The chain builds a nested
+% dot_get/2 term, desugared by the dot expansion phase in 1_expansion.
+dot_chain(Receiver, S0, S, Final) :-
+    ( dot_then_ident(S0, S1)
+    -> ident(Field, S1, S2),
+       dot_chain(dot_get(Receiver, Field), S2, S, Final)
+    ; Final = Receiver, S = S0
+    ).
+
+% The cut commits on dot-plus-identifier-start together: an if-then-else on the
+% dot alone would commit and then fail on a non-identifier follower, eating the
+% terminator period after an identifier.
+dot_then_ident([0'. | S1], S1) :-
+    S1 = [C | _],
+    ( code_type(C, alpha) ; C == 0'_ ),
+    !.
 
 call_args([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 call_args([Arg | Rest], Vars0, Vars, S0, S) :-
