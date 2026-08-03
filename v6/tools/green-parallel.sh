@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# green-parallel.sh -- green-all's 31 legs, phased instead of one at a time.
+#
+# Phase order is dictated by what each leg is sensitive to:
+#   scale-floor  alone, first, on a quiet machine: its verdict IS a wall reading.
+#   memory-soak  alone. It compares second-quarter to final-quarter rss, which
+#                only survives UNIFORM load: overlapping it with a ramp put the
+#                heavy phase in its final quarter and reddened rss_flat by 0.6%
+#                (106,891,182 -> 118,288,548 against a 117,580,300 ceiling).
+#   serial       legs that write gen_emitted/ or gen/scale_generated.ts, plus
+#                tsv2-test, whose bopRun.test.ts:25 times a boot against a 30s
+#                spawnSync budget and reddens on a merely busy machine.
+#   parallel     everything else, GREEN_PARALLEL_JOBS (default 6 of 12 cores).
+#
+# compile-speed and memory-soak gate on inferences and on flatness, not wall
+# clock, so load cannot move their verdicts. Every server leg gets its own port
+# below; two defaults collide (17571, 17591).
+#
+# Serial fallback: `just green-all-serial`.
+
+set -uo pipefail
+
+V6="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JOBS="${GREEN_PARALLEL_JOBS:-6}"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/green-parallel.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+PHASE_WALL=(scale-floor)
+
+PHASE_A=(conformance roundtrip text-door sweep import-gate
+         staleness-gate golden-flex tsv2-test)
+
+# Each entry is "leg[:ENV=VALUE...]". Ordered longest-first: on a bounded pool
+# the makespan is set by the slowest job if it starts last.
+SOAK="memory-soak:TSV2_SOAK_PORT=17801"
+
+PHASE_B=(
+  "multirepo-golden:TSV2_MULTIREPO_PORT=17812"
+  "precommit-changed:TSV2_GIT_DIAGS_PORT=17814"
+  "endurance:TSV2_ENDURANCE_PORT=17802"
+  "getting-started"
+  "flagship:TSV2_FLAGSHIP_PORT=17808 TSV2_FLAGSHIP_FLOW_PORT=17809"
+  "store-test"
+  "files:TSV2_FILES_PORT=17807"
+  "extraction-live:TSV2_EXTRACTION_PORT=17806"
+  "dl-test"
+  "serve-leak-soak:TSV2_LEAK_PORT=17805"
+  "prolog-lint"
+  "serve-endurance:TSV2_ENDURANCE_PORT=17804"
+  "lsp-diags:TSV2_LSP_DIAG_PORT=17810"
+  "compile-speed"
+  "plunit"
+  "typecheck"
+  "leak-soak:TSV2_LEAK_PORT=17803"
+  "rtkq-golden:TSV2_PARITY_PORT=17813"
+  "watch-scale"
+  "ghcacher-golden:TSV2_PARITY_PORT=17811"
+  "one-subscribe"
+)
+
+started="$(date +%s)"
+status=0
+
+run_leg() {
+  local spec="$1" leg env_assignments
+  leg="${spec%%:*}"
+  env_assignments=""
+  [ "$spec" != "$leg" ] && env_assignments="${spec#*:}"
+  local begin; begin="$(date +%s)"
+  ( cd "$V6" && env $env_assignments just "$leg" ) >"$WORK/$leg.out" 2>&1
+  local rc=$?
+  printf '%s' "$rc" >"$WORK/$leg.rc"
+  printf '%s' "$(( $(date +%s) - begin ))" >"$WORK/$leg.sec"
+  return $rc
+}
+export -f run_leg
+export V6 WORK
+
+report() {
+  local leg rc sec
+  for leg in "$@"; do
+    rc="$(cat "$WORK/$leg.rc" 2>/dev/null || echo '?')"
+    sec="$(cat "$WORK/$leg.sec" 2>/dev/null || echo '?')"
+    if [ "$rc" = "0" ]; then
+      printf 'PASS  %-20s %4ss\n' "$leg" "$sec"
+    else
+      status=1
+      printf 'FAIL  %-20s %4ss  exit=%s\n' "$leg" "$sec" "$rc"
+      sed 's/^/      | /' <"$WORK/$leg.out" | tail -25
+    fi
+  done
+}
+
+for leg in "${PHASE_WALL[@]}"; do run_leg "$leg"; done
+report "${PHASE_WALL[@]}"
+
+run_leg "$SOAK"
+report memory-soak
+
+echo
+echo "== serial legs (${#PHASE_A[@]}) =="
+for leg in "${PHASE_A[@]}"; do run_leg "$leg"; done
+report "${PHASE_A[@]}"
+
+echo
+echo "== parallel legs, ${JOBS} at a time (${#PHASE_B[@]}) =="
+printf '%s\n' "${PHASE_B[@]}" | xargs -P "$JOBS" -I{} bash -c 'run_leg "$@"' _ {}
+# Unquoted on purpose: report/1 takes one leg name per argument.
+# shellcheck disable=SC2046
+report $(printf '%s\n' "${PHASE_B[@]}" | sed 's/:.*//')
+
+echo
+elapsed=$(( $(date +%s) - started ))
+if [ "$status" = "0" ]; then
+  echo "GREEN ALL HOLDS: $(( ${#PHASE_WALL[@]} + 1 + ${#PHASE_A[@]} + ${#PHASE_B[@]} )) legs, ${elapsed}s"
+else
+  echo "GREEN ALL FAILED after ${elapsed}s"
+fi
+exit "$status"

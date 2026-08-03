@@ -367,5 +367,13 @@ bench-cli:
 # the review-gate battery minus the slow sweep; what a merge must pass
 green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
 
-# everything, including the sweep
-green-all: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
+# everything, phased: scale-floor alone (its verdict is a wall reading), then
+# the memory leak test alone (its flatness check reddens under a load ramp),
+# then the gen-writers serially, then the rest 6-up. Same 31 legs, same
+# verdicts, one ordered PASS/FAIL table.
+# (expect: GREEN ALL HOLDS: 31 legs, exit 0; ~177s vs ~254s one at a time)
+green-all:
+	bash {{v6}}/tools/green-parallel.sh
+
+# the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
+green-all-serial: green endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
