@@ -3389,7 +3389,7 @@ struct_intern_statements(Decls, Types, TypeName, Value, LookupSlot, LookupParams
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules),
+lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _DemandedRels),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     type_definitions(Decls, LoweringTypes),
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),

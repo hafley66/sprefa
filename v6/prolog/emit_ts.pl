@@ -293,10 +293,10 @@ local_types_lines(
       '  params: readonly IRowValue[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly demandedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };'
     ]).
 
-world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
+world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, DemandedRels), Lines) :-
     findall(HostPlan,
             ( member(Decl, Decls),
               Decl = sh_decl(_, _, _, _),
@@ -320,6 +320,7 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
     maplist(host_plan_json, HostPlans, HostRows),
     maplist(bind_plan_json, BindPlans, BindRows),
     maplist(query_plan_json, QueryPlans, QueryRows),
+    maplist(demanded_rel_json, DemandedRels, DemandedRows),
     % PHASE 2 (plans/2026-07-29-runtime-bridge-header.md): sh hosts and the
     % interval bind EXECUTE in the served runtime, so neither emits a refusal
     % row any more. The const and its slot stay: a future world term with no
@@ -331,9 +332,17 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _), Lines) :-
                      BindLine),
     array_const_line('export const queryPlans: readonly IQueryPlanData[]', QueryRows,
                      QueryLine),
+    array_const_line('export const demandedRels: readonly string[]',
+                     DemandedRows, DemandedLine),
     array_const_line('export const unsupportedExecution: readonly string[]',
                      Refusals, RefusalLine),
-    Lines = [HostLine, BindLine, QueryLine, RefusalLine].
+    Lines = [HostLine, BindLine, QueryLine, DemandedLine, RefusalLine].
+
+% One cone member as the emitted module spells it: the "name/arity" string
+% compile.pl:program_plan/2 computed, never re-derived out here.
+demanded_rel_json(Name/Arity, Json) :-
+    format(atom(Ref), '~w/~w', [Name, Arity]),
+    js_string(Ref, Json).
 
 array_const_line(Prefix, Rows, Line) :-
     atomic_list_concat(Rows, ', ', Body),
@@ -1236,7 +1245,7 @@ ordered_program(EdgeStatements) :-
     ordered_edge_statement(Statement),
     !.
 
-plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _), Refs) :-
+plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _), Refs) :-
     findall(Ref,
             ( member((_ <+ Body), Rules),
               level_body_pre_ref(Body, Ref) ),
@@ -1965,7 +1974,7 @@ dispatch_signature(_,
     'function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {').
 
 derived_edge_carry_required(
-        plan(_, prog(_, Rules), _, _, _, _), EdgeStatements, Required) :-
+        plan(_, prog(_, Rules), _, _, _, _, _), EdgeStatements, Required) :-
     derived_refs(Rules, DerivedRefs),
     ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _), EdgeStatements),
       memberchk(TriggerRef, DerivedRefs)
@@ -1973,7 +1982,7 @@ derived_edge_carry_required(
     ;  Required = false
     ).
 
-incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _),
+incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _),
                          _EdgeStatements, _LevelStatements, Safe) :-
     rules_have_supported_level_bodies(Rules),
     Safe = true.
@@ -1982,7 +1991,7 @@ rules_have_supported_level_bodies([]).
 rules_have_supported_level_bodies([_ | Rest]) :-
     rules_have_supported_level_bodies(Rest).
 
-reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _), Reconcile) :-
+reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       body_ref_uses(Body, Uses),
@@ -1991,7 +2000,7 @@ reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _), Reconcile) :-
     ;  Reconcile = false
     ).
 
-retraction_guard(plan(_, prog(_, Rules), _, _, _, _), Guard) :-
+retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _), Guard) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       rule_head_ref(Rule, HeadRef),
@@ -2043,7 +2052,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
-    Plan = plan(_, prog(PlanDecls, _), _, _, _, _),
+    Plan = plan(_, prog(PlanDecls, _), _, _, _, _, _),
     struct_type_plans(PlanDecls, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
     ( ordered_program(EdgeStatements) -> HasOrderedProgram = true
@@ -2056,7 +2065,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _),
+    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
     plan_pre_refs(Plan, PreRefs),
     findall(LevelRef,
@@ -2097,7 +2106,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
                           DepartureRefs, BuildDeltasFnLines),
-    Plan = plan(_, TickProg, _, _, _, _),
+    Plan = plan(_, TickProg, _, _, _, _, _),
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,

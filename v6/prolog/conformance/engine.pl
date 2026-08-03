@@ -65,6 +65,9 @@
 :- use_module(library(pairs)).
 :- use_module('../1_expansion', [expand_program/3]).
 :- use_module('../0_body_walk', [walk_body/3, body_wrapper_refs/4]).
+% Shared with the compiler, the 1_host_expand.pl precedent: one module both
+% doors call, so the cone cannot fork into two analyses.
+:- use_module('../2_demand_cone', [demand_cone/4]).
 :- use_module('../0_program_check',
               [ first_violation/3, relation_kind/3, declared_key/3 ]).
 :- use_module('../3_clock_check', [clock_violation/2]).
@@ -548,6 +551,13 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     maplist(normalize_relation_reference_rows(ProgDecls), CanonicalSchedule, Schedule),
     seed_store(Prog, Initial, Store0),
     Prog = prog(_, Rules),
+    % PARITY PREP: the same cone the compiler threads into every emitted
+    % module (compile.pl:program_plan/2), computed from the same shared module
+    % on the same post-expansion program. The oracle asserts nothing with it
+    % yet; computing it here is what makes a later parity check a diff of two
+    % numbers rather than a new analysis on one side.
+    findall(QueryAtom, member(query(QueryAtom), ProgDecls), Queries),
+    demand_cone(ProgDecls, Rules, Queries, _DemandedRels),
     split_rules(Rules, AggRules, PlainLevel, _),
     store_rows(Store0, BaseRows),
     level_closure(PlainLevel, AggRules, BaseRows, 0, Level0),

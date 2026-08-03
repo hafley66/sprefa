@@ -124,14 +124,14 @@ lowered_for(Base, Name, Lowered) :-
 % reproduce that grouping exactly.
 
 test(switch_as_keyed_replace_one_group) :-
-    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
     length(Group, 2).
 
 test(demand_laziness_one_group) :-
-    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
@@ -142,13 +142,13 @@ test(demand_laziness_one_group) :-
 % demanded); demanded must precede effect_call likewise.
 
 test(switch_as_keyed_replace_rule_order) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, _, _, RuleOrder, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, _, _, RuleOrder, _, _)),
     RuleOrder = [(DemandedHead <- _), (RouteViewHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(RouteViewHead, route_view, 2).
 
 test(demand_laziness_rule_order) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, RuleOrder, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, RuleOrder, _, _)),
     RuleOrder = [(DemandedHead <- _), (EffectCallHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(EffectCallHead, effect_call, 1).
@@ -172,7 +172,7 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 % witness at all and stays text per the ruling's flat-punt).
 
 test(switch_as_keyed_replace_columns) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _, _)),
     memberchk(relplan(open_scope/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(route_view/2, set, [route_id, body], none, [text, text]), RelPlans),
@@ -180,7 +180,7 @@ test(switch_as_keyed_replace_columns) :-
     memberchk(relplan(route_row/2, set, [route_id, body], none, [text, text]), RelPlans).
 
 test(demand_laziness_columns) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _, _)),
     memberchk(relplan(open_feed/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(effect_call/1, set, [target], none, [text]), RelPlans).
@@ -294,7 +294,7 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
@@ -542,7 +542,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),
     once(sub_atom(SeedSql, _, _, _, 'FROM "path" b0')),
-    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, []),
+    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], []),
     retraction_guard(Plan, 'recursive-cte-reseed').
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
@@ -839,7 +839,7 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
@@ -1004,7 +1004,7 @@ test(accepts_edge_derived_edge_trigger) :-
 test(head_arithmetic_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
     memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
     assertion(UnionTypes == [text, text, int]),
     memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
@@ -1017,7 +1017,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
                              Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
     memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
     assertion(Types == [text, int]).
 
@@ -1030,7 +1030,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
 test(concat_result_column_stays_text) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
     memberchk(relplan(message/3, _, _, _, Types), RelPlans),
     assertion(Types == [text, int, text]).
 
@@ -1585,14 +1585,14 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
       fixture(host_declared_struct_output_parses_and_lowers_as_ref,
               Program, [], [], [])-Bindings,
       Plan),
-    Plan = plan(_, _, RelPlans, _, _, _),
+    Plan = plan(_, _, RelPlans, _, _, _, _),
     memberchk(
       relplan('__host_response_scan_span'/4, set,
               [witness_digest, ordinal, path, at],
               key([1, 2]), [text, int, text, ref(span)]),
       RelPlans),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), _, _, _, _),
+    Plan = plan(_, prog(Decls, _), _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(
@@ -1659,7 +1659,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
@@ -1705,7 +1705,7 @@ test(query_plan_carries_columns_and_bound_positions) :-
               Program, [], [], [])-Bindings,
       Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(query_plan_carries_columns_and_bound_positions,
@@ -3130,7 +3130,7 @@ test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
             pre(counter(Name, Total)),
             Next := Total + 1) ]),
     program_plan(fixture(scan_numeric_constraint, Prog, [], [], [])-[], Plan),
-    Plan = plan(_, _, RelPlans, _, _, _),
+    Plan = plan(_, _, RelPlans, _, _, _, _),
     memberchk(relplan(counter/2, _, _, _, [text, int]), RelPlans).
 
 :- end_tests(phase5_value_plane).
@@ -3266,7 +3266,7 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 :- begin_tests(relation_depth_lowering).
 
 depth_program(Rules, plan(depth, prog(Decls, Rules), RelPlans, [raw/4],
-                          LevelRules, EdgeRules)) :-
+                          LevelRules, EdgeRules, [])) :-
     Decls = [ type_decl(repo,  [col(name, text)]),
               col_type(repo/1, name, text),
               type_decl(fpath, [col(name, text)]),

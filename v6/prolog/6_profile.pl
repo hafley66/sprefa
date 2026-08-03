@@ -53,7 +53,7 @@ compile_dl6_profiled(File, OutFile, LogStream) :-
     phase(LogStream, File, 3, lower,
           lower_program(Plan, Lowered),
           LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     phase(LogStream, File, 4, boot,
           boot_statements(Decls, RelPlans, [], LevelStatements,
