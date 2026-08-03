@@ -1,0 +1,11 @@
+{
+  "message": "parse error here **bold** `mono` [linked](#target) <b>html-bold</b> <span style=\"color:red\">html-red</span>",
+  "codeValue": "dl6/surface_findings:3",
+  "codeTargetUri": "file:///Users/chrishafley/projects/sprefa-lanes/dl6-vscode/proofs/dl6-rich-diag/scratch.dl6",
+  "relatedCount": 2,
+  "hoverRegistered": true,
+  "hoverSupportHtml": true,
+  "codelensRegistered": true,
+  "webviewCommand": "dl6RichDiag.openWebview",
+  "timestamp": 1785712603224
+}

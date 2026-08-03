@@ -1,0 +1,3 @@
+rel a(x: int).
+rel b(y: int).
+here_is_the_bad_line :-

@@ -1,0 +1,58 @@
+{
+  "name": "dl6-rich-diag-proof",
+  "displayName": "dl6 rich diag proof",
+  "description": "Empirical proof of what VS Code renders for markdown/HTML in diagnostics, hover, codelens, relatedInformation, codeDescription, and a webview.",
+  "version": "0.1.0",
+  "publisher": "sprefa",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Linters",
+    "Testing"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:dl6"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "dl6RichDiag.publishDiagnostics",
+        "title": "dl6RichDiag: publish diagnostics with markdown/HTML/code/related"
+      },
+      {
+        "command": "dl6RichDiag.openWebview",
+        "title": "dl6RichDiag: open rich-content webview"
+      },
+      {
+        "command": "dl6RichDiag.reportState",
+        "title": "dl6RichDiag: report what got wired"
+      }
+    ],
+    "languages": [
+      {
+        "id": "dl6",
+        "extensions": [
+          ".dl6"
+        ],
+        "aliases": [
+          "dl6"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -p ./ --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/test-electron": "^2.3.9",
+    "playwright": "^1.61.1",
+    "typescript": "^5.4.0"
+  }
+}
