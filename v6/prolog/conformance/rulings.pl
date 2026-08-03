@@ -553,3 +553,22 @@ ruling(bounded_log_arm_order, refuse_two_arms_on_bounded_log, user,
 
 ruling(repo_column_spelling, distinct_name_hosts, user,
        'user 2026-07-31: "we want A bc no magic strings repeated all the time since we dont have defaults or nulls" -- repo-scoped enumeration is its own host pair (repo_files(repo, glob, ...), repo_files_at(repo, rev, glob, ...)) beside the unscoped files/files_at, never a required leading column with a repeated cwd literal. Follows the repo_grep_at precedent and the no-defaults/no-nulls design line: a coordinate the program does not vary is a host the program does not name.').
+
+% 2026-08-03 evening: the laziness fork menu, ruled via drawn options.
+ruling(pulse_merge_spelling, edge_arms_with_latest_sample, user,
+       'user 2026-08-03: canonical merge-of-pulses = edge arms with an explicit latest/1 sample of the latch (compiles today, grade 0). Level-accumulate stays legal; the bare-atom edge spelling stays refused (the grade rule at 3_clock_check.pl:129-138 is untouched).').
+
+ruling(subscribed_reset_pole, per_rel_declaration, user,
+       'user 2026-08-03: reset behavior is per-rel. Default = rx share(), cold when the last reader unsubscribes; a rel opts into warm (never re-cold) explicitly. The pre-commit example global is one warm opt-in, never a global default. Decoupling running from the ticks$ refcount is a defect fix independent of this pole.').
+
+ruling(edge_before_first_subscribe, keep_table_is_the_replay, user,
+       'user 2026-08-03: an edge rel ingests eagerly into storage; evaluation is lazy. A late subscriber reads the keep()-bounded table then the live stream (concat(from(storedRows), live$)). No second ingress buffer mechanism.').
+
+ruling(event_ingress_surface, live_event_bind, user,
+       'user 2026-08-03: outside-world events enter as a new bind name, live_event, whose executor starts no process; rows arrive through POST /arrivals and type-check like any arrival. No new keyword (external/register died; bind is the survivor).').
+
+ruling(zero_query_semantics, subscribes_nothing, user,
+       'user 2026-08-03: "im sorry are u saying if no file has a question in it we just subscribe to everything?" -> strict: a program with no query subscribes to NOTHING. The conformance harness seeds subscription roots from its own expectations (zero fixture edits). The compat all-rels branch in the cone is a migration bridge scheduled for removal.').
+
+ruling(subscribe_vocabulary, subscribe_never_demand, user,
+       'user 2026-08-03: "and call it subscribes damn it". The cone family uses subscribe vocabulary everywhere: subscribed_rels/4, subscribedRels, 2_subscribe.pl. The word demand is banned for this construct family in surface, identifiers, and docs (host __host_demand_* rows are a separate pre-existing family, rename not ruled).').
