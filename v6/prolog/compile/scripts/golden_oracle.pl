@@ -26,6 +26,18 @@ oracle_final(Dl6File, ScheduleFile) :-
     final_state_line(FinalAll, Line),
     format('~w~n', [Line]).
 
+% Both legs off ONE evaluation. run_program/5 already returns the tick deltas
+% and the final state together, and the two entry points above each discard the
+% half they did not ask for, so grading a schedule through them replays the
+% whole program twice. Output is the concatenation the two-call form produced,
+% in the same order, byte for byte.
+oracle_both(Dl6File, ScheduleFile) :-
+    golden_program(Dl6File, ScheduleFile, Prog, Schedule),
+    run_program(Prog, [], Schedule, FinalAll, DeltaTicks),
+    print_tick_lines(1, DeltaTicks),
+    final_state_line(FinalAll, Line),
+    format('~w~n', [Line]).
+
 golden_program(Dl6File, ScheduleFile, Prog, Schedule) :-
     parse_dl_file(Dl6File, Prog, Bindings, Findings),
     ( Findings == []

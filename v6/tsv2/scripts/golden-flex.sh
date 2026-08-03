@@ -74,9 +74,12 @@ for leg in zero one many perturbed; do
   schedule="$WORK/golden-flex.$leg.json"
   [ -f "$schedule" ] || fail "no schedule for leg $leg"
 
+  # oracle_both/2 prints the tick log and the final line off ONE run_program/5.
+  # The two-call form replayed the whole program twice per leg for the two
+  # halves of one result; output is unchanged, proved byte-identical on all four
+  # legs (zero 468 B, one 4954 B, many 183110 B, perturbed 189080 B).
   ( cd "$COMPILE/scripts" \
-    && swipl -q -l golden_oracle.pl -g "oracle_ticklog('$GOLDEN', '$schedule')" -g halt \
-    && swipl -q -l golden_oracle.pl -g "oracle_final('$GOLDEN', '$schedule')"   -g halt \
+    && swipl -q -l golden_oracle.pl -g "oracle_both('$GOLDEN', '$schedule')" -g halt \
   ) >"$WORK/oracle.$leg" 2>"$WORK/oracle.$leg.err" || fail "oracle $leg: $(cat "$WORK/oracle.$leg.err")"
 
   for mode in incremental naive; do
