@@ -1,6 +1,20 @@
 # Trace schema + rule identity through the compile seam
 
-Status: PROPOSED, awaiting go/no-go. Base sha `e3a103ce`.
+Status: LANDED 2026-08-03. Base sha `e3a103ce`.
+  A  923d2451  schema as data, ms -> wall_ms, witnessDigest -> witness_digest
+  B  d49f9d8f  ruleId through the emit seam (370 files; 179 modules regenerate)
+  C  098ce390  goldens/trace-line.jsonl + the projection receipt
+
+Two claims in this plan were WRONG and the receipts corrected them:
+  - "a level head's clauses are two rules" -- they are not separable at this
+    seam; level clauses fold into one UNION'd insert, so a level head is always
+    #1. Edge arms do get their own ordinals. Found by writing the receipt
+    against the coalesce fixture and watching it go red.
+  - "the same bytes" -- not achievable across sinks. pino prepends `level`, a
+    `tracing` json layer adds `target`/`fields`, and pino cannot be told to drop
+    its level without emitting malformed JSON. The receipt grades the line's
+    PROJECTION onto the declared fields instead, which is what a second emitter
+    can actually satisfy.
 
 ## What was asked
 
