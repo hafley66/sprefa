@@ -1,0 +1,7 @@
+example.com/shared	alpha	v1.2.0
+example.com/shared	beta	v1.3.0
+example.com/shared	gamma	v1.2.0
+github.com/pkg/errors	alpha	v0.9.1
+github.com/pkg/errors	beta	v0.9.1
+github.com/pkg/errors	gamma	v0.8.0
+github.com/pkg/errors	shared	v0.9.1

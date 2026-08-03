@@ -3,19 +3,29 @@
 # ARCH fork flagship_pick: "callgraph rail first proves the rig, flow-interproc
 # rides the same rig").
 #
-# It runs BOTH engines over ONE pinned corpus and diffs their answers rel by rel.
-#   v5: the root `dl` binary running `examples/callgraph-ast.dl`, BYTE-UNMODIFIED
+# It diffs, rel by rel, over ONE pinned corpus:
+#   v5: CHECKED-IN OUTPUT of the root `dl` binary running
+#       `examples/callgraph-ast.dl` BYTE-UNMODIFIED, pinned under
+#       goldens/flagship_callgraph/v5_golden/ with the rev, the binary digest and
+#       the corpus digest it was captured against
 #   v6: the served tsv2 engine running `../dl/fixtures/flagship-callgraph.dl6`
+#
+# THE DEFAULT PATH NEVER RUNS THE V5 BINARY. `FLAGSHIP_V5_WRITE=1` is the one
+# mode that does, and it rewrites the golden. Without it a missing golden is a
+# hard failure naming that command; nothing is built and nothing regenerates.
+# Both pins the golden carries -- the corpus digest and the v5 program's blob
+# sha -- are asserted before anything is graded, because a golden diffed against
+# a moved corpus is a false green.
 #
 # ─── WHY THE V5 PROGRAM IS NOT EDITED, AND HOW THE CORPUS IS PINNED ──────────
 # `examples/callgraph-ast.dl` hardcodes `scan("WORK", "src/**/*.rs", ...)`. Rather
 # than copy it and narrow the glob (which would make "we ran the real rail" a
 # claim instead of a fact), the RIG MOVES THE ROOT: it copies a literal, listed
 # set of this repository's own Rust files into a scratch directory as `src/...`,
-# `git init`s and commits them, and runs both engines with that directory as cwd.
-# The v5 program is read straight out of examples/ with zero edits, and both
-# engines see the same relative paths, so the artifacts compare column for column
-# with no path rewriting anywhere in this script.
+# `git init`s and commits them, and runs with that directory as cwd. The v5
+# program is read straight out of examples/ with zero edits, and both engines see
+# the same relative paths, so the artifacts compare column for column with no
+# path rewriting anywhere in this script.
 #
 # The corpus is the sprefa-extract crate's core (types / wire / scip / the small
 # re-export shims / one language front end / the CLI). It is listed literally
@@ -26,9 +36,10 @@
 # grade that runs in seconds.
 #
 # ─── ISOLATION ──────────────────────────────────────────────────────────────
-# `DL_STATE_DIR` points at the scratch tree and `--db` names a scratch file, so
-# the v5 leg touches no served-root cache and no daemon state. The v6 leg runs on
-# `:memory:`. Nothing under ~/.local/state/sprefa is read or written.
+# Under `FLAGSHIP_V5_WRITE=1`, `DL_STATE_DIR` points at the scratch tree and
+# `--db` names a scratch file, so the capture touches no served-root cache and no
+# daemon state. The v6 leg runs on `:memory:`. Nothing under
+# ~/.local/state/sprefa is read or written.
 #
 # ─── THE COLUMN MAPPING (part of the rig, per the brief) ────────────────────
 # The two engines name and shape these rels differently. Every artifact is
@@ -95,6 +106,15 @@
 #    "v5's inputs do not derive it" — true, and irrelevant, because the rule had
 #    changed. The rule-fidelity check is what the sabotage bought: it now fails
 #    with 2,277 v6-extra rows named individually.
+# 3  GOLDEN EDIT, one row, run against the pinned v5 side. In v5.def.tsv,
+#    `src/bin/extract.rs family_mode` -> `family_mod`. The row COUNT is
+#    unchanged, so the MANIFEST rows_def check passes by design and the grade is
+#    what has to catch it. Exit 1, 43 unclassified, the edited name named:
+#      ('def', 'src/bin/extract.rs', 'family_mode')
+#      ('def', 'v5-only', 'src/bin/extract.rs', 'family_mod')
+#      40 calls + 1 unused rows, v5-side rule fidelity broken on that name
+#    The receipt is that the checked-in golden FEEDS the grade rather than
+#    sitting next to it.
 set -uo pipefail
 
 TSV2="$(cd "$(dirname "$0")/.." && pwd)"
@@ -107,6 +127,10 @@ V5_PROGRAM="$REPO/examples/callgraph-ast.dl"
 V6_PROGRAM="$TSV2/../dl/fixtures/flagship-callgraph.dl6"
 SERVE_MAIN="$TSV2/serve/main.ts"
 CLASSIFY="$TSV2/scripts/flagship-classify.py"
+GOLDEN="$TSV2/goldens/flagship_callgraph/v5_golden"
+MANIFEST="$GOLDEN/MANIFEST.tsv"
+REGEN_CMD="FLAGSHIP_V5_WRITE=1 bash scripts/flagship-callgraph.sh"
+WRITE_GOLDEN="${FLAGSHIP_V5_WRITE:-0}"
 SERVER_PID=""
 
 # THE PIN. Paths are relative to v6/sprefa-extract/ and land at the same relative
@@ -185,6 +209,98 @@ build_corpus() {
   say "PASS  pinned corpus: $CORPUS_N files at $REV ($ROOT)"
 }
 
+# The corpus is COPIED out of the live tree, so it drifts whenever those files
+# are edited. Path and bytes both enter the digest, so a rename moves it too.
+corpus_digest() {
+  local file
+  for file in $CORPUS; do
+    printf '%s\n' "$file"
+    cat "$ROOT/$file"
+  done | shasum -a 256 | cut -d' ' -f1
+}
+
+manifest_field() { awk -F'\t' -v key="$1" '$1 == key { print $2 }' "$MANIFEST"; }
+
+write_golden() {
+  resolve_v5_bin
+  git -C "$REPO" diff --quiet -- "$V5_PROGRAM" \
+    || say "NOTE  examples/callgraph-ast.dl has uncommitted changes in the source tree"
+  DL_STATE_DIR="$WORK/state" "$DL_V5_BIN" "$V5_PROGRAM" --db "$WORK/v5.sqlite" \
+    >"$WORK/v5.out" 2>"$WORK/v5.err" || fail "v5 run failed: $(tail -10 "$WORK/v5.err")"
+  # The isolation assertion, not a comment about isolation: `DL_STATE_DIR` is the
+  # honored sandbox knob, and v5 writes its invocation db and log under whatever
+  # that names. Those files existing HERE is the receipt that the real state home
+  # was not the one it opened.
+  [ -f "$WORK/state/invocations.db" ] \
+    || fail "v5 did not write its state under DL_STATE_DIR=$WORK/state; the run was not isolated"
+  local v5_files
+  v5_files="$(sqlite3 "$WORK/v5.sqlite" 'select count(*) from rel_file_txt;')"
+  [ "$v5_files" = "$CORPUS_N" ] \
+    || fail "v5 saw $v5_files corpus files, the pin has $CORPUS_N"
+
+  mkdir -p "$GOLDEN"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct path, name from rel_def_txt;'    | LC_ALL=C sort -u >"$GOLDEN/v5.def.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct path, callee from rel_call_txt;' | LC_ALL=C sort -u >"$GOLDEN/v5.call.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct caller, callee from rel_calls_txt;' | LC_ALL=C sort -u >"$GOLDEN/v5.calls.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct name from rel_unused_txt;'       | LC_ALL=C sort -u >"$GOLDEN/v5.unused.tsv"
+
+  {
+    printf 'v5_rev\t%s\n'           "$(git -C "$REPO" rev-parse HEAD)"
+    printf 'v5_program\t%s\n'       "examples/callgraph-ast.dl"
+    printf 'v5_program_blob\t%s\n'  "$(git -C "$REPO" hash-object "$V5_PROGRAM")"
+    printf 'v5_binary_sha256\t%s\n' "$(shasum -a 256 "$DL_V5_BIN" | cut -d' ' -f1)"
+    printf 'corpus_files\t%s\n'     "$CORPUS_N"
+    printf 'corpus_sha256\t%s\n'    "$(corpus_digest)"
+    printf 'captured_utc\t%s\n'     "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'regenerate\t%s\n'       "$REGEN_CMD"
+    for rel in def call calls unused; do
+      printf 'rows_%s\t%s\n' "$rel" "$(wc -l <"$GOLDEN/v5.$rel.tsv" | tr -d ' ')"
+    done
+  } >"$MANIFEST"
+  say "WROTE v5 golden: $GOLDEN (rev $(manifest_field v5_rev), corpus $(manifest_field corpus_sha256))"
+}
+
+read_golden() {
+  [ -f "$MANIFEST" ] || fail "no pinned v5 golden at $MANIFEST
+      A gate does not run v5. Regenerate from v6/tsv2 with:
+      $REGEN_CMD"
+  local rel want got
+  for rel in def call calls unused; do
+    [ -f "$GOLDEN/v5.$rel.tsv" ] || fail "pinned v5 golden missing $GOLDEN/v5.$rel.tsv; regenerate: $REGEN_CMD"
+    want="$(manifest_field "rows_$rel")"
+    got="$(wc -l <"$GOLDEN/v5.$rel.tsv" | tr -d ' ')"
+    [ "$want" = "$got" ] \
+      || fail "pinned v5 golden v5.$rel.tsv has $got rows, MANIFEST rows_$rel says $want (truncated golden); regenerate: $REGEN_CMD"
+    cp "$GOLDEN/v5.$rel.tsv" "$WORK/v5.$rel.tsv"
+  done
+
+  want="$(manifest_field corpus_files)"
+  [ "$want" = "$CORPUS_N" ] \
+    || fail "the pin lists $CORPUS_N files, the golden was captured against $want; regenerate: $REGEN_CMD"
+  want="$(manifest_field corpus_sha256)"
+  got="$(corpus_digest)"
+  [ "$want" = "$got" ] \
+    || fail "the corpus MOVED since the v5 golden was captured (golden $want, now $got).
+      Grading v6 against a golden from a different corpus is a false green.
+      Regenerate from v6/tsv2 with:
+      $REGEN_CMD"
+  # v5 is retired: the program going away leaves the golden standing, the
+  # program CHANGING invalidates it.
+  if [ -f "$V5_PROGRAM" ]; then
+    want="$(manifest_field v5_program_blob)"
+    got="$(git -C "$REPO" hash-object "$V5_PROGRAM")"
+    [ "$want" = "$got" ] \
+      || fail "$(manifest_field v5_program) changed since the golden was captured (golden blob $want, now $got); regenerate: $REGEN_CMD"
+  else
+    say "NOTE  $(manifest_field v5_program) is gone from the tree; the golden stands on its recorded rev"
+  fi
+  say "PASS  v5 golden: rev $(manifest_field v5_rev), captured $(manifest_field captured_utc), corpus digest holds ($GOLDEN)"
+}
+
 rows_of() { curl -s "$BASE/idb/$1"; }
 row_count() {
   rows_of "$1" | python3 -c 'import json,sys
@@ -192,7 +308,6 @@ try: print(len(json.load(sys.stdin)["rows"]))
 except Exception: print(-1)'
 }
 
-resolve_v5_bin
 resolve_extract_bin
 build_corpus
 
@@ -205,30 +320,9 @@ diff -u "$WORK/fileset.pin" "$WORK/fileset.pathspec" >"$WORK/fileset.diff" \
 narrow="$(git ls-files -- 'src/**/*.rs' | wc -l | tr -d ' ')"
 say "PASS  file set: pathspec 'src/*.rs' = the $CORPUS_N pinned files (git's own 'src/**/*.rs' would select only $narrow -- the divergence this rig states)"
 
-# ── the v5 leg: the real rail, unmodified, on the pinned root ───────────────
-git -C "$REPO" diff --quiet -- "$V5_PROGRAM" \
-  || say "NOTE  examples/callgraph-ast.dl has uncommitted changes in the source tree"
-DL_STATE_DIR="$WORK/state" "$DL_V5_BIN" "$V5_PROGRAM" --db "$WORK/v5.sqlite" \
-  >"$WORK/v5.out" 2>"$WORK/v5.err" || fail "v5 run failed: $(tail -10 "$WORK/v5.err")"
-# The isolation assertion, not a comment about isolation: `DL_STATE_DIR` is the
-# honored sandbox knob, and v5 writes its invocation db and log under whatever
-# that names. Those files existing HERE is the receipt that the real state home
-# was not the one it opened.
-[ -f "$WORK/state/invocations.db" ] \
-  || fail "v5 did not write its state under DL_STATE_DIR=$WORK/state; the run was not isolated"
-v5_files="$(sqlite3 "$WORK/v5.sqlite" 'select count(*) from rel_file_txt;')"
-[ "$v5_files" = "$CORPUS_N" ] \
-  || fail "v5 saw $v5_files corpus files, the pin has $CORPUS_N"
-say "PASS  v5 ran examples/callgraph-ast.dl over the pinned root ($v5_files files, db $WORK/v5.sqlite)"
-
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct path, name from rel_def_txt;'    | LC_ALL=C sort -u >"$WORK/v5.def.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct path, callee from rel_call_txt;' | LC_ALL=C sort -u >"$WORK/v5.call.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct caller, callee from rel_calls_txt;' | LC_ALL=C sort -u >"$WORK/v5.calls.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct name from rel_unused_txt;'       | LC_ALL=C sort -u >"$WORK/v5.unused.tsv"
+# ── the v5 leg: the pinned capture, checked in ──────────────────────────────
+[ "$WRITE_GOLDEN" = "1" ] && write_golden
+read_golden
 
 # ── the v6 leg: the served tsv2 engine, cwd = the same root ────────────────
 TSV2_DB=":memory:" TSV2_PORT="$PORT" DL_EXTRACT_BIN="$DL_EXTRACT_BIN" \

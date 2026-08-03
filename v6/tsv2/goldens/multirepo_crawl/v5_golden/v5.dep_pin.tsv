@@ -1,0 +1,8 @@
+alpha	example.com/shared	v1.2.0
+alpha	github.com/pkg/errors	v0.9.1
+beta	example.com/shared	v1.3.0
+beta	github.com/pkg/errors	v0.9.1
+gamma	example.com/shared	v1.2.0
+gamma	github.com/pkg/errors	v0.8.0
+gamma	golang.org/x/sync	v0.7.0
+shared	github.com/pkg/errors	v0.9.1

@@ -2,23 +2,38 @@
 # 2_gate.sh -- THE MULTIREPO DEP/REPO/REV GOLDEN (stopping-point program #5).
 #
 # Same rig as flagship-callgraph.sh, widened from one repository to four:
-#   v5: the root `dl` binary running `examples/version-skew.dl`, BYTE-UNMODIFIED
+#   v5: CHECKED-IN OUTPUT of the root `dl` binary running
+#       `examples/version-skew.dl` BYTE-UNMODIFIED, pinned under ./v5_golden/
+#       with the rev, the binary digest and the corpus digest it was captured
+#       against
 #   v6: the served tsv2 engine running ./0_multirepo_crawl.dl6
 # over ONE pinned corpus, diffed rel by rel, every differing row bucketed with
 # a proven reason.
+#
+# THE DEFAULT PATH NEVER RUNS THE V5 BINARY. `MULTIREPO_V5_WRITE=1` is the one
+# mode that does, and it rewrites the golden. Without it a missing golden is a
+# hard failure naming that command; nothing is built and nothing regenerates.
+# The corpus digest and the v5 program's blob sha are asserted before anything
+# is graded: a golden diffed against a moved corpus is a false green.
 #
 # ─── WHY THE V5 PROGRAM IS NOT EDITED ───────────────────────────────────────
 # `examples/version-skew.dl` reads its repo set from $SPREFA_CONFIG. The rig
 # therefore BUILDS a config rather than narrowing the program: 1_corpus.sh
 # writes four one-commit git repositories and an all.config.toml naming them,
-# and the v5 leg is pointed at that file. The program text is read straight out
+# and the capture is pointed at that file. The program text is read straight out
 # of examples/ with zero edits, so "we ran the real rail" is a fact.
 #
+# The corpus digest covers every corpus file EXCEPT `.git/**` and
+# all.config.toml: those two carry a fresh commit sha and the scratch path, so
+# they move on every run while the go.mod bytes the program actually reads do
+# not. The golden's own columns are slug-keyed for the same reason.
+#
 # ─── ISOLATION ──────────────────────────────────────────────────────────────
-# `DL_STATE_DIR` points into the scratch tree and `--db` names a scratch file,
-# so the v5 leg touches no served-root cache and no daemon state; the assertion
-# below proves it by requiring the invocation db to exist THERE. The v6 leg runs
-# on `:memory:`. Nothing under ~/.local/state/sprefa is read or written.
+# Under `MULTIREPO_V5_WRITE=1`, `DL_STATE_DIR` points into the scratch tree and
+# `--db` names a scratch file, so the capture touches no served-root cache and no
+# daemon state; the assertion below proves it by requiring the invocation db to
+# exist THERE. The v6 leg runs on `:memory:`. Nothing under
+# ~/.local/state/sprefa is read or written.
 #
 # ─── THE COLUMN MAPPING ─────────────────────────────────────────────────────
 #   artifact     columns              v5 source           v6 source
@@ -76,6 +91,15 @@
 #    not derive v6's own answer", which is the statement that rules out an
 #    input difference. It is also the receipt that the unskewed module in the
 #    corpus is a working negative control and not decoration.
+# 3  GOLDEN EDIT, one row, run against the pinned v5 side. In v5.dep_pin.tsv,
+#    gamma's `github.com/pkg/errors v0.8.0` -> `v0.9.1`. The row COUNT is
+#    unchanged, so the MANIFEST rows_dep_pin check passes by design and the grade
+#    is what has to catch it. Exit 1, CLASSIFY unclassified=7:
+#      GRADE dep_pin: differs (v5 8 rows, v6 8 rows)
+#      (c) UNCLASSIFIED, not derivable from corpus bytes
+#            gamma  github.com/pkg/errors  v0.9.1
+#      v5 skewed / skew_row / skew_width: FIDELITY BROKEN (1 + 4 + 1 rows)
+#    The v6 side stays FIDELITY OK, which is what places the edit on the v5 leg.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -89,6 +113,11 @@ V5_PROGRAM="$REPO/examples/version-skew.dl"
 V6_PROGRAM="$HERE/0_multirepo_crawl.dl6"
 SERVE_MAIN="$TSV2/serve/main.ts"
 CLASSIFY="$HERE/3_classify.py"
+GOLDEN="$HERE/v5_golden"
+MANIFEST="$GOLDEN/MANIFEST.tsv"
+REGEN_CMD="MULTIREPO_V5_WRITE=1 bash goldens/multirepo_crawl/2_gate.sh"
+WRITE_GOLDEN="${MULTIREPO_V5_WRITE:-0}"
+V5_RELS="dep_pin skewed skew_row skew_width dep_ver"
 SERVER_PID=""
 
 fail() { printf 'FAIL  %s\n' "$*"; [ -n "$SERVER_PID" ] && tail -c 2000 "$WORK/server.log"; stop_server; exit 1; }
@@ -112,7 +141,97 @@ resolve_v5_bin() {
   say "v5 bin: $DL_V5_BIN (in-tree release)"
 }
 
-resolve_v5_bin
+corpus_digest() {
+  (
+    cd "$CORPUS" || exit 1
+    find . -type f -not -path '*/.git/*' -not -name all.config.toml \
+      | LC_ALL=C sort \
+      | while IFS= read -r file; do printf '%s\n' "$file"; cat "$file"; done
+  ) | shasum -a 256 | cut -d' ' -f1
+}
+
+manifest_field() { awk -F'\t' -v key="$1" '$1 == key { print $2 }' "$MANIFEST"; }
+
+write_golden() {
+  resolve_v5_bin
+  git -C "$REPO" diff --quiet -- "$V5_PROGRAM" \
+    || say "NOTE  examples/version-skew.dl has uncommitted changes in the source tree"
+  SPREFA_CONFIG="$CORPUS/all.config.toml" DL_STATE_DIR="$WORK/state" \
+    "$DL_V5_BIN" "$V5_PROGRAM" --db "$WORK/v5.sqlite" \
+    >"$WORK/v5.out" 2>"$WORK/v5.err" || fail "v5 run failed: $(tail -10 "$WORK/v5.err")"
+  [ -f "$WORK/state/invocations.db" ] \
+    || fail "v5 did not write its state under DL_STATE_DIR=$WORK/state; the run was not isolated"
+  local v5_repos
+  v5_repos="$(sqlite3 "$WORK/v5.sqlite" 'select count(distinct repo) from rel_dep_pin_txt;')"
+  [ "$v5_repos" = "$CORPUS_N" ] \
+    || fail "v5 saw $v5_repos repos, the pin has $CORPUS_N"
+
+  mkdir -p "$GOLDEN"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct repo, module, ver from rel_dep_pin_txt;'    | LC_ALL=C sort -u >"$GOLDEN/v5.dep_pin.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct module from rel_skew_txt;'                  | LC_ALL=C sort -u >"$GOLDEN/v5.skewed.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct module, repo, ver from rel_skew_row_txt;'   | LC_ALL=C sort -u >"$GOLDEN/v5.skew_row.tsv"
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct module, repos from rel_skew_width_txt;'     | LC_ALL=C sort -u >"$GOLDEN/v5.skew_width.tsv"
+  # The named gap's v5 side, captured so the gate can print what v6 cannot say.
+  sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
+    'select distinct module, lo, hi from rel_dep_ver_txt;'       | LC_ALL=C sort -u >"$GOLDEN/v5.dep_ver.tsv"
+
+  {
+    printf 'v5_rev\t%s\n'           "$(git -C "$REPO" rev-parse HEAD)"
+    printf 'v5_program\t%s\n'       "examples/version-skew.dl"
+    printf 'v5_program_blob\t%s\n'  "$(git -C "$REPO" hash-object "$V5_PROGRAM")"
+    printf 'v5_binary_sha256\t%s\n' "$(shasum -a 256 "$DL_V5_BIN" | cut -d' ' -f1)"
+    printf 'corpus_repos\t%s\n'     "$CORPUS_N"
+    printf 'corpus_sha256\t%s\n'    "$(corpus_digest)"
+    printf 'captured_utc\t%s\n'     "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'regenerate\t%s\n'       "$REGEN_CMD"
+    for rel in $V5_RELS; do
+      printf 'rows_%s\t%s\n' "$rel" "$(wc -l <"$GOLDEN/v5.$rel.tsv" | tr -d ' ')"
+    done
+  } >"$MANIFEST"
+  say "WROTE v5 golden: $GOLDEN (rev $(manifest_field v5_rev), corpus $(manifest_field corpus_sha256))"
+}
+
+read_golden() {
+  [ -f "$MANIFEST" ] || fail "no pinned v5 golden at $MANIFEST
+      A gate does not run v5. Regenerate from v6/tsv2 with:
+      $REGEN_CMD"
+  local rel want got
+  for rel in $V5_RELS; do
+    [ -f "$GOLDEN/v5.$rel.tsv" ] || fail "pinned v5 golden missing $GOLDEN/v5.$rel.tsv; regenerate: $REGEN_CMD"
+    want="$(manifest_field "rows_$rel")"
+    got="$(wc -l <"$GOLDEN/v5.$rel.tsv" | tr -d ' ')"
+    [ "$want" = "$got" ] \
+      || fail "pinned v5 golden v5.$rel.tsv has $got rows, MANIFEST rows_$rel says $want (truncated golden); regenerate: $REGEN_CMD"
+    cp "$GOLDEN/v5.$rel.tsv" "$WORK/v5.$rel.tsv"
+  done
+
+  want="$(manifest_field corpus_repos)"
+  [ "$want" = "$CORPUS_N" ] \
+    || fail "the pin builds $CORPUS_N repos, the golden was captured against $want; regenerate: $REGEN_CMD"
+  want="$(manifest_field corpus_sha256)"
+  got="$(corpus_digest)"
+  [ "$want" = "$got" ] \
+    || fail "1_corpus.sh's corpus MOVED since the v5 golden was captured (golden $want, now $got).
+      Grading v6 against a golden from a different corpus is a false green.
+      Regenerate from v6/tsv2 with:
+      $REGEN_CMD"
+  # v5 is retired: the program going away leaves the golden standing, the
+  # program CHANGING invalidates it.
+  if [ -f "$V5_PROGRAM" ]; then
+    want="$(manifest_field v5_program_blob)"
+    got="$(git -C "$REPO" hash-object "$V5_PROGRAM")"
+    [ "$want" = "$got" ] \
+      || fail "$(manifest_field v5_program) changed since the golden was captured (golden blob $want, now $got); regenerate: $REGEN_CMD"
+  else
+    say "NOTE  $(manifest_field v5_program) is gone from the tree; the golden stands on its recorded rev"
+  fi
+  say "PASS  v5 golden: rev $(manifest_field v5_rev), captured $(manifest_field captured_utc), corpus digest holds ($GOLDEN)"
+}
+
 bash "$HERE/1_corpus.sh" "$CORPUS" >"$WORK/corpus.log" 2>&1 \
   || fail "corpus build failed: $(cat "$WORK/corpus.log")"
 CORPUS_N=4
@@ -142,30 +261,9 @@ grep -q '^dialect_mismatches 0$' "$WORK/dialect.txt" \
   || fail "the two regex dialects disagree on the corpus: $(cat "$WORK/dialect.txt")"
 say "PASS  regex dialects agree on the corpus (v5 rust-crate vs v6 python-re, 0 mismatching lines)"
 
-# ── the v5 leg: the real rail, unmodified, over the config ─────────────────
-git -C "$REPO" diff --quiet -- "$V5_PROGRAM" \
-  || say "NOTE  examples/version-skew.dl has uncommitted changes in the source tree"
-SPREFA_CONFIG="$CORPUS/all.config.toml" DL_STATE_DIR="$WORK/state" \
-  "$DL_V5_BIN" "$V5_PROGRAM" --db "$WORK/v5.sqlite" \
-  >"$WORK/v5.out" 2>"$WORK/v5.err" || fail "v5 run failed: $(tail -10 "$WORK/v5.err")"
-[ -f "$WORK/state/invocations.db" ] \
-  || fail "v5 did not write its state under DL_STATE_DIR=$WORK/state; the run was not isolated"
-v5_repos="$(sqlite3 "$WORK/v5.sqlite" 'select count(distinct repo) from rel_dep_pin_txt;')"
-[ "$v5_repos" = "$CORPUS_N" ] \
-  || fail "v5 saw $v5_repos repos, the pin has $CORPUS_N"
-say "PASS  v5 ran examples/version-skew.dl over $v5_repos configured repos (db $WORK/v5.sqlite)"
-
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct repo, module, ver from rel_dep_pin_txt;'    | LC_ALL=C sort -u >"$WORK/v5.dep_pin.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct module from rel_skew_txt;'                  | LC_ALL=C sort -u >"$WORK/v5.skewed.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct module, repo, ver from rel_skew_row_txt;'   | LC_ALL=C sort -u >"$WORK/v5.skew_row.tsv"
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct module, repos from rel_skew_width_txt;'     | LC_ALL=C sort -u >"$WORK/v5.skew_width.tsv"
-# The named gap's v5 side, captured so the gate can print what v6 cannot say.
-sqlite3 -noheader -separator '	' "$WORK/v5.sqlite" \
-  'select distinct module, lo, hi from rel_dep_ver_txt;'       | LC_ALL=C sort -u >"$WORK/v5.dep_ver.tsv"
+# ── the v5 leg: the pinned capture, checked in ─────────────────────────────
+[ "$WRITE_GOLDEN" = "1" ] && write_golden
+read_golden
 
 # ── the v6 leg: the served tsv2 engine ─────────────────────────────────────
 export MULTIREPO_GREP="$TSV2/scripts/parity-grep.py"

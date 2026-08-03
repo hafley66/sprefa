@@ -1,0 +1,12 @@
+v5_rev	0b66368c367d6ae679fcec3e7e21784e95578313
+v5_program	examples/callgraph-ast.dl
+v5_program_blob	c9d752624dc3aa968c239d38e8b58cc59124e22b
+v5_binary_sha256	239720d5f1d01e849d21f6ed94c9354c3bd7d7233f578774840da0065d4a4b71
+corpus_files	13
+corpus_sha256	027eb59c900c7c61f73c4b6dec855994cada49bc8439525453a1b551367ecc3b
+captured_utc	2026-08-03T12:35:30Z
+regenerate	FLAGSHIP_V5_WRITE=1 bash scripts/flagship-callgraph.sh
+rows_def	67
+rows_call	53
+rows_calls	257
+rows_unused	43
