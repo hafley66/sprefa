@@ -41,6 +41,12 @@ let pendingWatches: WatchEvent[] = [];
 let installed = false;
 
 function install(logPath: string): void {
+  // `base: null` drops pid/hostname and `timestamp: false` the clock. pino
+  // still prepends its own numeric `level`, and it stays: suppressing it with
+  // `formatters.level` makes pino emit `{,"tick":...`, malformed JSON, since
+  // the formatter's object is spliced in as a prefix chunk. Sink decoration is
+  // not the contract -- registry.pl's trace_event fields are, and
+  // tests/traceGolden.test.ts grades the line's PROJECTION onto them.
   logger = pino({ base: null, timestamp: false }, pino.destination({ dest: logPath, sync: true }));
   ruleChannel.subscribe((message) => {
     pendingRules.push(message as RuleEvent);

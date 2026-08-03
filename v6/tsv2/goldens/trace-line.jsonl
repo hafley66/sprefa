@@ -1,0 +1,4 @@
+{"tick":1,"rels":3,"rows":6,"statements":36,"rules":[{"rule":"<program>:merged/1#1","rows":2},{"rule":"<program>:merged/1#2","rows":1}],"effects":[],"binds":[],"watches":[]}
+{"tick":2,"rels":3,"rows":0,"statements":24,"rules":[{"rule":"<program>:merged/1#1","rows":0},{"rule":"<program>:merged/1#2","rows":0}],"effects":[],"binds":[],"watches":[]}
+{"tick":3,"rels":3,"rows":2,"statements":30,"rules":[{"rule":"<program>:merged/1#1","rows":0},{"rule":"<program>:merged/1#2","rows":1}],"effects":[],"binds":[],"watches":[]}
+{"tick":4,"rels":3,"rows":0,"statements":24,"rules":[{"rule":"<program>:merged/1#1","rows":0},{"rule":"<program>:merged/1#2","rows":0}],"effects":[],"binds":[],"watches":[]}
