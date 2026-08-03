@@ -30,15 +30,18 @@
 :- discontiguous correction/2.
 :- discontiguous answered/2.
 :- discontiguous open/2.
+:- discontiguous resolved/2.
 
 session(id, '20260802.2').
 session(date, '2026-08-02').
 session(coordinator, 'opus 5 (1M context)').
 session(branch, 'codex/rel-ref-file-span-lab').
 session(base_at_open, 'a7108169').
-session(head_at_close, 'c805eafc').
+session(head_at_close, 'a7a58f95').
+session(commits_this_session, 24).
 session(pushed, false).
 session(tagged, false).
+session(merge_state, 'all 6 lane branches merged into codex/rel-ref-file-span-lab; branch is 500 ahead of local main; local main 32 ahead of origin/main (github hafley66/sprefa). PUSH BLOCKED, see finding gate_red_dl_test.').
 session(prior_ledger, 'chat_log/20260802.1.fable-state-diet-worktree-skill-purge.md').
 
 % ═══ directives, all user-set ════════════════════════════════════════════════
@@ -118,8 +121,115 @@ finding(bench_results_csv_stale, small, coordinator,
 finding(sugar_spans_absent, design_gap, coordinator,
         'ALL SEVEN dl6 expansion passes carry ZERO source positions across 1608 lines (0_match_expand 137, 0_enum_expand 180, 0_coalesce_expand 274, 0_seq_expand 194, 0_relation_edge_expand 92, 1_expansion 57, 1_host_expand 674). match arms, |-> arrows, and enum declarations synthesize fresh rules with nothing behind them. A diagnostic on the third arm of a match has no source text to point at. This is the classic macro source-mapping problem that Rust, Scheme, and TypeScript all treat as core infrastructure. The coordinator BRIEFED THE SIDE TABLE WITHOUT THE PROPAGATION, so the landed channel works for parse-time diagnostics and silently degrades downstream of sugar.').
 
+% ═══ the merge and the blocked push ══════════════════════════════════════════
+
+lane(dl6_diag_fix, flash_0731, '8907a040', merged,
+     'fixed all three audit defects. Wrong position solved head-first: a refusal names
+      the offending rule and that rule DEFINES the reference, so the resolver looks up by
+      head identity before falling back to the sub_term scan. diag.pl moved out of labs/
+      to v6/prolog/. uri is now file://. Coordinator re-ran every gate.').
+lane(dl6_vscode, flash_0731, 'b7cdf014', merged,
+     'answered the rich-diagnostics question by DRIVING A LIVE VS CODE over the Chrome
+      DevTools Protocol, not by quoting the spec. Diagnostic.message is escaped plain text;
+      hovers render markdown plus a subset of HTML with inline styles stripped. Recommends
+      the extension watch the JSONL and set diagnostics itself, no new server.').
+lane(extract_drift, flash_0731, 'a7a58f95', reported,
+     'investigated the 79-vs-82 golden drift. Rebuilt the OLD binary from 023cd61a, got
+      exactly 79, set-diffed. Verdict correct-and-additive, re-baseline to 82.').
+lane(extract_drift_fable, fable_5, 'a7a58f95', reported,
+     'same question, independently. Rebuilt from 2faf82b1^ instead, also got exactly 79.
+      Same verdict. Found THREE things flash did not: downstream inertness, the repo own
+      prior acknowledgment of the defect, and the sanctioned replacement shape.').
+
+finding(gate_red_dl_test, blocks_push, coordinator,
+        'green-all on the merged tree is green on every leg EXCEPT dl-test: conformance
+         281/0, plunit 283/283, TEXT_DOOR 196/196/0, roundtrip G1+G2 pass, PROLOG_LINT
+         findings=1 baseline=1 OK, GOLDEN FLEX HOLDS. dl-test fails for a PRE-EXISTING
+         reason with two parts, neither caused by this session (zero files changed under
+         v6/dl or v6/sprefa-extract across a7108169..HEAD).').
+finding(extract_pin_points_at_reaped_worktree, blocks_push, coordinator,
+        'v6/dl/tasks.d.ts:346 pins DEFAULT_EXTRACT_BIN as a STRING LITERAL TYPE to
+         .claude/worktrees/extract-golden-plan/.../target/debug/extract. That worktree was
+         removed in a prior cleanup, so the test cannot find a binary at all. The comment
+         above it calls the pin an owner ruling the ledger keeps standing, so the
+         coordinator did not touch it. v6/tsv2/scripts/extraction-live.sh already carries
+         the successor shape AND a comment naming this exact defect as a known item.').
+finding(extract_golden_drift_79_to_82, needs_user_ruling, coordinator,
+        'v6/dl/tests/4_hosts.test.ts:463 asserts 79 rows from the unchanged 6-line fixture
+         v6/dl/fixtures/corpus/bad.ts; the current binary emits 82. TWO INDEPENDENT
+         INVESTIGATIONS (fable and flash) reached the same verdict by rebuilding the old
+         binary from DIFFERENT base commits and both getting exactly 79. The delta is
+         purely additive: commit 2faf82b1 (2026-07-29, df param/arg aux records) added
+         three TRUE facts about the fixture, and the original 79 survive byte-identical.
+         Nothing downstream consumes them: 4_ingest.ts handles only node/edge/sig/site/
+         const, so param/arg fall through. Recommendation re-baseline to 82; the residual
+         risk both named is that a raw-count assertion against a live evolving binary
+         breaks on every future additive change.').
+finding(gitignore_clobbered_by_coordinator, process, coordinator,
+        'the coordinator wrote a fresh .gitignore in the hs-interp worktree, overwriting
+         the repo real 69-line file, and the merge carried the damage in. Also why a later
+         git add -A nearly swept examples/_npm into a commit. Restored from main plus the
+         lab entries appended. Root cause: cat > .gitignore in a worktree without checking
+         whether one existed.').
+
+correction(coordinator_to_self,
+           'ran green-all piped through tail, which masked its exit code, and reported the
+            gate as passing when dl-test had failed. Re-ran with full capture.').
+correction(coordinator_to_self,
+           'raised an alarm that a lane had triggered an OAuth flow on the user machine.
+            It was the Chrome DevTools Protocol debug port of a VS Code instance the lane
+            launched deliberately. Nothing authenticated. Should have traced it first.').
+correction(coordinator_to_self,
+           'seeded the audit with a claim that removing the outer sort in scc.pl turns 3
+            tests red. It is 1 test, exit 1. The 3 came from counting output lines.').
+
+answered('can a dl6 diagnostic message carry markdown or html',
+         'no. Diagnostic.message renders as escaped plain text, proved in a live VS Code
+          and confirmed by the coordinator reading the screenshot. What DOES render: the
+          code field as a clickable link, relatedInformation as clickable locations, and a
+          HoverProvider returning MarkdownString, which renders markdown plus <b> under
+          supportHtml while STRIPPING inline style attributes. Recommended shape is a plain
+          diagnostic plus a hover that re-renders it, which is the pattern v5 already ships
+          at editors/vscode-dl/src/extension.ts:261-286.').
+answered('is prolog the right tool for the sprefa-extract subset work',
+         'half. Approved-subset is a FILTERING problem, not a parsing one, and filtering a
+          tree by rules is what unification is for. But tree-sitter already parses 100+
+          languages with error recovery, which is exactly the shitty-parse tolerance the
+          goal needs, and a DCG gives none of it. sprefa-extract already extracts PROLOG
+          itself via a tree-sitter grammar (src/lang/prolog/_0_source.rs), so the
+          five-language pattern is established. Split to defend: tree-sitter parses, Rust
+          emits the four planes, and the APPROVAL POLICY plus TYPE MAPPING become Prolog
+          rules over the rows. Undecided and it decides the design: whether approval needs
+          the full CST shipped per file or just the rows.').
+
 % ═══ receipts ════════════════════════════════════════════════════════════════
 % receipt(Name, Command, Result).
+
+receipt(green_all_merged_tree,
+        'cd v6/prolog && just green-all',
+        'EXIT 1. Green: conformance 281/0, plunit 283/283, TEXT_DOOR 196/196/0, roundtrip
+         G1 ALL PASS + G2 NO PARSE ERRORS, PROLOG_LINT findings=1 baseline=1 OK, GOLDEN
+         FLEX HOLDS. Red: dl-test only, and it is the last recipe so nothing went unrun.').
+receipt(merge_did_not_touch_the_failing_area,
+        'git diff --name-only a7108169..HEAD -- v6/dl v6/sprefa-extract',
+        '0 files. The fixture is untouched since 84744e7a. The merge is not responsible.').
+receipt(extract_three_extra_rows,
+        './v6/sprefa-extract/target/release/extract v6/dl/fixtures/corpus/bad.ts',
+        '82 rows, of which exactly 3 carry record param or arg: param name at pos 0,
+         arg console at pos -1 (receiver convention), arg message at pos 0.').
+receipt(downstream_ignores_the_new_rows,
+        'grep -c param|arg v6/dl/src/4_ingest.ts',
+        '0 hits. The ingest switch handles node/edge/sig/site/const only, so the new rows
+         fall through unread. Fable found this; flash did not check it.').
+receipt(repo_already_knew,
+        'v6/tsv2/scripts/extraction-live.sh:52-60 comment',
+        'verbatim: "v6/dl s 4_ingest.ts still defaults to a DEBUG build under an absolute
+         path from another worktree; that is the known perf item this script does not
+         copy." The defect was documented before this session found it.').
+receipt(salvage_banked,
+        'per-worktree git diff --cached --binary into /tmp/salvage-2026-08-02b',
+        '18 patches, 1.1M, covering every dirty worktree including nine from prior
+         sessions. Two were re-banked without dist-newstyle after the first pass hit 34M.').
 
 receipt(gate_arch, 'cd v6/prolog && swipl -g go -t halt ARCH.pl', 'PASS').
 receipt(gate_plunit, 'cd v6/prolog && just plunit', '281/281 exit 0 (baseline 276, +5 from the diag lane tests)').
@@ -205,14 +315,24 @@ answered('can Haskell join the sqlite throughput bench',
 % ═══ open ════════════════════════════════════════════════════════════════════
 % open(Item, Owner).
 
-open(fix_diag_wrong_position, next_lane).
-open(move_diag_out_of_labs, next_lane).
-open(file_scheme_uri, next_lane).
+open(rebaseline_extract_golden_79_to_82, user_ruling).
+open(repoint_extract_pin_to_extraction_live_shape, user_ruling).
+open(harden_count_assertion_to_record_kinds, user_ruling).
+open(push_532_commits_to_github, user_ruling).
+open(remove_reconciled_worktrees, coordinator_staged).
 open(span_propagation_through_seven_expanders, phase_2).
 open(sg_pattern_metavariable_semantics, user_deferred).
 open(hs_reach_bench_engine, unbuilt).
 open(push_and_tag, user).
 open(update_save_session_skill_to_pl, user).
+
+% ═══ resolved ════════════════════════════════════════════════════════════════
+% resolved(FindingName, By).
+
+resolved(diag_wrong_position,   'lane/dl6-diag-fix 0d336775, head-first resolution; coordinator reproduced line 6').
+resolved(diag_lab_coupling,     'lane/dl6-diag-fix 0d336775, diag.pl moved labs/ -> v6/prolog/').
+resolved(diag_bare_uri,         'lane/dl6-diag-fix 0d336775, file:// scheme').
+resolved(gitignore_clobbered_by_coordinator, 'restored from main plus lab entries appended, merge commit 2ee96c42 line').
 
 % ═══ grader ══════════════════════════════════════════════════════════════════
 
@@ -225,15 +345,21 @@ go :-
 check(every_lane_has_a_state,
       forall(lane(Name, _, _, State, _),
              ( memberchk(State, [landed, committed, committed_negative,
-                                 committed_blocked, cancelled_work_kept])
+                                 committed_blocked, cancelled_work_kept,
+                                 merged, reported])
              -> true
              ;  ( format("  bad state on ~w: ~w~n", [Name, State]), fail ) ))).
 check(every_finding_has_a_finder,
       forall(finding(_, _, FoundBy, _),
              memberchk(FoundBy, [coordinator, audit_hs, audit_pl]))).
-check(merge_blockers_are_open,
-      forall(finding(_, blocks_merge, _, _), open(_, next_lane))).
-check(fleet_ran_one_model,
-      forall(lane(_, Model, _, _, _), Model == flash_0731)).
+% Every merge blocker must be either resolved by a named commit or still open.
+check(merge_blockers_are_resolved_or_open,
+      forall(finding(Name, blocks_merge, _, _),
+             ( resolved(Name, _) -> true ; open(Name, _) ))).
+check(fleet_is_flash_except_the_named_fable_lane,
+      forall(lane(Name, Model, _, _, _),
+             ( Model == flash_0731 -> true ; Name == extract_drift_fable ))).
+check(push_blockers_are_user_ruling,
+      forall(finding(_, blocks_push, _, _), open(_, user_ruling))).
 check(nothing_pushed,
       ( session(pushed, false), session(tagged, false) )).
