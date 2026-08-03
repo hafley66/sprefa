@@ -600,20 +600,24 @@ export interface IServeTsv2 {
   (config: IServeConfig): Observable<IServeEvent>;
 }
 
+/** Wire keys follow registry.pl's `trace_event/2` table: lower snake case,
+ *  elapsed values in `*_ms`, key order as declared there. The spelling is the
+ *  contract a second emitter reproduces, so it does NOT follow this file's
+ *  camelCase; locals and parameters still do. */
 export interface IServeTickEvent {
   readonly tick: number;
   readonly rels: number;
   readonly rows: number;
   readonly statements: number;
-  readonly ms: number;
+  readonly wall_ms: number;
 }
 
 export interface IServeEffectEvent {
   readonly host: string;
-  readonly witnessDigest: string;
+  readonly witness_digest: string;
   readonly outcome: "done" | "cache_hit" | "error";
   readonly rows: number;
-  readonly ms: number;
+  readonly wall_ms: number;
   readonly error?: string;
 }
 
@@ -641,13 +645,13 @@ export interface IServeTickLine extends IServeTickEvent {
 }
 
 export interface IServeTrace {
-  tick(tick: number, rels: number, rows: number, statements: number, ms: number): void;
+  tick(tick: number, rels: number, rows: number, statements: number, wallMs: number): void;
   effect(
     host: string,
     witnessDigest: string,
     outcome: "done" | "cache_hit" | "error",
     rows: number,
-    ms: number,
+    wallMs: number,
     failure?: unknown,
   ): void;
   bind(rel: string, period: number, bucket: number): void;

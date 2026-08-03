@@ -57,15 +57,22 @@ function install(logPath: string): void {
 }
 
 export const ServeTrace: IServeTrace = {
-  tick(tick, rels, rows, statements, ms): void {
+  tick(tick, rels, rows, statements, wallMs): void {
     if (!tickChannel.hasSubscribers) return;
-    tickChannel.publish({ tick, rels, rows, statements, ms } satisfies TickEvent);
+    tickChannel.publish({ tick, rels, rows, statements, wall_ms: wallMs } satisfies TickEvent);
   },
 
-  effect(host, witnessDigest, outcome, rows, ms, failure): void {
+  effect(host, witnessDigest, outcome, rows, wallMs, failure): void {
     if (!effectChannel.hasSubscribers) return;
     const error = failure === undefined ? undefined : failure instanceof Error ? failure.message : String(failure);
-    effectChannel.publish({ host, witnessDigest, outcome, rows, ms, error } satisfies EffectEvent);
+    effectChannel.publish({
+      host,
+      witness_digest: witnessDigest,
+      outcome,
+      rows,
+      wall_ms: wallMs,
+      error,
+    } satisfies EffectEvent);
   },
 
   bind(rel, period, bucket): void {

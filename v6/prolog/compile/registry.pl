@@ -25,7 +25,8 @@
             expression/5,
             expression_for_term/5,
             cli_command/3,
-            clock_role/4
+            clock_role/4,
+            trace_event/2
           ]).
 
 % Contextual gate: live around one plain relation atom in an edge body;
@@ -477,3 +478,49 @@ http_route('POST', '/arrivals', 'submit signed EDB arrivals.').
 http_route('GET',  '/idb/:rel', 'read one relation snapshot.').
 http_route('GET',  '/ticks', 'stream tick events as SSE.').
 http_route('GET',  '/stats', 'read process memory and SQLite storage statistics.').
+
+% ═══ DL_PERF_LOG wire schema ════════════════════════════════════════════════
+%
+% trace_event(Name, Fields), Fields in WIRE ORDER
+% field(Key, Type, Stability)
+%
+% One JSONL line per tick, under the DL_PERF_LOG flag every language in this
+% repo already answers to (v6/prolog/6_profile.pl writes compile phases to it;
+% v6/tsv2/serve/0_trace.ts writes ticks to it). This table is what makes a
+% SECOND emitter reproducible: it fixes the key spelling and the key order so a
+% rust runtime's `tracing` layer and this one's pino destination write the same
+% bytes for the same program and schedule.
+%
+% Stability says whether a field belongs to that byte comparison:
+%   stable  every emitter must reproduce it exactly
+%   timing  a clock, stripped before the cross-target diff
+%   host    target-specific text (an error rendering), stripped with it
+%
+% Key spelling is lower snake case and every elapsed value ends _ms, which is
+% the convention 6_profile.pl:7-9 states and the TS side had drifted from
+% (`ms`, `witnessDigest`). WIRE keys only: TS locals stay camelCase.
+trace_event(tick_line,
+            [ field(tick,       int,           stable),
+              field(rels,       int,           stable),
+              field(rows,       int,           stable),
+              field(statements, int,           stable),
+              field(wall_ms,    real,          timing),
+              field(effects,    list(effect),  stable),
+              field(binds,      list(bind),    stable),
+              field(watches,    list(watch),   stable) ]).
+trace_event(effect,
+            [ field(host,           text, stable),
+              field(witness_digest, text, stable),
+              field(outcome,        text, stable),
+              field(rows,           int,  stable),
+              field(wall_ms,        real, timing),
+              field(error,          text, host) ]).
+trace_event(bind,
+            [ field(rel,    text, stable),
+              field(period, int,  stable),
+              field(bucket, int,  stable) ]).
+trace_event(watch,
+            [ field(rel,     text, stable),
+              field(glob,    text, stable),
+              field(added,   int,  stable),
+              field(removed, int,  stable) ]).
