@@ -127,7 +127,7 @@ reason_name(Reason, Name) :-
 %
 % No message-name list is duplicated here. A new registry refusal or named
 % compiler reason enters this inventory from its defining clause.
-% MEMOIZED: the scan walks every clause of all twelve refusal_source_module/1
+% MEMOIZED: the scan walks every clause of all thirteen refusal_source_module/1
 % modules, and refusal_inventory_name/1 sits under the umbrella renderer, so
 % unmemoized it runs once per rendered refusal. The answer is a function of
 % loaded clause source alone. A process that loads another refusal source after
@@ -182,6 +182,7 @@ refusal_source_module(parse_dl).
 refusal_source_module(enum_expand).
 refusal_source_module(match_expand).
 refusal_source_module(coalesce_expand).
+refusal_source_module(dot_expand).
 refusal_source_module(type_plane).
 refusal_source_module(expansion).
 refusal_source_module(host_expand).

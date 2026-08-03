@@ -476,6 +476,8 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
     ; Term = spread(Element)
     -> print_term(Element, Bindings, 0, top, ElementText),
        format(atom(Text), "[... ~w]", [ElementText])
+    ; Term = dot_get(_, _), dot_chain_fields(Term, Fields), maplist(identifier_atom, Fields)
+    -> print_dot_chain(Term, Bindings, Text)
     ; compound(Term), Term =.. [Op, Left, Right], arith_op(Op, MyPrec)
     -> print_term(Left, Bindings, MyPrec, left, LeftText),
        print_term(Right, Bindings, MyPrec, right, RightText),
@@ -495,6 +497,35 @@ finite_float_text(Value, Text) :-
     float_class(Value, Class),
     memberchk(Class, [normal, subnormal, zero]),
     format(atom(Text), "~h", [Value]).
+
+% The dot spelling, printed back as `Receiver.field.sub`. A chain only takes
+% this route when every field re-reads as one (the parser admits only an
+% identifier after the member dot); anything else falls through to the generic
+% compound arm so the round trip cannot lose it.
+print_dot_chain(Term, Bindings, Text) :-
+    dot_chain_root(Term, Root),
+    dot_chain_fields(Term, Fields),
+    print_term(Root, Bindings, 0, top, RootText),
+    field_dots(Fields, DotsText),
+    format(atom(Text), "~w~w", [RootText, DotsText]).
+
+dot_chain_root(Term, Root) :-
+    ( nonvar(Term), Term = dot_get(Receiver, _)
+    -> dot_chain_root(Receiver, Root)
+    ;  Root = Term
+    ).
+
+dot_chain_fields(Term, Fields) :-
+    ( nonvar(Term), Term = dot_get(Receiver, Field)
+    -> dot_chain_fields(Receiver, Prefix),
+       append(Prefix, [Field], Fields)
+    ;  Fields = []
+    ).
+
+field_dots([], '').
+field_dots([Field | Rest], Text) :-
+    field_dots(Rest, RestText),
+    format(atom(Text), ".~w~w", [Field, RestText]).
 
 print_arg(Bindings, Arg, Text) :- print_term(Arg, Bindings, 0, top, Text).
 

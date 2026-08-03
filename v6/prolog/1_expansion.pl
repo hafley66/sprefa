@@ -16,6 +16,7 @@
 :- use_module('0_match_expand', []).
 :- use_module('0_seq_expand', []).
 :- use_module('0_coalesce_expand', []).
+:- use_module('0_dot_expand', []).
 :- use_module('0_relation_edge_expand', []).
 
 % ── the order, stated once ───────────────────────────────────────────────────
@@ -25,6 +26,14 @@ expansion_phase(20, decl_spread, unwired).
 expansion_phase(30, row_spread,  unwired).
 expansion_phase(40, match,       match_expand:expand_match_program_in_context).
 expansion_phase(42, seq,          seq_expand:expand_seq_in_context).
+% AFTER match, BEFORE coalesce, and both halves of that decide the answer.
+%
+%   after match   a match arm is an ordinary rule body by then, so one walk
+%                 reaches every dot chain.
+%   before        every later phase must see the brace program the author
+%   coalesce      could have typed by hand, so coalesce, relation_edge, and
+%                 the checks cannot tell the two spellings apart.
+expansion_phase(44, dot,         dot_expand:expand_dot_in_context).
 % AFTER match, BEFORE relation_edge, and both halves of that are load-bearing.
 %
 %   after match   a match arm is an ordinary rule body and may carry a
