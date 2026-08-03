@@ -458,11 +458,30 @@ bad_result(path, out) <- file(path), failing?(path, out).
   }
 });
 
+// extract is CONSUME-ONLY and evolves on its own schedule, so this grades the
+// spine 4_ingest.ts actually reads (node|edge|sig|site|const, per record kind so a
+// miss names itself) and lets auxiliary kinds above it come and go. A bare total
+// would break on every additive extract change; it did, at 79 -> 82.
+const ExtractSpineCounts: Readonly<Record<string, number>> = {
+  node: 41,
+  edge: 36,
+  sig: 0,
+  site: 1,
+  const: 1,
+};
+
 test("extract host exposure: one demand row streams the file's records as rows", async () => {
   const rows = await drain(builtinExtract.run({ path: "fixtures/corpus/bad.ts" }));
-  assert.equal(rows.length, 79);
+  const seen: Record<string, number> = { node: 0, edge: 0, sig: 0, site: 0, const: 0 };
   for (const row of rows) {
     assert.equal(row.path, "fixtures/corpus/bad.ts");
-    assert.doesNotThrow(() => JSON.parse(String(row.record_json)));
+    let record: { record?: unknown };
+    assert.doesNotThrow(() => {
+      record = JSON.parse(String(row.record_json));
+    });
+    const kind = String(record!.record);
+    if (kind in seen) seen[kind] += 1;
   }
+  assert.deepEqual(seen, ExtractSpineCounts);
+  assert.ok(rows.length >= 79, `spine rows cannot exceed the stream: ${rows.length}`);
 });

@@ -345,7 +345,7 @@ export const builtinSg: HostDef = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const DEFAULT_EXTRACT_BIN: ExtractBinDefault =
-  "/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan/v6/sprefa-extract/target/debug/extract";
+  "/Users/chrishafley/projects/sprefa/v6/sprefa-extract/target/release/extract";
 
 function extractBinaryPath(): string {
   return process.env.DL_EXTRACT_BIN ?? DEFAULT_EXTRACT_BIN;

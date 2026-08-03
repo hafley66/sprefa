@@ -336,15 +336,17 @@ export type DiagHeadDefaultLaw = "end_line=line end_col=col severity='warn' code
 // ─────────────────────────────────────────────────────────────────────────────
 export type SpineRelName = "file" | "node" | "edge" | "sig" | "site" | "const" | "span_line";
 
-/** extract binary (task 0.3): env DL_EXTRACT_BIN overrides; default is the worktree
- *  debug bin. extract is CONSUME-ONLY (owner amendment 2026-07-24): never edit its
+/** extract binary (task 0.3): env DL_EXTRACT_BIN overrides; default is the in-tree
+ *  RELEASE build, matching tsv2/scripts/extraction-live.sh. It formerly named a
+ *  debug bin under .claude/worktrees/extract-golden-plan, which was reaped.
+ *  extract is CONSUME-ONLY (owner amendment 2026-07-24): never edit its
  *  crate or worktree; limitations get filed, worked around, or deferred.
  *
  *  Kept declared HERE (not src/0_types.ts) by owner ruling at M7: this is a
  *  pin/law block the ledger keeps standing. src/1_hosts.ts and src/4_ingest.ts
  *  import ExtractBinDefault straight from this file. */
 export type ExtractBinDefault =
-  "/Users/chrishafley/projects/sprefa/.claude/worktrees/extract-golden-plan/v6/sprefa-extract/target/debug/extract";
+  "/Users/chrishafley/projects/sprefa/v6/sprefa-extract/target/release/extract";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // M2 · schema + runtime (src/2_schema.ts, src/3_runtime.ts) — types live in
