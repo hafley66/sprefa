@@ -52,11 +52,12 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly demandedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [{ name: "scan_span", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "at", type: "span" }], template: "scan {path}", demandRel: "__host_demand_scan_span", responseRel: "__host_response_scan_span", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "host_start", arity: 2, columns: [null, null], bound: [], snapshot: "current" }];
+export const demandedRels: readonly string[] = ["__host_response_scan_span/4", "host_span/2", "host_start/2", "source_path/1"];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
