@@ -8,6 +8,8 @@
 :- use_module(library(lists)).
 :- use_module('../../2_demand_cone', [ demand_cone/4 ]).
 
+:- begin_tests(demand_cone).
+
 % An empty query list means no analysis entry point; the compat rule puts the
 % whole program on the demand side, so every declared rel is in the cone.
 test(zero_query_all_rels) :-
@@ -48,3 +50,5 @@ test(negation_included) :-
     demand_cone(Decls, Rules, [gate(Name)], Cone),
     sort([gate/1, ok/1, blocked/1], Expect),
     Cone == Expect.
+
+:- end_tests(demand_cone).
