@@ -1678,6 +1678,41 @@ test(emitter_carries_world_plans_and_demand_sql) :-
                   'CREATE TABLE "__host_response_tree_sitter"')),
     !.
 
+% QUERY-COLUMN FAIL-FIRST RECEIPT (ladder step 0 of the laziness migration).
+% RED at base b2b45a9e: the emitted line read
+%   { rel: "job", arity: 2, snapshot: "current" }
+% because world_plan_lines/2 rebuilt the plan from functor/3 alone, so the
+% `columns(Args)` compile_query/2 already computes was dropped between phases.
+% A demand-key consumer reading that line could not tell WHICH position the
+% program pinned, nor to what, without re-parsing the surface.
+%
+% `columns` is one entry per position of the query atom -- the pinned literal,
+% or null where the position is free -- and `bound` lists the pinned positions,
+% 0-based. Those positions are the demand keys.
+%
+% The atom read here comes out of the POST-expansion Decls of plan/6, so a
+% dotted-path query (`? job(rec.id, secs)`) needs no schema change on this
+% line: whatever the expansion phases leave in the decl is what the columns
+% are, and a position expansion has not reduced to a literal is simply free.
+test(query_plan_carries_columns_and_bound_positions) :-
+    string_codes(
+      "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\njob(Id, Secs) <- seed(Id, Secs).\n? job(7, secs).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    program_plan(
+      fixture(query_plan_carries_columns_and_bound_positions,
+              Program, [], [], [])-Bindings,
+      Plan),
+    lower_program(Plan, Lowered),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    emit_program(query_plan_carries_columns_and_bound_positions,
+                 Plan, Lowered, Boot, Text),
+    once(sub_atom(Text, _, _, _,
+                  '{ rel: "job", arity: 2, columns: [7, null], bound: [0], snapshot: "current" }')),
+    !.
+
 % ── D2: the backslash escape rule, both doors ───────────────────────────────
 %
 % quoted_chars/4 ended in a catch-all that DROPPED the backslash of any
