@@ -95,7 +95,7 @@ sweep_one(File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
         ( program_plan(Term-Bindings, Plan),
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
-          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _),
+          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
           boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),

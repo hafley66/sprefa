@@ -69,7 +69,7 @@ check(Name) :-
     Term = fixture(Name, _Prog, Initial, Schedule, Expectations),
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _ArrivalTargets, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _ArrivalTargets, _, _, _),
     Lowered = lowered(_, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
     tmp_db_file(Name, DbFile),

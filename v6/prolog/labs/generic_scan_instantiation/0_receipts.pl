@@ -557,7 +557,7 @@ receipt_real_compiler :-
     program_plan(
         fixture(generic_scan_total, Program, Initial, Schedule, [])-[],
         Plan),
-    Plan = plan(_, prog(_, Rules), RelPlans, _, _, _),
+    Plan = plan(_, prog(_, Rules), RelPlans, _, _, _, _),
     \+ contains_functor(Rules, scan_spec/6),
     \+ contains_functor(Rules, add_step/3),
     findall(Ref, member(relplan(Ref, _, _, _, _), RelPlans), Refs0),
