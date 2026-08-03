@@ -72,6 +72,8 @@
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 204 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/compile/test/diag-fix-REPORT.md](prolog/compile/test/diag-fix-REPORT.md) | 138 | dl6 diag channel: audit fix REPORT |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
+| [prolog/labs/diag_channel/AUDIT/CONTRACT.md](prolog/labs/diag_channel/AUDIT/CONTRACT.md) | 145 | Audit lane: the Prolog work |
+| [prolog/labs/diag_channel/AUDIT/REPORT.md](prolog/labs/diag_channel/AUDIT/REPORT.md) | 189 | prolog audit: REPORT |
 | [prolog/labs/diag_channel/CONTRACT.md](prolog/labs/diag_channel/CONTRACT.md) | 160 | Lane: a machine-readable diagnostic channel for dl6 |
 | [prolog/labs/scc_extract/CONTRACT.md](prolog/labs/scc_extract/CONTRACT.md) | 172 | Lane L5: pluck Tarjan out of clpfd and make it callable |
 | [prolog/labs/scc_extract/REPORT.md](prolog/labs/scc_extract/REPORT.md) | 173 | L5 swi scc extract: REPORT |
@@ -1106,6 +1108,40 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
+```
+
+### prolog/labs/diag_channel/AUDIT/CONTRACT.md
+```
+1:# Audit lane: the Prolog work
+3:## What this is
+12:## Base
+21:## What you own
+33:## Already-confirmed findings, seeded so you do not spend time rediscovering them
+46:## The audit protocol
+48:### 1. Sabotage every test
+65:### 2. Attack the one-source-two-renderers claim
+76:### 3. Check what a SUCCESSFUL compile pays
+84:### 4. Check the position claim honestly
+97:### 5. Couplings and layering
+105:### 6. The scc_extract lane
+117:## What you must NOT do
+125:## Style laws
+132:## REPORT.md format
+```
+
+### prolog/labs/diag_channel/AUDIT/REPORT.md
+```
+1:# prolog audit: REPORT
+3:## Base proof
+8:## Restore proof
+28:## 1. Sabotage table
+44:## 2. The two-renderer property under attack
+62:## 3. Cost on the success path
+75:## 4. Position correctness
+110:## 5. Couplings, state, and failure modes
+132:## 6. scc_extract independent verification
+155:## Ranked findings
+173:## What I could not check
 ```
 
 ### prolog/labs/diag_channel/CONTRACT.md
