@@ -5,15 +5,25 @@ subprocesses; the language gets a regex predicate. Graft, never build: the
 matchers are SQLite-function-registered JS RegExp on the runtime side and SWI
 `library(pcre)` on the oracle side, both already installed.
 
-## Ground (verified by the coordinator on 6c3e928c before this brief)
+## Ground (REGROUNDED 2026-08-04 after the lane's correct stop: the runtime
+## seam is `@libsql/client` (engine/lib.ts createClient), better-sqlite3 is a
+## vestigial dep. All probes below run by the coordinator against that client.)
 
 | fact | receipt |
 |---|---|
-| runtime driver | `better-sqlite3 ^13` (v6/sprefa-store/js/package.json:15), has `db.function()` |
+| REGEXP is NATIVE in libsql's embedded build | `SELECT 'abc' REGEXP 'b'` -> 1 through `createClient({url:'file::memory:'})`; NO registration code is needed anywhere |
+| flavor = Rust regex crate | lookahead `a(?=b)` -> SQLITE_ERROR `'?' without operand`; backref `(a)\1` -> SQLITE_ERROR `unknown \ escape`; `^[a-z]\d$` -> OK |
 | oracle pcre | `swipl -g "use_module(library(pcre)), re_match('^a.c$'/i, \"AbC\")"` prints ok |
 | dl6 expression surface today | arithmetic, comparison, `norm/1`; no string ops |
 | scalar-function precedent | `norm/1`: follow it through parse, type plane, lower, emit, oracle |
 | named-refusal precedent | ARCH row aggregate_text_refusal: shared load-time check in 0_program_check.pl so BOTH doors throw the same term |
+
+PCRE accepts lookahead/backrefs that the runtime REJECTS, so PCRE-validity
+alone is not a sufficient load check: the shared check must enforce the pinned
+subset itself (refuse `(?`, backrefs `\1..\9`, possessive quantifiers, and any
+escape outside `\d \w \s \b \. \\ \+ \* \? \( \) \[ \] \{ \} \| \^ \$`),
+named `regexp_pattern_outside_subset`, alongside `regexp_pattern_invalid`
+from `re_compile/3`.
 
 ## Design (pinned; do not redesign)
 
@@ -26,12 +36,10 @@ matchers are SQLite-function-registered JS RegExp on the runtime side and SWI
 - SQL lowering: `(<operand_sql> REGEXP '<pattern>')` with the pattern carried
   as a bound parameter if the surrounding lowering binds literals that way;
   match the file's existing literal discipline.
-- Runtime: register once at database open, next to where the connection is
-  created in sprefa-store js (find by symbol, e.g. the SqlRunner seam):
-  `db.function("regexp", { deterministic: true }, (pattern, text) =>
-  text == null ? 0 : (new RegExp(pattern).test(text) ? 1 : 0))` with a
-  per-pattern compiled-RegExp cache (a Map; patterns are literals, so the
-  cache is bounded by program text).
+- Runtime: NOTHING to register; libsql's REGEXP is built in (probe above).
+  The only store-side change is one unit test proving
+  `SELECT 'abc' REGEXP 'b'` = 1 through the existing runner seam, so a future
+  driver swap that loses the builtin fails loudly.
 - Oracle: `re_match/2` from `library(pcre)`, no flags. A `re_match` throw on
   a pattern PCRE rejects surfaces as a compile-time refusal if detectable at
   load (try `re_compile/3` during the shared check and refuse
@@ -52,8 +60,8 @@ matchers are SQLite-function-registered JS RegExp on the runtime side and SWI
   LANG.md (one entry), conformance fixtures (positive match, non-match,
   retraction flip on a derived rel guarded by regexp, both refusals, a
   pattern-invalid refusal), plunit tests.
-- v6/sprefa-store/js: the single registration site + one unit test proving
-  `SELECT 'abc' REGEXP 'b'` = 1 through the runner.
+- v6/sprefa-store/js: ONE unit test only (REGEXP-through-the-runner guard);
+  no engine code changes.
 - NOTHING else. The comment rail stays as-is; migrating its host flags is a
   separate later ruling.
 
