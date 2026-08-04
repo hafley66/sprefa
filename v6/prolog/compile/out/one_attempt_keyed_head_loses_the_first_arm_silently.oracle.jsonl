@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]},"dispatch_winner":{"add":[[1,"sealed"]],"del":[]}}}
+{"tick":2,"deltas":{}}
