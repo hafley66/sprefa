@@ -14,8 +14,8 @@ event at tick 3 rather than participating in tick 2's pure closure.
 |---:|---|---|
 | 1 | `watch`, bootstrap `etag_event`, `interval(300,1)` | keyed clock/etag state and witness-1 demand appear |
 | 2 | witness-1 host response | `resp` and `cache_view(tag-v1,17)` appear |
-| 3 | later tag feedback plus `interval(300,2)` | keyed clock/etag replacement retracts witness 1's demand/view and adds witness-2 demand |
-| 4 | witness-2 host response | `resp` and `cache_view(tag-v2,18)` appear |
+| 3 | later tag feedback plus `interval(300,2)` | keyed clock/etag replacement retracts witness 1's demand and adds witness-2 demand; `fresh_hit` retracts but the keyed `cache_view` latch survives |
+| 4 | witness-2 host response | `resp`, `fresh_hit`, and `cache_view(tag-v2,18)` appear; the `cache_view` latch replaces tag-v1 with tag-v2 |
 | 5 | late replacement for witness 1, ordinal 0 | raw `__host_response_fetch` replaces its old row; `resp` and `cache_view` emit no delta because witness 1 has no current `poll` membership |
 
 The final raw response table intentionally retains the late old-witness row.
@@ -26,6 +26,10 @@ poll(repo, tag-v1, 2)
 resp(repo, 2, 200, tag-v2, 18, cli/cli)
 cache_view(repo, tag-v2, 18, cli/cli)
 ```
+
+`cache_view` here is the section-1.1 fix: a `key(1)` latch fed by `<+` off the
+status-filtering level rel `fresh_hit`, so the clock bucket moving no longer
+empties it. The 304-specific grade lives in `ghcacher_304_golden`.
 
 Run from the repository root, or as `just ghcacher-golden` from `v6/`:
 
