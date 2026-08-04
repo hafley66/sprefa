@@ -163,6 +163,21 @@
 #   and GET /idb the raw arrival key order
 #   IRowValue cannot type a struct value the          tsv2/scripts/
 #   engine both accepts and prints                    golden-schedules.ts
+#   a self-referential level rule runs ONE round      COMPOSE.md finding 1;
+#   per tick in the emitter and to full fixpoint      the fold below therefore
+#   in the oracle, so a chain arriving inside one     takes one link per tick,
+#   tick diverges and never converges on later        and stops at two links
+#   ticks either; and INSIDE THIS PROGRAM it stops
+#   at depth two whatever the tick, while the same
+#   fold in a two-rule program chains freely
+#   two negation-guarded arms on one head compile     COMPOSE.md finding 2;
+#   on both doors and pick opposite winners: the      ledger in conformance/
+#   oracle by arrival order, the emitter by           fixtures/one_vs_any.pl
+#   source arm order
+#   an edge arm triggered by a LEVEL-headed rel       COMPOSE.md finding 3;
+#   loses the level plane's retractions in the        the `any` arms below
+#   emitter when the trigger's own source is a        trigger off arrival
+#   keyed rel taking same-batch replacements          rels for this reason
 #
 # None of them is fixed here. Two are routed around inside this lane (its own
 # oracle door, its own schedule types) and the routes are named at the site.
@@ -463,6 +478,91 @@ rel orchard_query(query: text).
 orchard_query(ts_query([node('call_expression', [capture('callee', 'wildcard')])])) <-
   quarantined(_Species).
 
+# ═══ THE COMPOSITION SCENARIO: one story through five constructs ═══════════
+# Everything above proves a construct. This section proves they hold hands: a
+# json manifest is decoded into a route, an enum says how the crate travels, a
+# match block reads BOTH of those in one guard set, a self-referential level
+# rule folds the legs into a running weight, and two edge arms write the same
+# tagged head on one tick without either row losing.
+#
+# THE FOLD IS THE RX `scan`, SPELLED AS THE LANGUAGE HAS IT: a base arm for the
+# first leg and a step arm that reads the head at the previous leg. `scan` the
+# WORD is a reserved removed word (files_naming) and is not spelled here.
+# CONSTRAINTS THE SPELLING RESTS ON, both measured against the two doors: the
+# legs of one dispatch arrive on SUCCESSIVE ticks (a chain inside one batch
+# diverges), and the chain is TWO links (a third never lands in the emitter at
+# any tick, while the oracle always has it). Header index below.
+
+rel dispatch_manifest(dispatch_id: int, payload: json).
+rel dispatch_leg(leg_id: int, dispatch_id: int, previous_leg: int, kilos: int,
+                 origin: patch).
+rel dispatch_ack(dispatch_id: int).
+rel dispatch_seal(dispatch_id: int).
+
+# The second enum_decl/2 in this file, and the one whose tag view is READ by a
+# match block rather than only produced.
+rel dispatch(air(hours: int) ; road(miles: int) ; rail(stops: int)).
+
+# decode/2 into a NESTED object pattern that captures two keys at depth two --
+# a plain capture and a typed one in one pattern. The single-capture and
+# `**`-descent forms are above; this is the composed shape.
+rel dispatch_route(dispatch_id: int, route: text, hops: int).
+dispatch_route(DispatchId, RouteName, HopCount) <-
+  dispatch_manifest(DispatchId, ManifestPayload),
+  decode(ManifestPayload, {route: {name: RouteName, hops: HopCount: int}}).
+
+# The join that makes the match block a COMPOSITION rather than a second copy
+# of `graded`: the scrutinee carries the enum's tag AND the json's numbers, so
+# the arms below can guard on either.
+rel dispatch_ticket(dispatch_id: int, tag: text, route: text, hops: int).
+dispatch_ticket(DispatchId, DispatchTag, RouteName, HopCount) <-
+  dispatch_tag(DispatchId, DispatchTag),
+  dispatch_route(DispatchId, RouteName, HopCount).
+
+# Arms are independent rules, so overlapping guards fire together (the `graded`
+# block above rides its `true` catch-all on top of every ripe row). This guard
+# set is disjoint by construction instead: only the rail variant is fed hops
+# above two, so exactly one arm answers per ticket.
+rel dispatch_plan(dispatch_id: int, route: text, verdict: text).
+match dispatch_ticket(DispatchId, DispatchTag, RouteName, HopCount) (
+  ; DispatchTag == 'air'  |-> dispatch_plan(DispatchId, RouteName, "fly it")
+  ; DispatchTag == 'road' |-> dispatch_plan(DispatchId, RouteName, "truck it")
+  ; HopCount > 2          |-> dispatch_plan(DispatchId, RouteName, "stage it")
+).
+
+# decode/2 over the struct-typed column of the NEW flow, so the value plane and
+# the scenario share one dictionary chain (`origin` is a patch, whose `at` is a
+# plot) rather than the scenario carrying flat columns.
+rel leg_origin(leg_id: int, label: text).
+leg_origin(LegId, OriginLabel) <-
+  dispatch_leg(LegId, _DispatchId, _PreviousLeg, _Kilos, Origin),
+  decode(Origin, {label: OriginLabel}).
+
+# THE FOLD. Base arm: a leg whose previous_leg is 0 starts the accumulator.
+# Step arm: the head reads ITSELF at the previous leg and adds this leg's
+# kilos. Nothing outside the two rules holds the running value.
+rel leg_total(leg_id: int, dispatch_id: int, kilos_so_far: int).
+leg_total(LegId, DispatchId, Kilos) <-
+  dispatch_leg(LegId, DispatchId, 0, Kilos, _Origin).
+leg_total(LegId, DispatchId, KilosSoFar) <-
+  dispatch_leg(LegId, DispatchId, PreviousLeg, Kilos, _Origin),
+  leg_total(PreviousLeg, DispatchId, KilosBefore),
+  KilosSoFar := KilosBefore + Kilos.
+
+# `any`: two edge arms on ONE unbounded log head, two triggers arriving in the
+# SAME batch, both rows landing with distinct tags. Nothing arbitrates, which
+# is exactly what makes this the expressible half of the any/one pair. The
+# UNEXPRESSIBLE half -- one arm winning, named by the program -- is the ledger
+# in conformance/fixtures/one_vs_any.pl; every attempt at it either loses the
+# loser silently, is refused, or becomes a race the two doors referee
+# differently.
+rel dispatch_note(dispatch_id: int, note_tag: text) log keep(all).
+dispatch_note(DispatchId, 'acked') <+ dispatch_ack(DispatchId).
+dispatch_note(SealedId, 'sealed') <+ dispatch_seal(SealedId).
+
 # ═══ query/1: the read surface ═════════════════════════════════════════════
 ? display(_TreeId, _Note).
 ? pick_stats(_StatTree, _Picks, _Total, _Lowest, _Highest).
+? dispatch_plan(_PlanDispatch, _PlanRoute, _PlanVerdict).
+? leg_total(_TotalLeg, _TotalDispatch, _KilosSoFar).
+? dispatch_note(_NoteDispatch, _NoteTag).
