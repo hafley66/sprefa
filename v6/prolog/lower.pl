@@ -3463,23 +3463,25 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % at tick 1 without this.
 boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
     type_definitions(Decls, Types),
-    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups0),
-    maplist(tag_boot_group, RelPlans, SeedGroups0, SeedGroups),
+    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups),
     append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
 boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
-    boot_seed_statement(Decls, Types, RelPlan, Initial, Statements).
+    RelPlan = relplan(Name/_, _, _, _, _),
+    boot_seed_statement(Decls, Types, RelPlan, Initial, Statements0),
+    tag_boot_statements(Name, Statements0, Statements).
 
 % Every boot statement names the rel it exists for, which is what the emitted
 % module's subscribe-cone filter reads. A seed row's struct-intern statements
 % carry the PARENT rel: they exist only to make that row insertable, so
-% dropping the parent must drop them with it.
-tag_boot_group(relplan(Name/_, _, _, _, _), Statements0, Statements) :-
-    maplist(tag_boot_statement(Name), Statements0, Statements).
-
-tag_boot_statement(Name, bootstmt(Sql, Params), bootstmt(Name, Sql, Params)).
+% dropping the parent must drop them with it. Most rels seed nothing, and the
+% [] clause is what keeps the compile-speed ratchet from paying for them.
+tag_boot_statements(_, [], []) :- !.
+tag_boot_statements(Name, [bootstmt(Sql, Params) | Rest],
+                    [bootstmt(Name, Sql, Params) | Tagged]) :-
+    tag_boot_statements(Name, Rest, Tagged).
 
 % engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
 % 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
