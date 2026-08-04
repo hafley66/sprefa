@@ -20,8 +20,10 @@
  * into one Subject and awaits a matching id on another, and no caller is forced
  * back into `await`.
  *
- * The loop turns only while `ticks$` is subscribed. `submit` before that is an
- * error.
+ * The loop turns from the first `ticks$` subscription onward, INCLUDING while
+ * nothing reads it: readers come and go, the engine does not. `submit` before
+ * anything has ever subscribed is an error, because the arrivals Subject would
+ * drop the batch with no lane behind it.
  *
  * File-backed boot tolerates existing permanent tables and recreates TEMP
  * tables on each boot.
@@ -109,7 +111,13 @@ export class LiveEngine implements ILiveEngine {
           this.running = false;
         },
       }),
-      share(),
+      // `resetOnRefCountZero: false` KEEPS THE LANE CONNECTED once anything has
+      // read `ticks$`, so `running` follows the lane and not the reader count.
+      // Under the default reset the last reader leaving tore the concatMap lane
+      // down, `finalize` flipped `running` false, and the next submit was
+      // refused (receipt: tests/engineBetweenSubscribers.test.ts). The lane still
+      // resets on complete or error, which is what the fault arm relies on.
+      share({ resetOnRefCountZero: false }),
     );
   }
 
