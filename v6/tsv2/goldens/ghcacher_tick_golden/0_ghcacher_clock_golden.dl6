@@ -18,7 +18,8 @@ sh fetch(ep: text, prev: text, bucket: int) ->
 
 rel poll(ep: text, prev: text, bucket: int).
 rel resp(ep: text, bucket: int, status: int, tag: text, stars: int, full_name: text).
-rel cache_view(ep: text, tag: text, stars: int, full_name: text).
+rel fresh_hit(ep: text, tag: text, stars: int, full_name: text).
+rel cache_view(ep: text, tag: text, stars: int, full_name: text) key(1).
 
 current_etag(Ep, Tag) <+ etag_event(Ep, Tag).
 current_clock(Period, Bucket) <+ interval(Period, Bucket).
@@ -32,7 +33,10 @@ resp(Ep, Bucket, Status, Tag, Stars, FullName) <-
   poll(Ep, Prev, Bucket),
   fetch(Ep, Prev, Bucket, Status, Tag, Stars, FullName).
 
-cache_view(Ep, Tag, Stars, FullName) <-
-  resp(Ep, _, 200, Tag, Stars, FullName).
+fresh_hit(Ep, Tag, Stars, FullName) <-
+  resp(Ep, _, Status, Tag, Stars, FullName),
+  Status == 200.
+
+cache_view(Ep, Tag, Stars, FullName) <+ fresh_hit(Ep, Tag, Stars, FullName).
 
 ? cache_view(Ep, Tag, Stars, FullName).
