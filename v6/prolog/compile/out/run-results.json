@@ -1120,6 +1120,20 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "switch_as_keyed_replace",
     "bucket": "identical",
     "detail": "",

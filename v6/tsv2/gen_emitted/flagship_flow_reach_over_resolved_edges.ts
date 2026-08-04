@@ -17,7 +17,7 @@
 // run-emitted.ts (the reconciliation runner) runs it after DDL and before
 // the tick fold.
 
-import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
+import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
@@ -254,12 +254,21 @@ INSERT OR IGNORE INTO "flow_reach" ("from_path", "from_name", "to_path", "to_nam
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "flow_edge";
-INSERT OR IGNORE INTO "flow_edge" ("from_path", "from_name", "to_path", "to_name") SELECT b0."caller_path", b0."caller_name", b0."callee_path", b0."callee_name" FROM "resolved_call_edge" b0;
-DELETE FROM "flow_reach";
+  const deleteSql = `DELETE FROM "flow_edge";
+DELETE FROM "flow_reach"`;
+  const insertSql = `INSERT OR IGNORE INTO "flow_edge" ("from_path", "from_name", "to_path", "to_name") SELECT b0."caller_path", b0."caller_name", b0."callee_path", b0."callee_name" FROM "resolved_call_edge" b0;
 INSERT OR IGNORE INTO "flow_reach" ("from_path", "from_name", "to_path", "to_name") SELECT b0."from_path", b0."from_name", b0."to_path", b0."to_name" FROM "flow_edge" b0;
 INSERT OR IGNORE INTO "flow_reach" ("from_path", "from_name", "to_path", "to_name") SELECT b0."from_path", b0."from_name", b1."to_path", b1."to_name" FROM "flow_reach" b0, "flow_edge" b1 WHERE b1."from_path" = b0."to_path" AND b1."from_name" = b0."to_name"`;
-  return seam.runner.executeMultiple(seam.db, sql);
+  const countSql = `SELECT (SELECT count(*) FROM "flow_edge") + (SELECT count(*) FROM "flow_reach")`;
+  return seam.runner.executeMultiple(seam.db, deleteSql).pipe(
+    map(() => -1),
+    expand((priorRows) => seam.runner.executeMultiple(seam.db, insertSql).pipe(
+      concatMap(() => seam.runner.scalar(seam.db, countSql)),
+      concatMap((rows) => (rows === priorRows ? EMPTY : of(rows))),
+    )),
+    last(),
+    map(() => undefined),
+  );
 }
 
 function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
