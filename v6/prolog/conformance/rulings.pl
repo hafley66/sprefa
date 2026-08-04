@@ -572,3 +572,12 @@ ruling(zero_query_semantics, subscribes_nothing, user,
 
 ruling(subscribe_vocabulary, subscribe_never_demand, user,
        'user 2026-08-03: "and call it subscribes damn it". The cone family uses subscribe vocabulary everywhere: subscribed_rels/4, subscribedRels, 2_subscribe.pl. The word demand is banned for this construct family in surface, identifiers, and docs (host __host_demand_* rows are a separate pre-existing family, rename not ruled).').
+
+% 2026-08-03 night: the one() fork, ruled after the compose lab's four-run race
+% table (COMPOSE.md section 3): oracle referees by arrival order, emitter by
+% source arm order, and they agree only when the orders coincide.
+ruling(one_pick_order, arrival_order_per_tick, user,
+       'user 2026-08-03: "i simply want arrival time, who got there first for that tick, congrats, thats the winner". The pick inside a tick reads the arrival index, on BOTH doors. Source arm order is not an axis of the clock; the emitted module must stop consulting it (today it runs concat-of-arms where the oracle runs merge). Rx: merge(arms).pipe(groupBy(key), mergeMap(g => g.pipe(take(1)))), never concat.').
+
+ruling(one_admission_no_lockout, both_folds_stay_sound, user,
+       'user 2026-08-03: "we cannot lock ourselves out of 2 choices that are both sound". First-wins (scan((acc,row) => acc ?? row), state==history, log-vs-key vacuous) and one-per-tick takeover (zip(perKey, ticks$), keyed, each admission replaces visibly) are BOTH sound constructs; ruling one() = first-wins never forecloses the serializer spelling. Neither is built yet; the design lane prices both.').

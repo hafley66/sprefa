@@ -76,3 +76,6 @@ semicolon-prefixed arms and per-arm plane arrows `|->` / `|+>`
 through the stream_cards. Any any/one block design must follow the
 match block's actual shape: `( ; label-or-guard ARROW head ... )`, not
 braces.
+
+## Visual merge (parked, user 2026-08-03: "having a visual merge would be rad, dont immediately need it")
+A marble-diagram view of merge/one behavior rendered from a real tick log: columns per tick, sub-columns per round, E/L/G row kinds, using the 3-axis notation (tick, round, arrival-index). Natural home: the flow panel (sprefa-flow-panel-layers schema conventions) or a conformance fixture HTML report. Wake on demand.
