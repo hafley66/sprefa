@@ -16,6 +16,7 @@
 :- use_module(library(apply)).
 :- use_module(library(pairs)).
 :- use_module(library(assoc)).
+:- use_module(library(pcre)).
 :- use_module('../0_body_walk', [walk_body/3]).
 :- use_module('../compile/registry',
               [expression/5, expression_for_term/5, surface_for_term/6]).
@@ -258,6 +259,9 @@ solve(decode(Expr, Pattern), _) :- !,
     eval_expr(Expr, Value), json_decode(Value, Pattern).
 solve(json_each(Expr, Element), _) :- !,
     eval_expr(Expr, List), is_list(List), member(Element, List).
+solve(regexp(Operand, Pattern), _) :- !,
+    eval_expr(Operand, Value),
+    re_match(Pattern, Value).
 solve(Comparison, _) :- comparison_goal(Comparison), !, solve_comparison(Comparison).
 solve(Atom, Ctx) :- Ctx = ctx(Visible, _, _), rows_member(Atom, Visible).
 

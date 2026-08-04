@@ -20,7 +20,6 @@
 | [README.md](README.md) | 110 | V6 |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
-| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -65,7 +64,7 @@
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
-| [prolog/LANG.md](prolog/LANG.md) | 95 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
+| [prolog/LANG.md](prolog/LANG.md) | 100 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 555 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 377 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
@@ -84,7 +83,6 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/comment_rail_golden/README.md](tsv2/goldens/comment_rail_golden/README.md) | 215 | Comment-budget rail golden |
@@ -272,16 +270,6 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
-```
-
-### bench-cli/out/STANDINGS.md
-```
-1:# bench-cli standings
-17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
-50:## Real programs
-52:### callgraph_derivation
-62:## Scale shapes
-65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -1024,10 +1012,10 @@
 ```
 1:# LANG snapshot for labs (2026-07-27) — the candidate language, unbanked
 13:## Surface
-44:## Semantics
-67:## Known open questions (find more; do not silently resolve)
-75:## Context files (read before working)
-83:## Lab style laws (non-negotiable)
+49:## Semantics
+72:## Known open questions (find more; do not silently resolve)
+80:## Context files (read before working)
+88:## Lab style laws (non-negotiable)
 ```
 
 ### prolog/compile/PIPELINE.md
@@ -1256,14 +1244,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md

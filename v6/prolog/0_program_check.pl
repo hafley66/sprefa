@@ -15,6 +15,7 @@
           ]).
 
 :- use_module(library(lists)).
+:- use_module(library(pcre)).
 :- use_module('0_body_walk',
               [ body_wrapper_refs/4, walk_body/3, body_relation_atoms/4,
                 event_relation_atom/2, body_reserved_word/4 ]).
@@ -26,6 +27,8 @@
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
+
+:- discontiguous program_violation/3.
 
 % ── the ordered driver ───────────────────────────────────────────────────────
 
@@ -142,6 +145,65 @@ program_violation(finalize_in_level_rule, prog(_, Rules), Ref) :-
     body_wrapper_refs(Body, finalize,
                       walk_policy(descend_not(true), splice_bare(false)),
                       Ref).
+
+program_violation(regexp_pattern_not_literal, prog(_, Rules),
+                  regexp_pattern_not_literal) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, regexp(_, Pattern)),
+    \+ string(Pattern),
+    !.
+
+program_violation(regexp_pattern_outside_subset, prog(_, Rules),
+                  regexp_pattern_outside_subset(Pattern)) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, regexp(_, Pattern)),
+    string(Pattern),
+    regexp_pattern_outside_subset(Pattern),
+    !.
+
+program_violation(regexp_pattern_invalid, prog(_, Rules),
+                  regexp_pattern_invalid(Pattern, Message)) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, regexp(_, Pattern)),
+    string(Pattern),
+    \+ regexp_pattern_outside_subset(Pattern),
+    regexp_pattern_pcre_error(Pattern, Message),
+    !.
+
+program_violation(regexp_operand_not_text, prog(Decls, Rules),
+                  regexp_operand_not_text(Ref, Column, Type)) :-
+    type_definitions(Decls, Types),
+    declared_column_table(Decls, Types, Rules, Table),
+    member(Rule, Rules),
+    rule_body_goal(Rule, regexp(Operand, _)),
+    var(Operand),
+    rule_body_column_variable(Table, Rule, Operand, Ref, Column, Type),
+    Type \== text,
+    !.
+
+regexp_pattern_outside_subset(Pattern) :-
+    string_codes(Pattern, Codes),
+    \+ regexp_subset_codes(Codes).
+
+regexp_subset_codes([]).
+regexp_subset_codes([92, Escape | Rest]) :-
+    memberchk(Escape, [0'd, 0'w, 0's, 0'b, 0'., 0'\\, 0'+, 0'*, 0'?,
+                       0'(, 0'), 0'[, 0'], 0'{, 0'}, 0'|, 0'^, 0'$]),
+    !,
+    regexp_subset_codes(Rest).
+regexp_subset_codes([92 | _]) :- !, fail.
+regexp_subset_codes([40, 63 | _]) :- !, fail.
+regexp_subset_codes([Quantifier, 43 | _]) :-
+    memberchk(Quantifier, [0'*, 0'+, 0'?, 0'}]),
+    !,
+    fail.
+regexp_subset_codes([_ | Rest]) :-
+    regexp_subset_codes(Rest).
+
+regexp_pattern_pcre_error(Pattern, Message) :-
+    catch(( re_compile(Pattern, _, []), fail ),
+          Error,
+          message_to_string(Error, Message)).
 
 % ── the value plane (STRUCT-AS-ROWS) ─────────────────────────────────────────
 

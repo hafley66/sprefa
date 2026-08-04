@@ -628,7 +628,10 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
                ]).
 
 compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
-    ( tick_goal(Goal, Variable)
+    ( regexp_goal(Goal)
+    -> compile_regexp_goal(Goal, Bound0, Text),
+       Bound = Bound0, Texts = [Text | Texts0]
+    ; tick_goal(Goal, Variable)
     -> tick_column_sql(TickSql),
        ( \+ bound_lookup(Bound0, Variable, _)
        -> Bound = [Variable-typed(TickSql, int) | Bound0], Texts = Texts0
@@ -649,6 +652,22 @@ compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
        Bound = Bound0, Texts = [Text | Texts0]
     ;  throw(unsupported_construct(guard_goal_shape(Goal)))
     ).
+
+regexp_goal(Goal) :-
+    body_surface_for_term(Goal, regexp/2, guard, no_refs,
+                          wrapper(expr_pair, lower), _).
+
+compile_regexp_goal(regexp(Operand, Pattern), Bound, Text) :-
+    compile_expr(Operand, Bound, OperandSql, OperandType),
+    ( OperandType == text
+    -> true
+    ;  throw(unsupported_construct(regexp_operand_not_text(Operand, OperandType)))
+    ),
+    ( string(Pattern)
+    -> sql_literal(Pattern, PatternSql)
+    ;  throw(unsupported_construct(regexp_pattern_not_literal))
+    ),
+    format(atom(Text), '(~w REGEXP ~w)', [OperandSql, PatternSql]).
 
 % engine.pl solve_comparison/1: `< =< > >=` run through eval_int2/4, so BOTH
 % operands must be integers or the reference engine throws arith_on_non_int

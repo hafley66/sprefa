@@ -3052,6 +3052,34 @@ test(norm_refuses_integer_operand,
      [throws(unsupported_construct(text_operand_not_text(norm(7), 7, int)))]) :-
     compile_expr(norm(7), [], _, _).
 
+test(regexp_is_a_guard_surface) :-
+    body_surface_for_term(regexp(Text, "^a$"), regexp/2, guard, no_refs,
+                          wrapper(expr_pair, lower), live),
+    var(Text).
+
+test(regexp_lowers_to_sql_regexp) :-
+    lowered_for('9_regexp.pl', regexp_positive_match, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    member(levelstmt(matched/1, _, [InsertSql], _, _, _), LevelStatements),
+    once(sub_atom(InsertSql, _, _, _, ' REGEXP ')).
+
+test(regexp_pattern_not_literal_agrees_across_doors) :-
+    Program = prog([col_type(source/1, text, text)],
+                    [(matched(Text) <- source(Text), regexp(Text, Pattern))]),
+    catch(check_supported_subset(Program), CompilerError, true),
+    CompilerError == unsupported_construct(regexp_pattern_not_literal),
+    catch(check_program(Program), OracleError, true),
+    OracleError == regexp_pattern_not_literal.
+
+test(regexp_pattern_outside_subset_agrees_across_doors) :-
+    Program = prog([col_type(source/1, text, text)],
+                    [(matched(Text) <- source(Text), regexp(Text, "a(?=b)"))]),
+    catch(check_supported_subset(Program), CompilerError, true),
+    CompilerError ==
+      unsupported_construct(regexp_pattern_outside_subset("a(?=b)")),
+    catch(check_program(Program), OracleError, true),
+    OracleError == regexp_pattern_outside_subset("a(?=b)").
+
 % Every comparison row lowers to its declared SQL operator.
 test(every_comparison_row_lowers_to_its_sql_operator) :-
     forall(( expression(Name/2, Family, _, infix(SqlOperator), _),
@@ -3995,4 +4023,3 @@ read_seeded_text(File, Text) :-
     catch(delete_file(File), _, true).
 
 :- end_tests(fact_seeding).
-

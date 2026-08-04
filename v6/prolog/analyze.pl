@@ -140,6 +140,9 @@ atom_ref_args(Atom, Ref, Args) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
 
 guard_goal(Goal) :-
     body_surface_for_term(Goal, _, guard, no_refs, infix(_), _).
+guard_goal(Goal) :-
+    body_surface_for_term(Goal, regexp/2, guard, no_refs,
+                          wrapper(expr_pair, lower), _).
 
 bind_goal(Goal, Variable, Expr) :-
     body_surface_for_term(Goal, _, bind, no_refs, infix(_), _),
@@ -1109,6 +1112,10 @@ check_supported_subset_expanded(Program) :-
                               % check; this one is about what the program
                               % wrote down and so belongs to both doors.
                               head_column_type_conflict,
+                              regexp_pattern_not_literal,
+                              regexp_pattern_outside_subset,
+                              regexp_pattern_invalid,
+                              regexp_operand_not_text,
                               % Burrs B3/B4, in the same slot engine.pl gives
                               % them: shapes this compiler refused at LOWERING
                               % while the reference engine ran them. Shared now,
@@ -1214,6 +1221,10 @@ compiler_refusal(head_column_type_conflict,
                           BodyRef, BodyColumn, BodyType),
                  head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                            BodyRef, BodyColumn, BodyType)).
+compiler_refusal(regexp_pattern_not_literal, Payload, Payload).
+compiler_refusal(regexp_pattern_outside_subset, Payload, Payload).
+compiler_refusal(regexp_pattern_invalid, Payload, Payload).
+compiler_refusal(regexp_operand_not_text, Payload, Payload).
 compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
 compiler_refusal(key_position_out_of_range, Payload, Payload).
 compiler_refusal(key_position_duplicate,    Payload, Payload).

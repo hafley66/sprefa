@@ -154,6 +154,7 @@ surface('>'/2,          guard,     no_refs,                      infix(lower),  
 surface('>='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('=='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('\\=='/2,       guard,     no_refs,                      infix(lower),                          live).
+surface(regexp/2,        guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 
 surface(count/1,        aggregate, no_refs,                      head(lower),                           live).
 surface(sum/1,          aggregate, no_refs,                      head(lower),                           live).
