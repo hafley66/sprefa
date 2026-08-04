@@ -136,6 +136,10 @@ engine_check_order([ key_position_out_of_range,
                      % program contradicting a STRUCT type still reports the
                      % ref-flavoured name it always did.
                      head_column_type_conflict,
+                     regexp_pattern_not_literal,
+                     regexp_pattern_outside_subset,
+                     regexp_pattern_invalid,
+                     regexp_operand_not_text,
                      % Burrs B3/B4: shapes the compiler refused and this engine
                      % ran. Refused here too so the two doors answer the same
                      % program the same way (0_program_check.pl states why).
@@ -201,6 +205,10 @@ engine_refusal(head_column_type_conflict,
                         BodyRef, BodyColumn, BodyType),
                head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                          BodyRef, BodyColumn, BodyType)).
+engine_refusal(regexp_pattern_not_literal, Payload, Payload).
+engine_refusal(regexp_pattern_outside_subset, Payload, Payload).
+engine_refusal(regexp_pattern_invalid, Payload, Payload).
+engine_refusal(regexp_operand_not_text, Payload, Payload).
 engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
 engine_refusal(key_position_out_of_range, Payload, Payload).
 engine_refusal(key_position_duplicate,    Payload, Payload).

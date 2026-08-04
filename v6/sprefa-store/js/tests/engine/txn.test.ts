@@ -86,3 +86,9 @@ test("inTransaction: the bracketed retract still cascades (chain kill)", async (
   assert.strictEqual(await firstValueFrom(store.alive()), 0, "the whole chain died");
   store.conn().close();
 });
+
+test("libsql: built-in REGEXP crosses the SqlRunner seam", async () => {
+  const db = createClient({ url: ":memory:" });
+  assert.strictEqual(await firstValueFrom(SqlRunner.scalar(db, "SELECT 'abc' REGEXP 'b'")), 1);
+  db.close();
+});
