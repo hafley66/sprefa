@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "numbered" ("number" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number")) WITHOUT ROWID`,
+  `CREATE TABLE "numbered" ("number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number")) WITHOUT ROWID`,
   `CREATE TABLE "resp" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_numbered" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_numbered_sign" ON "__delta_numbered" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_resp_phase" ON "__frontier_resp" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_resp" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__next_frontier_resp_phase" ON "__next_frontier_resp" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_numbered" ("number" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("number")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_numbered" ("number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("number")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "numbered", ruleId: "json_array_spread_skips_non_matching_elements:numbered/1#1", headDeltaTableName: "__delta_numbered", headColumns: ["number"], insertSql: `INSERT OR IGNORE INTO "numbered" ("number") SELECT DISTINCT json_extract(j0.value, '$."number"') FROM "__frontier_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL RETURNING "number"`, selectSql: `SELECT "number" FROM "numbered"`, recomputeSql: `DELETE FROM "numbered";
-INSERT OR IGNORE INTO "numbered" ("number") SELECT json_extract(j0.value, '$."number"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_numbered"`, `INSERT INTO "__support_next_numbered" ("number", "__support_count") SELECT "number", sum("__support_count") FROM (SELECT json_extract(j0.value, '$."number"') AS "number", count(*) AS "__support_count" FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL GROUP BY json_extract(j0.value, '$."number"')) GROUP BY "number"`, `UPDATE "numbered" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_numbered" n WHERE n."number" = h."number"), 0))`, `DELETE FROM "numbered" WHERE "__support_count" <= 0 RETURNING "number"`, `INSERT INTO "numbered" ("number", "__support_count") SELECT "number", n."__support_count" FROM "__support_next_numbered" n WHERE NOT EXISTS (SELECT 1 FROM "numbered" h WHERE n."number" = h."number") RETURNING "number"`], aggregateSql: null },
+INSERT OR IGNORE INTO "numbered" ("number") SELECT json_extract(j0.value, '$."number"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_numbered"`, `INSERT INTO "__support_next_numbered" ("number", "__refcount") SELECT "number", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."number"') AS "number", count(*) AS "__refcount" FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL GROUP BY json_extract(j0.value, '$."number"')) GROUP BY "number"`, `UPDATE "numbered" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_numbered" n WHERE n."number" = h."number"), 0))`, `DELETE FROM "numbered" WHERE "__refcount" <= 0 RETURNING "number"`, `INSERT INTO "numbered" ("number", "__refcount") SELECT "number", n."__refcount" FROM "__support_next_numbered" n WHERE NOT EXISTS (SELECT 1 FROM "numbered" h WHERE n."number" = h."number") RETURNING "number"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

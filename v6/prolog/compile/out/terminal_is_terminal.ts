@@ -136,7 +136,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 const ddl: readonly string[] = [
   `CREATE TABLE "stream_end" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE TABLE "stream_item" ("args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
-  `CREATE TABLE "stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_stream_end" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_stream_end_sign" ON "__delta_stream_end" ("_sign")`,
   `CREATE INDEX "__delta_stream_end_group" ON "__delta_stream_end" ("args", "col2")`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_stream_status_phase" ON "__frontier_stream_status" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stream_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_stream_status_phase" ON "__next_frontier_stream_status" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -243,7 +243,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "stream_status", ruleId: "terminal_is_terminal:stream_status/2#1", headDeltaTableName: "__delta_stream_status", headColumns: ["args", "col2"], insertSql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT DISTINCT d0."args", 'running' FROM "__frontier_stream_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = d0."args") UNION ALL SELECT DISTINCT d0."args", 'done' FROM "__frontier_stream_end" d0 WHERE d0."_phase" >= 0 RETURNING "args", "col2"`, selectSql: `SELECT "args", "col2" FROM "stream_status"`, recomputeSql: `DELETE FROM "stream_status";
 INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, supportSql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", sum("__support_count") FROM (SELECT b0."args" AS "args", 'running' AS "col2", count(*) AS "__support_count" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", 'running' UNION ALL SELECT b0."args" AS "args", 'done' AS "col2", count(*) AS "__support_count" FROM "stream_end" b0 GROUP BY b0."args", 'done') GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0))`, `DELETE FROM "stream_status" WHERE "__support_count" <= 0 RETURNING "args", "col2"`, `INSERT INTO "stream_status" ("args", "col2", "__support_count") SELECT "args", "col2", n."__support_count" FROM "__support_next_stream_status" n WHERE NOT EXISTS (SELECT 1 FROM "stream_status" h WHERE n."args" = h."args" AND n."col2" = h."col2") RETURNING "args", "col2"`], aggregateSql: null },
+INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, supportSql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__refcount") SELECT "args", "col2", sum("__refcount") FROM (SELECT b0."args" AS "args", 'running' AS "col2", count(*) AS "__refcount" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", 'running' UNION ALL SELECT b0."args" AS "args", 'done' AS "col2", count(*) AS "__refcount" FROM "stream_end" b0 GROUP BY b0."args", 'done') GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0))`, `DELETE FROM "stream_status" WHERE "__refcount" <= 0 RETURNING "args", "col2"`, `INSERT INTO "stream_status" ("args", "col2", "__refcount") SELECT "args", "col2", n."__refcount" FROM "__support_next_stream_status" n WHERE NOT EXISTS (SELECT 1 FROM "stream_status" h WHERE n."args" = h."args" AND n."col2" = h."col2") RETURNING "args", "col2"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

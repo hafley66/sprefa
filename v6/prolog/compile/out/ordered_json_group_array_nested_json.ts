@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "child" ("group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), PRIMARY KEY ("group", "payload")) WITHOUT ROWID`,
-  `CREATE TABLE "nested" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "nested" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_child" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_child_sign" ON "__delta_child" ("_sign")`,
   `CREATE INDEX "__delta_child_group" ON "__delta_child" ("group", "payload")`,

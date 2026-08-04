@@ -145,7 +145,7 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
+  `CREATE TABLE "def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
   `CREATE TABLE "node_fact" ("path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL, UNIQUE ("end", "start"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "end", "start", json_object('end', t."end", 'start', t."start") AS "__rendered" FROM "span" t`,
@@ -170,7 +170,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -256,7 +256,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "def_start", ruleId: "struct_span_columns_are_int_after_decode:def_start/2#1", headDeltaTableName: "__delta_def_start", headColumns: ["path", "offset"], insertSql: `INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT DISTINCT d0."path", b0."start" FROM "__frontier_node_fact" d0, "__ref_span" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."at" RETURNING "path", "offset"`, selectSql: `SELECT "path", "offset" FROM "def_start"`, recomputeSql: `DELETE FROM "def_start";
-INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, supportSql: [`DELETE FROM "__support_next_def_start"`, `INSERT INTO "__support_next_def_start" ("path", "offset", "__support_count") SELECT "path", "offset", sum("__support_count") FROM (SELECT b0."path" AS "path", b1."start" AS "offset", count(*) AS "__support_count" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at" GROUP BY b0."path", b1."start") GROUP BY "path", "offset"`, `UPDATE "def_start" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_def_start" n WHERE n."path" = h."path" AND n."offset" = h."offset"), 0))`, `DELETE FROM "def_start" WHERE "__support_count" <= 0 RETURNING "path", "offset"`, `INSERT INTO "def_start" ("path", "offset", "__support_count") SELECT "path", "offset", n."__support_count" FROM "__support_next_def_start" n WHERE NOT EXISTS (SELECT 1 FROM "def_start" h WHERE n."path" = h."path" AND n."offset" = h."offset") RETURNING "path", "offset"`], aggregateSql: null },
+INSERT OR IGNORE INTO "def_start" ("path", "offset") SELECT b0."path", b1."start" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, supportSql: [`DELETE FROM "__support_next_def_start"`, `INSERT INTO "__support_next_def_start" ("path", "offset", "__refcount") SELECT "path", "offset", sum("__refcount") FROM (SELECT b0."path" AS "path", b1."start" AS "offset", count(*) AS "__refcount" FROM "node_fact" b0, "__ref_span" b1 WHERE b1."__id" = b0."at" GROUP BY b0."path", b1."start") GROUP BY "path", "offset"`, `UPDATE "def_start" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_def_start" n WHERE n."path" = h."path" AND n."offset" = h."offset"), 0))`, `DELETE FROM "def_start" WHERE "__refcount" <= 0 RETURNING "path", "offset"`, `INSERT INTO "def_start" ("path", "offset", "__refcount") SELECT "path", "offset", n."__refcount" FROM "__support_next_def_start" n WHERE NOT EXISTS (SELECT 1 FROM "def_start" h WHERE n."path" = h."path" AND n."offset" = h."offset") RETURNING "path", "offset"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

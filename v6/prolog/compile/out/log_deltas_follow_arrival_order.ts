@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "line" ("_stream_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
-  `CREATE TABLE "seen" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_line_sign" ON "__delta_line" ("_sign")`,
   `CREATE INDEX "__delta_line_group" ON "__delta_line" ("_stream_id", "path", "_name")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_seen" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_seen" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -226,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "log_deltas_follow_arrival_order:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "seen" ("path") SELECT DISTINCT d0."path" FROM "__frontier_line" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "seen" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "seen" WHERE "__refcount" <= 0 RETURNING "path"`, `INSERT INTO "seen" ("path", "__refcount") SELECT "path", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

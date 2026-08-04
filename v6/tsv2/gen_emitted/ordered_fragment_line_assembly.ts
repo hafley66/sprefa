@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "fragment_line" ("fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL, PRIMARY KEY ("fragment_name", "line_ordinal", "line_text")) WITHOUT ROWID`,
-  `CREATE TABLE "fragment_text" ("fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("fragment_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "fragment_text" ("fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("fragment_name", "col2")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_fragment_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fragment_line_sign" ON "__delta_fragment_line" ("_sign")`,
   `CREATE INDEX "__delta_fragment_line_group" ON "__delta_fragment_line" ("fragment_name", "line_ordinal", "line_text")`,

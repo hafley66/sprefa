@@ -160,7 +160,7 @@ function departureOccurrences(seam: ISqlSeam, sql: string, columns: readonly str
 
 const ddl: readonly string[] = [
   `CREATE TABLE "closed_at" ("item" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TABLE "mirror" ("item" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TABLE "mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item")) WITHOUT ROWID`,
   `CREATE TABLE "source_row" ("item" TEXT NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_closed_at" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_closed_at_sign" ON "__delta_closed_at" ("_sign")`,
@@ -185,7 +185,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_source_row_phase" ON "__frontier_source_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_source_row_phase" ON "__next_frontier_source_row" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_mirror" ("item" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
   `CREATE TABLE "__tick" ("n" INTEGER NOT NULL)`,
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
 ];
@@ -270,7 +270,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "mirror", ruleId: "departed_fires_next_tick_on_retraction:mirror/1#1", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";
-INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__support_count") SELECT "item", sum("__support_count") FROM (SELECT b0."item" AS "item", count(*) AS "__support_count" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__support_count" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__support_count") SELECT "item", n."__support_count" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`], aggregateSql: null },
+INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__refcount") SELECT "item", sum("__refcount") FROM (SELECT b0."item" AS "item", count(*) AS "__refcount" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__refcount" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__refcount") SELECT "item", n."__refcount" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`], aggregateSql: null },
 ];
 
 const EDGE_CLOSED_AT_0_PROJECT_SQL = `SELECT ?1 AS "item", (SELECT "n" FROM "__tick") AS "tick"`;

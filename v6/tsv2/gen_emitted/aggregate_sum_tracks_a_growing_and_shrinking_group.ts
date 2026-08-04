@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "budget" ("team" TEXT NOT NULL, "col2" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("team", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "budget" ("team" TEXT NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("team", "col2")) WITHOUT ROWID`,
   `CREATE TABLE "spend" ("team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL, PRIMARY KEY ("team", "_item", "cost")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_budget_sign" ON "__delta_budget" ("_sign")`,

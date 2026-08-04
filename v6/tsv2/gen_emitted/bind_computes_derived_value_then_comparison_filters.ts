@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "bump" ("name" TEXT NOT NULL, "extra" INTEGER NOT NULL, PRIMARY KEY ("name", "extra")) WITHOUT ROWID`,
-  `CREATE TABLE "over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
+  `CREATE TABLE "over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
   `CREATE TABLE "seen" ("name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL, PRIMARY KEY ("name", "base", "col3")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_bump" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_bump_sign" ON "__delta_bump" ("_sign")`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -245,7 +245,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "over_budget", ruleId: "bind_computes_derived_value_then_comparison_filters:over_budget/2#1", headDeltaTableName: "__delta_over_budget", headColumns: ["name", "sum"], insertSql: `INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT DISTINCT d0."name", (d0."base" + b0."extra") FROM "__frontier_seen" d0, "bump" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND ((d0."base" + b0."extra") > 10) UNION ALL SELECT DISTINCT d0."name", (b0."base" + d0."extra") FROM "__frontier_bump" d0, "seen" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND ((b0."base" + d0."extra") > 10) RETURNING "name", "sum"`, selectSql: `SELECT "name", "sum" FROM "over_budget"`, recomputeSql: `DELETE FROM "over_budget";
-INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`, supportSql: [`DELETE FROM "__support_next_over_budget"`, `INSERT INTO "__support_next_over_budget" ("name", "sum", "__support_count") SELECT "name", "sum", sum("__support_count") FROM (SELECT b0."name" AS "name", (b0."base" + b1."extra") AS "sum", count(*) AS "__support_count" FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10) GROUP BY b0."name", (b0."base" + b1."extra")) GROUP BY "name", "sum"`, `UPDATE "over_budget" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_over_budget" n WHERE n."name" = h."name" AND n."sum" = h."sum"), 0))`, `DELETE FROM "over_budget" WHERE "__support_count" <= 0 RETURNING "name", "sum"`, `INSERT INTO "over_budget" ("name", "sum", "__support_count") SELECT "name", "sum", n."__support_count" FROM "__support_next_over_budget" n WHERE NOT EXISTS (SELECT 1 FROM "over_budget" h WHERE n."name" = h."name" AND n."sum" = h."sum") RETURNING "name", "sum"`], aggregateSql: null },
+INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`, supportSql: [`DELETE FROM "__support_next_over_budget"`, `INSERT INTO "__support_next_over_budget" ("name", "sum", "__refcount") SELECT "name", "sum", sum("__refcount") FROM (SELECT b0."name" AS "name", (b0."base" + b1."extra") AS "sum", count(*) AS "__refcount" FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10) GROUP BY b0."name", (b0."base" + b1."extra")) GROUP BY "name", "sum"`, `UPDATE "over_budget" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_over_budget" n WHERE n."name" = h."name" AND n."sum" = h."sum"), 0))`, `DELETE FROM "over_budget" WHERE "__refcount" <= 0 RETURNING "name", "sum"`, `INSERT INTO "over_budget" ("name", "sum", "__refcount") SELECT "name", "sum", n."__refcount" FROM "__support_next_over_budget" n WHERE NOT EXISTS (SELECT 1 FROM "over_budget" h WHERE n."name" = h."name" AND n."sum" = h."sum") RETURNING "name", "sum"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

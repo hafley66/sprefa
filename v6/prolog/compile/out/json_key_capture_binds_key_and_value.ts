@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
   `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_field" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_field_sign" ON "__delta_field" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__next_frontier_raw_doc_phase" ON "__next_frontier_raw_doc" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "field", ruleId: "json_key_capture_binds_key_and_value:field/2#1", headDeltaTableName: "__delta_field", headColumns: ["key", "value"], insertSql: `INSERT OR IGNORE INTO "field" ("key", "value") SELECT DISTINCT j0.key, j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "key", "value"`, selectSql: `SELECT "key", "value" FROM "field"`, recomputeSql: `DELETE FROM "field";
-INSERT OR IGNORE INTO "field" ("key", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_field"`, `INSERT INTO "__support_next_field" ("key", "value", "__support_count") SELECT "key", "value", sum("__support_count") FROM (SELECT j0.key AS "key", j0.value AS "value", count(*) AS "__support_count" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "key", "value"`, `UPDATE "field" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_field" n WHERE n."key" = h."key" AND n."value" = h."value"), 0))`, `DELETE FROM "field" WHERE "__support_count" <= 0 RETURNING "key", "value"`, `INSERT INTO "field" ("key", "value", "__support_count") SELECT "key", "value", n."__support_count" FROM "__support_next_field" n WHERE NOT EXISTS (SELECT 1 FROM "field" h WHERE n."key" = h."key" AND n."value" = h."value") RETURNING "key", "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "field" ("key", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_field"`, `INSERT INTO "__support_next_field" ("key", "value", "__refcount") SELECT "key", "value", sum("__refcount") FROM (SELECT j0.key AS "key", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "key", "value"`, `UPDATE "field" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_field" n WHERE n."key" = h."key" AND n."value" = h."value"), 0))`, `DELETE FROM "field" WHERE "__refcount" <= 0 RETURNING "key", "value"`, `INSERT INTO "field" ("key", "value", "__refcount") SELECT "key", "value", n."__refcount" FROM "__support_next_field" n WHERE NOT EXISTS (SELECT 1 FROM "field" h WHERE n."key" = h."key" AND n."value" = h."value") RETURNING "key", "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "seen" ("value" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TABLE "source" ("value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_seen" ("value" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_seen" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -226,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "next_level_is_the_bare_atom_spelling:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "seen" ("value") SELECT DISTINCT d0."value" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("value") SELECT b0."value" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT b0."value" AS "value", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("value") SELECT b0."value" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__refcount" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__refcount") SELECT "value", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -155,7 +155,7 @@ function triggerOccurrences(
 const ddl: readonly string[] = [
   `CREATE TABLE "known_repo" ("to_repo_id" INTEGER NOT NULL, PRIMARY KEY ("to_repo_id")) WITHOUT ROWID`,
   `CREATE TABLE "pin_extracted" ("from_span_id" INTEGER NOT NULL, "to_repo_id" INTEGER NOT NULL, "to_rev_id" INTEGER NOT NULL, "to_path" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE TABLE "repo_candidate" ("to_repo_id" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("to_repo_id")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_candidate" ("to_repo_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("to_repo_id")) WITHOUT ROWID`,
   `CREATE TABLE "xref" ("from_span_id" INTEGER NOT NULL, "to_repo_id" INTEGER NOT NULL, "to_rev_id" INTEGER NOT NULL, "to_path" TEXT NOT NULL, "col5" TEXT NOT NULL, "kind" TEXT NOT NULL, PRIMARY KEY ("from_span_id")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_known_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "to_repo_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_known_repo_sign" ON "__delta_known_repo" ("_sign")`,
@@ -185,7 +185,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_xref_phase" ON "__frontier_xref" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_xref" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "from_span_id" INTEGER NOT NULL, "to_repo_id" INTEGER NOT NULL, "to_rev_id" INTEGER NOT NULL, "to_path" TEXT NOT NULL, "col5" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_xref_phase" ON "__next_frontier_xref" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_repo_candidate" ("to_repo_id" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("to_repo_id")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_repo_candidate" ("to_repo_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("to_repo_id")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -276,7 +276,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "repo_candidate", ruleId: "pin_to_unknown_repo_derives_repo_candidate:repo_candidate/1#1", headDeltaTableName: "__delta_repo_candidate", headColumns: ["to_repo_id"], insertSql: `INSERT OR IGNORE INTO "repo_candidate" ("to_repo_id") SELECT DISTINCT d0."to_repo_id" FROM "__frontier_pin_extracted" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "known_repo" n0 WHERE n0."to_repo_id" = d0."to_repo_id") RETURNING "to_repo_id"`, selectSql: `SELECT "to_repo_id" FROM "repo_candidate"`, recomputeSql: `DELETE FROM "repo_candidate";
-INSERT OR IGNORE INTO "repo_candidate" ("to_repo_id") SELECT b0."to_repo_id" FROM "pin_extracted" b0 WHERE NOT EXISTS (SELECT 1 FROM "known_repo" n0 WHERE n0."to_repo_id" = b0."to_repo_id")`, supportSql: [`DELETE FROM "__support_next_repo_candidate"`, `INSERT INTO "__support_next_repo_candidate" ("to_repo_id", "__support_count") SELECT "to_repo_id", sum("__support_count") FROM (SELECT b0."to_repo_id" AS "to_repo_id", count(*) AS "__support_count" FROM "pin_extracted" b0 WHERE NOT EXISTS (SELECT 1 FROM "known_repo" n0 WHERE n0."to_repo_id" = b0."to_repo_id") GROUP BY b0."to_repo_id") GROUP BY "to_repo_id"`, `UPDATE "repo_candidate" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_repo_candidate" n WHERE n."to_repo_id" = h."to_repo_id"), 0))`, `DELETE FROM "repo_candidate" WHERE "__support_count" <= 0 RETURNING "to_repo_id"`, `INSERT INTO "repo_candidate" ("to_repo_id", "__support_count") SELECT "to_repo_id", n."__support_count" FROM "__support_next_repo_candidate" n WHERE NOT EXISTS (SELECT 1 FROM "repo_candidate" h WHERE n."to_repo_id" = h."to_repo_id") RETURNING "to_repo_id"`], aggregateSql: null },
+INSERT OR IGNORE INTO "repo_candidate" ("to_repo_id") SELECT b0."to_repo_id" FROM "pin_extracted" b0 WHERE NOT EXISTS (SELECT 1 FROM "known_repo" n0 WHERE n0."to_repo_id" = b0."to_repo_id")`, supportSql: [`DELETE FROM "__support_next_repo_candidate"`, `INSERT INTO "__support_next_repo_candidate" ("to_repo_id", "__refcount") SELECT "to_repo_id", sum("__refcount") FROM (SELECT b0."to_repo_id" AS "to_repo_id", count(*) AS "__refcount" FROM "pin_extracted" b0 WHERE NOT EXISTS (SELECT 1 FROM "known_repo" n0 WHERE n0."to_repo_id" = b0."to_repo_id") GROUP BY b0."to_repo_id") GROUP BY "to_repo_id"`, `UPDATE "repo_candidate" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_repo_candidate" n WHERE n."to_repo_id" = h."to_repo_id"), 0))`, `DELETE FROM "repo_candidate" WHERE "__refcount" <= 0 RETURNING "to_repo_id"`, `INSERT INTO "repo_candidate" ("to_repo_id", "__refcount") SELECT "to_repo_id", n."__refcount" FROM "__support_next_repo_candidate" n WHERE NOT EXISTS (SELECT 1 FROM "repo_candidate" h WHERE n."to_repo_id" = h."to_repo_id") RETURNING "to_repo_id"`], aggregateSql: null },
 ];
 
 const EDGE_XREF_0_PROJECT_SQL = `SELECT ?1 AS "from_span_id", ?2 AS "to_repo_id", ?3 AS "to_rev_id", ?4 AS "to_path", 'none' AS "col5", ?5 AS "kind"`;

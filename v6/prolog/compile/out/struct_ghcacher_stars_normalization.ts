@@ -148,7 +148,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "current_body" ("ep" TEXT NOT NULL, "body" INTEGER NOT NULL, PRIMARY KEY ("ep", "body")) WITHOUT ROWID`,
   `CREATE TABLE "repo_body" ("__id" INTEGER PRIMARY KEY, "full_name" TEXT NOT NULL, "stargazers_count" INTEGER NOT NULL, UNIQUE ("full_name", "stargazers_count"))`,
   `CREATE TEMP VIEW "__ref_repo_body" AS SELECT t."__id", "full_name", "stargazers_count", json_object('full_name', t."full_name", 'stargazers_count', t."stargazers_count") AS "__rendered" FROM "repo_body" t`,
-  `CREATE TABLE "stars" ("ep" TEXT NOT NULL, "n" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
+  `CREATE TABLE "stars" ("ep" TEXT NOT NULL, "n" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_current_body" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_body_sign" ON "__delta_current_body" ("_sign")`,
   `CREATE INDEX "__delta_current_body_group" ON "__delta_current_body" ("ep", "body")`,
@@ -170,7 +170,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_stars_phase" ON "__frontier_stars" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stars" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" TEXT NOT NULL, "n" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_stars_phase" ON "__next_frontier_stars" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_stars" ("ep" TEXT NOT NULL, "n" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_stars" ("ep" TEXT NOT NULL, "n" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -256,7 +256,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "stars", ruleId: "struct_ghcacher_stars_normalization:stars/2#1", headDeltaTableName: "__delta_stars", headColumns: ["ep", "n"], insertSql: `INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT DISTINCT d0."ep", b0."stargazers_count" FROM "__frontier_current_body" d0, "__ref_repo_body" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."body" RETURNING "ep", "n"`, selectSql: `SELECT "ep", "n" FROM "stars"`, recomputeSql: `DELETE FROM "stars";
-INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body"`, supportSql: [`DELETE FROM "__support_next_stars"`, `INSERT INTO "__support_next_stars" ("ep", "n", "__support_count") SELECT "ep", "n", sum("__support_count") FROM (SELECT b0."ep" AS "ep", b1."stargazers_count" AS "n", count(*) AS "__support_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body" GROUP BY b0."ep", b1."stargazers_count") GROUP BY "ep", "n"`, `UPDATE "stars" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stars" n WHERE n."ep" = h."ep" AND n."n" = h."n"), 0))`, `DELETE FROM "stars" WHERE "__support_count" <= 0 RETURNING "ep", "n"`, `INSERT INTO "stars" ("ep", "n", "__support_count") SELECT "ep", "n", n."__support_count" FROM "__support_next_stars" n WHERE NOT EXISTS (SELECT 1 FROM "stars" h WHERE n."ep" = h."ep" AND n."n" = h."n") RETURNING "ep", "n"`], aggregateSql: null },
+INSERT OR IGNORE INTO "stars" ("ep", "n") SELECT b0."ep", b1."stargazers_count" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body"`, supportSql: [`DELETE FROM "__support_next_stars"`, `INSERT INTO "__support_next_stars" ("ep", "n", "__refcount") SELECT "ep", "n", sum("__refcount") FROM (SELECT b0."ep" AS "ep", b1."stargazers_count" AS "n", count(*) AS "__refcount" FROM "current_body" b0, "__ref_repo_body" b1 WHERE b1."__id" = b0."body" GROUP BY b0."ep", b1."stargazers_count") GROUP BY "ep", "n"`, `UPDATE "stars" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_stars" n WHERE n."ep" = h."ep" AND n."n" = h."n"), 0))`, `DELETE FROM "stars" WHERE "__refcount" <= 0 RETURNING "ep", "n"`, `INSERT INTO "stars" ("ep", "n", "__refcount") SELECT "ep", "n", n."__refcount" FROM "__support_next_stars" n WHERE NOT EXISTS (SELECT 1 FROM "stars" h WHERE n."ep" = h."ep" AND n."n" = h."n") RETURNING "ep", "n"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

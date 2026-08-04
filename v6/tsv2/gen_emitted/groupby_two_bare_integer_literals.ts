@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "classified" ("name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "line", "column")) WITHOUT ROWID`,
+  `CREATE TABLE "classified" ("name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "line", "column")) WITHOUT ROWID`,
   `CREATE TABLE "source" ("name" TEXT NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_classified" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_classified_sign" ON "__delta_classified" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_classified" ("name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "line", "column")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_classified" ("name" TEXT NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "line", "column")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "classified", ruleId: "groupby_two_bare_integer_literals:classified/3#1", headDeltaTableName: "__delta_classified", headColumns: ["name", "line", "column"], insertSql: `INSERT OR IGNORE INTO "classified" ("name", "line", "column") SELECT DISTINCT d0."name", 0, 0 FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "name", "line", "column"`, selectSql: `SELECT "name", "line", "column" FROM "classified"`, recomputeSql: `DELETE FROM "classified";
-INSERT OR IGNORE INTO "classified" ("name", "line", "column") SELECT b0."name", 0, 0 FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_classified"`, `INSERT INTO "__support_next_classified" ("name", "line", "column", "__support_count") SELECT "name", "line", "column", sum("__support_count") FROM (SELECT b0."name" AS "name", 0 AS "line", 0 AS "column", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."name", (0 + 0), (0 + 0)) GROUP BY "name", "line", "column"`, `UPDATE "classified" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_classified" n WHERE n."name" = h."name" AND n."line" = h."line" AND n."column" = h."column"), 0))`, `DELETE FROM "classified" WHERE "__support_count" <= 0 RETURNING "name", "line", "column"`, `INSERT INTO "classified" ("name", "line", "column", "__support_count") SELECT "name", "line", "column", n."__support_count" FROM "__support_next_classified" n WHERE NOT EXISTS (SELECT 1 FROM "classified" h WHERE n."name" = h."name" AND n."line" = h."line" AND n."column" = h."column") RETURNING "name", "line", "column"`], aggregateSql: null },
+INSERT OR IGNORE INTO "classified" ("name", "line", "column") SELECT b0."name", 0, 0 FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_classified"`, `INSERT INTO "__support_next_classified" ("name", "line", "column", "__refcount") SELECT "name", "line", "column", sum("__refcount") FROM (SELECT b0."name" AS "name", 0 AS "line", 0 AS "column", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."name", (0 + 0), (0 + 0)) GROUP BY "name", "line", "column"`, `UPDATE "classified" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_classified" n WHERE n."name" = h."name" AND n."line" = h."line" AND n."column" = h."column"), 0))`, `DELETE FROM "classified" WHERE "__refcount" <= 0 RETURNING "name", "line", "column"`, `INSERT INTO "classified" ("name", "line", "column", "__refcount") SELECT "name", "line", "column", n."__refcount" FROM "__support_next_classified" n WHERE NOT EXISTS (SELECT 1 FROM "classified" h WHERE n."name" = h."name" AND n."line" = h."line" AND n."column" = h."column") RETURNING "name", "line", "column"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

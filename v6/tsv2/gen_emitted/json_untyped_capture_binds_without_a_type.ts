@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TABLE "seen" ("value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,
   `CREATE INDEX "__delta_event_group" ON "__delta_event" ("payload")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_seen" ("value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_seen" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "json_untyped_capture_binds_without_a_type:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "seen" ("value") SELECT DISTINCT json_extract(d0."payload", '$."stars"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_extract(d0."payload", '$."stars"') IS NOT NULL RETURNING "value"`, selectSql: `SELECT "value" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT json_extract(b0."payload", '$."stars"') AS "value", count(*) AS "__support_count" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL GROUP BY json_extract(b0."payload", '$."stars"')) GROUP BY "value"`, `UPDATE "seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_extract(b0."payload", '$."stars"') AS "value", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL GROUP BY json_extract(b0."payload", '$."stars"')) GROUP BY "value"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__refcount" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__refcount") SELECT "value", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

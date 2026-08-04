@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,15 +46,17 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [];
+export const subscribedRels: readonly string[] = [];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
@@ -131,11 +134,11 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "current" ("id" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "kind")) WITHOUT ROWID`,
+  `CREATE TABLE "current" ("id" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "kind")) WITHOUT ROWID`,
   `CREATE TABLE "event" ("id" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE TABLE "result_error" ("id" INTEGER NOT NULL, "message" TEXT NOT NULL, PRIMARY KEY ("message")) WITHOUT ROWID`,
   `CREATE TABLE "result_ok" ("id" INTEGER NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_current" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_current_sign" ON "__delta_current" ("_sign")`,
   `CREATE INDEX "__delta_current_group" ON "__delta_current" ("id", "kind")`,
@@ -171,8 +174,8 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_result_tag_phase" ON "__frontier_result_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_result_tag_phase" ON "__next_frontier_result_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_current" ("id" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("id", "kind")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__support_next_result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_current" ("id" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -202,11 +205,11 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["event", "result_error", "result_ok"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `DELETE FROM "current"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, params: [] },
-  { sql: `DELETE FROM "result_tag"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, params: [] },
+  { rel: "current", sql: `DELETE FROM "current"`, params: [] },
+  { rel: "current", sql: `INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, params: [] },
+  { rel: "result_tag", sql: `DELETE FROM "result_tag"`, params: [] },
+  { rel: "result_tag", sql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0`, params: [] },
+  { rel: "result_tag", sql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -276,10 +279,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "current", ruleId: "door-handwritten:current/2#1", headDeltaTableName: "__delta_current", headColumns: ["id", "kind"], insertSql: `INSERT OR IGNORE INTO "current" ("id", "kind") SELECT DISTINCT d0."id", d0."kind" FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 RETURNING "id", "kind"`, selectSql: `SELECT "id", "kind" FROM "current"`, recomputeSql: `DELETE FROM "current";
-INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, supportSql: [`DELETE FROM "__support_next_current"`, `INSERT INTO "__support_next_current" ("id", "kind", "__support_count") SELECT "id", "kind", sum("__support_count") FROM (SELECT b0."id" AS "id", b0."kind" AS "kind", count(*) AS "__support_count" FROM "event" b0 GROUP BY b0."id", b0."kind") GROUP BY "id", "kind"`, `UPDATE "current" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_current" n WHERE n."id" = h."id" AND n."kind" = h."kind"), 0))`, `DELETE FROM "current" WHERE "__support_count" <= 0 RETURNING "id", "kind"`, `INSERT INTO "current" ("id", "kind", "__support_count") SELECT "id", "kind", n."__support_count" FROM "__support_next_current" n WHERE NOT EXISTS (SELECT 1 FROM "current" h WHERE n."id" = h."id" AND n."kind" = h."kind") RETURNING "id", "kind"`], aggregateSql: null },
+INSERT OR IGNORE INTO "current" ("id", "kind") SELECT b0."id", b0."kind" FROM "event" b0`, supportSql: [`DELETE FROM "__support_next_current"`, `INSERT INTO "__support_next_current" ("id", "kind", "__refcount") SELECT "id", "kind", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."kind" AS "kind", count(*) AS "__refcount" FROM "event" b0 GROUP BY b0."id", b0."kind") GROUP BY "id", "kind"`, `UPDATE "current" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_current" n WHERE n."id" = h."id" AND n."kind" = h."kind"), 0))`, `DELETE FROM "current" WHERE "__refcount" <= 0 RETURNING "id", "kind"`, `INSERT INTO "current" ("id", "kind", "__refcount") SELECT "id", "kind", n."__refcount" FROM "__support_next_current" n WHERE NOT EXISTS (SELECT 1 FROM "current" h WHERE n."id" = h."id" AND n."kind" = h."kind") RETURNING "id", "kind"`], aggregateSql: null },
   { headRel: "result_tag", ruleId: "door-handwritten:result_tag/2#1", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";
 INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;
-INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__support_count" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__support_count" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__refcount" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__refcount" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__refcount" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", n."__refcount" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
@@ -322,16 +325,26 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -360,11 +373,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

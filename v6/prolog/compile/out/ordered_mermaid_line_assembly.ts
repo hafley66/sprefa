@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "mermaid_line" ("file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL, PRIMARY KEY ("file_name", "line_ordinal", "line_text")) WITHOUT ROWID`,
-  `CREATE TABLE "mermaid_text" ("file_name" TEXT NOT NULL, "col2" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "mermaid_text" ("file_name" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file_name", "col2")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_mermaid_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_mermaid_line_sign" ON "__delta_mermaid_line" ("_sign")`,
   `CREATE INDEX "__delta_mermaid_line_group" ON "__delta_mermaid_line" ("file_name", "line_ordinal", "line_text")`,

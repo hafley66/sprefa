@@ -154,7 +154,7 @@ function triggerOccurrences(
 
 const ddl: readonly string[] = [
   `CREATE TABLE "fetch_call" ("endpoint" TEXT NOT NULL)`,
-  `CREATE TABLE "fetch_demand" ("endpoint" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TABLE "fetch_demand" ("endpoint" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
   `CREATE TABLE "stale" ("endpoint" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_fetch_call" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fetch_call_sign" ON "__delta_fetch_call" ("_sign")`,
@@ -177,7 +177,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_stale_phase" ON "__frontier_stale" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stale" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_stale_phase" ON "__next_frontier_stale" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_fetch_demand" ("endpoint" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_fetch_demand" ("endpoint" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -260,7 +260,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "fetch_demand", ruleId: "demand_view_fires_its_consumer_once:fetch_demand/1#1", headDeltaTableName: "__delta_fetch_demand", headColumns: ["endpoint"], insertSql: `INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_stale" d0 WHERE d0."_phase" >= 0 RETURNING "endpoint"`, selectSql: `SELECT "endpoint" FROM "fetch_demand"`, recomputeSql: `DELETE FROM "fetch_demand";
-INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT b0."endpoint" FROM "stale" b0`, supportSql: [`DELETE FROM "__support_next_fetch_demand"`, `INSERT INTO "__support_next_fetch_demand" ("endpoint", "__support_count") SELECT "endpoint", sum("__support_count") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__support_count" FROM "stale" b0 GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "fetch_demand" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_fetch_demand" n WHERE n."endpoint" = h."endpoint"), 0))`, `DELETE FROM "fetch_demand" WHERE "__support_count" <= 0 RETURNING "endpoint"`, `INSERT INTO "fetch_demand" ("endpoint", "__support_count") SELECT "endpoint", n."__support_count" FROM "__support_next_fetch_demand" n WHERE NOT EXISTS (SELECT 1 FROM "fetch_demand" h WHERE n."endpoint" = h."endpoint") RETURNING "endpoint"`], aggregateSql: null },
+INSERT OR IGNORE INTO "fetch_demand" ("endpoint") SELECT b0."endpoint" FROM "stale" b0`, supportSql: [`DELETE FROM "__support_next_fetch_demand"`, `INSERT INTO "__support_next_fetch_demand" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "stale" b0 GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "fetch_demand" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_fetch_demand" n WHERE n."endpoint" = h."endpoint"), 0))`, `DELETE FROM "fetch_demand" WHERE "__refcount" <= 0 RETURNING "endpoint"`, `INSERT INTO "fetch_demand" ("endpoint", "__refcount") SELECT "endpoint", n."__refcount" FROM "__support_next_fetch_demand" n WHERE NOT EXISTS (SELECT 1 FROM "fetch_demand" h WHERE n."endpoint" = h."endpoint") RETURNING "endpoint"`], aggregateSql: null },
 ];
 
 const EDGE_FETCH_CALL_0_PROJECT_SQL = `SELECT ?1 AS "endpoint"`;

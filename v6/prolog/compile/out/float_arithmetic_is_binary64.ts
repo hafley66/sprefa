@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "adjusted" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "adjusted" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TABLE "score" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_adjusted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_adjusted_sign" ON "__delta_adjusted" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__next_frontier_score_phase" ON "__next_frontier_score" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_adjusted" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_adjusted" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "adjusted", ruleId: "float_arithmetic_is_binary64:adjusted/2#1", headDeltaTableName: "__delta_adjusted", headColumns: ["name", "value"], insertSql: `INSERT OR IGNORE INTO "adjusted" ("name", "value") SELECT DISTINCT d0."name", (d0."value" + 0.2) FROM "__frontier_score" d0 WHERE d0."_phase" >= 0 RETURNING "name", "value"`, selectSql: `SELECT "name", "value" FROM "adjusted"`, recomputeSql: `DELETE FROM "adjusted";
-INSERT OR IGNORE INTO "adjusted" ("name", "value") SELECT b0."name", (b0."value" + 0.2) FROM "score" b0`, supportSql: [`DELETE FROM "__support_next_adjusted"`, `INSERT INTO "__support_next_adjusted" ("name", "value", "__support_count") SELECT "name", "value", sum("__support_count") FROM (SELECT b0."name" AS "name", (b0."value" + 0.2) AS "value", count(*) AS "__support_count" FROM "score" b0 GROUP BY b0."name", (b0."value" + 0.2)) GROUP BY "name", "value"`, `UPDATE "adjusted" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_adjusted" n WHERE n."name" = h."name" AND n."value" = h."value"), 0))`, `DELETE FROM "adjusted" WHERE "__support_count" <= 0 RETURNING "name", "value"`, `INSERT INTO "adjusted" ("name", "value", "__support_count") SELECT "name", "value", n."__support_count" FROM "__support_next_adjusted" n WHERE NOT EXISTS (SELECT 1 FROM "adjusted" h WHERE n."name" = h."name" AND n."value" = h."value") RETURNING "name", "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "adjusted" ("name", "value") SELECT b0."name", (b0."value" + 0.2) FROM "score" b0`, supportSql: [`DELETE FROM "__support_next_adjusted"`, `INSERT INTO "__support_next_adjusted" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT b0."name" AS "name", (b0."value" + 0.2) AS "value", count(*) AS "__refcount" FROM "score" b0 GROUP BY b0."name", (b0."value" + 0.2)) GROUP BY "name", "value"`, `UPDATE "adjusted" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_adjusted" n WHERE n."name" = h."name" AND n."value" = h."value"), 0))`, `DELETE FROM "adjusted" WHERE "__refcount" <= 0 RETURNING "name", "value"`, `INSERT INTO "adjusted" ("name", "value", "__refcount") SELECT "name", "value", n."__refcount" FROM "__support_next_adjusted" n WHERE NOT EXISTS (SELECT 1 FROM "adjusted" h WHERE n."name" = h."name" AND n."value" = h."value") RETURNING "name", "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

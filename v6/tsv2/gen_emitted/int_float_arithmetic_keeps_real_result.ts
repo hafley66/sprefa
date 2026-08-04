@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "measure" ("name" TEXT NOT NULL, "whole" INTEGER NOT NULL, "fraction" REAL NOT NULL CHECK (typeof("fraction") = 'real' AND "fraction" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("name", "whole", "fraction")) WITHOUT ROWID`,
-  `CREATE TABLE "total" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "total" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_measure" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "whole" INTEGER NOT NULL, "fraction" REAL NOT NULL CHECK (typeof("fraction") = 'real' AND "fraction" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_measure_sign" ON "__delta_measure" ("_sign")`,
   `CREATE INDEX "__delta_measure_group" ON "__delta_measure" ("name", "whole", "fraction")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_total_phase" ON "__frontier_total" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__next_frontier_total_phase" ON "__next_frontier_total" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_total" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_total" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "total", ruleId: "int_float_arithmetic_keeps_real_result:total/2#1", headDeltaTableName: "__delta_total", headColumns: ["name", "value"], insertSql: `INSERT OR IGNORE INTO "total" ("name", "value") SELECT DISTINCT d0."name", (d0."whole" + d0."fraction") FROM "__frontier_measure" d0 WHERE d0."_phase" >= 0 RETURNING "name", "value"`, selectSql: `SELECT "name", "value" FROM "total"`, recomputeSql: `DELETE FROM "total";
-INSERT OR IGNORE INTO "total" ("name", "value") SELECT b0."name", (b0."whole" + b0."fraction") FROM "measure" b0`, supportSql: [`DELETE FROM "__support_next_total"`, `INSERT INTO "__support_next_total" ("name", "value", "__support_count") SELECT "name", "value", sum("__support_count") FROM (SELECT b0."name" AS "name", (b0."whole" + b0."fraction") AS "value", count(*) AS "__support_count" FROM "measure" b0 GROUP BY b0."name", (b0."whole" + b0."fraction")) GROUP BY "name", "value"`, `UPDATE "total" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_total" n WHERE n."name" = h."name" AND n."value" = h."value"), 0))`, `DELETE FROM "total" WHERE "__support_count" <= 0 RETURNING "name", "value"`, `INSERT INTO "total" ("name", "value", "__support_count") SELECT "name", "value", n."__support_count" FROM "__support_next_total" n WHERE NOT EXISTS (SELECT 1 FROM "total" h WHERE n."name" = h."name" AND n."value" = h."value") RETURNING "name", "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "total" ("name", "value") SELECT b0."name", (b0."whole" + b0."fraction") FROM "measure" b0`, supportSql: [`DELETE FROM "__support_next_total"`, `INSERT INTO "__support_next_total" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT b0."name" AS "name", (b0."whole" + b0."fraction") AS "value", count(*) AS "__refcount" FROM "measure" b0 GROUP BY b0."name", (b0."whole" + b0."fraction")) GROUP BY "name", "value"`, `UPDATE "total" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_total" n WHERE n."name" = h."name" AND n."value" = h."value"), 0))`, `DELETE FROM "total" WHERE "__refcount" <= 0 RETURNING "name", "value"`, `INSERT INTO "total" ("name", "value", "__refcount") SELECT "name", "value", n."__refcount" FROM "__support_next_total" n WHERE NOT EXISTS (SELECT 1 FROM "total" h WHERE n."name" = h."name" AND n."value" = h."value") RETURNING "name", "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

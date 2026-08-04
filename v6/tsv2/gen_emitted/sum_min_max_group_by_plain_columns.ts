@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "star_row" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
-  `CREATE TABLE "stat" ("repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
+  `CREATE TABLE "stat" ("repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_star_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_row_sign" ON "__delta_star_row" ("_sign")`,
   `CREATE INDEX "__delta_star_row_group" ON "__delta_star_row" ("repo", "stars")`,

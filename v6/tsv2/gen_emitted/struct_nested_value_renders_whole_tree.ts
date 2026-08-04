@@ -148,7 +148,7 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "diag" ("where" INTEGER NOT NULL, "message" TEXT NOT NULL, PRIMARY KEY ("where", "message")) WITHOUT ROWID`,
-  `CREATE TABLE "diag_file" ("file" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TABLE "diag_file" ("file" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file")) WITHOUT ROWID`,
   `CREATE TABLE "place" ("__id" INTEGER PRIMARY KEY, "file" TEXT NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("file", "at"))`,
   `CREATE TEMP VIEW "__ref_place" AS SELECT t."__id", "file", "at", json_object('file', t."file", 'at', json((SELECT c."__rendered" FROM "__ref_span" c WHERE c."__id" = t."at"))) AS "__rendered" FROM "place" t`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
@@ -181,7 +181,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_diag_file" ("file" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_diag_file" ("file" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("file")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -275,7 +275,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "diag_file", ruleId: "struct_nested_value_renders_whole_tree:diag_file/1#1", headDeltaTableName: "__delta_diag_file", headColumns: ["file"], insertSql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT DISTINCT b0."file" FROM "__frontier_diag" d0, "__ref_place" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."where" RETURNING "file"`, selectSql: `SELECT "file" FROM "diag_file"`, recomputeSql: `DELETE FROM "diag_file";
-INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__support_count") SELECT "file", sum("__support_count") FROM (SELECT b1."file" AS "file", count(*) AS "__support_count" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0))`, `DELETE FROM "diag_file" WHERE "__support_count" <= 0 RETURNING "file"`, `INSERT INTO "diag_file" ("file", "__support_count") SELECT "file", n."__support_count" FROM "__support_next_diag_file" n WHERE NOT EXISTS (SELECT 1 FROM "diag_file" h WHERE n."file" = h."file") RETURNING "file"`], aggregateSql: null },
+INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__refcount") SELECT "file", sum("__refcount") FROM (SELECT b1."file" AS "file", count(*) AS "__refcount" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0))`, `DELETE FROM "diag_file" WHERE "__refcount" <= 0 RETURNING "file"`, `INSERT INTO "diag_file" ("file", "__refcount") SELECT "file", n."__refcount" FROM "__support_next_diag_file" n WHERE NOT EXISTS (SELECT 1 FROM "diag_file" h WHERE n."file" = h."file") RETURNING "file"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "active" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "active" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TABLE "disabled" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL CHECK ("value" IN (0,1)), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TABLE "item" ("name" TEXT NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_active" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_item_phase" ON "__frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_item_phase" ON "__next_frontier_item" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_active" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_active" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -248,7 +248,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "active", ruleId: "bool_relation_negation_is_two_valued:active/1#1", headDeltaTableName: "__delta_active", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "active" ("name") SELECT DISTINCT d0."name" FROM "__frontier_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "disabled" n0 WHERE n0."name" = d0."name" AND n0."value" = 1) RETURNING "name"`, selectSql: `SELECT "name" FROM "active"`, recomputeSql: `DELETE FROM "active";
-INSERT OR IGNORE INTO "active" ("name") SELECT b0."name" FROM "item" b0 WHERE NOT EXISTS (SELECT 1 FROM "disabled" n0 WHERE n0."name" = b0."name" AND n0."value" = 1)`, supportSql: [`DELETE FROM "__support_next_active"`, `INSERT INTO "__support_next_active" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "item" b0 WHERE NOT EXISTS (SELECT 1 FROM "disabled" n0 WHERE n0."name" = b0."name" AND n0."value" = 1) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "active" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_active" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "active" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "active" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_active" n WHERE NOT EXISTS (SELECT 1 FROM "active" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "active" ("name") SELECT b0."name" FROM "item" b0 WHERE NOT EXISTS (SELECT 1 FROM "disabled" n0 WHERE n0."name" = b0."name" AND n0."value" = 1)`, supportSql: [`DELETE FROM "__support_next_active"`, `INSERT INTO "__support_next_active" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "item" b0 WHERE NOT EXISTS (SELECT 1 FROM "disabled" n0 WHERE n0."name" = b0."name" AND n0."value" = 1) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "active" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_active" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "active" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "active" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_active" n WHERE NOT EXISTS (SELECT 1 FROM "active" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
