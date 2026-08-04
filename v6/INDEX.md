@@ -90,6 +90,7 @@
 | [tsv2/goldens/ghcacher_304_golden/README.md](tsv2/goldens/ghcacher_304_golden/README.md) | 89 | Ghcacher 304 golden |
 | [tsv2/goldens/ghcacher_checkout_golden/README.md](tsv2/goldens/ghcacher_checkout_golden/README.md) | 225 | Ghcacher clone/checkout golden |
 | [tsv2/goldens/ghcacher_config_golden/README.md](tsv2/goldens/ghcacher_config_golden/README.md) | 51 | Ghcacher config-feeder golden |
+| [tsv2/goldens/ghcacher_env_golden/README.md](tsv2/goldens/ghcacher_env_golden/README.md) | 71 | Ghcacher env / config-as-json golden |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 50 | Ghcacher clock golden |
 | [tsv2/goldens/ghcacher_tier_golden/README.md](tsv2/goldens/ghcacher_tier_golden/README.md) | 50 | Ghcacher tier golden |
 | [tsv2/goldens/multirepo_crawl/README.md](tsv2/goldens/multirepo_crawl/README.md) | 74 | multirepo_crawl — stopping-point program #5, graded against v5 |
@@ -1306,6 +1307,12 @@
 ### tsv2/goldens/ghcacher_config_golden/README.md
 ```
 1:# Ghcacher config-feeder golden
+```
+
+### tsv2/goldens/ghcacher_env_golden/README.md
+```
+1:# Ghcacher env / config-as-json golden
+44:## Fail-first receipt
 ```
 
 ### tsv2/goldens/ghcacher_tick_golden/README.md
