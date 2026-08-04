@@ -100,7 +100,7 @@ async function exhaustPolicySeam(liveTabRows: number): Promise<{ seam: ISqlSeam;
   if (values.length > 0) {
     await run(
       seam,
-      `INSERT INTO "live_tab" ("session_id", "tab_id", "__support_count") VALUES ${values.join(",")}`,
+      `INSERT INTO "live_tab" ("session_id", "tab_id", "__refcount") VALUES ${values.join(",")}`,
     );
   }
   // One tick's worth of arrival, staged the way IncrementalRuntime.applyArrivals
