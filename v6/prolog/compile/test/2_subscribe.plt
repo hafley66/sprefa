@@ -1,12 +1,13 @@
-% 2_demand_cone.plt : receipts for demand_cone/4 (the lazy-compute seed).
+% 2_subscribe.plt : receipts for subscribed_rels/4 (the lazy-compute seed).
 %
 % One predicate, compute only, wired to nothing yet. These pin the two
-% branches of the spec: the null-query compat rule, and the demand-dependency
-% closure (transitive, positive and negated reads, sampler wrappers included).
+% branches of the spec: the null-query compat rule, and the subscribe
+% dependency closure (transitive, positive and negated reads, sampler
+% wrappers included).
 
 :- use_module(library(plunit)).
 :- use_module(library(lists)).
-:- use_module('../../2_demand_cone', [ demand_cone/4 ]).
+:- use_module('../../2_subscribe', [ subscribed_rels/4 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
 :- use_module('../../lower', [ lower_program/2, boot_statements/5 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
@@ -22,28 +23,28 @@
 :- dynamic(cone_test_dir/1).
 :- prolog_load_context(directory, ConeHere), assertz(cone_test_dir(ConeHere)).
 
-:- begin_tests(demand_cone).
+:- begin_tests(subscribe_cone).
 
 % An empty query list means no analysis entry point; the compat rule puts the
-% whole program on the demand side, so every declared rel is in the cone.
+% whole program on the subscribe side, so every declared rel is in the cone.
 test(zero_query_all_rels) :-
     Decls = [kind(root/1, log), keep(root/1, all),
              kind(mid/2, set),
              kind(top/1, set)],
     Rules = [(mid(Left, Right) <- root(Left), root(Right)),
              (top(Result) <- mid(_, Result))],
-    demand_cone(Decls, Rules, [], Cone),
+    subscribed_rels(Decls, Rules, [], Cone),
     Cone == [mid/2, root/1, top/1].
 
-% The cone is only the query's demand chain; the rule nowhere reachable from
-% the seed (e <- d) stays out even though d and e are declared.
+% The cone is only the query's subscribe chain; the rule nowhere reachable
+% from the seed (e <- d) stays out even though d and e are declared.
 test(hand_computed_cone) :-
     Decls = [kind(a/1, set), kind(b/1, set), kind(c/1, set),
              kind(d/1, set), kind(e/1, set)],
     Rules = [(b(Value) <- a(Value)),
              (c(Value) <- b(Value)),
              (e(Value) <- d(Value))],
-    demand_cone(Decls, Rules, [c(Value)], Cone),
+    subscribed_rels(Decls, Rules, [c(Value)], Cone),
     Cone == [a/1, b/1, c/1].
 
 % pre/1 still names its sampled rel, so the sampler reference joins the cone
@@ -52,7 +53,7 @@ test(sampler_included) :-
     Decls = [kind(trigger/1, log), keep(trigger/1, all),
              kind(sample/1, set)],
     Rules = [(sample(Total) <- trigger(Item), pre(sample(Total)))],
-    demand_cone(Decls, Rules, [sample(Item)], Cone),
+    subscribed_rels(Decls, Rules, [sample(Item)], Cone),
     sort([sample/1, trigger/1], Expect),
     Cone == Expect.
 
@@ -61,7 +62,7 @@ test(negation_included) :-
     Decls = [kind(ok/1, set), kind(blocked/1, set),
              kind(gate/1, set)],
     Rules = [(gate(Name) <- ok(Name), not(blocked(Name)))],
-    demand_cone(Decls, Rules, [gate(Name)], Cone),
+    subscribed_rels(Decls, Rules, [gate(Name)], Cone),
     sort([gate/1, ok/1, blocked/1], Expect),
     Cone == Expect.
 
@@ -82,7 +83,7 @@ test(decl_walk_reads_the_real_decl_forms) :-
       Codes),
     parse_dl(Codes, prog(Decls, Rules), _, []),
     \+ memberchk(kind(seed/1, _), Decls),
-    demand_cone(Decls, Rules, [], Cone),
+    subscribed_rels(Decls, Rules, [], Cone),
     Cone == [job/1, seed/1, trail/1],
     !.
 
@@ -95,11 +96,11 @@ test(declared_rels_match_analyze) :-
       Codes),
     parse_dl(Codes, prog(Decls, Rules), _, []),
     declared_refs(Decls, AnalyzeRefs),
-    demand_cone(Decls, Rules, [], Cone),
+    subscribed_rels(Decls, Rules, [], Cone),
     Cone == AnalyzeRefs,
     !.
 
-% EXTENSION 2: edge arms. `<+` rules carry demand exactly as `<-` rules do,
+% EXTENSION 2: edge arms. `<+` rules carry subscribe exactly as `<-` rules do,
 % and cone_fixpoint/3 matched only `<-` before the wire -- an edge-headed rel
 % contributed neither its head nor a single body read. This chain is
 % head-to-body-to-head twice, so a missed arm shows up as a missing rel rather
@@ -114,7 +115,7 @@ test(edge_arm_chain_including_pre) :-
              (counter(Id, Next) <+ tick_source(Id), pre(counter(Id, Prev)),
                                    Next := Prev + 1),
              (rollup(Id, Total) <- counter(Id, Total))],
-    demand_cone(Decls, Rules, [rollup(_, _)], Cone),
+    subscribed_rels(Decls, Rules, [rollup(_, _)], Cone),
     Cone == [counter/2, rollup/2, tick_source/1].
 
 % EXTENSION 3: next/1 and combine splice their arguments in, so the atoms they
@@ -125,7 +126,7 @@ test(next_and_combine_spliced) :-
              col_type(monitored/1, id, int), col_type(display/1, id, int)],
     Rules = [(monitored(Id) <- combine(pickable(Id), sensor(Id))),
              (display(Id) <- next(monitored(Id)))],
-    demand_cone(Decls, Rules, [display(_)], Cone),
+    subscribed_rels(Decls, Rules, [display(_)], Cone),
     Cone == [display/1, monitored/1, pickable/1, sensor/1].
 
 % EXTENSION 4: the registry decides what a rel read is, so decode/2's json
@@ -143,9 +144,9 @@ test(registry_decides_what_a_read_is) :-
                                         '__host_response_weigh'(Id, Label),
                                         Id > 0, now(Tick),
                                         Stamped := concat([Bucket, Label, Tick]))],
-    demand_cone(Decls, Rules, [card(_, _)], CardCone),
+    subscribed_rels(Decls, Rules, [card(_, _)], CardCone),
     CardCone == [card/2, payload/2],
-    demand_cone(Decls, Rules, [roll_call(_, _)], RollCone),
+    subscribed_rels(Decls, Rules, [roll_call(_, _)], RollCone),
     RollCone == ['__host_response_weigh'/2, interval/2, payload/2,
                  roll_call/2].
 
@@ -185,8 +186,8 @@ test(golden_flex_cone_invariants) :-
                                            splice_bare(true)),
                                PreRef) ),
            memberchk(PreRef, Cone)),
-    % A strict subset: a 55-rel program answering two queries must not demand
-    % all 55, or the wire proved nothing.
+    % A strict subset: a 55-rel program answering two queries must not subscribe
+    % to all 55, or the wire proved nothing.
     length(Cone, ConeSize), length(AllRefs, AllSize),
     ConeSize < AllSize,
     !.
@@ -208,11 +209,11 @@ test(emitted_module_carries_the_hand_computed_cone) :-
     emitted_text(emitted_module_carries_the_hand_computed_cone,
                  Program, Bindings, Text),
     once(sub_atom(Text, _, _, _,
-                  'export const demandedRels: readonly string[] = ["job/2", "seed/2"];')),
+                  'export const subscribedRels: readonly string[] = ["job/2", "seed/2"];')),
     !.
 
 % The compat rule at the emit seam: no query decl means no analysis entry
-% point, so every rel the program declares or mentions is on the demand side.
+% point, so every rel the program declares or mentions is on the subscribe side.
 test(zero_query_module_carries_every_rel) :-
     string_codes(
       "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n",
@@ -220,7 +221,7 @@ test(zero_query_module_carries_every_rel) :-
     parse_dl(Codes, Program, Bindings, []),
     emitted_text(zero_query_module_carries_every_rel, Program, Bindings, Text),
     once(sub_atom(Text, _, _, _,
-                  'export const demandedRels: readonly string[] = ["job/2", "seed/2", "unread/1"];')),
+                  'export const subscribedRels: readonly string[] = ["job/2", "seed/2", "unread/1"];')),
     !.
 
 emitted_text(Name, Program, Bindings, Text) :-
@@ -231,4 +232,4 @@ emitted_text(Name, Program, Bindings, Text) :-
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(Name, Plan, Lowered, Boot, Text).
 
-:- end_tests(demand_cone).
+:- end_tests(subscribe_cone).

@@ -293,10 +293,10 @@ local_types_lines(
       '  params: readonly IRowValue[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly demandedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };'
     ]).
 
-world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, DemandedRels), Lines) :-
+world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels), Lines) :-
     findall(HostPlan,
             ( member(Decl, Decls),
               Decl = sh_decl(_, _, _, _),
@@ -320,7 +320,7 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, DemandedRels), Lines) :
     maplist(host_plan_json, HostPlans, HostRows),
     maplist(bind_plan_json, BindPlans, BindRows),
     maplist(query_plan_json, QueryPlans, QueryRows),
-    maplist(demanded_rel_json, DemandedRels, DemandedRows),
+    maplist(subscribed_rel_json, SubscribedRels, SubscribedRows),
     % PHASE 2 (plans/2026-07-29-runtime-bridge-header.md): sh hosts and the
     % interval bind EXECUTE in the served runtime, so neither emits a refusal
     % row any more. The const and its slot stay: a future world term with no
@@ -332,15 +332,15 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, DemandedRels), Lines) :
                      BindLine),
     array_const_line('export const queryPlans: readonly IQueryPlanData[]', QueryRows,
                      QueryLine),
-    array_const_line('export const demandedRels: readonly string[]',
-                     DemandedRows, DemandedLine),
+    array_const_line('export const subscribedRels: readonly string[]',
+                     SubscribedRows, SubscribedLine),
     array_const_line('export const unsupportedExecution: readonly string[]',
                      Refusals, RefusalLine),
-    Lines = [HostLine, BindLine, QueryLine, DemandedLine, RefusalLine].
+    Lines = [HostLine, BindLine, QueryLine, SubscribedLine, RefusalLine].
 
 % One cone member as the emitted module spells it: the "name/arity" string
 % compile.pl:program_plan/2 computed, never re-derived out here.
-demanded_rel_json(Name/Arity, Json) :-
+subscribed_rel_json(Name/Arity, Json) :-
     format(atom(Ref), '~w/~w', [Name, Arity]),
     js_string(Ref, Json).
 

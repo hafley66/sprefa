@@ -434,11 +434,11 @@ export interface IQueryPlan {
   readonly snapshot: "current";
 }
 
-/** The demand cone as an emitted module spells it: one "name/arity" string per
- *  rel, sorted. Seeded by the module's own query decls and closed over the rule
- *  graph (2_demand_cone.pl); a module with no query decl lists every rel it
+/** The subscribe cone as an emitted module spells it: one "name/arity" string
+ *  per rel, sorted. Seeded by the module's own query decls and closed over the
+ *  rule graph (2_subscribe.pl); a module with no query decl lists every rel it
  *  declares or mentions. Nothing reads it yet. */
-export type IDemandedRel = string;
+export type ISubscribedRel = string;
 
 /**
  * What a compiled `.dl6` module actually exports: `IGenProgram`'s five pinned
@@ -452,7 +452,7 @@ export interface IServedProgram extends IGenProgram {
   readonly hostPlans: readonly IHostPlan[];
   readonly bindPlans: readonly IBindPlan[];
   readonly queryPlans: readonly IQueryPlan[];
-  readonly demandedRels: readonly IDemandedRel[];
+  readonly subscribedRels: readonly ISubscribedRel[];
   readonly unsupportedExecution: readonly string[];
 }
 
