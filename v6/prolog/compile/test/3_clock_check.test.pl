@@ -623,6 +623,37 @@ test(live_keyed_first_write_arm_is_labelled_not_refused) :-
            not_provable(arm_absence_batch_invariance(
                           rule(1, edge, total/2), total/2)))).
 
+% THE TWO-ARM VERSION OF THAT SHAPE IS THE CLOSEST THING TO `one` THE SURFACE
+% HAS, and this pins why it is not `one`. Two arms, two triggers, one batch,
+% each arm reading not(head) over the shared edge-headed head: exactly one row
+% lands and nothing in the program says which. The checker labels both arms and
+% refuses neither, so the winner is whoever gets there first -- here the ARRIVAL
+% order, reversed below and reversing the answer with it. The emitted module
+% referees the same race by SOURCE ARM order instead, so the two doors disagree
+% whenever arm order and arrival order disagree; that half is measured in
+% COMPOSE.md and is why conformance one_vs_any.pl grades only the order on
+% which the two doors agree.
+test(two_arm_negation_guard_is_a_race_not_one) :-
+    Program =
+      prog([ kind(dispatch_first/2, log), keep(dispatch_first/2, all) ],
+           [ (dispatch_first(AckId, acked) <+
+                (dispatch_ack(AckId), not(dispatch_first(AckId, _AckTag)))),
+             (dispatch_first(SealId, sealed) <+
+                (dispatch_seal(SealId), not(dispatch_first(SealId, _SealTag)))) ]),
+    check_clock_program(Program),
+    findall(Boundary, clock_boundary(Program, Boundary), Boundaries),
+    Boundaries ==
+      [ not_provable(arm_absence_batch_invariance(
+                       rule(1, edge, dispatch_first/2), dispatch_first/2)),
+        not_provable(arm_absence_batch_invariance(
+                       rule(2, edge, dispatch_first/2), dispatch_first/2)) ],
+    once(run_program(Program, [],
+                     [[ +dispatch_ack(1), +dispatch_seal(1) ]], AckFirst, _)),
+    once(run_program(Program, [],
+                     [[ +dispatch_seal(1), +dispatch_ack(1) ]], SealFirst, _)),
+    AckFirst  == [dispatch_ack(1), dispatch_seal(1), dispatch_first(1, acked)],
+    SealFirst == [dispatch_ack(1), dispatch_seal(1), dispatch_first(1, sealed)].
+
 equal_diamond(
   prog([ kind(source/1, log), keep(source/1, all),
          kind(left/1, log), keep(left/1, all),
