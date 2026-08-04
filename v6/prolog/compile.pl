@@ -24,7 +24,7 @@
 :- use_module('1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
 :- use_module('3_clock_check', [check_clock_program/1]).
-:- use_module('2_demand_cone', [demand_cone/4]).
+:- use_module('2_subscribe', [subscribed_rels/4]).
 :- use_module(strat).
 :- use_module(lower).
 :- use_module(emit_ts).
@@ -72,7 +72,7 @@ find_fixture(Stream, Name, Term, Bindings) :-
 % once so both stay pure functions of it rather than re-deriving it ═════════
 %
 % plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-%      DemandedRels)
+%      SubscribedRels)
 %   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
 %             ColumnTypes) covering every ref program_refs/2 or typed
 %             declaration finds (arrival
@@ -86,7 +86,7 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
 %              program order for each occurrence; with at most one edge rule
 %              per target fixture this is a formality kept for generality).
-%   DemandedRels: 2_demand_cone.pl's cone, sorted Name/Arity. Computed here
+%   SubscribedRels: 2_subscribe.pl's cone, sorted Name/Arity. Computed here
 %              and threaded to emission; nothing else reads it.
 
 % 1_host_expand.pl is SHARED with the reference engine, so its refusals are
@@ -179,9 +179,9 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % The query decls are the cone's only seeds, read from the POST-expansion
     % Decls for the same reason emit_ts.pl:world_plan_lines/2 reads them there.
     findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
-    demand_cone(Decls, Rules, Queries, DemandedRels),
+    subscribed_rels(Decls, Rules, Queries, SubscribedRels),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-                DemandedRels).
+                SubscribedRels).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
