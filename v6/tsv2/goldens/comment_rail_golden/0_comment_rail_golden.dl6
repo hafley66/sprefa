@@ -1,0 +1,237 @@
+# comment_rail_golden.dl6 -- the repo's comment-budget pre-commit check, ported
+# from bash (claude-research/bin/comment-prod) to dl6 rules.
+#
+# THE CHECK: a run of MORE THAN 2 consecutive comment lines that the staged
+# diff touches is a violation. `@comment-ok:` inside the run waives it. Exempt
+# paths (docs, locks, test/spec/fixture/golden, vendor trees) pass whole.
+#
+# ── THE GROUND THIS STANDS ON ──────────────────────────────────────────────
+# plans/2026-07-29-comment-node-verdict.md measured four text-acquisition
+# routes and ruled (b2)+(c): the CST-family host template pre-filters to
+# comment nodes host-side (5,939 rows crossing the boundary rather than
+# 230,096, 38.7x amplification avoided), and a cheap marker scanner is joined
+# to it IN-LANGUAGE. That verdict's own worked shape is
+#
+#     suppressed(path, line, code) <-
+#       directive_line(path, digest, line, code),        # route (c), grep
+#       comment_node(path, digest, line, kind, text).    # route (b2), grammar
+#
+# and `waived_run` below is that shape with `@comment-ok:` in the marker seat.
+# The grammar atom is what makes the marker safe: the same verdict measured 9
+# real false positives in 8,193 scanner-flagged lines of THIS repository, so a
+# `@comment-ok:` inside a string literal must waive nothing, and the fixture
+# that pins it is in this golden.
+#
+# plans/2026-08-02-cst-query-rulings.md rules that matching is BOUGHT and that
+# sprefa-extract is the matching executor (ast-grep-core / ast-grep-language
+# 0.38, Cargo.toml:18-19), with the external ast-grep CLI a compatibility door.
+# Nothing here spawns that CLI. It also rules extraction demand LAZY: only
+# `graded_file` raises a demand row, so an exempt path costs zero extractor
+# processes, which is the `cst_need` shape keyed by the staged paths.
+#
+# ── COMMENTS ARE AST NODES, NOT LINES THAT LOOK LIKE COMMENTS ──────────────
+# The bash tool grades a line by regex on its leading characters. This grades a
+# COMMENT NODE. Consequences the regex cannot reach, each pinned by a fixture:
+#
+#   - `const banner = "// not a comment";` is a string literal, so it is no row
+#   - a `/* ... */` block is ONE node already spanning its lines, so a 3-line
+#     block is a 3-line run before any coalescing happens
+#   - `code(); // why` is a comment node on that line, which a leading-character
+#     test cannot see
+#
+# LANGUAGE COVERAGE is the cst family's, not "every file": ARCH row
+# language_parsing has ts/tsx/js/rust/go live, and prolog rides ast-grep's
+# grammar registry. MARKDOWN IS A KNOWN HOLE (ARCH doc_format_extraction,
+# SLOT-EXTRACTOR-WAIVER in the comment-node verdict section 6): sprefa-extract
+# has no markdown grammar. It costs this rail nothing only because `*.md` is on
+# the exempt list already; a language with no grammar answers zero comment
+# nodes and therefore zero violations, which is a SILENT PASS, and 6_gate.sh
+# prints the covered-extension list rather than letting that go unstated.
+#
+# ── WHAT LIVES IN A HOST, AND WHY ──────────────────────────────────────────
+# Four `sh` declarations, all of them git or extraction:
+#
+#   staged_file_list  git diff --cached --name-only + the exempt-path test
+#   added_line_span   git diff --cached --unified=0, @@ headers reconstructed
+#   comment_fact      route (b2): sprefa-extract cst family + the byte-span
+#                     flattener (scripts/comment_node.py, the verdict's cn.py)
+#   waiver_marker     route (c): the cheap scanner, grammar-gated by the join
+#
+# The exempt-path test is a GLOB and the marker test is a SUBSTRING; the dl6
+# expression surface is arithmetic, comparison and norm/1, so neither has a
+# rule spelling. Everything the port is about -- coalescing nodes into runs,
+# measuring them, thresholding, intersecting with the diff, subtracting the
+# waiver -- is a rule below.
+#
+# ── RUN COALESCING WITHOUT RECURSION ───────────────────────────────────────
+# strat.pl refuses a recursive stratum (`unsupported_construct(
+# recursive_stratum(...))`), so a run start cannot be propagated node by node
+# down the chain. Runs are spelled as BOUNDARIES instead:
+#
+#   a node no other node ends one line above is a run START
+#   a node no other node starts one line below is a run END
+#
+# `not/1` is live only around one PLAIN relation atom, so "some node ends one
+# line above" is materialized as a shifted rel rather than written as an
+# arithmetic argument inside the negation. Two shift rels, one row each per
+# comment node: linear in nodes.
+#
+# Pairing a start to its end is an inequality join, and it is over BOUNDARY
+# rows (2 per run), never node or line rows. `min/1` picks the first end at or
+# after the start. The run's line extent is then `end - start + 1` arithmetic,
+# NOT a second join back to the nodes: a run is contiguous by construction, so
+# counting its members would be a `nodes x runs` join to recover a number two
+# integers already hold.
+#
+# The two remaining range joins -- diff intersection and waiver -- read
+# `long_run`, which the threshold has already emptied in the ordinary case, so
+# neither sees the added-line set unless a violation candidate exists.
+# 6_gate.sh's cardinality leg is what holds that ordering in place.
+#
+# ── THE RX LOWERING ────────────────────────────────────────────────────────
+#
+#   const gradedFile$ = stagedFile$.pipe(
+#     map(rows => rows.filter(row => row.exemptFlag === 0)))
+#
+#   const runStart$ = combineLatest([commentNode$, nodeSuccessorLine$]).pipe(
+#     map(([nodes, successors]) => nodes.filter(node => !successors.has(key(node)))))
+#
+#   const waiverInComment$ = combineLatest([markerHit$, commentNode$]).pipe(
+#     map(([hits, nodes]) => hits.filter(hit => nodes.some(node =>
+#       node.filePath === hit.filePath &&
+#       node.startLine <= hit.markerLine && hit.markerLine <= node.endLine))))
+#
+#   const violationRun$ = combineLatest([longRun$, touchedRun$, waivedRun$]).pipe(
+#     map(([runs, touched, waived]) =>
+#       runs.filter(run => touched.has(key(run)) && !waived.has(key(run)))))
+
+# ── hosts ──────────────────────────────────────────────────────────────────
+# `index_digest` is the grading key: one value per run, so a second grading in
+# the same database is a second witness rather than a cache hit. `blob_digest`
+# is the staged blob oid, which is what makes re-extraction content-addressed
+# (`salt_minting = content_addressed`): restaging identical bytes is a cache
+# hit, and the feeder resolves every per-file host against THAT blob rather
+# than the worktree file, so unstaged edits cannot change a commit's grade.
+# `: {index_digest};` is the shell no-op that mentions an input the command
+# itself has no use for (the spelling comment-lint-rail.dl6 uses for digests).
+
+sh staged_file_list(index_digest: text)
+  -> (file_path: text, blob_digest: text, exempt_flag: int) =
+  `: {index_digest}; "$DL_COMMENT_BUDGET_FEED" staged`.
+
+sh added_line_span(path: text, digest: text) -> (line: int) =
+  `: {digest}; "$DL_COMMENT_BUDGET_FEED" added {path}`.
+
+sh comment_fact(path: text, digest: text) -> (line: int, end_line: int, kind: text) =
+  `"$DL_COMMENT_BUDGET_FEED" nodes {path} {digest}`.
+
+sh waiver_marker(path: text, digest: text) -> (line: int) =
+  `"$DL_COMMENT_BUDGET_FEED" markers {path} {digest}`.
+
+# ── sources ────────────────────────────────────────────────────────────────
+# Two arrivals start a grading, and they are arrivals rather than bodiless
+# facts because the TEXT DOOR HAS NO FACT SEAM: compile_dl6/2 passes
+# `Initial = []` (compile.pl:207-224) where the term door takes seed rows from
+# its fixture/5, so `max_run(2).` in .dl6 text refuses with
+# `level_rule_no_positive_body`. Recorded rather than worked around; the
+# ghcacher goldens all seed the same way.
+#
+# MAX_RUN is a row rather than a literal in a rule, so the threshold is data.
+rel max_run(limit_lines: int).
+rel staged_probe(index_digest: text).
+
+rel staged_file(file_path: text, blob_digest: text, exempt_flag: int).
+staged_file(file_path, blob_digest, exempt_flag) <-
+  staged_probe(index_digest),
+  staged_file_list(index_digest, file_path, blob_digest, exempt_flag).
+
+# Exempt paths are subtracted HERE, which is why they cost nothing: an exempt
+# file raises no demand row, so no extractor process ever runs for it.
+rel graded_file(file_path: text, blob_digest: text).
+graded_file(file_path, blob_digest) <-
+  staged_file(file_path, blob_digest, exempt_flag), exempt_flag == 0.
+
+rel added_line(file_path: text, line_number: int).
+added_line(file_path, line_number) <-
+  graded_file(file_path, blob_digest),
+  added_line_span(file_path, blob_digest, line_number).
+
+rel comment_node(file_path: text, start_line: int, end_line: int, kind: text).
+comment_node(file_path, start_line, end_line, kind) <-
+  graded_file(file_path, blob_digest),
+  comment_fact(file_path, blob_digest, start_line, end_line, kind).
+
+rel marker_hit(file_path: text, marker_line: int).
+marker_hit(file_path, marker_line) <-
+  graded_file(file_path, blob_digest),
+  waiver_marker(file_path, blob_digest, marker_line).
+
+# ── coalescing ─────────────────────────────────────────────────────────────
+rel node_successor_line(file_path: text, successor_line: int).
+node_successor_line(file_path, successor_line) <-
+  comment_node(file_path, _, end_line, _), successor_line := end_line + 1.
+
+rel node_predecessor_line(file_path: text, predecessor_line: int).
+node_predecessor_line(file_path, predecessor_line) <-
+  comment_node(file_path, start_line, _, _), predecessor_line := start_line - 1.
+
+rel run_start(file_path: text, start_line: int).
+run_start(file_path, start_line) <-
+  comment_node(file_path, start_line, _, _),
+  not(node_successor_line(file_path, start_line)).
+
+rel run_end(file_path: text, end_line: int).
+run_end(file_path, end_line) <-
+  comment_node(file_path, _, end_line, _),
+  not(node_predecessor_line(file_path, end_line)).
+
+rel run_end_candidate(file_path: text, start_line: int, end_line: int).
+run_end_candidate(file_path, start_line, end_line) <-
+  run_start(file_path, start_line), run_end(file_path, end_line),
+  end_line >= start_line.
+
+rel run_extent(file_path: text, start_line: int, end_line: int).
+run_extent(file_path, start_line, min(end_line)) <-
+  run_end_candidate(file_path, start_line, end_line).
+
+# ── the verdict ────────────────────────────────────────────────────────────
+rel long_run(file_path: text, start_line: int, end_line: int, comment_line_count: int).
+long_run(file_path, start_line, end_line, comment_line_count) <-
+  run_extent(file_path, start_line, end_line),
+  max_run(limit_lines),
+  comment_line_count := end_line - start_line + 1,
+  comment_line_count > limit_lines.
+
+rel touched_run(file_path: text, start_line: int, end_line: int).
+touched_run(file_path, start_line, end_line) <-
+  long_run(file_path, start_line, end_line, _),
+  added_line(file_path, added_line_number),
+  added_line_number >= start_line,
+  added_line_number =< end_line.
+
+# The grammar gate: a scanner hit counts only where the parser agrees a comment
+# node covers that line.
+rel waiver_in_comment(file_path: text, marker_line: int).
+waiver_in_comment(file_path, marker_line) <-
+  marker_hit(file_path, marker_line),
+  comment_node(file_path, start_line, end_line, _),
+  marker_line >= start_line,
+  marker_line =< end_line.
+
+rel waived_run(file_path: text, start_line: int, end_line: int).
+waived_run(file_path, start_line, end_line) <-
+  long_run(file_path, start_line, end_line, _),
+  waiver_in_comment(file_path, marker_line),
+  marker_line >= start_line,
+  marker_line =< end_line.
+
+rel violation_run(file_path: text, start_line: int, end_line: int, comment_line_count: int).
+violation_run(file_path, start_line, end_line, comment_line_count) <-
+  long_run(file_path, start_line, end_line, comment_line_count),
+  touched_run(file_path, start_line, end_line),
+  not(waived_run(file_path, start_line, end_line)).
+
+rel violation_total(runs: int).
+violation_total(count(file_path)) <- violation_run(file_path, _, _, _).
+
+? violation_run(file_path, start_line, end_line, comment_line_count).

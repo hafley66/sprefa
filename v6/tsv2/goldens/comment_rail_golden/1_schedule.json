@@ -1,0 +1,681 @@
+[
+  [
+    {
+      "rel": "max_run",
+      "sign": "add",
+      "row": [
+        2
+      ]
+    },
+    {
+      "rel": "staged_probe",
+      "sign": "add",
+      "row": [
+        "stage1"
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        0,
+        "stage1",
+        "src/violation.ts",
+        "blob-violation",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        1,
+        "stage1",
+        "src/block.ts",
+        "blob-block",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        2,
+        "stage1",
+        "src/waived.ts",
+        "blob-waived",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        3,
+        "stage1",
+        "src/fake-waiver.ts",
+        "blob-fake",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        4,
+        "stage1",
+        "src/untouched.ts",
+        "blob-untouched",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        5,
+        "stage1",
+        "src/pair.ts",
+        "blob-pair",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        6,
+        "stage1",
+        "src/gapped.ts",
+        "blob-gapped",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        7,
+        "stage1",
+        "tests/exempt.test.ts",
+        "blob-exempt",
+        1
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/violation.ts|digest:text=blob-violation",
+        0,
+        "src/violation.ts",
+        "blob-violation",
+        10
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/violation.ts|digest:text=blob-violation",
+        1,
+        "src/violation.ts",
+        "blob-violation",
+        11
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/violation.ts|digest:text=blob-violation",
+        2,
+        "src/violation.ts",
+        "blob-violation",
+        12
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block.ts|digest:text=blob-block",
+        0,
+        "src/block.ts",
+        "blob-block",
+        20
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block.ts|digest:text=blob-block",
+        1,
+        "src/block.ts",
+        "blob-block",
+        21
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block.ts|digest:text=blob-block",
+        2,
+        "src/block.ts",
+        "blob-block",
+        22
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/waived.ts|digest:text=blob-waived",
+        0,
+        "src/waived.ts",
+        "blob-waived",
+        5
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/waived.ts|digest:text=blob-waived",
+        1,
+        "src/waived.ts",
+        "blob-waived",
+        6
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/waived.ts|digest:text=blob-waived",
+        2,
+        "src/waived.ts",
+        "blob-waived",
+        7
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        0,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        1,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        2,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        3,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/untouched.ts|digest:text=blob-untouched",
+        0,
+        "src/untouched.ts",
+        "blob-untouched",
+        50
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/pair.ts|digest:text=blob-pair",
+        0,
+        "src/pair.ts",
+        "blob-pair",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/pair.ts|digest:text=blob-pair",
+        1,
+        "src/pair.ts",
+        "blob-pair",
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        0,
+        "src/gapped.ts",
+        "blob-gapped",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        1,
+        "src/gapped.ts",
+        "blob-gapped",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        2,
+        "src/gapped.ts",
+        "blob-gapped",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        3,
+        "src/gapped.ts",
+        "blob-gapped",
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        4,
+        "src/gapped.ts",
+        "blob-gapped",
+        5
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        5,
+        "src/gapped.ts",
+        "blob-gapped",
+        6
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        6,
+        "src/gapped.ts",
+        "blob-gapped",
+        7
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/gapped.ts|digest:text=blob-gapped",
+        7,
+        "src/gapped.ts",
+        "blob-gapped",
+        8
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        0,
+        "src/violation.ts",
+        "blob-violation",
+        10,
+        10,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        1,
+        "src/violation.ts",
+        "blob-violation",
+        11,
+        11,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        2,
+        "src/violation.ts",
+        "blob-violation",
+        12,
+        12,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/block.ts|digest:text=blob-block",
+        0,
+        "src/block.ts",
+        "blob-block",
+        20,
+        22,
+        "block"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        0,
+        "src/waived.ts",
+        "blob-waived",
+        5,
+        5,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        1,
+        "src/waived.ts",
+        "blob-waived",
+        6,
+        6,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        2,
+        "src/waived.ts",
+        "blob-waived",
+        7,
+        7,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        0,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        1,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        2,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        4,
+        4,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        0,
+        "src/untouched.ts",
+        "blob-untouched",
+        30,
+        30,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        1,
+        "src/untouched.ts",
+        "blob-untouched",
+        31,
+        31,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        2,
+        "src/untouched.ts",
+        "blob-untouched",
+        32,
+        32,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        3,
+        "src/untouched.ts",
+        "blob-untouched",
+        33,
+        33,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        0,
+        "src/pair.ts",
+        "blob-pair",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        1,
+        "src/pair.ts",
+        "blob-pair",
+        4,
+        4,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        0,
+        "src/gapped.ts",
+        "blob-gapped",
+        1,
+        1,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        1,
+        "src/gapped.ts",
+        "blob-gapped",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        2,
+        "src/gapped.ts",
+        "blob-gapped",
+        5,
+        5,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        3,
+        "src/gapped.ts",
+        "blob-gapped",
+        6,
+        6,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        4,
+        "src/gapped.ts",
+        "blob-gapped",
+        7,
+        7,
+        "line"
+      ]
+    }
+  ],
+  [
+    {
+      "rel": "__host_response_waiver_marker",
+      "sign": "add",
+      "row": [
+        "witness|waiver_marker|path:text=src/waived.ts|digest:text=blob-waived",
+        0,
+        "src/waived.ts",
+        "blob-waived",
+        6
+      ]
+    },
+    {
+      "rel": "__host_response_waiver_marker",
+      "sign": "add",
+      "row": [
+        "witness|waiver_marker|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        0,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        1
+      ]
+    }
+  ]
+]
