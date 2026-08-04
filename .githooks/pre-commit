@@ -4,10 +4,9 @@
 #  back on PATH. Bypass this hook: git commit -n)
 repo_root=$(git rev-parse --show-toplevel)
 sh "$repo_root/v6/tools/gen-index.sh" && git add "$repo_root/v6/INDEX.md" || exit 1
-# Comment budget on staged added lines (>2 consecutive comment lines = fail).
-# SPREFA_COMMENT_RAIL_DL6=1 swaps the bash tool for the dl6 rail (same contract,
-# comments read as AST nodes): v6/tsv2/goldens/comment_rail_golden/README.md.
-if [ "${SPREFA_COMMENT_RAIL_DL6:-0}" = 1 ]; then
+# Comment budget (>2 consecutive comment lines = fail); default = the dl6 rail
+# (comment_rail_golden/README.md), SPREFA_COMMENT_RAIL_DL6=0 = retired bash tool.
+if [ "${SPREFA_COMMENT_RAIL_DL6:-1}" = 1 ]; then
   exec bash "$repo_root/v6/tsv2/scripts/comment-budget-rail.sh"
 fi
 /Users/chrishafley/projects/claude-research/bin/comment-prod --cached
