@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,6 +46,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -214,10 +216,10 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["df_param", "sig", "sink_callee", "type_owner"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `DELETE FROM "flow_node_type"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT b2."node", b0."path", b0."name", b3."ty" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos"`, params: [] },
-  { sql: `DELETE FROM "flow_param_type"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT b0."path", b0."name", b2."pos", b2."ty" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param'`, params: [] },
+  { rel: "flow_node_type", sql: `DELETE FROM "flow_node_type"`, params: [] },
+  { rel: "flow_node_type", sql: `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT b2."node", b0."path", b0."name", b3."ty" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos"`, params: [] },
+  { rel: "flow_param_type", sql: `DELETE FROM "flow_param_type"`, params: [] },
+  { rel: "flow_param_type", sql: `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT b0."path", b0."name", b2."pos", b2."ty" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param'`, params: [] },
 ];
 
 type Snapshot = {
@@ -338,16 +340,26 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -376,11 +388,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

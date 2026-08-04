@@ -24,7 +24,7 @@
 %                        referee. DeltaTable and BoundarySql carry P1's
 %                        tick-local change stream.
 %
-% plus boot_statements/5, a SEPARATE list of bootstmt(Sql, Params) (needs
+% plus boot_statements/5, a SEPARATE list of bootstmt(Rel, Sql, Params) (needs
 % Initial, which plan/6 does not carry, plus LevelStatements for the t=0
 % level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
@@ -3463,13 +3463,23 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % at tick 1 without this.
 boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
     type_definitions(Decls, Types),
-    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups),
+    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups0),
+    maplist(tag_boot_group, RelPlans, SeedGroups0, SeedGroups),
     append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
 boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
     boot_seed_statement(Decls, Types, RelPlan, Initial, Statements).
+
+% Every boot statement names the rel it exists for, which is what the emitted
+% module's subscribe-cone filter reads. A seed row's struct-intern statements
+% carry the PARENT rel: they exist only to make that row insertable, so
+% dropping the parent must drop them with it.
+tag_boot_group(relplan(Name/_, _, _, _, _), Statements0, Statements) :-
+    maplist(tag_boot_statement(Name), Statements0, Statements).
+
+tag_boot_statement(Name, bootstmt(Sql, Params), bootstmt(Name, Sql, Params)).
 
 % engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
 % 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
@@ -3478,8 +3488,9 @@ boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
 % no bind params (a literal statement, not a template) so a level view over
 % Initial-seeded data starts at its real t=0 rows rather than empty.
 boot_level_recompute_statements(LevelStatements, BootStatements) :-
-    findall(bootstmt(Sql, []),
+    findall(bootstmt(HeadName, Sql, []),
             ( member(LevelStatement, LevelStatements),
+              LevelStatement = levelstmt(HeadName/_, _, _, _, _, _),
               boot_level_statement_sql(LevelStatement, Sql) ),
             BootStatements).
 

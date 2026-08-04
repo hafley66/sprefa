@@ -90,7 +90,7 @@ check(Name) :-
 tmp_db_file(Name, DbFile) :-
     format(atom(DbFile), '/tmp/tsv2_sql_check_~w.sqlite3', [Name]).
 
-boot_stmt_sql(bootstmt(Sql, Params), ExecutableSql) :- substitute_params(Sql, Params, ExecutableSql).
+boot_stmt_sql(bootstmt(_Rel, Sql, Params), ExecutableSql) :- substitute_params(Sql, Params, ExecutableSql).
 
 % ═══ per-tick driving (round 2: before-snapshot, absorb, resolve edge
 % writes, recompute levels, after-snapshot, multiset diff) ═════════════════
