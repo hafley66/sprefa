@@ -80,6 +80,20 @@ for raw in sys.stdin:
 '
 }
 
+comment_lines_body() {
+  "$DL_EXTRACT_BIN" --family cst "$1" 2>/dev/null \
+    | python3 "$DL_COMMENT_NODE" comment-lines "$1" \
+    | python3 -c '
+import json, sys
+for raw in sys.stdin:
+    if not raw.strip():
+        continue
+    row = json.loads(raw)
+    print(json.dumps({"line": row["line"], "prose_flag": row["prose_flag"], "prose_seq": row["prose_seq"]},
+                     separators=(",", ":")))
+'
+}
+
 markers_body() {
   grep -n '@comment-ok:' "$1" 2>/dev/null | awk -F: '{ printf "{\"line\":%d}\n", $1 }'
 }
@@ -88,6 +102,7 @@ case "${1:-}" in
   staged) staged ;;
   added) [ $# -eq 2 ] || die "usage: added <path>"; added "$2" ;;
   nodes) [ $# -eq 3 ] || die "usage: nodes <path> <blob>"; with_staged_blob "$2" "$3" nodes_body ;;
+  comment-lines) [ $# -eq 3 ] || die "usage: comment-lines <path> <blob>"; with_staged_blob "$2" "$3" comment_lines_body ;;
   markers) [ $# -eq 3 ] || die "usage: markers <path> <blob>"; with_staged_blob "$2" "$3" markers_body ;;
-  *) die "usage: comment-budget-feed.sh staged | added <path> | nodes <path> <blob> | markers <path> <blob>" ;;
+  *) die "usage: comment-budget-feed.sh staged | added <path> | nodes <path> <blob> | comment-lines <path> <blob> | markers <path> <blob>" ;;
 esac

@@ -55,18 +55,35 @@ def semantics(ticks, final):
         "violation_run",
         sorted(rows(final, "violation_run")),
         [
-            ["src/block.ts", 20, 22, 3],
+            ["src/block3.ts", 10, 14, 3],
+            ["src/divider.ts", 10, 14, 4],
             ["src/fake-waiver.ts", 2, 4, 3],
             ["src/gapped.ts", 5, 7, 3],
+            ["src/shebang3.ts", 1, 4, 3],
             ["src/violation.ts", 10, 12, 3],
         ],
     )
-    check("violation_total", rows(final, "violation_total"), [[4]])
+    check("violation_total", rows(final, "violation_total"), [[6]])
 
-    # One node spanning three lines is a three-line run with nothing to coalesce.
+    # A one-prose block ( `/*` + a prose line + `*/` ) is a 3-physical-line run
+    # with a PROSE count of 1, so it is clean. The old measure counted 3 lines
+    # and flagged it.
+    check("block_one_prose_is_clean", "src/block.ts" in
+          [row[0] for row in rows(final, "long_run")], False)
     check("block_is_one_node", count(final, "comment_node") and
           [row for row in rows(final, "comment_node") if row[0] == "src/block.ts"],
           [["src/block.ts", 20, 22, "block"]])
+
+    # The block, divider and shebang rulings each surface in prose_seq: the
+    # delimiter and shebang carry a non-prose flag and a seq that never advances.
+    check("block_prose_count", [row for row in rows(final, "run_prose_count")
+          if row[0] == "src/block.ts"], [["src/block.ts", 20, 22, 1]])
+    check("divider_glues_run", [row for row in rows(final, "run_prose_count")
+          if row[0] == "src/divider.ts"], [["src/divider.ts", 10, 14, 4]])
+    check("shebang2_prose_count", [row for row in rows(final, "run_prose_count")
+          if row[0] == "src/shebang2.ts"], [["src/shebang2.ts", 1, 3, 2]])
+    check("shebang3_prose_count", [row for row in rows(final, "run_prose_count")
+          if row[0] == "src/shebang3.ts"], [["src/shebang3.ts", 1, 4, 3]])
 
     # A gap splits one node list into two runs, and min/1 pairs each start with
     # its NEAREST end rather than the file's last.
@@ -103,10 +120,10 @@ def semantics(ticks, final):
     check("waiver_retracts_at_tick5", tick5["del"], [["src/waived.ts", 5, 7, 3]])
 
     # Laziness: the exempt path never raises a demand row, so no extractor runs.
-    for host in ("comment_fact", "added_line_span", "waiver_marker"):
+    for host in ("comment_fact", "comment_line_fact", "added_line_span", "waiver_marker"):
         paths = demand_paths(ticks, f"__host_demand_{host}")
         check(f"exempt_raises_no_{host}_demand", "tests/exempt.test.ts" in paths, False)
-        check(f"{host}_demands", len(paths), 7)
+        check(f"{host}_demands", len(paths), 11)
 
 
 def cardinality(final, scale_final):
@@ -114,18 +131,25 @@ def cardinality(final, scale_final):
 
     The scale schedule keeps every comment node and multiplies the added lines
     by 20. Boundary and pairing cardinalities must be IDENTICAL; only
-    added_line may grow.
+    added_line may grow. The per-line prose rows are fixed by the comment
+    content, so they scale with comment lines, never with added lines.
     """
     base_added = count(final, "added_line")
     scale_added = count(scale_final, "added_line")
-    check("added_line grew", (base_added, scale_added), (24, 480))
-    for rel in ("comment_node", "run_start", "run_end", "run_end_candidate",
-                "run_extent", "long_run", "touched_run", "violation_run"):
+    check("added_line grew", (base_added, scale_added), (41, 820))
+    for rel in ("comment_node", "comment_line", "prose_line", "run_start",
+                "run_end", "run_end_candidate", "run_extent", "run_prose_row",
+                "run_prose_extent", "run_prose_count", "long_run", "touched_run",
+                "violation_run"):
         check(f"{rel} flat under 20x added lines", count(scale_final, rel), count(final, rel))
-    # The pairing join is 2 boundary rows per run, never a line row: 8 runs over
-    # 7 files, so start x end within a file stays at this exact number.
-    check("run_end_candidate cardinality", count(final, "run_end_candidate"), 9)
-    check("run_start cardinality", count(final, "run_start"), 8)
+    # The pairing join is 2 boundary rows per run, never a line row: 12 runs
+    # over 11 files, so start x end within a file stays at this exact number.
+    check("run_end_candidate cardinality", count(final, "run_end_candidate"), 13)
+    check("run_start cardinality", count(final, "run_start"), 12)
+    # Prose rows track comment content: one per physical comment line reports
+    # to prose_line at most once (only prose_flag==1 rows).
+    check("prose_line equals in-run prose", count(final, "run_prose_row"),
+          count(final, "prose_line"))
 
 
 def query_plans(generated):
@@ -147,6 +171,9 @@ def query_plans(generated):
     wanted = {
         "run_end_candidate":
             "SCAN b0 | SEARCH b1 USING PRIMARY KEY (file_path=? AND end_line>?)",
+        "run_prose_row":
+            "SCAN b0 | SEARCH b1 USING PRIMARY KEY "
+            "(file_path=? AND line_number>? AND line_number<?)",
         "touched_run":
             "SCAN b0 | SEARCH b1 USING PRIMARY KEY "
             "(file_path=? AND line_number>? AND line_number<?)",

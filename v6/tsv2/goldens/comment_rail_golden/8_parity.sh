@@ -114,5 +114,24 @@ printf '%s\n' 'export const a = 1;' '// one' '// two' 'export const b = 2;' \
 git -C "$dir" add src/boundary.ts
 case_report boundary "$(grade "$dir" bash)" "$(grade "$dir" rail)" CLEAN
 
-[ "$FAILED" = 0 ] && say 'COMMENT_RAIL_PARITY HOLDS cases=7'
+# ── case 8 (prose divergence): three `//` divider lines, no prose ──────────
+# The regex counts all three as comments; the prose measure floods on a divider
+# run that carries no letters, so the rail clears it.
+dir="$(new_repo divider)"
+printf '%s\n' 'export const a = 1;' '// ----------' '// ----------' '// ----------' \
+  'export const b = 2;' >"$dir/src/divider.ts"
+git -C "$dir" add src/divider.ts
+case_report divider "$(grade "$dir" bash)" "$(grade "$dir" rail)" CLEAN
+
+# ── case 9 (prose divergence): a shebang plus three `#` lines ──────────────
+# The regex counts the shebang and each `#` line; the cst grammar raises no
+# comment node for any of them (shebang is FORCED non-prose, `#` is not a TS
+# comment), so the rail passes.
+dir="$(new_repo shebang)"
+printf '%s\n' '#!/usr/bin/env node' '# prose one' '# prose two' '# prose three' \
+  'export const b = 2;' >"$dir/src/shebang.ts"
+git -C "$dir" add src/shebang.ts
+case_report shebang "$(grade "$dir" bash)" "$(grade "$dir" rail)" CLEAN
+
+[ "$FAILED" = 0 ] && say 'COMMENT_RAIL_PARITY HOLDS cases=9'
 exit "$FAILED"

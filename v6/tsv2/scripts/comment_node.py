@@ -2,10 +2,13 @@
 """Policy-free projections for the cst family and byte-span records."""
 
 import json
+import re
 import sys
 
 
 STRIP_PREFIXES = ("///", "//!", "/**", "//", "/*", "#!", "%%", "#", "%", "--")
+
+PROSE_RE = re.compile(r"[A-Za-z]")
 
 
 def strip_tokens(text):
@@ -56,8 +59,7 @@ def read_input(path):
     return data, LineIndex(data)
 
 
-def comments(path):
-    data, index = read_input(path)
+def outer_comment_spans():
     spans = []
     for raw in sys.stdin:
         if not raw.strip():
@@ -69,7 +71,6 @@ def comments(path):
         if kind.endswith("comment"):
             span = row["span"]
             spans.append((span["start"], span["end"], kind))
-
     outer = []
     for start, end, kind in spans:
         nested = any(
@@ -80,8 +81,28 @@ def comments(path):
         )
         if not nested:
             outer.append((start, end, kind))
+    return sorted(outer)
 
-    for start, end, kind in sorted(outer):
+
+def physical_line_text(data, index, line_number):
+    starts = index.starts
+    if line_number < 1 or line_number > len(starts):
+        return ""
+    start = starts[line_number - 1]
+    end = starts[line_number] if line_number < len(starts) else len(data)
+    return data[start:end].decode("utf-8", "replace").rstrip("\r\n")
+
+
+def prose_flag(text, line_number):
+    body = text.strip()
+    if line_number == 1 and body.startswith("#!"):
+        return False
+    return bool(PROSE_RE.search(strip_tokens(text)))
+
+
+def comments(path):
+    data, index = read_input(path)
+    for start, end, kind in outer_comment_spans():
         text = data[start:end].decode("utf-8", "replace")
         line, col = index.locate(start)
         end_line, end_col = index.locate(end)
@@ -93,6 +114,28 @@ def comments(path):
             "end_col": end_col,
             "kind": doc_kind(text) or comment_kind(kind),
             "comment_text": strip_tokens(text),
+        }, separators=(",", ":")))
+
+
+def comment_lines(path):
+    data, index = read_input(path)
+    prose = {}
+    for start, end, _kind in outer_comment_spans():
+        last_byte = max(end - 1, start)
+        line, _ = index.locate(start)
+        end_line, _ = index.locate(last_byte)
+        for line_number in range(line, end_line + 1):
+            text = physical_line_text(data, index, line_number)
+            prose[line_number] = prose_flag(text, line_number)
+    seq = 0
+    for line_number in sorted(prose):
+        if prose[line_number]:
+            seq += 1
+        print(json.dumps({
+            "path": path,
+            "line": line_number,
+            "prose_flag": 1 if prose[line_number] else 0,
+            "prose_seq": seq,
         }, separators=(",", ":")))
 
 
@@ -120,10 +163,16 @@ def lines(path):
 
 
 def main():
-    if len(sys.argv) != 3 or sys.argv[1] not in ("comments", "lines"):
-        print("usage: comment_node.py comments|lines PATH", file=sys.stderr)
+    if len(sys.argv) != 3 or sys.argv[1] not in ("comments", "comment-lines", "lines"):
+        print("usage: comment_node.py comments|comment-lines|lines PATH", file=sys.stderr)
         return 2
-    (comments if sys.argv[1] == "comments" else lines)(sys.argv[2])
+    verb = sys.argv[1]
+    if verb == "comments":
+        comments(sys.argv[2])
+    elif verb == "comment-lines":
+        comment_lines(sys.argv[2])
+    else:
+        lines(sys.argv[2])
     return 0
 
 

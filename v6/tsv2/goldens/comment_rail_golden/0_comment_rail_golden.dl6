@@ -78,14 +78,17 @@
 #
 # Pairing a start to its end is an inequality join, and it is over BOUNDARY
 # rows (2 per run), never node or line rows. `min/1` picks the first end at or
-# after the start. The run's line extent is then `end - start + 1` arithmetic,
-# NOT a second join back to the nodes: a run is contiguous by construction, so
-# counting its members would be a `nodes x runs` join to recover a number two
-# integers already hold.
+# after the start. The run's LINE extent is then `end - start + 1` arithmetic,
+# NOT a second join back to the nodes. Measuring PROSE is a second, deliberate
+# join: the extent is intersected with comment-line rows that carry a prose_seq,
+# and `min/max(prose_seq)` recovers the prose count as range arithmetic, never a
+# nodes-x-runs COUNT. Delimiter, divider and shebang rows carry no prose_seq
+# sequence of their own (prose_seq only advances on prose), so a run of nothing
+# but glue produces no aggregate row and is never long.
 #
-# The two remaining range joins -- diff intersection and waiver -- read
-# `long_run`, which the threshold has already emptied in the ordinary case, so
-# neither sees the added-line set unless a violation candidate exists.
+# The three remaining range joins -- prose, diff intersection and waiver --
+# read `long_run`, which the threshold has already emptied in the ordinary
+# case, so none sees the added-line set unless a violation candidate exists.
 # 6_gate.sh's cardinality leg is what holds that ordering in place.
 #
 # ── THE RX LOWERING ────────────────────────────────────────────────────────
@@ -95,6 +98,28 @@
 #
 #   const runStart$ = combineLatest([commentNode$, nodeSuccessorLine$]).pipe(
 #     map(([nodes, successors]) => nodes.filter(node => !successors.has(key(node)))))
+#
+#   const proseLine$ = commentLine$.pipe(
+#     filter(row => row.proseFlag === 1))
+#
+#   const runProseRow$ = combineLatest([runExtent$, proseLine$]).pipe(
+#     filter(([run, prose]) =>
+#       run.filePath === prose.filePath &&
+#       prose.lineNumber >= run.startLine && prose.lineNumber <= run.endLine),
+#     map(([run, prose]) => ({ ...run, proseSeq: prose.proseSeq })))
+#
+#   const runProse$ = runProseRow$.pipe(
+#     groupBy(row => key(row)),
+#     mergeMap(group$ => group$.pipe(
+#       reduce((acc, row) => ({
+#         ...acc,
+#         minProseSeq: Math.min(acc.minProseSeq, row.proseSeq),
+#         maxProseSeq: Math.max(acc.maxProseSeq, row.proseSeq),
+#       }), {}) )),
+#     map(extent => ({
+#       ...extent,
+#       commentLineCount: extent.maxProseSeq - extent.minProseSeq + 1,
+#     })))
 #
 #   const waiverInComment$ = combineLatest([markerHit$, commentNode$]).pipe(
 #     map(([hits, nodes]) => hits.filter(hit => nodes.some(node =>
@@ -124,6 +149,9 @@ sh added_line_span(path: text, digest: text) -> (line: int) =
 
 sh comment_fact(path: text, digest: text) -> (line: int, end_line: int, kind: text) =
   `"$DL_COMMENT_BUDGET_FEED" nodes {path} {digest}`.
+
+sh comment_line_fact(path: text, digest: text) -> (line: int, prose_flag: int, prose_seq: int) =
+  `"$DL_COMMENT_BUDGET_FEED" comment-lines {path} {digest}`.
 
 sh waiver_marker(path: text, digest: text) -> (line: int) =
   `"$DL_COMMENT_BUDGET_FEED" markers {path} {digest}`.
@@ -158,6 +186,17 @@ comment_node(file_path, start_line, end_line, kind) <-
   graded_file(file_path, blob_digest),
   comment_fact(file_path, blob_digest, start_line, end_line, kind).
 
+# Per-physical-line rows graded by prose. prose_seq renumbers the prose lines
+# 1..N so a run's prose measure is min/max, never a count over a lines join.
+rel comment_line(file_path: text, line_number: int, prose_flag: int, prose_seq: int).
+comment_line(file_path, line_number, prose_flag, prose_seq) <-
+  graded_file(file_path, blob_digest),
+  comment_line_fact(file_path, blob_digest, line_number, prose_flag, prose_seq).
+
+rel prose_line(file_path: text, line_number: int, prose_seq: int).
+prose_line(file_path, line_number, prose_seq) <-
+  comment_line(file_path, line_number, prose_flag, prose_seq), prose_flag == 1.
+
 rel marker_hit(file_path: text, marker_line: int).
 marker_hit(file_path, marker_line) <-
   graded_file(file_path, blob_digest),
@@ -191,12 +230,32 @@ rel run_extent(file_path: text, start_line: int, end_line: int).
 run_extent(file_path, start_line, min(end_line)) <-
   run_end_candidate(file_path, start_line, end_line).
 
+# ── the prose measure ──────────────────────────────────────────────────────
+# Coalescing stays over ALL comment lines; a delimiter/divider/shebang is
+# glue, contiguous but unmeasured. Intersect the runs with PROSE rows only,
+# then min/max of prose_seq recovers the count as range arithmetic; a run
+# with no prose rows produces no aggregate row, so it is never long.
+rel run_prose_row(file_path: text, start_line: int, end_line: int, prose_seq: int).
+run_prose_row(file_path, start_line, end_line, prose_seq) <-
+  run_extent(file_path, start_line, end_line),
+  prose_line(file_path, prose_line_number, prose_seq),
+  prose_line_number >= start_line,
+  prose_line_number =< end_line.
+
+rel run_prose_extent(file_path: text, start_line: int, end_line: int, min_prose_seq: int, max_prose_seq: int).
+run_prose_extent(file_path, start_line, end_line, min(prose_seq), max(prose_seq)) <-
+  run_prose_row(file_path, start_line, end_line, prose_seq).
+
+rel run_prose_count(file_path: text, start_line: int, end_line: int, prose_count: int).
+run_prose_count(file_path, start_line, end_line, prose_count) <-
+  run_prose_extent(file_path, start_line, end_line, min_prose_seq, max_prose_seq),
+  prose_count := max_prose_seq - min_prose_seq + 1.
+
 # ── the verdict ────────────────────────────────────────────────────────────
 rel long_run(file_path: text, start_line: int, end_line: int, comment_line_count: int).
 long_run(file_path, start_line, end_line, comment_line_count) <-
-  run_extent(file_path, start_line, end_line),
+  run_prose_count(file_path, start_line, end_line, comment_line_count),
   max_run(limit_lines),
-  comment_line_count := end_line - start_line + 1,
   comment_line_count > limit_lines.
 
 rel touched_run(file_path: text, start_line: int, end_line: int).

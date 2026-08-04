@@ -47,6 +47,18 @@
         "witness|staged_file_list|index_digest:text=stage1",
         2,
         "stage1",
+        "src/block3.ts",
+        "blob-block3",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        3,
+        "stage1",
         "src/waived.ts",
         "blob-waived",
         0
@@ -57,7 +69,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        3,
+        4,
         "stage1",
         "src/fake-waiver.ts",
         "blob-fake",
@@ -69,7 +81,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        4,
+        5,
         "stage1",
         "src/untouched.ts",
         "blob-untouched",
@@ -81,7 +93,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        5,
+        6,
         "stage1",
         "src/pair.ts",
         "blob-pair",
@@ -93,7 +105,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        6,
+        7,
         "stage1",
         "src/gapped.ts",
         "blob-gapped",
@@ -105,7 +117,43 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        7,
+        8,
+        "stage1",
+        "src/shebang2.ts",
+        "blob-shebang2",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        9,
+        "stage1",
+        "src/shebang3.ts",
+        "blob-shebang3",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        10,
+        "stage1",
+        "src/divider.ts",
+        "blob-divider",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        11,
         "stage1",
         "tests/exempt.test.ts",
         "blob-exempt",
@@ -178,6 +226,61 @@
         "src/block.ts",
         "blob-block",
         22
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        1,
+        "src/block3.ts",
+        "blob-block3",
+        11
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        2,
+        "src/block3.ts",
+        "blob-block3",
+        12
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        3,
+        "src/block3.ts",
+        "blob-block3",
+        13
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        4,
+        "src/block3.ts",
+        "blob-block3",
+        14
       ]
     },
     {
@@ -377,6 +480,138 @@
         "blob-gapped",
         8
       ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14
+      ]
     }
   ],
   [
@@ -429,6 +664,19 @@
         "blob-block",
         20,
         22,
+        "block"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10,
+        14,
         "block"
       ]
     },
@@ -651,6 +899,682 @@
         7,
         7,
         "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1,
+        1,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1,
+        1,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4,
+        4,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10,
+        10,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11,
+        11,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12,
+        12,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13,
+        13,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14,
+        14,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        0,
+        "src/violation.ts",
+        "blob-violation",
+        10,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        1,
+        "src/violation.ts",
+        "blob-violation",
+        11,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        2,
+        "src/violation.ts",
+        "blob-violation",
+        12,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        0,
+        "src/block.ts",
+        "blob-block",
+        20,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        1,
+        "src/block.ts",
+        "blob-block",
+        21,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        2,
+        "src/block.ts",
+        "blob-block",
+        22,
+        0,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        1,
+        "src/block3.ts",
+        "blob-block3",
+        11,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        2,
+        "src/block3.ts",
+        "blob-block3",
+        12,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        3,
+        "src/block3.ts",
+        "blob-block3",
+        13,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        4,
+        "src/block3.ts",
+        "blob-block3",
+        14,
+        0,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        0,
+        "src/waived.ts",
+        "blob-waived",
+        5,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        1,
+        "src/waived.ts",
+        "blob-waived",
+        6,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        2,
+        "src/waived.ts",
+        "blob-waived",
+        7,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        0,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        1,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        2,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        4,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        0,
+        "src/untouched.ts",
+        "blob-untouched",
+        30,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        1,
+        "src/untouched.ts",
+        "blob-untouched",
+        31,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        2,
+        "src/untouched.ts",
+        "blob-untouched",
+        32,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        3,
+        "src/untouched.ts",
+        "blob-untouched",
+        33,
+        1,
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        0,
+        "src/pair.ts",
+        "blob-pair",
+        3,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        1,
+        "src/pair.ts",
+        "blob-pair",
+        4,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        0,
+        "src/gapped.ts",
+        "blob-gapped",
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        1,
+        "src/gapped.ts",
+        "blob-gapped",
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        2,
+        "src/gapped.ts",
+        "blob-gapped",
+        5,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        3,
+        "src/gapped.ts",
+        "blob-gapped",
+        6,
+        1,
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        4,
+        "src/gapped.ts",
+        "blob-gapped",
+        7,
+        1,
+        5
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12,
+        0,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14,
+        1,
+        4
       ]
     }
   ],

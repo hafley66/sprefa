@@ -47,6 +47,18 @@
         "witness|staged_file_list|index_digest:text=stage1",
         2,
         "stage1",
+        "src/block3.ts",
+        "blob-block3",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        3,
+        "stage1",
         "src/waived.ts",
         "blob-waived",
         0
@@ -57,7 +69,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        3,
+        4,
         "stage1",
         "src/fake-waiver.ts",
         "blob-fake",
@@ -69,7 +81,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        4,
+        5,
         "stage1",
         "src/untouched.ts",
         "blob-untouched",
@@ -81,7 +93,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        5,
+        6,
         "stage1",
         "src/pair.ts",
         "blob-pair",
@@ -93,7 +105,7 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        6,
+        7,
         "stage1",
         "src/gapped.ts",
         "blob-gapped",
@@ -105,7 +117,43 @@
       "sign": "add",
       "row": [
         "witness|staged_file_list|index_digest:text=stage1",
-        7,
+        8,
+        "stage1",
+        "src/shebang2.ts",
+        "blob-shebang2",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        9,
+        "stage1",
+        "src/shebang3.ts",
+        "blob-shebang3",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        10,
+        "stage1",
+        "src/divider.ts",
+        "blob-divider",
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_staged_file_list",
+      "sign": "add",
+      "row": [
+        "witness|staged_file_list|index_digest:text=stage1",
+        11,
         "stage1",
         "tests/exempt.test.ts",
         "blob-exempt",
@@ -1432,6 +1480,1106 @@
         "src/block.ts",
         "blob-block",
         1056
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        1,
+        "src/block3.ts",
+        "blob-block3",
+        11
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        2,
+        "src/block3.ts",
+        "blob-block3",
+        12
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        3,
+        "src/block3.ts",
+        "blob-block3",
+        13
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        4,
+        "src/block3.ts",
+        "blob-block3",
+        14
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        5,
+        "src/block3.ts",
+        "blob-block3",
+        1000
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        6,
+        "src/block3.ts",
+        "blob-block3",
+        1001
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        7,
+        "src/block3.ts",
+        "blob-block3",
+        1002
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        8,
+        "src/block3.ts",
+        "blob-block3",
+        1003
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        9,
+        "src/block3.ts",
+        "blob-block3",
+        1004
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        10,
+        "src/block3.ts",
+        "blob-block3",
+        1005
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        11,
+        "src/block3.ts",
+        "blob-block3",
+        1006
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        12,
+        "src/block3.ts",
+        "blob-block3",
+        1007
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        13,
+        "src/block3.ts",
+        "blob-block3",
+        1008
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        14,
+        "src/block3.ts",
+        "blob-block3",
+        1009
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        15,
+        "src/block3.ts",
+        "blob-block3",
+        1010
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        16,
+        "src/block3.ts",
+        "blob-block3",
+        1011
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        17,
+        "src/block3.ts",
+        "blob-block3",
+        1012
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        18,
+        "src/block3.ts",
+        "blob-block3",
+        1013
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        19,
+        "src/block3.ts",
+        "blob-block3",
+        1014
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        20,
+        "src/block3.ts",
+        "blob-block3",
+        1015
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        21,
+        "src/block3.ts",
+        "blob-block3",
+        1016
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        22,
+        "src/block3.ts",
+        "blob-block3",
+        1017
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        23,
+        "src/block3.ts",
+        "blob-block3",
+        1018
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        24,
+        "src/block3.ts",
+        "blob-block3",
+        1019
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        25,
+        "src/block3.ts",
+        "blob-block3",
+        1020
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        26,
+        "src/block3.ts",
+        "blob-block3",
+        1021
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        27,
+        "src/block3.ts",
+        "blob-block3",
+        1022
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        28,
+        "src/block3.ts",
+        "blob-block3",
+        1023
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        29,
+        "src/block3.ts",
+        "blob-block3",
+        1024
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        30,
+        "src/block3.ts",
+        "blob-block3",
+        1025
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        31,
+        "src/block3.ts",
+        "blob-block3",
+        1026
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        32,
+        "src/block3.ts",
+        "blob-block3",
+        1027
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        33,
+        "src/block3.ts",
+        "blob-block3",
+        1028
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        34,
+        "src/block3.ts",
+        "blob-block3",
+        1029
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        35,
+        "src/block3.ts",
+        "blob-block3",
+        1030
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        36,
+        "src/block3.ts",
+        "blob-block3",
+        1031
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        37,
+        "src/block3.ts",
+        "blob-block3",
+        1032
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        38,
+        "src/block3.ts",
+        "blob-block3",
+        1033
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        39,
+        "src/block3.ts",
+        "blob-block3",
+        1034
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        40,
+        "src/block3.ts",
+        "blob-block3",
+        1035
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        41,
+        "src/block3.ts",
+        "blob-block3",
+        1036
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        42,
+        "src/block3.ts",
+        "blob-block3",
+        1037
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        43,
+        "src/block3.ts",
+        "blob-block3",
+        1038
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        44,
+        "src/block3.ts",
+        "blob-block3",
+        1039
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        45,
+        "src/block3.ts",
+        "blob-block3",
+        1040
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        46,
+        "src/block3.ts",
+        "blob-block3",
+        1041
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        47,
+        "src/block3.ts",
+        "blob-block3",
+        1042
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        48,
+        "src/block3.ts",
+        "blob-block3",
+        1043
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        49,
+        "src/block3.ts",
+        "blob-block3",
+        1044
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        50,
+        "src/block3.ts",
+        "blob-block3",
+        1045
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        51,
+        "src/block3.ts",
+        "blob-block3",
+        1046
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        52,
+        "src/block3.ts",
+        "blob-block3",
+        1047
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        53,
+        "src/block3.ts",
+        "blob-block3",
+        1048
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        54,
+        "src/block3.ts",
+        "blob-block3",
+        1049
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        55,
+        "src/block3.ts",
+        "blob-block3",
+        1050
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        56,
+        "src/block3.ts",
+        "blob-block3",
+        1051
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        57,
+        "src/block3.ts",
+        "blob-block3",
+        1052
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        58,
+        "src/block3.ts",
+        "blob-block3",
+        1053
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        59,
+        "src/block3.ts",
+        "blob-block3",
+        1054
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        60,
+        "src/block3.ts",
+        "blob-block3",
+        1055
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        61,
+        "src/block3.ts",
+        "blob-block3",
+        1056
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        62,
+        "src/block3.ts",
+        "blob-block3",
+        1057
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        63,
+        "src/block3.ts",
+        "blob-block3",
+        1058
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        64,
+        "src/block3.ts",
+        "blob-block3",
+        1059
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        65,
+        "src/block3.ts",
+        "blob-block3",
+        1060
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        66,
+        "src/block3.ts",
+        "blob-block3",
+        1061
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        67,
+        "src/block3.ts",
+        "blob-block3",
+        1062
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        68,
+        "src/block3.ts",
+        "blob-block3",
+        1063
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        69,
+        "src/block3.ts",
+        "blob-block3",
+        1064
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        70,
+        "src/block3.ts",
+        "blob-block3",
+        1065
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        71,
+        "src/block3.ts",
+        "blob-block3",
+        1066
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        72,
+        "src/block3.ts",
+        "blob-block3",
+        1067
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        73,
+        "src/block3.ts",
+        "blob-block3",
+        1068
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        74,
+        "src/block3.ts",
+        "blob-block3",
+        1069
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        75,
+        "src/block3.ts",
+        "blob-block3",
+        1070
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        76,
+        "src/block3.ts",
+        "blob-block3",
+        1071
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        77,
+        "src/block3.ts",
+        "blob-block3",
+        1072
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        78,
+        "src/block3.ts",
+        "blob-block3",
+        1073
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        79,
+        "src/block3.ts",
+        "blob-block3",
+        1074
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        80,
+        "src/block3.ts",
+        "blob-block3",
+        1075
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        81,
+        "src/block3.ts",
+        "blob-block3",
+        1076
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        82,
+        "src/block3.ts",
+        "blob-block3",
+        1077
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        83,
+        "src/block3.ts",
+        "blob-block3",
+        1078
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        84,
+        "src/block3.ts",
+        "blob-block3",
+        1079
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        85,
+        "src/block3.ts",
+        "blob-block3",
+        1080
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        86,
+        "src/block3.ts",
+        "blob-block3",
+        1081
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        87,
+        "src/block3.ts",
+        "blob-block3",
+        1082
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        88,
+        "src/block3.ts",
+        "blob-block3",
+        1083
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        89,
+        "src/block3.ts",
+        "blob-block3",
+        1084
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        90,
+        "src/block3.ts",
+        "blob-block3",
+        1085
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        91,
+        "src/block3.ts",
+        "blob-block3",
+        1086
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        92,
+        "src/block3.ts",
+        "blob-block3",
+        1087
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        93,
+        "src/block3.ts",
+        "blob-block3",
+        1088
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        94,
+        "src/block3.ts",
+        "blob-block3",
+        1089
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        95,
+        "src/block3.ts",
+        "blob-block3",
+        1090
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        96,
+        "src/block3.ts",
+        "blob-block3",
+        1091
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        97,
+        "src/block3.ts",
+        "blob-block3",
+        1092
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        98,
+        "src/block3.ts",
+        "blob-block3",
+        1093
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/block3.ts|digest:text=blob-block3",
+        99,
+        "src/block3.ts",
+        "blob-block3",
+        1094
       ]
     },
     {
@@ -5393,6 +6541,2646 @@
         "blob-gapped",
         1151
       ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        3,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1000
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        4,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1001
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        5,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1002
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        6,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1003
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        7,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1004
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        8,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1005
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        9,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1006
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        10,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1007
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        11,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1008
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        12,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1009
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        13,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1010
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        14,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1011
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        15,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1012
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        16,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1013
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        17,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1014
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        18,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1015
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        19,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1016
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        20,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1017
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        21,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1018
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        22,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1019
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        23,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1020
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        24,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1021
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        25,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1022
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        26,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1023
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        27,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1024
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        28,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1025
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        29,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1026
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        30,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1027
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        31,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1028
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        32,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1029
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        33,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1030
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        34,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1031
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        35,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1032
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        36,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1033
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        37,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1034
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        38,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1035
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        39,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1036
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        40,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1037
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        41,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1038
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        42,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1039
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        43,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1040
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        44,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1041
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        45,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1042
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        46,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1043
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        47,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1044
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        48,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1045
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        49,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1046
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        50,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1047
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        51,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1048
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        52,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1049
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        53,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1050
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        54,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1051
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        55,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1052
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        56,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1053
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        57,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1054
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        58,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1055
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        59,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1056
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        4,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1000
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        5,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1001
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        6,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1002
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        7,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1003
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        8,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1004
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        9,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1005
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        10,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1006
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        11,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1007
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        12,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1008
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        13,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1009
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        14,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1010
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        15,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1011
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        16,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1012
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        17,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1013
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        18,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1014
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        19,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1015
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        20,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1016
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        21,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1017
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        22,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1018
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        23,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1019
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        24,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1020
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        25,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1021
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        26,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1022
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        27,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1023
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        28,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1024
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        29,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1025
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        30,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1026
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        31,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1027
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        32,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1028
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        33,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1029
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        34,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1030
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        35,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1031
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        36,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1032
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        37,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1033
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        38,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1034
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        39,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1035
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        40,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1036
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        41,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1037
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        42,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1038
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        43,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1039
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        44,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1040
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        45,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1041
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        46,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1042
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        47,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1043
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        48,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1044
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        49,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1045
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        50,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1046
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        51,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1047
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        52,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1048
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        53,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1049
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        54,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1050
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        55,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1051
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        56,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1052
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        57,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1053
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        58,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1054
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        59,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1055
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        60,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1056
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        61,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1057
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        62,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1058
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        63,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1059
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        64,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1060
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        65,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1061
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        66,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1062
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        67,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1063
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        68,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1064
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        69,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1065
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        70,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1066
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        71,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1067
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        72,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1068
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        73,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1069
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        74,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1070
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        75,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1071
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        76,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1072
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        77,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1073
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        78,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1074
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        79,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1075
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        5,
+        "src/divider.ts",
+        "blob-divider",
+        1000
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        6,
+        "src/divider.ts",
+        "blob-divider",
+        1001
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        7,
+        "src/divider.ts",
+        "blob-divider",
+        1002
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        8,
+        "src/divider.ts",
+        "blob-divider",
+        1003
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        9,
+        "src/divider.ts",
+        "blob-divider",
+        1004
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        10,
+        "src/divider.ts",
+        "blob-divider",
+        1005
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        11,
+        "src/divider.ts",
+        "blob-divider",
+        1006
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        12,
+        "src/divider.ts",
+        "blob-divider",
+        1007
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        13,
+        "src/divider.ts",
+        "blob-divider",
+        1008
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        14,
+        "src/divider.ts",
+        "blob-divider",
+        1009
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        15,
+        "src/divider.ts",
+        "blob-divider",
+        1010
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        16,
+        "src/divider.ts",
+        "blob-divider",
+        1011
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        17,
+        "src/divider.ts",
+        "blob-divider",
+        1012
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        18,
+        "src/divider.ts",
+        "blob-divider",
+        1013
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        19,
+        "src/divider.ts",
+        "blob-divider",
+        1014
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        20,
+        "src/divider.ts",
+        "blob-divider",
+        1015
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        21,
+        "src/divider.ts",
+        "blob-divider",
+        1016
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        22,
+        "src/divider.ts",
+        "blob-divider",
+        1017
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        23,
+        "src/divider.ts",
+        "blob-divider",
+        1018
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        24,
+        "src/divider.ts",
+        "blob-divider",
+        1019
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        25,
+        "src/divider.ts",
+        "blob-divider",
+        1020
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        26,
+        "src/divider.ts",
+        "blob-divider",
+        1021
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        27,
+        "src/divider.ts",
+        "blob-divider",
+        1022
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        28,
+        "src/divider.ts",
+        "blob-divider",
+        1023
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        29,
+        "src/divider.ts",
+        "blob-divider",
+        1024
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        30,
+        "src/divider.ts",
+        "blob-divider",
+        1025
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        31,
+        "src/divider.ts",
+        "blob-divider",
+        1026
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        32,
+        "src/divider.ts",
+        "blob-divider",
+        1027
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        33,
+        "src/divider.ts",
+        "blob-divider",
+        1028
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        34,
+        "src/divider.ts",
+        "blob-divider",
+        1029
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        35,
+        "src/divider.ts",
+        "blob-divider",
+        1030
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        36,
+        "src/divider.ts",
+        "blob-divider",
+        1031
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        37,
+        "src/divider.ts",
+        "blob-divider",
+        1032
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        38,
+        "src/divider.ts",
+        "blob-divider",
+        1033
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        39,
+        "src/divider.ts",
+        "blob-divider",
+        1034
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        40,
+        "src/divider.ts",
+        "blob-divider",
+        1035
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        41,
+        "src/divider.ts",
+        "blob-divider",
+        1036
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        42,
+        "src/divider.ts",
+        "blob-divider",
+        1037
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        43,
+        "src/divider.ts",
+        "blob-divider",
+        1038
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        44,
+        "src/divider.ts",
+        "blob-divider",
+        1039
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        45,
+        "src/divider.ts",
+        "blob-divider",
+        1040
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        46,
+        "src/divider.ts",
+        "blob-divider",
+        1041
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        47,
+        "src/divider.ts",
+        "blob-divider",
+        1042
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        48,
+        "src/divider.ts",
+        "blob-divider",
+        1043
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        49,
+        "src/divider.ts",
+        "blob-divider",
+        1044
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        50,
+        "src/divider.ts",
+        "blob-divider",
+        1045
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        51,
+        "src/divider.ts",
+        "blob-divider",
+        1046
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        52,
+        "src/divider.ts",
+        "blob-divider",
+        1047
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        53,
+        "src/divider.ts",
+        "blob-divider",
+        1048
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        54,
+        "src/divider.ts",
+        "blob-divider",
+        1049
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        55,
+        "src/divider.ts",
+        "blob-divider",
+        1050
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        56,
+        "src/divider.ts",
+        "blob-divider",
+        1051
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        57,
+        "src/divider.ts",
+        "blob-divider",
+        1052
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        58,
+        "src/divider.ts",
+        "blob-divider",
+        1053
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        59,
+        "src/divider.ts",
+        "blob-divider",
+        1054
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        60,
+        "src/divider.ts",
+        "blob-divider",
+        1055
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        61,
+        "src/divider.ts",
+        "blob-divider",
+        1056
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        62,
+        "src/divider.ts",
+        "blob-divider",
+        1057
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        63,
+        "src/divider.ts",
+        "blob-divider",
+        1058
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        64,
+        "src/divider.ts",
+        "blob-divider",
+        1059
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        65,
+        "src/divider.ts",
+        "blob-divider",
+        1060
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        66,
+        "src/divider.ts",
+        "blob-divider",
+        1061
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        67,
+        "src/divider.ts",
+        "blob-divider",
+        1062
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        68,
+        "src/divider.ts",
+        "blob-divider",
+        1063
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        69,
+        "src/divider.ts",
+        "blob-divider",
+        1064
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        70,
+        "src/divider.ts",
+        "blob-divider",
+        1065
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        71,
+        "src/divider.ts",
+        "blob-divider",
+        1066
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        72,
+        "src/divider.ts",
+        "blob-divider",
+        1067
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        73,
+        "src/divider.ts",
+        "blob-divider",
+        1068
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        74,
+        "src/divider.ts",
+        "blob-divider",
+        1069
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        75,
+        "src/divider.ts",
+        "blob-divider",
+        1070
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        76,
+        "src/divider.ts",
+        "blob-divider",
+        1071
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        77,
+        "src/divider.ts",
+        "blob-divider",
+        1072
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        78,
+        "src/divider.ts",
+        "blob-divider",
+        1073
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        79,
+        "src/divider.ts",
+        "blob-divider",
+        1074
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        80,
+        "src/divider.ts",
+        "blob-divider",
+        1075
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        81,
+        "src/divider.ts",
+        "blob-divider",
+        1076
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        82,
+        "src/divider.ts",
+        "blob-divider",
+        1077
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        83,
+        "src/divider.ts",
+        "blob-divider",
+        1078
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        84,
+        "src/divider.ts",
+        "blob-divider",
+        1079
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        85,
+        "src/divider.ts",
+        "blob-divider",
+        1080
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        86,
+        "src/divider.ts",
+        "blob-divider",
+        1081
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        87,
+        "src/divider.ts",
+        "blob-divider",
+        1082
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        88,
+        "src/divider.ts",
+        "blob-divider",
+        1083
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        89,
+        "src/divider.ts",
+        "blob-divider",
+        1084
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        90,
+        "src/divider.ts",
+        "blob-divider",
+        1085
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        91,
+        "src/divider.ts",
+        "blob-divider",
+        1086
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        92,
+        "src/divider.ts",
+        "blob-divider",
+        1087
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        93,
+        "src/divider.ts",
+        "blob-divider",
+        1088
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        94,
+        "src/divider.ts",
+        "blob-divider",
+        1089
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        95,
+        "src/divider.ts",
+        "blob-divider",
+        1090
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        96,
+        "src/divider.ts",
+        "blob-divider",
+        1091
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        97,
+        "src/divider.ts",
+        "blob-divider",
+        1092
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        98,
+        "src/divider.ts",
+        "blob-divider",
+        1093
+      ]
+    },
+    {
+      "rel": "__host_response_added_line_span",
+      "sign": "add",
+      "row": [
+        "witness|added_line_span|path:text=src/divider.ts|digest:text=blob-divider",
+        99,
+        "src/divider.ts",
+        "blob-divider",
+        1094
+      ]
     }
   ],
   [
@@ -5445,6 +9233,19 @@
         "blob-block",
         20,
         22,
+        "block"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10,
+        14,
         "block"
       ]
     },
@@ -5667,6 +9468,682 @@
         7,
         7,
         "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1,
+        1,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1,
+        1,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2,
+        2,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3,
+        3,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4,
+        4,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10,
+        10,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11,
+        11,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12,
+        12,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13,
+        13,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14,
+        14,
+        "line"
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        0,
+        "src/violation.ts",
+        "blob-violation",
+        10,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        1,
+        "src/violation.ts",
+        "blob-violation",
+        11,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/violation.ts|digest:text=blob-violation",
+        2,
+        "src/violation.ts",
+        "blob-violation",
+        12,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        0,
+        "src/block.ts",
+        "blob-block",
+        20,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        1,
+        "src/block.ts",
+        "blob-block",
+        21,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block.ts|digest:text=blob-block",
+        2,
+        "src/block.ts",
+        "blob-block",
+        22,
+        0,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        0,
+        "src/block3.ts",
+        "blob-block3",
+        10,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        1,
+        "src/block3.ts",
+        "blob-block3",
+        11,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        2,
+        "src/block3.ts",
+        "blob-block3",
+        12,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        3,
+        "src/block3.ts",
+        "blob-block3",
+        13,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/block3.ts|digest:text=blob-block3",
+        4,
+        "src/block3.ts",
+        "blob-block3",
+        14,
+        0,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        0,
+        "src/waived.ts",
+        "blob-waived",
+        5,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        1,
+        "src/waived.ts",
+        "blob-waived",
+        6,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/waived.ts|digest:text=blob-waived",
+        2,
+        "src/waived.ts",
+        "blob-waived",
+        7,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        0,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        1,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/fake-waiver.ts|digest:text=blob-fake",
+        2,
+        "src/fake-waiver.ts",
+        "blob-fake",
+        4,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        0,
+        "src/untouched.ts",
+        "blob-untouched",
+        30,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        1,
+        "src/untouched.ts",
+        "blob-untouched",
+        31,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        2,
+        "src/untouched.ts",
+        "blob-untouched",
+        32,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/untouched.ts|digest:text=blob-untouched",
+        3,
+        "src/untouched.ts",
+        "blob-untouched",
+        33,
+        1,
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        0,
+        "src/pair.ts",
+        "blob-pair",
+        3,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/pair.ts|digest:text=blob-pair",
+        1,
+        "src/pair.ts",
+        "blob-pair",
+        4,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        0,
+        "src/gapped.ts",
+        "blob-gapped",
+        1,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        1,
+        "src/gapped.ts",
+        "blob-gapped",
+        2,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        2,
+        "src/gapped.ts",
+        "blob-gapped",
+        5,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        3,
+        "src/gapped.ts",
+        "blob-gapped",
+        6,
+        1,
+        4
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/gapped.ts|digest:text=blob-gapped",
+        4,
+        "src/gapped.ts",
+        "blob-gapped",
+        7,
+        1,
+        5
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        0,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        1,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang2.ts|digest:text=blob-shebang2",
+        2,
+        "src/shebang2.ts",
+        "blob-shebang2",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        0,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        1,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        2,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        2,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        3,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/shebang3.ts|digest:text=blob-shebang3",
+        3,
+        "src/shebang3.ts",
+        "blob-shebang3",
+        4,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        0,
+        "src/divider.ts",
+        "blob-divider",
+        10,
+        1,
+        1
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        1,
+        "src/divider.ts",
+        "blob-divider",
+        11,
+        1,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        2,
+        "src/divider.ts",
+        "blob-divider",
+        12,
+        0,
+        2
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        3,
+        "src/divider.ts",
+        "blob-divider",
+        13,
+        1,
+        3
+      ]
+    },
+    {
+      "rel": "__host_response_comment_line_fact",
+      "sign": "add",
+      "row": [
+        "witness|comment_line_fact|path:text=src/divider.ts|digest:text=blob-divider",
+        4,
+        "src/divider.ts",
+        "blob-divider",
+        14,
+        1,
+        4
       ]
     }
   ],
