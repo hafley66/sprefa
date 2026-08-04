@@ -1,0 +1,176 @@
+# ghcacher_live.dl6 -- the LIVE conditional-fetch leg
+# (plans/2026-08-04-ghcacher-plan.md sections 3.1 and 4.4).
+#
+# Transport is `gh api --include` with an explicit If-None-Match header. `gh`
+# reads credentials from the OS keychain, so no token is ever interpolated into
+# a template, an environment variable, or a tick log. `--cache` is NOT used: a
+# TTL hit answers stale bytes without asking GitHub, and what this program needs
+# is GitHub's own freshness confirmation.
+#
+# NO BACK-OFF, SLEEP, OR RETRY COLUMN EXISTS HERE, and none may be added: rate
+# pressure is relational. A threshold rule that refuses to derive `poll` is a
+# paused tick, and a paused tick derives nothing and costs nothing.
+
+# ── the cadence ─────────────────────────────────────────────────────────────
+# The literal in `poll`'s body IS the schedule: emit_ts.pl collects exactly that
+# literal and serve/2_binds.ts spins exactly that one rx interval, whose first
+# emission is one period after boot. 2 is what keeps the live smoke inside the
+# 10-second law; the design cadence for a 300-repo poller is 60.
+#
+# rx: interval(2_000).pipe(map(toBucketRow), mergeMap(rows => engine.submit(rows)))
+bind interval(period: int, bucket: int).
+
+# The world names an endpoint. EDB: a bare top-level fact is refused
+# (level_rule_no_positive_body), so this arrives over /arrivals.
+#
+# rx: arrivals$.pipe(filter(row => row.rel === 'watch_endpoint'))
+rel watch_endpoint(endpoint_path: text).
+
+# ── the clock latch ─────────────────────────────────────────────────────────
+# TWO rules and not one, and the split is forced from both sides. The cadence
+# has to be the LITERAL argument 1 of an `interval` atom, because emit_ts.pl
+# bind_read_literals/4 spins one rx timer per literal it finds there and a
+# variable emits a bind plan with no timer at all. A literal in an edge rule's
+# TRIGGER atom is refused (trigger_arg_not_var). So the literal read is a level
+# rule and the latch is the edge rule above it.
+#
+# rx: intervalFired$.pipe(map(toBucketRow))
+rel bucket_event(period: int, bucket: int).
+bucket_event(2, Bucket) <- interval(2, Bucket).
+
+# key(1) keys on `period`, so a new bucket REPLACES rather than accumulates.
+# That replacement is what bounds the poll: `interval` rows themselves never
+# depart, so a rule reading them directly would re-demand every bucket it has
+# ever seen. A keyed head must be an edge head (keyed_level_head refuses the
+# level form).
+#
+# rx: bucketEvent$.pipe(scan((latch, row) => latch.set(row.period, row), new Map()))
+rel current_bucket(period: int, bucket: int) key(1).
+current_bucket(Period, Bucket) <+ bucket_event(Period, Bucket).
+
+# ── the conditional request ─────────────────────────────────────────────────
+# `bucket` is FRESHNESS (registry.pl host_input_contract/3): it never appears in
+# the template, it extends the witness, so a new bucket re-asks the same
+# question and an unchanged resource absorbs as zero delta. `prev_etag` is
+# IDENTITY, so it returns on the response row and a new tag is a new question.
+#
+# `|| true` is not defensive: MEASURED 2026-08-04 against gh 2.92.0, a 304 exits
+# 1 with `gh: HTTP 304` on stderr, and a nonzero exit is a host failure at this
+# seam (serve/1_hosts.ts runShellLine). The status is a VALUE here.
+#
+# One compact JSON object is the answer shape, not four printf lines: on a 304
+# the body is empty, which collapses a per-column read to three lines against
+# four declared columns and lands in the whitespace-grid reading instead
+# (serve/1_hosts.ts parseWhitespace). A named projection has no such ambiguity.
+#
+# `grep -i '^etag:'` is anchored because Access-Control-Expose-Headers lists
+# both ETag and X-RateLimit-Remaining by name in its value.
+sh gh_rest_cond(endpoint_path: text, prev_etag: text, bucket: int)
+  -> (status_code: int, next_etag: text, body_json: text, rest_remaining: int) =
+  `RAW=$(gh api --include -H "If-None-Match: {prev_etag}" '{endpoint_path}' 2>/dev/null || true)
+   STATUS=$(printf '%s\n' "$RAW" | head -1 | awk '{print $2}')
+   [ -n "$STATUS" ] || STATUS=0
+   ETAG=$(printf '%s\n' "$RAW" | grep -i '^etag:' | head -1 | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')
+   [ -n "$ETAG" ] || ETAG='{prev_etag}'
+   REMAIN=$(printf '%s\n' "$RAW" | grep -i '^x-ratelimit-remaining:' | head -1 | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')
+   [ -n "$REMAIN" ] || REMAIN=0
+   BODY=$(printf '%s\n' "$RAW" | awk 'seen{print $0} /^[[:space:]]*$/{seen=1}')
+   [ "$STATUS" = 200 ] || BODY=
+   jq -c -n --argjson st "$STATUS" --arg et "$ETAG" --arg bd "$BODY" --argjson rem "$REMAIN" '{status_code:$st,next_etag:$et,body_json:$bd,rest_remaining:$rem}'`.
+
+# ── the etag latch ──────────────────────────────────────────────────────────
+# `etag_event` is the DELAY that makes the poll loop legal, and it is not
+# decoration. The loop poll_state -> poll -> rest_call -> fresh_etag ->
+# poll_state closes through a trigger whose source is LEVEL-headed, which is
+# grade 0, so the whole cycle sums to 0 and the clock checker refuses it
+# (unconstructive_clock_cycle, MEASURED on the direct spelling that section 4.4
+# writes). A trigger read off an EDGE-headed rel is grade 1
+# (3_clock_check.pl edge_goal_dependency), so this one hop makes the cycle
+# productive_delayed. It is also exactly the rel the 304 golden pins, one tick
+# apart from the response it now derives from rather than being fed.
+#
+# rx: freshEtag$.pipe(delay(0))   the one-tick hop
+rel etag_event(endpoint_path: text, etag_value: text) log keep(all).
+etag_event(EndpointPath, NextEtag) <+ fresh_etag(EndpointPath, NextEtag).
+
+# Two edge arms into one key(1) head: the bootstrap arm gives the first poll an
+# empty If-None-Match, the refresh arm replaces it. Only a 200 moves the latch,
+# which is why the 304's WEAKNESS-STRIPPED tag never lands (MEASURED: a 200
+# answers `W/"abc"`, its own 304 answers `"abc"`).
+#
+# rx: merge(watchEndpoint$.pipe(map(row => [row.path, ''])),
+#           etagEvent$).pipe(scan((latch, [path, tag]) => latch.set(path, tag), new Map()))
+rel poll_state(endpoint_path: text, etag_value: text) key(1).
+poll_state(EndpointPath, '') <+ watch_endpoint(EndpointPath).
+poll_state(EndpointPath, EtagValue) <+ etag_event(EndpointPath, EtagValue).
+
+# ── the poll ────────────────────────────────────────────────────────────────
+# The witness is (endpoint_path, prev_etag, bucket). Two things move it: a new
+# bucket, and a new tag. So the first 200 re-derives this rule with the tag it
+# just learned, inside the same bucket, and that second call is the one that
+# answers 304.
+#
+# rx: combineLatest([watchEndpoint$, pollState$, currentBucket$]).pipe(map(toPollRows))
+rel poll(endpoint_path: text, prev_etag: text, bucket: int).
+poll(EndpointPath, PrevEtag, Bucket) <-
+  watch_endpoint(EndpointPath),
+  poll_state(EndpointPath, PrevEtag),
+  current_bucket(2, Bucket).
+
+# rx: poll$.pipe(map(mintIdentityAndWitness), distinct(row => row.witnessDigest),
+#                mergeMap(runShell), mergeMap(commitEdbArrival))
+rel rest_call(endpoint_path: text, bucket: int, status_code: int,
+              next_etag: text, body_json: text, rest_remaining: int).
+rest_call(EndpointPath, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining) <-
+  poll(EndpointPath, PrevEtag, Bucket),
+  gh_rest_cond(EndpointPath, PrevEtag, Bucket, StatusCode, NextEtag, BodyJson, RestRemaining).
+
+# ── what a 200 buys ─────────────────────────────────────────────────────────
+# rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toEtagPair))
+rel fresh_etag(endpoint_path: text, etag_value: text).
+fresh_etag(EndpointPath, NextEtag) <-
+  rest_call(EndpointPath, _Bucket, StatusCode, NextEtag, _BodyJson, _RestRemaining),
+  StatusCode == 200.
+
+# rx: restCall$.pipe(filter(row => row.statusCode === 200), map(toBodyPair))
+rel fresh_body(endpoint_path: text, body_json: text).
+fresh_body(EndpointPath, BodyJson) <-
+  rest_call(EndpointPath, _Bucket, StatusCode, _NextEtag, BodyJson, _RestRemaining),
+  StatusCode == 200.
+
+# THE CACHE. A LATCH, never a level rule: a level rule loses the body the moment
+# its poll row is superseded, which is the defect section 1.1 measured. A 304
+# leaves this table byte-identical, and that is the whole receipt.
+#
+# rx: freshBody$.pipe(scan((cache, row) => cache.set(row.path, row.body), new Map()))
+rel cached_body(endpoint_path: text, body_json: text) key(1).
+cached_body(EndpointPath, BodyJson) <+ fresh_body(EndpointPath, BodyJson).
+
+# ── the rate pool ───────────────────────────────────────────────────────────
+# Keyed by endpoint rather than as a single global row: key(N) keys on the FIRST
+# N columns, so a one-column keyed rel keys on its own value and accumulates
+# instead of replacing.
+#
+# rx: restCall$.pipe(scan((pool, row) => pool.set(row.path, row.remaining), new Map()))
+rel rest_pool(endpoint_path: text, remaining_points: int) key(1).
+rest_pool(EndpointPath, RestRemaining) <+
+  rest_call(EndpointPath, _Bucket, _StatusCode, _NextEtag, _BodyJson, RestRemaining).
+
+# ── telemetry ───────────────────────────────────────────────────────────────
+# Two arms with a literal each, because the language has no `if`. Edge arms, not
+# level arms: a level `call_log` would lose every row whose `rest_call` was
+# superseded by the next poll, and an audit trail that retracts is not one.
+#
+# rx: merge(restCall$.pipe(filter(row => row.statusCode === 304), map(withHit(1))),
+#           restCall$.pipe(filter(row => row.statusCode !== 304), map(withHit(0))))
+rel call_log(endpoint_path: text, bucket: int, status_code: int,
+             cache_hit: int, remaining_points: int) log keep(all).
+call_log(EndpointPath, Bucket, StatusCode, 1, RestRemaining) <+
+  rest_call(EndpointPath, Bucket, StatusCode, _NextEtag, _BodyJson, RestRemaining),
+  StatusCode == 304.
+call_log(EndpointPath, Bucket, StatusCode, 0, RestRemaining) <+
+  rest_call(EndpointPath, Bucket, StatusCode, _NextEtag, _BodyJson, RestRemaining),
+  StatusCode \== 304.
+
+? cached_body(EndpointPath, BodyJson).
+? call_log(EndpointPath, Bucket, StatusCode, CacheHit, RemainingPoints).
