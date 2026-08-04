@@ -596,6 +596,13 @@ ruling(tick_boundary, ingress_transaction_list, user,
 ruling(admission_word, lossless_queue_concat_family, user,
        'user 2026-08-04: "no dropping events, exhaustMap is not what i want, this is concatMap territory, idk why its zip but dont lose info". The reserved admission door = LOSSLESS QUEUED admission: one admission per key per tick, remaining contenders WAIT for successive ticks, nothing is dropped. Drop-flavored spellings (throttle, exhaust) are REJECTED for this construct; zip is rejected as the WORD while its lockstep semantics survive; the surface spelling comes from the rx concat family, exact form priced in the fuse contract. one_pick_order (within-tick pick = arrival order) is untouched: it referees who is FIRST in a deliberate batch, this ruling says the rest queue instead of vanishing.').
 
+% 2026-08-04 midday: design-debt mode declared. Language design is FROZEN in
+% favor of shipping ghcacher, the golden use cases, and full sprefa-extract
+% usage. Any AI-taken design decision during this mode carries the user's
+% banner verbatim at the decision site.
+ruling(design_debt_mode, utility_over_pedantry, user,
+       'user 2026-08-04: "im done language designing, do whatever it takes to be able to competently express ghcacher and our golden usecases and full usage of sprefa-extract. stick a fork in it and accrue lang design debt fuck it, mark it accordingly with big fucking loud letters: FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT". Debt decisions taken under this banner so far (ghcacher plan Q1-Q3): host concurrency stays serial concatMap (knob deferred); rate back-off = relational pause (over_budget anti-joined into due), never a sleeping host; change detector = one conditional org-events call, with the live smoke leg measuring whether a private org blinds it before any lane depends on it. Each lands in code/docs with the banner.').
+
 % 2026-08-04 midday: block sugar timing, ruled (duel word 2). The lowered form
 % is the construct; braces come later as sugar over it.
 ruling(block_lowering_first, flat_rels_catalog_edges_arg_distribution, user,

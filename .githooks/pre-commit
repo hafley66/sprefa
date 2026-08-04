@@ -3,4 +3,6 @@
 # (dl --check rails gate removed for now — restore `exec dl --check` when dl is
 #  back on PATH. Bypass this hook: git commit -n)
 repo_root=$(git rev-parse --show-toplevel)
-sh "$repo_root/v6/tools/gen-index.sh" && git add "$repo_root/v6/INDEX.md"
+sh "$repo_root/v6/tools/gen-index.sh" && git add "$repo_root/v6/INDEX.md" || exit 1
+# Comment budget on staged added lines (>2 consecutive comment lines = fail).
+/Users/chrishafley/projects/claude-research/bin/comment-prod --cached
