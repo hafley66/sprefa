@@ -149,13 +149,21 @@ header_lines(Name, Lines) :-
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
 imports_lines(HasEdgeRules, HasRetention, Lines) :-
-    imports_lines(HasEdgeRules, HasRetention, false, false, Lines).
+    imports_lines(HasEdgeRules, HasRetention, false, false, [], Lines).
 
 imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
-              Lines) :-
+              SelfReferentialLevelRefs, Lines) :-
     ( HasRetention == true
     -> RetentionImport = ['  IIncrementalRetentionStatement,']
     ; RetentionImport = []
+    ),
+    % The level fixpoint's three extra operators, imported only by the
+    % programs that emit it, so every other module's import line is unchanged.
+    ( SelfReferentialLevelRefs == []
+    -> RxImportLine =
+       'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";'
+    ;  RxImportLine =
+       'import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } from "rxjs";'
     ),
     ( HasOrderedProgram == true
     -> RuntimeImport =
@@ -169,7 +177,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
     ;  StructImport = [], StructTypeImports = []
     ),
     append(
-    [ [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
+    [ [ RxImportLine,
       '',
       RuntimeImport,
       'import { SubscribeCone } from "../runtime/3_subscribe.ts";',
@@ -1558,14 +1566,68 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
 % complete shape the async-becomes-rxjs law calls for (EMPTY would complete
 % without emitting, which starves the caller's `.pipe(map(() => before))` of
 % a value and stalls the whole tick chain).
-recompute_levels_fn_lines([], Lines) :- !,
+recompute_levels_fn_lines(_, [], Lines) :- !,
     Lines =
     [ 'function recomputeLevels(seam: ISqlSeam): Observable<void> {',
       '  void seam;',
       '  return of(undefined);',
       '}'
     ].
-recompute_levels_fn_lines(LevelStatements, Lines) :-
+% THE LEVEL FIXPOINT. One DELETE-then-INSERT-per-clause pass gives a
+% self-referential head exactly as many derivation rounds as it has clauses,
+% from an empty table, every tick: a two-clause fold reaches two links and
+% stops, whatever the data says (sprefa-lab-foldwall/FOLDWALL.md measured the
+% ceiling tracking clause count exactly). Both doors that call this function
+% carry the ceiling -- runOrderedTick, which any seq/1 or pre/1 program takes,
+% and runNaiveTick.
+%
+% So the DELETE runs ONCE and the INSERT set repeats until a round adds no
+% row. strat.pl:topo_order_group/2 refuses mutual recursion inside a stratum
+% (recursive_stratum) and exempts only the self-edge, so a DIRECT self-read is
+% the whole recursion surface, and a program with none of them still reaches
+% its answer in the single pass below -- which is why that clause stays and
+% keeps every non-recursive module's emitted text unchanged.
+%
+% Every clause is INSERT OR IGNORE, so a round can only add rows and the count
+% is monotone; datalog closure over a finite store is what makes it stop.
+recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
+    SelfReferentialLevelRefs \== [],
+    LevelStatements \== [],
+    !,
+    findall(DeleteSql,
+            member(levelstmt(_, DeleteSql, _, _, _, _), LevelStatements),
+            DeleteSqls),
+    findall(InsertSql,
+            ( member(levelstmt(_, _, InsertSqls, _, _, _), LevelStatements),
+              member(InsertSql, InsertSqls) ),
+            RoundInsertSqls),
+    % Real newline; see the note at the recompute join.
+    atomic_list_concat(DeleteSqls, ';\n', JoinedDeleteSql),
+    atomic_list_concat(RoundInsertSqls, ';\n', JoinedInsertSql),
+    js_template(JoinedDeleteSql, DeleteTemplate),
+    js_template(JoinedInsertSql, InsertTemplate),
+    level_row_count_sql(LevelStatements, CountSql),
+    js_template(CountSql, CountTemplate),
+    format(atom(DeleteLine), '  const deleteSql = ~w;', [DeleteTemplate]),
+    format(atom(InsertLine), '  const insertSql = ~w;', [InsertTemplate]),
+    format(atom(CountLine), '  const countSql = ~w;', [CountTemplate]),
+    Lines =
+    [ 'function recomputeLevels(seam: ISqlSeam): Observable<void> {',
+      DeleteLine,
+      InsertLine,
+      CountLine,
+      '  return seam.runner.executeMultiple(seam.db, deleteSql).pipe(',
+      '    map(() => -1),',
+      '    expand((priorRows) => seam.runner.executeMultiple(seam.db, insertSql).pipe(',
+      '      concatMap(() => seam.runner.scalar(seam.db, countSql)),',
+      '      concatMap((rows) => (rows === priorRows ? EMPTY : of(rows))),',
+      '    )),',
+      '    last(),',
+      '    map(() => undefined),',
+      '  );',
+      '}'
+    ].
+recompute_levels_fn_lines(_, LevelStatements, Lines) :-
     LevelStatements \== [],
     % InsertSqls is a LIST (lower.pl:level_statement_group/3 -- one entry per
     % rule clause sharing this head, so a multi-clause head's rows all
@@ -1583,6 +1645,32 @@ recompute_levels_fn_lines(LevelStatements, Lines) :-
       '  return seam.runner.executeMultiple(seam.db, sql);',
       '}'
     ].
+
+% ISqlRunner.scalar/2 reads the first column of the first row, so the round
+% count is one SELECT with no row shape to decode.
+level_row_count_sql(LevelStatements, Sql) :-
+    findall(CountExpr,
+            ( member(levelstmt(HeadRef, _, _, _, _, _), LevelStatements),
+              ref_name(HeadRef, HeadName),
+              quote_ident_local(HeadName, QuotedHead),
+              format(atom(CountExpr), '(SELECT count(*) FROM ~w)',
+                     [QuotedHead]) ),
+            CountExprs),
+    atomic_list_concat(CountExprs, ' + ', SummedExpr),
+    format(atom(Sql), 'SELECT ~w', [SummedExpr]).
+
+% A level head that reads ITSELF positively. strat.pl:topo_order_group/2 drops
+% exactly this edge from its Kahn order (`DependsOnRef \== HeadRef`) and
+% refuses every other cycle, so this is the complete set of heads whose SQL
+% needs more than one derivation round.
+self_referential_level_refs(Rules, Refs) :-
+    findall(HeadRef,
+            ( member(Rule, Rules), Rule = (_ <- Body),
+              rule_head_ref(Rule, HeadRef),
+              body_ref_uses(Body, Uses),
+              memberchk(use(HeadRef, _, pos, _), Uses) ),
+            Refs0),
+    sort(Refs0, Refs).
 
 % ═══ buildDeltas ═════════════════════════════════════════════════════════════
 
@@ -2112,8 +2200,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ( ordered_program(EdgeStatements) -> HasOrderedProgram = true
     ; HasOrderedProgram = false
     ),
+    Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _),
+    self_referential_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes,
-                  HasOrderedProgram, ImportLines),
+                  HasOrderedProgram, SelfReferentialLevelRefs, ImportLines),
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
@@ -2156,7 +2246,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                              OrderedOccurrenceLines),
     ordered_carry_lines(HasOrderedProgram, EdgeStatements, LevelHeadedRefs,
                         OrderedCarryLines),
-    recompute_levels_fn_lines(RuleLevelStatements, RecomputeLevelsFnLines),
+    recompute_levels_fn_lines(SelfReferentialLevelRefs, RuleLevelStatements,
+                              RecomputeLevelsFnLines),
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
                           DepartureRefs, BuildDeltasFnLines),

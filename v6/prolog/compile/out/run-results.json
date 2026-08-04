@@ -1099,6 +1099,13 @@
     "finalDetail": ""
   },
   {
+    "name": "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "filter_map_is_a_level_rule",
     "bucket": "identical",
     "detail": "",
@@ -1114,6 +1121,20 @@
   },
   {
     "name": "fork_join_is_a_conjunctive_body",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unordered_program_level_fold_reaches_three_links",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
