@@ -88,6 +88,7 @@
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/ghcacher_304_golden/README.md](tsv2/goldens/ghcacher_304_golden/README.md) | 89 | Ghcacher 304 golden |
+| [tsv2/goldens/ghcacher_config_golden/README.md](tsv2/goldens/ghcacher_config_golden/README.md) | 51 | Ghcacher config-feeder golden |
 | [tsv2/goldens/ghcacher_tick_golden/README.md](tsv2/goldens/ghcacher_tick_golden/README.md) | 50 | Ghcacher clock golden |
 | [tsv2/goldens/multirepo_crawl/README.md](tsv2/goldens/multirepo_crawl/README.md) | 74 | multirepo_crawl — stopping-point program #5, graded against v5 |
 | [tsv2/rxoracle/README.md](tsv2/rxoracle/README.md) | 171 | rxoracle -- grading sprefa's event sequence against literal rxjs |
@@ -1282,6 +1283,11 @@
 ```
 1:# Ghcacher 304 golden
 56:## Fail-first receipt
+```
+
+### tsv2/goldens/ghcacher_config_golden/README.md
+```
+1:# Ghcacher config-feeder golden
 ```
 
 ### tsv2/goldens/ghcacher_tick_golden/README.md
