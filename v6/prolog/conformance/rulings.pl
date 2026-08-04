@@ -584,3 +584,19 @@ ruling(one_admission_no_lockout, both_folds_stay_sound, user,
 
 ruling(one_decl_surface, rel_declaration_only, user,
        'user 2026-08-03: "i dont want a non rel declaration feature fucks with the other features bc muh constraint soundness". Whatever one()/admission becomes, it lands as a rel-declaration property beside key(1) and log keep() so the existing decl checkers (edge_head_conflict_risk, retention_head_conflict_risk, type gate) see it natively; a freestanding construct class with unpriced decl interactions is refused at the design stage. Standing note: the keyed-vs-log split itself is disliked and will be revisited; no new feature may deepen the split before that revisit.').
+
+% 2026-08-04 morning: the tick boundary, ruled after the v8/event-loop survey
+% (macrotask = tick, microtask drain = rounds, boundary = queue exhaustion;
+% v8 owns no clock and neither do we).
+ruling(tick_boundary, ingress_transaction_list, user,
+       'user 2026-08-04: "make the events that are in-tick be a list of events, and its usually a list of one". A tick dequeues ONE ingress transaction = an explicit list of events, list of one in the common case. Simultaneity is opt-in: it exists only when the submitter deliberately batched (one file save, one commit, one schedule row), never manufactured by the engine coalescing independent sources into a shared tick. Consequences: same-tick multi-writer conflicts shrink to refereeing DELIBERATE batches (the one/any family scope-cut); independent contenders land on successive ticks automatically (the deferral door happens by construction); the engine surface already matches (submit takes IArrivalBatch, concatMap runs one batch per tick, 3_engine.ts:104); the constraint binds every future ingress path (live_event, bus, clock binds): one submission = one tick, no auto-coalescing.').
+
+% 2026-08-04 midday: the duel words, ruled. Ends the throttle-vs-zip fork
+% (plans/2026-08-04-rxprim-duel-verdict.md word 1).
+ruling(admission_word, lossless_queue_concat_family, user,
+       'user 2026-08-04: "no dropping events, exhaustMap is not what i want, this is concatMap territory, idk why its zip but dont lose info". The reserved admission door = LOSSLESS QUEUED admission: one admission per key per tick, remaining contenders WAIT for successive ticks, nothing is dropped. Drop-flavored spellings (throttle, exhaust) are REJECTED for this construct; zip is rejected as the WORD while its lockstep semantics survive; the surface spelling comes from the rx concat family, exact form priced in the fuse contract. one_pick_order (within-tick pick = arrival order) is untouched: it referees who is FIRST in a deliberate batch, this ruling says the rest queue instead of vanishing.').
+
+% 2026-08-04 midday: block sugar timing, ruled (duel word 2). The lowered form
+% is the construct; braces come later as sugar over it.
+ruling(block_lowering_first, flat_rels_catalog_edges_arg_distribution, user,
+       'user 2026-08-04: "if a file is our first block syntax its not really sugar anymore... make a middle of the road abstraction that we open later... relate rels to each other after we lower them into longer names and if we capture arg from outside world its implicitly captured, distribute that arg into every thing, that sounds sugarable". Block construct v1 = the LOWERING: children land as flat rels with long mangled names (module-catalog M5 spelling) plus catalog rows relating them; an outer arg the block captures is IMPLICITLY DISTRIBUTED into every child rel as a leading demand-key column (module-catalog M1, data-driven scalar args). The brace surface is sugar over that lowering and arrives in a later wave; a FILE is the degenerate first block already. Consistent with modscope decisions 7 (module = rel/0 with children), 8 (dotted heads contribute), 10 (block-under-rel = extension surface).').
