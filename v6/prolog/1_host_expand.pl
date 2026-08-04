@@ -21,6 +21,7 @@
             compile_query/2,
             compile_ts_query/2,
             body_goals/2,
+            host_relation_refs/3,
             reserved_host_column/1
           ]).
 

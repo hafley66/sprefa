@@ -56,7 +56,7 @@ type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatemen
 export const hostPlans: readonly IHostPlanData[] = [{ name: "tree_sitter", inputs: [{ name: "file_digest", type: "text" }, { name: "query", type: "text" }], outputs: [{ name: "capture", type: "text" }], template: "tree-sitter {file_digest} $query", demandRel: "__host_demand_tree_sitter", responseRel: "__host_response_tree_sitter", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [{ name: "interval", columns: [{ name: "period", type: "int" }, { name: "bucket", type: "int" }], literals: [], execution: "live_interval" }];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "captured", arity: 1, columns: [null], bound: [], snapshot: "current" }];
-export const subscribedRels: readonly string[] = ["__host_response_tree_sitter/5", "captured/1", "file_digest/1", "query_source/1", "query_value/1"];
+export const subscribedRels: readonly string[] = ["__host_demand_tree_sitter/4", "__host_response_tree_sitter/5", "captured/1", "file_digest/1", "query_source/1", "query_value/1"];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {

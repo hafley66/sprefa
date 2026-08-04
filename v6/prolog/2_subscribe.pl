@@ -2,7 +2,9 @@
 %
 % Seeded by the program's queries, closed over the rule graph: a subscribed
 % rel subscribes to every rule whose head is that rel, and each such rule
-% subscribes to every rel its body reads, through samplers and negation alike.
+% subscribes to every rel its body reads, through samplers and negation alike,
+% plus the one edge no rule body carries: a subscribed host RESPONSE rel
+% subscribes to its host's DEMAND rel (host_edge/3 below).
 % Strict per ruling zero_query_semantics 2026-08-03: a program with no query
 % subscribes to NOTHING; harness-side subscription roots arrive with the
 % pruning rung.
@@ -19,6 +21,7 @@
 
 :- use_module(library(lists)).
 :- use_module('0_body_walk', [body_relation_atoms/4]).
+:- use_module('1_host_expand', [host_relation_refs/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -29,12 +32,12 @@
 subscribed_rels(_Decls, _Rules, [], Cone) :-
     !,
     Cone = [].
-subscribed_rels(_Decls, Rules, Queries, Cone) :-
+subscribed_rels(Decls, Rules, Queries, Cone) :-
     findall(Name/Arity,
             ( member(QueryAtom, Queries), functor(QueryAtom, Name, Arity) ),
             SeedList),
     sort(SeedList, Seeds),
-    cone_fixpoint(Seeds, Rules, Cone).
+    cone_fixpoint(Seeds, Decls, Rules, Cone).
 
 % Both arrows: `<+` edge rules carry as much of a real program's subscribe
 % chain as `<-` level rules do (golden-flex.dl6 reaches pick_count, last_picker
@@ -42,19 +45,40 @@ subscribed_rels(_Decls, Rules, Queries, Cone) :-
 cone_rule((Head <- Body), Name/Arity, Body) :- functor(Head, Name, Arity).
 cone_rule((Head <+ Body), Name/Arity, Body) :- functor(Head, Name, Arity).
 
-cone_fixpoint(Cone0, Rules, Cone) :-
+cone_fixpoint(Cone0, Decls, Rules, Cone) :-
     findall(BodyRef,
             ( member(Rule, Rules),
               cone_rule(Rule, HeadRef, Body),
               memberchk(HeadRef, Cone0),
               body_rel(Body, BodyRef) ),
             Reached),
-    append(Cone0, Reached, Widened),
+    findall(DemandRef,
+            ( member(Ref, Cone0), host_edge(Decls, Ref, DemandRef) ),
+            HostReached),
+    append([Cone0, Reached, HostReached], Widened),
     sort(Widened, Cone1),
     ( Cone1 == Cone0
     -> Cone = Cone0
-    ;  cone_fixpoint(Cone1, Rules, Cone)
+    ;  cone_fixpoint(Cone1, Decls, Rules, Cone)
     ).
+
+% THE EDGE NO RULE BODY CARRIES. 1_host_expand.pl splits a probe into a demand
+% rule and a response atom, and the response relation is EDB: nothing in the
+% rule graph reads the demand relation, so the walk above stops at the response
+% and the demand rel falls outside the cone. Under a replay schedule the answers
+% arrive anyway and the gap is invisible; against a live host the demand rows
+% are what the runner reads, so a pruned demand rel means the host never runs
+% and the subscribed rel stays empty with no error.
+%
+% The pairing is read from the host DECLARATION, so it holds for every host in
+% every program at the rel-kind level, and the two names come from
+% host_relation_refs/3 rather than a second spelling of the prefixes.
+% Demand arity is read from the generated col_type/3 decls because a probe's
+% salts widen the relation past its base arity.
+host_edge(Decls, ResponseName/_, DemandName/DemandArity) :-
+    member(sh_decl(HostName, _, _, _), Decls),
+    host_relation_refs(HostName, DemandName, ResponseName),
+    member(col_type(DemandName/DemandArity, _, _), Decls).
 
 % The widest walk policy, the one analyze.pl:body_ref_uses/2 uses: descend
 % not/1, splice next/1 and combine. The registry decides what is a relation
