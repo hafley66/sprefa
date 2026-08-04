@@ -1,0 +1,74 @@
+# Deterministic ghcacher tier golden over the current v6 text surface.
+#
+# repo_activity last-event buckets drive NON-OVERLAPPING tier bands. A repo is
+# due only when its band's period divides the clock bucket; the downstream poll
+# and fetch are gated on that due row, so a cold repo fires exactly on its Nth
+# tick and a non-due repo derives no row at all. The schedule feeds every fact
+# and interval; no shell, network, or wall clock participates in the grade.
+
+rel repo(repo_slug: text).
+rel repo_activity(repo_slug: text, last_event_bucket: int) key(1).
+rel tier_rule(tier_name: text, min_idle_ticks: int, max_idle_ticks: int, period_ticks: int).
+rel batch_size(rows_per_call: int) key(1).
+rel repo_ordinal(repo_slug: text, ordinal: int) key(1).
+
+rel repo_tier(repo_slug: text, tier_name: text, period_ticks: int).
+rel due(repo_slug: text, bucket: int, tier_name: text).
+rel due_batch(bucket: int, batch_index: int, repo_slug: text).
+rel batch_query(bucket: int, batch_index: int, slug_list: text).
+rel points_budget(bucket: int, calls_this_tick: int).
+
+bind interval(period: int, bucket: int).
+
+sh fetch(repo_slug: text, bucket: int) ->
+  (status: int, full_name: text) =
+  `fetch {repo_slug} at $bucket`.
+
+rel poll(repo_slug: text, bucket: int).
+rel resp(repo_slug: text, bucket: int, status: int, full_name: text).
+
+# Which band a repo is in: idle ticks since its last event, matched against
+# NON-OVERLAPPING bands. The bands are fact rows, so retiering is posting rows.
+repo_tier(RepoSlug, TierName, PeriodTicks) <-
+  repo(RepoSlug),
+  repo_activity(RepoSlug, LastEventBucket),
+  interval(60, Bucket),
+  tier_rule(TierName, MinIdleTicks, MaxIdleTicks, PeriodTicks),
+  IdleTicks := Bucket - LastEventBucket,
+  IdleTicks >= MinIdleTicks,
+  IdleTicks < MaxIdleTicks.
+
+# Due this tick: the band's period divides the bucket. A non-due repo derives
+# NO ROW, which is why it costs nothing downstream.
+due(RepoSlug, Bucket, TierName) <-
+  interval(60, Bucket),
+  repo_tier(RepoSlug, TierName, PeriodTicks),
+  PhaseSlot := Bucket mod PeriodTicks,
+  PhaseSlot == 0.
+
+# Batching: integer division of a stable ordinal by the batch size.
+due_batch(Bucket, BatchIndex, RepoSlug) <-
+  due(RepoSlug, Bucket, _TierName),
+  repo_ordinal(RepoSlug, Ordinal),
+  batch_size(RowsPerCall),
+  BatchIndex := Ordinal / RowsPerCall.
+
+# The aliased-query slug list, built by a SQL aggregate rather than by string code.
+batch_query(Bucket, BatchIndex, group_concat(RepoSlug, ' ')) <-
+  due_batch(Bucket, BatchIndex, RepoSlug).
+
+# The budget, as rows.
+points_budget(Bucket, count(BatchIndex)) <-
+  batch_query(Bucket, BatchIndex, _SlugList).
+
+# The network work downstream: only due repos are polled and fetched.
+poll(RepoSlug, Bucket) <-
+  due(RepoSlug, Bucket, _TierName).
+
+resp(RepoSlug, Bucket, Status, FullName) <-
+  poll(RepoSlug, Bucket),
+  fetch(RepoSlug, Bucket, Status, FullName).
+
+? batch_query(Bucket, BatchIndex, SlugList).
+? points_budget(Bucket, CallsThisTick).
+? due(RepoSlug, Bucket, TierName).
