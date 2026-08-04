@@ -44,3 +44,23 @@ form. Blocked on nothing.
 - Family name: tick-aligned pulse operators, all match-block shaped:
   any (merge) / one (per-tick priority pick, rx auditTime-with-priority)
   / debounce (fire when a tick passes quiet) / scan (fold).
+
+## Refinement 2 (user, same night): typed merge, policy as parameter
+Verbatim: "allow any semantics so choose 1 or allow same tick etc...
+the correct technique is typed merge so we can tell what edge made it
+in a scan... it sounds like im fighting natural prolog itself".
+Resolution: not fighting prolog; fighting IMPLICIT merge. The arm tag
+is a plain enum column (the enum tag-view machinery already exists and
+is plunit-green). Spec sketch:
+    enum gate_source = pre_commit | timer.
+    gate_fire(Source: gate_source, Repo, B) <+ any {
+        pre_commit: pre_commit(Repo, B);
+        timer:      latest(armed(Repo)), interval(1, B);
+    }.
+- desugar: N ordinary arms, each writing its variant into column 1.
+- policy keyword picks arbitration over the SAME body:
+  any = all arms land (today's semantics, grouped+tagged);
+  one = per-tick priority pick, surviving tag = arbitration receipt.
+- rx: merge(a$.pipe(map(tag pre_commit)), b$.pipe(map(tag timer)));
+  scan folds with match over the tag (exhaustiveness checker-enforced
+  because the tag is an enum, never a bare atom).
