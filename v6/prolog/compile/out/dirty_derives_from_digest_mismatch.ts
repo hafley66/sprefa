@@ -153,7 +153,7 @@ function triggerOccurrences(
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "dirty" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "dirty" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TABLE "head" ("_repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, PRIMARY KEY ("_repo_id")) WITHOUT ROWID`,
   `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "tree_digest" TEXT NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
   `CREATE TABLE "worktree_edit" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
@@ -193,7 +193,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_worktree_file_phase" ON "__frontier_worktree_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_worktree_file_phase" ON "__next_frontier_worktree_file" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_dirty" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_dirty" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -293,7 +293,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "dirty", ruleId: "dirty_derives_from_digest_mismatch:dirty/1#1", headDeltaTableName: "__delta_dirty", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "dirty" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0, "head" b0, "tree_file" b1 WHERE d0."_phase" >= 0 AND b1."rev_id" = b0."rev_id" AND b1."path" = d0."path" AND (d0."digest" <> b1."tree_digest") UNION ALL SELECT DISTINCT b0."path" FROM "__frontier_head" d0, "worktree_file" b0, "tree_file" b1 WHERE d0."_phase" >= 0 AND b1."rev_id" = d0."rev_id" AND b1."path" = b0."path" AND (b0."digest" <> b1."tree_digest") UNION ALL SELECT DISTINCT d0."path" FROM "__frontier_tree_file" d0, "worktree_file" b0, "head" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."rev_id" = d0."rev_id" AND (b0."digest" <> d0."tree_digest") RETURNING "path"`, selectSql: `SELECT "path" FROM "dirty"`, recomputeSql: `DELETE FROM "dirty";
-INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" <> b2."tree_digest")`, supportSql: [`DELETE FROM "__support_next_dirty"`, `INSERT INTO "__support_next_dirty" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" <> b2."tree_digest") GROUP BY b0."path") GROUP BY "path"`, `UPDATE "dirty" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_dirty" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "dirty" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "dirty" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_dirty" n WHERE NOT EXISTS (SELECT 1 FROM "dirty" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
+INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" <> b2."tree_digest")`, supportSql: [`DELETE FROM "__support_next_dirty"`, `INSERT INTO "__support_next_dirty" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" <> b2."tree_digest") GROUP BY b0."path") GROUP BY "path"`, `UPDATE "dirty" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_dirty" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "dirty" WHERE "__refcount" <= 0 RETURNING "path"`, `INSERT INTO "dirty" ("path", "__refcount") SELECT "path", n."__refcount" FROM "__support_next_dirty" n WHERE NOT EXISTS (SELECT 1 FROM "dirty" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 
 const EDGE_WORKTREE_FILE_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest"`;

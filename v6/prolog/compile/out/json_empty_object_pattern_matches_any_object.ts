@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "entry" ("name" TEXT NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
-  `CREATE TABLE "is_object" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "is_object" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_entry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
   `CREATE INDEX "__delta_entry_sign" ON "__delta_entry" ("_sign")`,
   `CREATE INDEX "__delta_entry_group" ON "__delta_entry" ("name", "value")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_is_object_phase" ON "__frontier_is_object" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_is_object" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_is_object_phase" ON "__next_frontier_is_object" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_is_object" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_is_object" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -230,7 +230,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "is_object", ruleId: "json_empty_object_pattern_matches_any_object:is_object/1#1", headDeltaTableName: "__delta_is_object", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "is_object" ("name") SELECT DISTINCT d0."name" FROM "__frontier_entry" d0 WHERE d0."_phase" >= 0 AND json_type(d0."value", '$') = 'object' RETURNING "name"`, selectSql: `SELECT "name" FROM "is_object"`, recomputeSql: `DELETE FROM "is_object";
-INSERT OR IGNORE INTO "is_object" ("name") SELECT b0."name" FROM "entry" b0 WHERE json_type(b0."value", '$') = 'object'`, supportSql: [`DELETE FROM "__support_next_is_object"`, `INSERT INTO "__support_next_is_object" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "entry" b0 WHERE json_type(b0."value", '$') = 'object' GROUP BY b0."name") GROUP BY "name"`, `UPDATE "is_object" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_is_object" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "is_object" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "is_object" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_is_object" n WHERE NOT EXISTS (SELECT 1 FROM "is_object" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "is_object" ("name") SELECT b0."name" FROM "entry" b0 WHERE json_type(b0."value", '$') = 'object'`, supportSql: [`DELETE FROM "__support_next_is_object"`, `INSERT INTO "__support_next_is_object" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "entry" b0 WHERE json_type(b0."value", '$') = 'object' GROUP BY b0."name") GROUP BY "name"`, `UPDATE "is_object" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_is_object" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "is_object" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "is_object" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_is_object" n WHERE NOT EXISTS (SELECT 1 FROM "is_object" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -148,7 +148,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "finding" ("path" TEXT NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("path", "at")) WITHOUT ROWID`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
-  `CREATE TABLE "touched" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "touched" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finding_sign" ON "__delta_finding" ("_sign")`,
   `CREATE INDEX "__delta_finding_group" ON "__delta_finding" ("path", "at")`,
@@ -170,7 +170,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_touched_phase" ON "__frontier_touched" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_touched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_touched_phase" ON "__next_frontier_touched" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_touched" ("path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_touched" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -256,7 +256,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "touched", ruleId: "struct_column_renders_canonical_json:touched/1#1", headDeltaTableName: "__delta_touched", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "touched" ("path") SELECT DISTINCT d0."path" FROM "__frontier_finding" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "touched"`, recomputeSql: `DELETE FROM "touched";
-INSERT OR IGNORE INTO "touched" ("path") SELECT b0."path" FROM "finding" b0`, supportSql: [`DELETE FROM "__support_next_touched"`, `INSERT INTO "__support_next_touched" ("path", "__support_count") SELECT "path", sum("__support_count") FROM (SELECT b0."path" AS "path", count(*) AS "__support_count" FROM "finding" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "touched" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_touched" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "touched" WHERE "__support_count" <= 0 RETURNING "path"`, `INSERT INTO "touched" ("path", "__support_count") SELECT "path", n."__support_count" FROM "__support_next_touched" n WHERE NOT EXISTS (SELECT 1 FROM "touched" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
+INSERT OR IGNORE INTO "touched" ("path") SELECT b0."path" FROM "finding" b0`, supportSql: [`DELETE FROM "__support_next_touched"`, `INSERT INTO "__support_next_touched" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "finding" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "touched" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_touched" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "touched" WHERE "__refcount" <= 0 RETURNING "path"`, `INSERT INTO "touched" ("path", "__refcount") SELECT "path", n."__refcount" FROM "__support_next_touched" n WHERE NOT EXISTS (SELECT 1 FROM "touched" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

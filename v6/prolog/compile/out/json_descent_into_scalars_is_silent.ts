@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TABLE "found" ("value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "found" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_doc_sign" ON "__delta_doc" ("_sign")`,
   `CREATE INDEX "__delta_doc_group" ON "__delta_doc" ("body")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_found_phase" ON "__frontier_found" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_found_phase" ON "__next_frontier_found" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_found" ("value" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_found" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "found", ruleId: "json_descent_into_scalars_is_silent:found/1#1", headDeltaTableName: "__delta_found", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "found" ("value") SELECT DISTINCT json_extract(j0.value, '$."leaf"') FROM "__frontier_doc" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_extract(j0.value, '$."leaf"') IS NOT NULL RETURNING "value"`, selectSql: `SELECT "value" FROM "found"`, recomputeSql: `DELETE FROM "found";
-INSERT OR IGNORE INTO "found" ("value") SELECT json_extract(j0.value, '$."leaf"') FROM "doc" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_extract(j0.value, '$."leaf"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_found"`, `INSERT INTO "__support_next_found" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT json_extract(j0.value, '$."leaf"') AS "value", count(*) AS "__support_count" FROM "doc" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_extract(j0.value, '$."leaf"') IS NOT NULL GROUP BY json_extract(j0.value, '$."leaf"')) GROUP BY "value"`, `UPDATE "found" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_found" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "found" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "found" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_found" n WHERE NOT EXISTS (SELECT 1 FROM "found" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "found" ("value") SELECT json_extract(j0.value, '$."leaf"') FROM "doc" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_extract(j0.value, '$."leaf"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_found"`, `INSERT INTO "__support_next_found" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."leaf"') AS "value", count(*) AS "__refcount" FROM "doc" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_extract(j0.value, '$."leaf"') IS NOT NULL GROUP BY json_extract(j0.value, '$."leaf"')) GROUP BY "value"`, `UPDATE "found" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_found" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "found" WHERE "__refcount" <= 0 RETURNING "value"`, `INSERT INTO "found" ("value", "__refcount") SELECT "value", n."__refcount" FROM "__support_next_found" n WHERE NOT EXISTS (SELECT 1 FROM "found" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -157,7 +157,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "pin_want" ("col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE TABLE "rev_fill" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE TABLE "rev_status" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
-  `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_demand_rev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_demand_rev_sign" ON "__delta_demand_rev" ("_sign")`,
   `CREATE INDEX "__delta_demand_rev_group" ON "__delta_demand_rev" ("dep_repo_id", "ref_text")`,
@@ -193,7 +193,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_stale_pin_phase" ON "__frontier_stale_pin" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_stale_pin_phase" ON "__next_frontier_stale_pin" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -290,7 +290,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "stale_pin", ruleId: "rev_fill_not_behind_keeps_stale_pin_empty:stale_pin/2#1", headDeltaTableName: "__delta_stale_pin", headColumns: ["dep_repo_id", "ref_text"], insertSql: `INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT DISTINCT d0."dep_repo_id", d0."ref_text" FROM "__frontier_rev_status" d0 WHERE d0."_phase" >= 0 AND (d0."behind" > 0) RETURNING "dep_repo_id", "ref_text"`, selectSql: `SELECT "dep_repo_id", "ref_text" FROM "stale_pin"`, recomputeSql: `DELETE FROM "stale_pin";
-INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT b0."dep_repo_id", b0."ref_text" FROM "rev_status" b0 WHERE (b0."behind" > 0)`, supportSql: [`DELETE FROM "__support_next_stale_pin"`, `INSERT INTO "__support_next_stale_pin" ("dep_repo_id", "ref_text", "__support_count") SELECT "dep_repo_id", "ref_text", sum("__support_count") FROM (SELECT b0."dep_repo_id" AS "dep_repo_id", b0."ref_text" AS "ref_text", count(*) AS "__support_count" FROM "rev_status" b0 WHERE (b0."behind" > 0) GROUP BY b0."dep_repo_id", b0."ref_text") GROUP BY "dep_repo_id", "ref_text"`, `UPDATE "stale_pin" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_stale_pin" n WHERE n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text"), 0))`, `DELETE FROM "stale_pin" WHERE "__support_count" <= 0 RETURNING "dep_repo_id", "ref_text"`, `INSERT INTO "stale_pin" ("dep_repo_id", "ref_text", "__support_count") SELECT "dep_repo_id", "ref_text", n."__support_count" FROM "__support_next_stale_pin" n WHERE NOT EXISTS (SELECT 1 FROM "stale_pin" h WHERE n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text") RETURNING "dep_repo_id", "ref_text"`], aggregateSql: null },
+INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT b0."dep_repo_id", b0."ref_text" FROM "rev_status" b0 WHERE (b0."behind" > 0)`, supportSql: [`DELETE FROM "__support_next_stale_pin"`, `INSERT INTO "__support_next_stale_pin" ("dep_repo_id", "ref_text", "__refcount") SELECT "dep_repo_id", "ref_text", sum("__refcount") FROM (SELECT b0."dep_repo_id" AS "dep_repo_id", b0."ref_text" AS "ref_text", count(*) AS "__refcount" FROM "rev_status" b0 WHERE (b0."behind" > 0) GROUP BY b0."dep_repo_id", b0."ref_text") GROUP BY "dep_repo_id", "ref_text"`, `UPDATE "stale_pin" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_stale_pin" n WHERE n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text"), 0))`, `DELETE FROM "stale_pin" WHERE "__refcount" <= 0 RETURNING "dep_repo_id", "ref_text"`, `INSERT INTO "stale_pin" ("dep_repo_id", "ref_text", "__refcount") SELECT "dep_repo_id", "ref_text", n."__refcount" FROM "__support_next_stale_pin" n WHERE NOT EXISTS (SELECT 1 FROM "stale_pin" h WHERE n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text") RETURNING "dep_repo_id", "ref_text"`], aggregateSql: null },
 ];
 
 const EDGE_DEMAND_REV_0_PROJECT_SQL = `SELECT ?2 AS "dep_repo_id", ?3 AS "ref_text"`;

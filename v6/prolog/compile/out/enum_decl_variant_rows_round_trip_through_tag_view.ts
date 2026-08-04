@@ -136,7 +136,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 const ddl: readonly string[] = [
   `CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("view")) WITHOUT ROWID`,
   `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" TEXT NOT NULL, PRIMARY KEY ("to")) WITHOUT ROWID`,
-  `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_body_page" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_page_sign" ON "__delta_body_page" ("_sign")`,
   `CREATE INDEX "__delta_body_page_group" ON "__delta_body_page" ("id", "view")`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_body_tag_phase" ON "__frontier_body_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_body_tag_phase" ON "__next_frontier_body_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -246,7 +246,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "body_tag", ruleId: "enum_decl_variant_rows_round_trip_through_tag_view:body_tag/2#1", headDeltaTableName: "__delta_body_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", 'page' FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'redirect' FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "body_tag"`, recomputeSql: `DELETE FROM "body_tag";
 INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", sum("__support_count") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__support_count" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__support_count" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "body_tag" WHERE "__support_count" <= 0 RETURNING "id", "tag"`, `INSERT INTO "body_tag" ("id", "tag", "__support_count") SELECT "id", "tag", n."__support_count" FROM "__support_next_body_tag" n WHERE NOT EXISTS (SELECT 1 FROM "body_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0 RETURNING "id", "tag"`, `INSERT INTO "body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", n."__refcount" FROM "__support_next_body_tag" n WHERE NOT EXISTS (SELECT 1 FROM "body_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

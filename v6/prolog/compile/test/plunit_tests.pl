@@ -513,16 +513,16 @@ test(edb_edge_trigger_keeps_naive_referee_available) :-
 test(acyclic_ref_count_statements_are_emitted) :-
     lowered_for(shared_demand_refcount, Lowered),
     Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
-    memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
+    memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
                         refcountsql(ClearSql, SeedSql, UpdateSql,
                                    CollectZeroSql, InsertNewSql),
                         none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
-    once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__support_count"')),
-    once(sub_atom(UpdateSql, _, _, _, 'SET "__support_count" = "__support_count" -')),
-    CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__support_count" <= 0 RETURNING "target"',
+    once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__refcount"')),
+    once(sub_atom(UpdateSql, _, _, _, 'SET "__refcount" = "__refcount" -')),
+    CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__refcount" <= 0 RETURNING "target"',
     once(sub_atom(InsertNewSql, _, _, _, 'WHERE NOT EXISTS')).
 
 test(self_recursive_ref_count_uses_recursive_cte_reseed) :-

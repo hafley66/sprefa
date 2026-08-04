@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "left" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
-  `CREATE TABLE "matched" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "matched" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TABLE "right" ("name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_left" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_left_sign" ON "__delta_left" ("_sign")`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_right_phase" ON "__frontier_right" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_right" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__next_frontier_right_phase" ON "__next_frontier_right" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_matched" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_matched" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -248,7 +248,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "matched", ruleId: "float_exact_join_has_no_epsilon:matched/1#1", headDeltaTableName: "__delta_matched", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "matched" ("name") SELECT DISTINCT d0."name" FROM "__frontier_left" d0, "right" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND b0."value" = d0."value" UNION ALL SELECT DISTINCT d0."name" FROM "__frontier_right" d0, "left" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND b0."value" = d0."value" RETURNING "name"`, selectSql: `SELECT "name" FROM "matched"`, recomputeSql: `DELETE FROM "matched";
-INSERT OR IGNORE INTO "matched" ("name") SELECT b0."name" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value"`, supportSql: [`DELETE FROM "__support_next_matched"`, `INSERT INTO "__support_next_matched" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value" GROUP BY b0."name") GROUP BY "name"`, `UPDATE "matched" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_matched" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "matched" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "matched" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_matched" n WHERE NOT EXISTS (SELECT 1 FROM "matched" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "matched" ("name") SELECT b0."name" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value"`, supportSql: [`DELETE FROM "__support_next_matched"`, `INSERT INTO "__support_next_matched" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value" GROUP BY b0."name") GROUP BY "name"`, `UPDATE "matched" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_matched" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "matched" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "matched" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_matched" n WHERE NOT EXISTS (SELECT 1 FROM "matched" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

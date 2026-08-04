@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "repo" ("name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")), PRIMARY KEY ("name", "tags")) WITHOUT ROWID`,
-  `CREATE TABLE "repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
   `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name", "tags")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_repo_tag_phase" ON "__frontier_repo_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_repo_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_repo_tag_phase" ON "__next_frontier_repo_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -230,7 +230,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "repo_tag", ruleId: "list_column_fans_out_through_spread:repo_tag/2#1", headDeltaTableName: "__delta_repo_tag", headColumns: ["name", "tag"], insertSql: `INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT DISTINCT d0."name", j0.value FROM "__frontier_repo" d0, json_each(d0."tags") j0 WHERE d0."_phase" >= 0 AND json_type(d0."tags", '$') = 'array' AND j0.value IS NOT NULL RETURNING "name", "tag"`, selectSql: `SELECT "name", "tag" FROM "repo_tag"`, recomputeSql: `DELETE FROM "repo_tag";
-INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_repo_tag"`, `INSERT INTO "__support_next_repo_tag" ("name", "tag", "__support_count") SELECT "name", "tag", sum("__support_count") FROM (SELECT b0."name" AS "name", j0.value AS "tag", count(*) AS "__support_count" FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL GROUP BY b0."name", j0.value) GROUP BY "name", "tag"`, `UPDATE "repo_tag" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_repo_tag" n WHERE n."name" = h."name" AND n."tag" = h."tag"), 0))`, `DELETE FROM "repo_tag" WHERE "__support_count" <= 0 RETURNING "name", "tag"`, `INSERT INTO "repo_tag" ("name", "tag", "__support_count") SELECT "name", "tag", n."__support_count" FROM "__support_next_repo_tag" n WHERE NOT EXISTS (SELECT 1 FROM "repo_tag" h WHERE n."name" = h."name" AND n."tag" = h."tag") RETURNING "name", "tag"`], aggregateSql: null },
+INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_repo_tag"`, `INSERT INTO "__support_next_repo_tag" ("name", "tag", "__refcount") SELECT "name", "tag", sum("__refcount") FROM (SELECT b0."name" AS "name", j0.value AS "tag", count(*) AS "__refcount" FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL GROUP BY b0."name", j0.value) GROUP BY "name", "tag"`, `UPDATE "repo_tag" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_repo_tag" n WHERE n."name" = h."name" AND n."tag" = h."tag"), 0))`, `DELETE FROM "repo_tag" WHERE "__refcount" <= 0 RETURNING "name", "tag"`, `INSERT INTO "repo_tag" ("name", "tag", "__refcount") SELECT "name", "tag", n."__refcount" FROM "__support_next_repo_tag" n WHERE NOT EXISTS (SELECT 1 FROM "repo_tag" h WHERE n."name" = h."name" AND n."tag" = h."tag") RETURNING "name", "tag"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

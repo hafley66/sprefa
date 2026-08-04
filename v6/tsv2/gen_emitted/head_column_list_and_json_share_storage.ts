@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("items")) WITHOUT ROWID`,
+  `CREATE TABLE "copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("items")) WITHOUT ROWID`,
   `CREATE TABLE "source" ("items" TEXT NOT NULL CHECK (json_valid("items")), PRIMARY KEY ("items")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_copied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__delta_copied_sign" ON "__delta_copied" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__support_count" INTEGER NOT NULL, PRIMARY KEY ("items")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("items")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "copied", ruleId: "head_column_list_and_json_share_storage:copied/1#1", headDeltaTableName: "__delta_copied", headColumns: ["items"], insertSql: `INSERT OR IGNORE INTO "copied" ("items") SELECT DISTINCT d0."items" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "items"`, selectSql: `SELECT "items" FROM "copied"`, recomputeSql: `DELETE FROM "copied";
-INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_copied"`, `INSERT INTO "__support_next_copied" ("items", "__support_count") SELECT "items", sum("__support_count") FROM (SELECT b0."items" AS "items", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "copied" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_copied" n WHERE n."items" = h."items"), 0))`, `DELETE FROM "copied" WHERE "__support_count" <= 0 RETURNING "items"`, `INSERT INTO "copied" ("items", "__support_count") SELECT "items", n."__support_count" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items") RETURNING "items"`], aggregateSql: null },
+INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_copied"`, `INSERT INTO "__support_next_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "copied" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_copied" n WHERE n."items" = h."items"), 0))`, `DELETE FROM "copied" WHERE "__refcount" <= 0 RETURNING "items"`, `INSERT INTO "copied" ("items", "__refcount") SELECT "items", n."__refcount" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items") RETURNING "items"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

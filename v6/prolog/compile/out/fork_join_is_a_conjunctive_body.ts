@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TABLE "combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
   `CREATE TABLE "result_a" ("value_a" TEXT NOT NULL, PRIMARY KEY ("value_a")) WITHOUT ROWID`,
   `CREATE TABLE "result_b" ("value_b" TEXT NOT NULL, PRIMARY KEY ("value_b")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_combined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
@@ -158,7 +158,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_result_b_phase" ON "__frontier_result_b" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_result_b_phase" ON "__next_frontier_result_b" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -241,7 +241,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "combined", ruleId: "fork_join_is_a_conjunctive_body:combined/2#1", headDeltaTableName: "__delta_combined", headColumns: ["value_a", "value_b"], insertSql: `INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT DISTINCT d0."value_a", b0."value_b" FROM "__frontier_result_a" d0, "result_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."value_a", d0."value_b" FROM "__frontier_result_b" d0, "result_a" b0 WHERE d0."_phase" >= 0 RETURNING "value_a", "value_b"`, selectSql: `SELECT "value_a", "value_b" FROM "combined"`, recomputeSql: `DELETE FROM "combined";
-INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", sum("__support_count") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__support_count" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0))`, `DELETE FROM "combined" WHERE "__support_count" <= 0 RETURNING "value_a", "value_b"`, `INSERT INTO "combined" ("value_a", "value_b", "__support_count") SELECT "value_a", "value_b", n."__support_count" FROM "__support_next_combined" n WHERE NOT EXISTS (SELECT 1 FROM "combined" h WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b") RETURNING "value_a", "value_b"`], aggregateSql: null },
+INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__refcount") SELECT "value_a", "value_b", sum("__refcount") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__refcount" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0))`, `DELETE FROM "combined" WHERE "__refcount" <= 0 RETURNING "value_a", "value_b"`, `INSERT INTO "combined" ("value_a", "value_b", "__refcount") SELECT "value_a", "value_b", n."__refcount" FROM "__support_next_combined" n WHERE NOT EXISTS (SELECT 1 FROM "combined" h WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b") RETURNING "value_a", "value_b"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

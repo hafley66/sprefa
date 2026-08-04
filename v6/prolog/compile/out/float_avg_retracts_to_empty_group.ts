@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "mean" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "mean" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
   `CREATE TABLE "score" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_mean" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_mean_sign" ON "__delta_mean" ("_sign")`,

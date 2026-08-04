@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
   `CREATE TABLE "source" ("count" INTEGER NOT NULL, PRIMARY KEY ("count")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_scaled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_scaled_sign" ON "__delta_scaled" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "count" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__support_count" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "scaled", ruleId: "head_column_int_widens_into_float:scaled/1#1", headDeltaTableName: "__delta_scaled", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "scaled" ("value") SELECT DISTINCT d0."count" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "scaled"`, recomputeSql: `DELETE FROM "scaled";
-INSERT OR IGNORE INTO "scaled" ("value") SELECT b0."count" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_scaled"`, `INSERT INTO "__support_next_scaled" ("value", "__support_count") SELECT "value", sum("__support_count") FROM (SELECT b0."count" AS "value", count(*) AS "__support_count" FROM "source" b0 GROUP BY b0."count") GROUP BY "value"`, `UPDATE "scaled" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_scaled" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "scaled" WHERE "__support_count" <= 0 RETURNING "value"`, `INSERT INTO "scaled" ("value", "__support_count") SELECT "value", n."__support_count" FROM "__support_next_scaled" n WHERE NOT EXISTS (SELECT 1 FROM "scaled" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "scaled" ("value") SELECT b0."count" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_scaled"`, `INSERT INTO "__support_next_scaled" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."count" AS "value", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."count") GROUP BY "value"`, `UPDATE "scaled" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_scaled" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "scaled" WHERE "__refcount" <= 0 RETURNING "value"`, `INSERT INTO "scaled" ("value", "__refcount") SELECT "value", n."__refcount" FROM "__support_next_scaled" n WHERE NOT EXISTS (SELECT 1 FROM "scaled" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -741,7 +741,7 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
     ),
     ( memberchk(Ref, LevelHeadedRefs)
-    -> RefCountColumn = ', "__support_count" INTEGER NOT NULL DEFAULT 1'
+    -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1'
     ;  RefCountColumn = ''
     ),
     Ref = Name/_,
@@ -2366,13 +2366,13 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
                                 HeadColumnsSql, SeedSql)
     ),
     format(atom(UpdateSql),
-           'UPDATE ~w AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM ~w n WHERE ~w), 0))',
+           'UPDATE ~w AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0))',
            [QuotedHeadTable, QuotedRefCountTable, EqualitySql]),
     format(atom(CollectZeroSql),
-           'DELETE FROM ~w WHERE "__support_count" <= 0 RETURNING ~w',
+           'DELETE FROM ~w WHERE "__refcount" <= 0 RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql]),
     format(atom(InsertNewSql),
-           'INSERT INTO ~w (~w, "__support_count") SELECT ~w, n."__support_count" FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w) RETURNING ~w',
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w) RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql,
             QuotedRefCountTable, QuotedHeadTable, EqualitySql, HeadColumnsSql]).
 
@@ -2381,7 +2381,7 @@ counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
     maplist(level_ref_count_arm(RelPlans), Rules, RefCountArms),
     atomic_list_concat(RefCountArms, ' UNION ALL ', RefCountUnionSql),
     format(atom(SeedSql),
-           'INSERT INTO ~w (~w, "__support_count") SELECT ~w, sum("__support_count") FROM (~w) GROUP BY ~w',
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, sum("__refcount") FROM (~w) GROUP BY ~w',
            [QuotedRefCountTable, HeadColumnsSql, HeadColumnsSql,
             RefCountUnionSql, HeadColumnsSql]).
 
@@ -2401,7 +2401,7 @@ recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     format(atom(SeedSql),
-           'INSERT INTO ~w (~w, "__support_count") WITH RECURSIVE ~w (~w) AS (~w) SELECT ~w, 1 FROM ~w',
+           'INSERT INTO ~w (~w, "__refcount") WITH RECURSIVE ~w (~w) AS (~w) SELECT ~w, 1 FROM ~w',
            [QuotedRefCountTable, HeadColumnsSql, QuotedHeadTable,
             HeadColumnsSql, RecursiveUnionSql, HeadColumnsSql,
             QuotedHeadTable]).
@@ -2478,11 +2478,11 @@ level_ref_count_arm(RelPlans, Rule, RefCountArm) :-
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
     -> format(atom(RefCountArm),
-              'SELECT ~w, count(*) AS "__support_count" FROM ~w GROUP BY ~w',
+              'SELECT ~w, count(*) AS "__refcount" FROM ~w GROUP BY ~w',
               [SelectSql, FromSql, GroupSql])
     ;  atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
        format(atom(RefCountArm),
-              'SELECT ~w, count(*) AS "__support_count" FROM ~w WHERE ~w GROUP BY ~w',
+              'SELECT ~w, count(*) AS "__refcount" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
     ).
 
@@ -3238,7 +3238,7 @@ ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
-           'CREATE TEMP TABLE ~w (~w, "__support_count" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
+           'CREATE TEMP TABLE ~w (~w, "__refcount" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage

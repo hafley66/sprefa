@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "key_seen" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "key_seen" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_key_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_key_seen_sign" ON "__delta_key_seen" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__next_frontier_raw_doc_phase" ON "__next_frontier_raw_doc" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_key_seen" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_key_seen" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "key_seen", ruleId: "json_nfc_and_nfd_keys_stay_distinct:key_seen/1#1", headDeltaTableName: "__delta_key_seen", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "key_seen" ("name") SELECT DISTINCT j0.key FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "name"`, selectSql: `SELECT "name" FROM "key_seen"`, recomputeSql: `DELETE FROM "key_seen";
-INSERT OR IGNORE INTO "key_seen" ("name") SELECT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_key_seen"`, `INSERT INTO "__support_next_key_seen" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT j0.key AS "name", count(*) AS "__support_count" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key) GROUP BY "name"`, `UPDATE "key_seen" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_key_seen" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "key_seen" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "key_seen" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_key_seen" n WHERE NOT EXISTS (SELECT 1 FROM "key_seen" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "key_seen" ("name") SELECT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_key_seen"`, `INSERT INTO "__support_next_key_seen" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT j0.key AS "name", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key) GROUP BY "name"`, `UPDATE "key_seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_key_seen" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "key_seen" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "key_seen" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_key_seen" n WHERE NOT EXISTS (SELECT 1 FROM "key_seen" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

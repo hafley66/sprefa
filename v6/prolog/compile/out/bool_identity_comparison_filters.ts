@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "enabled_name" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "enabled_name" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
   `CREATE TABLE "flag" ("name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_enabled_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_enabled_name_sign" ON "__delta_enabled_name" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_flag_phase" ON "__frontier_flag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
   `CREATE INDEX "__next_frontier_flag_phase" ON "__next_frontier_flag" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_enabled_name" ("name" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_enabled_name" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -230,7 +230,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "enabled_name", ruleId: "bool_identity_comparison_filters:enabled_name/1#1", headDeltaTableName: "__delta_enabled_name", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "enabled_name" ("name") SELECT DISTINCT d0."name" FROM "__frontier_flag" d0 WHERE d0."_phase" >= 0 AND (d0."enabled" = 1) RETURNING "name"`, selectSql: `SELECT "name" FROM "enabled_name"`, recomputeSql: `DELETE FROM "enabled_name";
-INSERT OR IGNORE INTO "enabled_name" ("name") SELECT b0."name" FROM "flag" b0 WHERE (b0."enabled" = 1)`, supportSql: [`DELETE FROM "__support_next_enabled_name"`, `INSERT INTO "__support_next_enabled_name" ("name", "__support_count") SELECT "name", sum("__support_count") FROM (SELECT b0."name" AS "name", count(*) AS "__support_count" FROM "flag" b0 WHERE (b0."enabled" = 1) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "enabled_name" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_enabled_name" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "enabled_name" WHERE "__support_count" <= 0 RETURNING "name"`, `INSERT INTO "enabled_name" ("name", "__support_count") SELECT "name", n."__support_count" FROM "__support_next_enabled_name" n WHERE NOT EXISTS (SELECT 1 FROM "enabled_name" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "enabled_name" ("name") SELECT b0."name" FROM "flag" b0 WHERE (b0."enabled" = 1)`, supportSql: [`DELETE FROM "__support_next_enabled_name"`, `INSERT INTO "__support_next_enabled_name" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "flag" b0 WHERE (b0."enabled" = 1) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "enabled_name" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_enabled_name" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "enabled_name" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "enabled_name" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_enabled_name" n WHERE NOT EXISTS (SELECT 1 FROM "enabled_name" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

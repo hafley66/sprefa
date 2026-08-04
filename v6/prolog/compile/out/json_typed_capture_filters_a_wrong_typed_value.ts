@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "counted" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TABLE "counted" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE TEMP TABLE "__delta_counted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_counted_sign" ON "__delta_counted" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_event_phase" ON "__frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__next_frontier_event_phase" ON "__next_frontier_event" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_counted" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_counted" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "counted", ruleId: "json_typed_capture_filters_a_wrong_typed_value:counted/2#1", headDeltaTableName: "__delta_counted", headColumns: ["repo", "stars"], insertSql: `INSERT OR IGNORE INTO "counted" ("repo", "stars") SELECT DISTINCT json_extract(d0."payload", '$."repo"'), json_extract(d0."payload", '$."stars"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_type(d0."payload", '$."repo"') = 'text' AND json_type(d0."payload", '$."stars"') = 'integer' RETURNING "repo", "stars"`, selectSql: `SELECT "repo", "stars" FROM "counted"`, recomputeSql: `DELETE FROM "counted";
-INSERT OR IGNORE INTO "counted" ("repo", "stars") SELECT json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, supportSql: [`DELETE FROM "__support_next_counted"`, `INSERT INTO "__support_next_counted" ("repo", "stars", "__support_count") SELECT "repo", "stars", sum("__support_count") FROM (SELECT json_extract(b0."payload", '$."repo"') AS "repo", json_extract(b0."payload", '$."stars"') AS "stars", count(*) AS "__support_count" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer' GROUP BY json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"')) GROUP BY "repo", "stars"`, `UPDATE "counted" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_counted" n WHERE n."repo" = h."repo" AND n."stars" = h."stars"), 0))`, `DELETE FROM "counted" WHERE "__support_count" <= 0 RETURNING "repo", "stars"`, `INSERT INTO "counted" ("repo", "stars", "__support_count") SELECT "repo", "stars", n."__support_count" FROM "__support_next_counted" n WHERE NOT EXISTS (SELECT 1 FROM "counted" h WHERE n."repo" = h."repo" AND n."stars" = h."stars") RETURNING "repo", "stars"`], aggregateSql: null },
+INSERT OR IGNORE INTO "counted" ("repo", "stars") SELECT json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, supportSql: [`DELETE FROM "__support_next_counted"`, `INSERT INTO "__support_next_counted" ("repo", "stars", "__refcount") SELECT "repo", "stars", sum("__refcount") FROM (SELECT json_extract(b0."payload", '$."repo"') AS "repo", json_extract(b0."payload", '$."stars"') AS "stars", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer' GROUP BY json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"')) GROUP BY "repo", "stars"`, `UPDATE "counted" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_counted" n WHERE n."repo" = h."repo" AND n."stars" = h."stars"), 0))`, `DELETE FROM "counted" WHERE "__refcount" <= 0 RETURNING "repo", "stars"`, `INSERT INTO "counted" ("repo", "stars", "__refcount") SELECT "repo", "stars", n."__refcount" FROM "__support_next_counted" n WHERE NOT EXISTS (SELECT 1 FROM "counted" h WHERE n."repo" = h."repo" AND n."stars" = h."stars") RETURNING "repo", "stars"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "group_rels_json" ("group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "group_rels_json" ("group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group_name", "col2")) WITHOUT ROWID`,
   `CREATE TABLE "rel_catalog" ("relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL, PRIMARY KEY ("relation_name", "group_name", "_column_text", "_documentation_text")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_group_rels_json" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_group_rels_json_sign" ON "__delta_group_rels_json" ("_sign")`,

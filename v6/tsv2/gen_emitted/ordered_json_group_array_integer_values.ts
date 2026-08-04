@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "integer_sorted" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "integer_sorted" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
   `CREATE TABLE "item" ("group" TEXT NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_integer_sorted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_integer_sorted_sign" ON "__delta_integer_sorted" ("_sign")`,

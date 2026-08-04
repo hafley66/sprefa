@@ -135,7 +135,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "probe_in" ("probe_value" INTEGER NOT NULL)`,
-  `CREATE TABLE "probe_out" ("probe_value" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("probe_value")) WITHOUT ROWID`,
+  `CREATE TABLE "probe_out" ("probe_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("probe_value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_probe_in" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_probe_in_sign" ON "__delta_probe_in" ("_sign")`,
   `CREATE INDEX "__delta_probe_in_group" ON "__delta_probe_in" ("probe_value")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_probe_out_phase" ON "__frontier_probe_out" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_probe_out" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "probe_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_probe_out_phase" ON "__next_frontier_probe_out" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_probe_out" ("probe_value" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("probe_value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_probe_out" ("probe_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("probe_value")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -226,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "probe_out", ruleId: "arrival_affinity_rewrite_keeps_delta:probe_out/1#1", headDeltaTableName: "__delta_probe_out", headColumns: ["probe_value"], insertSql: `INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT DISTINCT d0."probe_value" FROM "__frontier_probe_in" d0 WHERE d0."_phase" >= 0 RETURNING "probe_value"`, selectSql: `SELECT "probe_value" FROM "probe_out"`, recomputeSql: `DELETE FROM "probe_out";
-INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT b0."probe_value" FROM "probe_in" b0`, supportSql: [`DELETE FROM "__support_next_probe_out"`, `INSERT INTO "__support_next_probe_out" ("probe_value", "__support_count") SELECT "probe_value", sum("__support_count") FROM (SELECT b0."probe_value" AS "probe_value", count(*) AS "__support_count" FROM "probe_in" b0 GROUP BY b0."probe_value") GROUP BY "probe_value"`, `UPDATE "probe_out" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_probe_out" n WHERE n."probe_value" = h."probe_value"), 0))`, `DELETE FROM "probe_out" WHERE "__support_count" <= 0 RETURNING "probe_value"`, `INSERT INTO "probe_out" ("probe_value", "__support_count") SELECT "probe_value", n."__support_count" FROM "__support_next_probe_out" n WHERE NOT EXISTS (SELECT 1 FROM "probe_out" h WHERE n."probe_value" = h."probe_value") RETURNING "probe_value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT b0."probe_value" FROM "probe_in" b0`, supportSql: [`DELETE FROM "__support_next_probe_out"`, `INSERT INTO "__support_next_probe_out" ("probe_value", "__refcount") SELECT "probe_value", sum("__refcount") FROM (SELECT b0."probe_value" AS "probe_value", count(*) AS "__refcount" FROM "probe_in" b0 GROUP BY b0."probe_value") GROUP BY "probe_value"`, `UPDATE "probe_out" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_probe_out" n WHERE n."probe_value" = h."probe_value"), 0))`, `DELETE FROM "probe_out" WHERE "__refcount" <= 0 RETURNING "probe_value"`, `INSERT INTO "probe_out" ("probe_value", "__refcount") SELECT "probe_value", n."__refcount" FROM "__support_next_probe_out" n WHERE NOT EXISTS (SELECT 1 FROM "probe_out" h WHERE n."probe_value" = h."probe_value") RETURNING "probe_value"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

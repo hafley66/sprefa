@@ -134,7 +134,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
+  `CREATE TABLE "doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
   `CREATE TABLE "reading" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_doubled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_doubled_sign" ON "__delta_doubled" ("_sign")`,
@@ -150,7 +150,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_reading_phase" ON "__frontier_reading" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__next_frontier_reading_phase" ON "__next_frontier_reading" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "doubled", ruleId: "filter_map_is_a_level_rule:doubled/2#1", headDeltaTableName: "__delta_doubled", headColumns: ["name", "out"], insertSql: `INSERT OR IGNORE INTO "doubled" ("name", "out") SELECT DISTINCT d0."name", (d0."value" * 2) FROM "__frontier_reading" d0 WHERE d0."_phase" >= 0 AND (d0."value" >= 10) RETURNING "name", "out"`, selectSql: `SELECT "name", "out" FROM "doubled"`, recomputeSql: `DELETE FROM "doubled";
-INSERT OR IGNORE INTO "doubled" ("name", "out") SELECT b0."name", (b0."value" * 2) FROM "reading" b0 WHERE (b0."value" >= 10)`, supportSql: [`DELETE FROM "__support_next_doubled"`, `INSERT INTO "__support_next_doubled" ("name", "out", "__support_count") SELECT "name", "out", sum("__support_count") FROM (SELECT b0."name" AS "name", (b0."value" * 2) AS "out", count(*) AS "__support_count" FROM "reading" b0 WHERE (b0."value" >= 10) GROUP BY b0."name", (b0."value" * 2)) GROUP BY "name", "out"`, `UPDATE "doubled" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_doubled" n WHERE n."name" = h."name" AND n."out" = h."out"), 0))`, `DELETE FROM "doubled" WHERE "__support_count" <= 0 RETURNING "name", "out"`, `INSERT INTO "doubled" ("name", "out", "__support_count") SELECT "name", "out", n."__support_count" FROM "__support_next_doubled" n WHERE NOT EXISTS (SELECT 1 FROM "doubled" h WHERE n."name" = h."name" AND n."out" = h."out") RETURNING "name", "out"`], aggregateSql: null },
+INSERT OR IGNORE INTO "doubled" ("name", "out") SELECT b0."name", (b0."value" * 2) FROM "reading" b0 WHERE (b0."value" >= 10)`, supportSql: [`DELETE FROM "__support_next_doubled"`, `INSERT INTO "__support_next_doubled" ("name", "out", "__refcount") SELECT "name", "out", sum("__refcount") FROM (SELECT b0."name" AS "name", (b0."value" * 2) AS "out", count(*) AS "__refcount" FROM "reading" b0 WHERE (b0."value" >= 10) GROUP BY b0."name", (b0."value" * 2)) GROUP BY "name", "out"`, `UPDATE "doubled" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_doubled" n WHERE n."name" = h."name" AND n."out" = h."out"), 0))`, `DELETE FROM "doubled" WHERE "__refcount" <= 0 RETURNING "name", "out"`, `INSERT INTO "doubled" ("name", "out", "__refcount") SELECT "name", "out", n."__refcount" FROM "__support_next_doubled" n WHERE NOT EXISTS (SELECT 1 FROM "doubled" h WHERE n."name" = h."name" AND n."out" = h."out") RETURNING "name", "out"`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

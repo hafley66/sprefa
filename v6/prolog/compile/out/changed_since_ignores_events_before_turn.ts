@@ -155,7 +155,7 @@ function triggerOccurrences(
 const ddl: readonly string[] = [
   `CREATE TABLE "agent_turn" ("turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE TABLE "change_event" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TABLE "changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
+  `CREATE TABLE "changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
   `CREATE TABLE "turn_marker" ("turn_id" TEXT NOT NULL)`,
   `CREATE TABLE "worktree_edit" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE TEMP TABLE "__delta_agent_turn" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
@@ -193,7 +193,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__next_frontier_worktree_edit_phase" ON "__next_frontier_worktree_edit" ("_phase")`,
-  `CREATE TEMP TABLE "__support_next_changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__support_count" INTEGER NOT NULL, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__support_next_changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
   `CREATE TABLE "__tick" ("n" INTEGER NOT NULL)`,
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
 ];
@@ -293,7 +293,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "changed_since", ruleId: "changed_since_ignores_events_before_turn:changed_since/2#1", headDeltaTableName: "__delta_changed_since", headColumns: ["turn_id", "path"], insertSql: `INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT DISTINCT d0."turn_id", b0."path" FROM "__frontier_agent_turn" d0, "change_event" b0 WHERE d0."_phase" >= 0 AND (b0."tick" > d0."tick") UNION ALL SELECT DISTINCT b0."turn_id", d0."path" FROM "__frontier_change_event" d0, "agent_turn" b0 WHERE d0."_phase" >= 0 AND (d0."tick" > b0."tick") RETURNING "turn_id", "path"`, selectSql: `SELECT "turn_id", "path" FROM "changed_since"`, recomputeSql: `DELETE FROM "changed_since";
-INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`, supportSql: [`DELETE FROM "__support_next_changed_since"`, `INSERT INTO "__support_next_changed_since" ("turn_id", "path", "__support_count") SELECT "turn_id", "path", sum("__support_count") FROM (SELECT b0."turn_id" AS "turn_id", b1."path" AS "path", count(*) AS "__support_count" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick") GROUP BY b0."turn_id", b1."path") GROUP BY "turn_id", "path"`, `UPDATE "changed_since" AS h SET "__support_count" = "__support_count" - ("__support_count" - COALESCE((SELECT n."__support_count" FROM "__support_next_changed_since" n WHERE n."turn_id" = h."turn_id" AND n."path" = h."path"), 0))`, `DELETE FROM "changed_since" WHERE "__support_count" <= 0 RETURNING "turn_id", "path"`, `INSERT INTO "changed_since" ("turn_id", "path", "__support_count") SELECT "turn_id", "path", n."__support_count" FROM "__support_next_changed_since" n WHERE NOT EXISTS (SELECT 1 FROM "changed_since" h WHERE n."turn_id" = h."turn_id" AND n."path" = h."path") RETURNING "turn_id", "path"`], aggregateSql: null },
+INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`, supportSql: [`DELETE FROM "__support_next_changed_since"`, `INSERT INTO "__support_next_changed_since" ("turn_id", "path", "__refcount") SELECT "turn_id", "path", sum("__refcount") FROM (SELECT b0."turn_id" AS "turn_id", b1."path" AS "path", count(*) AS "__refcount" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick") GROUP BY b0."turn_id", b1."path") GROUP BY "turn_id", "path"`, `UPDATE "changed_since" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_changed_since" n WHERE n."turn_id" = h."turn_id" AND n."path" = h."path"), 0))`, `DELETE FROM "changed_since" WHERE "__refcount" <= 0 RETURNING "turn_id", "path"`, `INSERT INTO "changed_since" ("turn_id", "path", "__refcount") SELECT "turn_id", "path", n."__refcount" FROM "__support_next_changed_since" n WHERE NOT EXISTS (SELECT 1 FROM "changed_since" h WHERE n."turn_id" = h."turn_id" AND n."path" = h."path") RETURNING "turn_id", "path"`], aggregateSql: null },
 ];
 
 const EDGE_CHANGE_EVENT_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest", (SELECT "n" FROM "__tick") AS "tick"`;
