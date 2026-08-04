@@ -3302,7 +3302,7 @@ test(relation_pattern_under_negation_is_refused) :-
     Thrown = unsupported_construct(
                  relation_pattern_not_lowerable(span/3, file, file, _)).
 
-% The same value in an EDGE rule. edge_statements_for_rule/3 compiles against
+% The same value in an EDGE rule. edge_statements_for_rule/4 compiles against
 % RelPlans alone -- the dictionary plans are level-body-only by construction --
 % so there is nowhere for the join to go. Refused with its own name, because
 % the fix for it is a different piece of work than the negation case.

@@ -1036,7 +1036,7 @@ dictionary_relplans(Types, Plans) :-
 % engine executes all of them -- so they live here and not in
 % 0_program_check.pl, per that file's own division of labour.
 
-% Edge rules do not get this rewrite. edge_statements_for_rule/3 compiles a
+% Edge rules do not get this rewrite. edge_statements_for_rule/4 compiles a
 % trigger occurrence against RelPlans alone -- the dictionary plans are level-
 % body-only by construction (Edge 2, see the comment at the call site) -- so
 % there is nowhere for the per-level join to go. A relation value in an edge
@@ -1488,7 +1488,7 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % body uses: compile_positive_uses/6, compile_guard_goals/4,
 % compile_negative_uses/4, folded in that order so a `:=` can read a variable
 % an earlier atom bound and a NOT EXISTS can read either). Lowering produces ONE
-% edgestmt/6 PER CANDIDATE TRIGGER ATOM (edge_statements_for_rule/3): for
+% edgestmt/6 PER CANDIDATE TRIGGER ATOM (edge_statements_for_rule/4): for
 % marked_single that is the existing single edgestmt, unchanged; for
 % unmarked_conjunction with N atoms it is N edgestmt entries, one per atom
 % acting as the trigger with the OTHER N-1 atoms as a real SQL join against
@@ -1502,29 +1502,31 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % to round 2's text for every already-IDENTICAL marked_single fixture
 % (verified via the plunit SQL-text snapshot tests, unchanged).
 
-edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
+edge_statements_for_rule(EdgeHeadedRefs, RelPlans, (Head <+ Body),
+                         EdgeStatements) :-
     edge_trigger_shape(Body, Shape),
     ( Shape = marked_single(TriggerAtom)
     -> rel_ref(TriggerAtom, TriggerRef),
        ( relplan_kind(RelPlans, TriggerRef, log) -> true
        ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
        edge_statement_single(RelPlans, Head, TriggerAtom, [], [], [], [],
-                             EdgeStmt),
+                             arrival, EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ; Shape = unmarked_conjunction(Atoms)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, Atoms, OtherAtoms),
                  edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
-                                       [], [], [], EdgeStmt) ),
+                                       [], [], [], arrival, EdgeStmt) ),
                EdgeStatements)
     ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms,
                                   NegAtoms, GuardGoals)
-    -> findall(EdgeStmt,
+    -> arrival_trigger_kind(EdgeHeadedRefs, PreAtoms, NegAtoms, ArrivalKind),
+       findall(EdgeStmt,
                ( select(TriggerAtom, TriggerAtoms, OtherTriggerAtoms),
                  append(OtherTriggerAtoms, SampleAtoms, OtherAtoms),
                  edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
                                        PreAtoms, NegAtoms, GuardGoals,
-                                       EdgeStmt) ),
+                                       ArrivalKind, EdgeStmt) ),
                EdgeStatements)
     % ONE arm, from the finalize'd rel's departure frontier. The other
     % positive atoms are joins, never arms: an arrival occurrence on one of
@@ -1543,6 +1545,32 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
        EdgeStatements = [EdgeStmt]
     ).
 
+% WHICH EMISSION ORDER THE ARMS RUN IN. `arrival` is arm-major: emit_ts.pl
+% walks ORDERED_EDGE_ARMS outermost, so an arm drains its whole batch before
+% the next arm sees its first row, and source line order decides who ran
+% first. `ordered_arrival` is occurrence-major: one edgestmt carrying it makes
+% ordered_program/1 true, and the whole module then runs the ordered
+% occurrence loop, which walks arrivals outermost and offers each occurrence
+% to every arm (emit_ts.pl:1490 applyOrderedOccurrence).
+%
+% Ruling one_pick_order (conformance/rulings.pl): the pick inside a tick reads
+% the ARRIVAL index on both doors, and source arm order is not an axis of the
+% clock. Arm-major is only observable when one arm's write can silence another
+% arm inside the same tick, and the two body forms that let it are pre/1 (the
+% fold reads the evolving store) and a negation over a rel that some edge rule
+% heads (the guard-by-negation pick: whoever writes first blocks the rest).
+% Both take ordered_arrival, so neither can be refereed by line order.
+% A negation over a rel NO edge rule writes cannot change inside the tick, so
+% it stays arm-major and its emitted text is unchanged.
+arrival_trigger_kind(_EdgeHeadedRefs, PreAtoms, _NegAtoms, ordered_arrival) :-
+    PreAtoms \== [], !.
+arrival_trigger_kind(EdgeHeadedRefs, _PreAtoms, NegAtoms, ordered_arrival) :-
+    member(NegAtom, NegAtoms),
+    rel_ref(NegAtom, NegRef),
+    memberchk(NegRef, EdgeHeadedRefs),
+    !.
+arrival_trigger_kind(_EdgeHeadedRefs, _PreAtoms, _NegAtoms, arrival).
+
 % One arm: TriggerAtom's own args bind to numbered placeholders (unchanged
 % compile_trigger_bound/2); OtherAtoms (possibly []) join against the
 % CURRENT store, seeded with that same placeholder Bound so shared
@@ -1557,14 +1585,6 @@ edge_statements_for_rule(RelPlans, (Head <+ Body), EdgeStatements) :-
 % too, since a Log head's resolver must NOT collapse multiple derived rows
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
-                      NegAtoms, GuardGoals, EdgeStmt) :-
-    ( PreAtoms == [] -> TriggerKind = arrival
-    ; TriggerKind = ordered_arrival
-    ),
-    edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
-                          NegAtoms, GuardGoals, TriggerKind, EdgeStmt).
-
 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
                       NegAtoms, GuardGoals, TriggerKind,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
@@ -3409,7 +3429,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % maplist collects a GROUP per rule and flattens, rather than assuming
     % one-to-one.
     maplist(check_edge_rule_relation_values(LoweringTypes, RelPlans), EdgeRules),
-    maplist(edge_statements_for_rule(RelPlans), EdgeRules, EdgeStatementGroups),
+    maplist(edge_statements_for_rule(EdgeHeadedRefs, RelPlans), EdgeRules,
+            EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
     % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
     % dictionary plans, and with decode/2 already rewritten into dictionary

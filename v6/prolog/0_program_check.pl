@@ -310,7 +310,7 @@ program_violation(head_column_type_conflict, prog(Decls, Rules),
 %   the outer body, which is where the rewrite appends them today, turns "no
 %   such fpath exists, therefore not(...) holds" into "no rows at all", the
 %   opposite answer. An edge rule has no dictionary-join seam at all:
-%   edge_statements_for_rule/3 compiles trigger occurrences against RelPlans,
+%   edge_statements_for_rule/4 compiles trigger occurrences against RelPlans,
 %   and the per-level joins have nowhere to go. Both are new execution shape.
 %
 %   A door disagreement is the worse of the two states. A program that the

@@ -1092,6 +1092,13 @@
     "finalDetail": ""
   },
   {
+    "name": "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "filter_map_is_a_level_rule",
     "bucket": "identical",
     "detail": "",

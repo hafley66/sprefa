@@ -19,7 +19,7 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
@@ -302,6 +302,146 @@ function resolveDispatchFirst_1Writes(seam: ISqlSeam, before: Snapshot, arrivals
   );
 }
 
+function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
+  return seam.runner.executeMultiple(seam.db, ``);
+}
+
+interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }
+interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
+interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
+
+function quoteOrderedIdentifier(identifier: string): string {
+  return '"' + identifier.replaceAll('"', '""') + '"';
+}
+
+function orderedPreWriteStatement(write: IOrderedWrite): SqlStatement | null {
+  const { arm, row } = write;
+  if (!arm.evolvesPre) return null;
+  const table = quoteOrderedIdentifier("__pre_" + arm.headRel);
+  const columns = arm.headColumns.map(quoteOrderedIdentifier);
+  const placeholders = columns.map(() => "?").join(", ");
+  if (arm.headKind === "log") {
+    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bindArgs(row) };
+  }
+  const keyIndices = new Set(arm.keyIndices);
+  const keyColumns = arm.keyIndices.map((index) => columns[index]!);
+  const nonKeyColumns = columns.filter((_column, index) => !keyIndices.has(index));
+  const conflict = nonKeyColumns.length === 0
+    ? "ON CONFLICT(" + keyColumns.join(", ") + ") DO NOTHING"
+    : "ON CONFLICT(" + keyColumns.join(", ") + ") DO UPDATE SET " + nonKeyColumns.map((column) => column + " = excluded." + column).join(", ");
+  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bindArgs(row) };
+}
+
+const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
+  { triggerRel: "dispatch_ack", triggerKind: "arrival", headRel: "dispatch_first", headKind: "log", headColumns: ["dispatch_id", "_ack_tag"], keyIndices: [], projectSql: `SELECT ?1 AS "dispatch_id", 'acked' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, writeSql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolvesPre: false },
+  { triggerRel: "dispatch_seal", triggerKind: "arrival", headRel: "dispatch_first", headKind: "log", headColumns: ["dispatch_id", "_ack_tag"], keyIndices: [], projectSql: `SELECT ?1 AS "dispatch_id", 'sealed' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, writeSql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolvesPre: false },
+];
+
+const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
+];
+
+const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
+  { rel: "dispatch_ack", sql: `SELECT "_sequence" AS "__sequence", "dispatch_id" FROM "__frontier_dispatch_ack" ORDER BY "_phase", "_sequence"`, columns: ["dispatch_id"] },
+  { rel: "dispatch_seal", sql: `SELECT "_sequence" AS "__sequence", "sealed_id" FROM "__frontier_dispatch_seal" ORDER BY "_phase", "_sequence"`, columns: ["sealed_id"] },
+];
+
+function orderedOutsideOccurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
+  const accepted = new Set<IArrivalRow>();
+  for (const arrival of triggerOccurrences("set", "dispatch_ack", before["dispatch_ack"], arrivals)) accepted.add(arrival);
+  for (const arrival of triggerOccurrences("set", "dispatch_seal", before["dispatch_seal"], arrivals)) accepted.add(arrival);
+  return arrivals.filter((arrival) => accepted.has(arrival)).map((arrival): IOrderedOccurrence => ({ rel: arrival.rel, kind: "arrival", row: arrival.row }));
+}
+
+function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+  void seam;
+  return of([]);
+}
+
+function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+  if (ORDERED_CARRY_READS.length === 0) return of([]);
+  return forkJoin(ORDERED_CARRY_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(
+    map((result) => result.rows.map((row): IOrderedOccurrence => ({
+      rel: read.rel,
+      kind: "arrival",
+      row: read.columns.map((column) => row[column] as IRowValue) as IRow,
+      sequence: Number(row.__sequence),
+    }))),
+  ))).pipe(map((groups) => groups.flat().sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))));
+}
+
+function orderedLevelOccurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {
+  const occurrences: IOrderedOccurrence[] = [];
+  return occurrences;
+}
+
+function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {
+  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.triggerRel === occurrence.rel && arm.triggerKind === occurrence.kind);
+  if (arms.length === 0) return of(undefined);
+  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.projectSql, args: bindArgs(occurrence.row) }).pipe(
+    map((result) => ({ arm, rows: result.rows.map((row) => arm.headColumns.map((column) => row[column] as IRowValue) as IRow) })),
+  ))).pipe(
+    concatMap((groups) => {
+      const writes: IOrderedWrite[] = [];
+      const exact = new Set<string>();
+      const keyed = new Map<string, IRow>();
+      for (const group of groups) {
+        for (const row of group.rows) {
+          const exactKey = JSON.stringify([group.arm.headRel, row]);
+          if (exact.has(exactKey)) continue;
+          exact.add(exactKey);
+          if (group.arm.headKind === "set") {
+            const key = JSON.stringify([group.arm.headRel, group.arm.keyIndices.map((index) => row[index])]);
+            const prior = keyed.get(key);
+            if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(row)) {
+              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.headRel}: ${key}`);
+            }
+            keyed.set(key, row);
+          }
+          writes.push({ arm: group.arm, row });
+        }
+      }
+      if (writes.length === 0) return of(undefined);
+      const statements = writes.flatMap((write): readonly SqlStatement[] => {
+        const base: SqlStatement = { sql: write.arm.writeSql, args: bindArgs(write.row) };
+        const pre = orderedPreWriteStatement(write);
+        return pre === null ? [base] : [base, pre];
+      });
+      return seam.runner.batch(seam.db, statements).pipe(map(() => {
+        written.push(...writes);
+        return undefined;
+      }));
+    }),
+  );
+}
+
+function processOrderedOccurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {
+  return forkJoin([readOrderedCarry(seam), readOrderedDepartures(seam)]).pipe(
+    concatMap(([carry, departures]) => {
+      const written: IOrderedWrite[] = [];
+      const occurrences = [...carry, ...departures, ...orderedOutsideOccurrences(before, arrivals), ...orderedLevelOccurrences(before, mid)];
+      return occurrences.reduce(
+        (work, occurrence) => work.pipe(concatMap(() => applyOrderedOccurrence(seam, occurrence, written))),
+        of(undefined) as Observable<void>,
+      ).pipe(map(() => written as readonly IOrderedWrite[]));
+    }),
+  );
+}
+
+function orderedCarryAdditions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {
+  const boundaryByRel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));
+  const boundaryAdds = new Map([...boundaryByRel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));
+  const additions: IRelDelta[] = [];
+  const seen = new Set<string>();
+  for (const { arm, row } of written) {
+    const rowText = JSON.stringify(row);
+    const exact = JSON.stringify([arm.headRel, row]);
+    if (seen.has(exact) || !(boundaryAdds.get(arm.headRel)?.has(rowText) ?? false)) continue;
+    seen.add(exact);
+    additions.push({ rel: arm.headRel, add: [row], del: [] });
+  }
+  return additions.filter((delta) => delta.add.length > 0);
+}
+
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
   void seam;
   return of(undefined);
@@ -337,12 +477,29 @@ function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITick
   // one_attempt_guard_by_negation_lands_one_unnamed_winner: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
+function runOrderedTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return readSnapshot(seam).pipe(
+    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => snapshotOrderedPre(seam).pipe(map(() => before))),
+    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+    concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),
+  ).pipe(
+    concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),
+    concatMap(({ mid, after, written, deltas }) => stageOrderedFrontiers(seam, INCREMENTAL_RELATIONS, orderedCarryAdditions(mid, after, deltas, written)).pipe(
+      map((postWriteCarry): ITickDeltas => ({ rels: deltas.rels, carryPending: deltas.carryPending || postWriteCarry })),
+    )),
+  );
+  // one_attempt_guard_by_negation_lands_one_unnamed_winner: ordered process_occurrences with evolving pre snapshots.
+}
+
 const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -370,10 +527,7 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validateArrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
-  }
-  return runIncrementalTick(seam, arrivals);
+  return runOrderedTick(seam, arrivals);
 }
 
 export const incrementalPlan: IIncrementalProgramPlan = {
