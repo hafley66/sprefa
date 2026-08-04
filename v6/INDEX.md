@@ -87,6 +87,7 @@
 | [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
+| [tsv2/goldens/comment_rail_golden/README.md](tsv2/goldens/comment_rail_golden/README.md) | 179 | Comment-budget rail golden |
 | [tsv2/goldens/ghcacher_304_golden/README.md](tsv2/goldens/ghcacher_304_golden/README.md) | 89 | Ghcacher 304 golden |
 | [tsv2/goldens/ghcacher_checkout_golden/README.md](tsv2/goldens/ghcacher_checkout_golden/README.md) | 225 | Ghcacher clone/checkout golden |
 | [tsv2/goldens/ghcacher_config_golden/README.md](tsv2/goldens/ghcacher_config_golden/README.md) | 51 | Ghcacher config-feeder golden |
@@ -1280,6 +1281,20 @@
 ### tsv2/SCALE.md
 ```
 1:# tsv2 and v1 generated-program scale data
+```
+
+### tsv2/goldens/comment_rail_golden/README.md
+```
+1:# Comment-budget rail golden
+7:## Contents
+22:## The pipeline
+58:## The check, restated
+69:## The ground
+77:## The fixture
+96:## Linearity, as counts rather than end-state equality
+123:## Fail-first receipt
+141:## Behavior parity vs the bash tool
+157:## Run it
 ```
 
 ### tsv2/goldens/ghcacher_304_golden/README.md
