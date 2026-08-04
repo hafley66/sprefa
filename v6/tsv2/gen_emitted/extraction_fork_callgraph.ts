@@ -56,7 +56,7 @@ type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatemen
 export const hostPlans: readonly IHostPlanData[] = [{ name: "sg", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "caller", type: "text" }, { name: "callee", type: "text" }, { name: "start_byte", type: "int" }, { name: "end_byte", type: "int" }], template: "sg {file_digest} $query_digest", demandRel: "__host_demand_sg", responseRel: "__host_response_sg", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
 export const queryPlans: readonly IQueryPlanData[] = [{ rel: "call_edge", arity: 5, columns: [null, null, null, null, null], bound: [], snapshot: "current" }];
-export const subscribedRels: readonly string[] = ["__host_response_sg/8", "call_edge/5", "file/2", "query_value/1"];
+export const subscribedRels: readonly string[] = ["__host_demand_sg/4", "__host_response_sg/8", "call_edge/5", "file/2", "query_value/1"];
 export const unsupportedExecution: readonly string[] = [];
 
 function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {

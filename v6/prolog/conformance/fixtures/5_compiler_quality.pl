@@ -200,3 +200,39 @@ fixture(backslash_in_string_literal_survives_both_doors,
   [ [ +raw('digit \\d here'), +raw('digit d here') ] ],
   [ final(hit/1, [ hit('digit \\d here') ]),
     ticks(1) ]).
+
+% ═══ D3: a query-bearing program with NO host and an off-cone derivation ════
+%
+% The pruning receipt (tsv2/tests/subscribePrune.test.ts) measured
+% SPREFA_TSV2_SUBSCRIBE_PRUNE=on against native_ts_query_term, whose only
+% derived rel outside the cone was __host_demand_tree_sitter. 2_subscribe.pl's
+% host_edge/3 puts that rel INSIDE the cone, so that module no longer witnesses
+% a pruned derivation at all and the flag's whole point went unmeasured on the
+% query-bearing side.
+%
+% This program has no host, so nothing the edge does can widen its cone:
+%
+%   query watched(sensor)      cone = watched/1, reading/2
+%   audited/1                  derived, off cone
+%   audit_trail/1              derived from audited/1, off cone one hop deeper
+%   reading/2                  ingested, so never pruned whatever the cone says
+%
+% The chain is two hops because pruning a rel while keeping the rule that reads
+% it is the failure a single off-cone rel cannot tell apart from a working
+% filter.
+fixture(host_free_query_leaves_a_derived_rel_unsubscribed,
+  program(
+    [ col_type(reading/2, sensor, text), col_type(reading/2, value, int),
+      col_type(watched/1, sensor, text),
+      col_type(audited/1, value, int),
+      col_type(audit_trail/1, value, int) ],
+    [ (watched(Sensor) <- reading(Sensor, _Value)),
+      (audited(Value) <- reading(_Sensor, Value)),
+      (audit_trail(Value) <- audited(Value)) ],
+    [query(watched(Sensor))]),
+  [ reading(alpha, 3) ],
+  [ [ +reading(beta, 7) ] ],
+  [ deltas(watched/1, [ [ +watched(beta) ] ]),
+    final(watched/1, [ watched(alpha), watched(beta) ]),
+    final(audited/1, [ audited(3), audited(7) ]),
+    final(audit_trail/1, [ audit_trail(3), audit_trail(7) ]) ]).
