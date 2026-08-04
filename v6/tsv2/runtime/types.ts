@@ -311,6 +311,11 @@ export interface IGenProgram {
  * these after DDL and before the tick fold.
  */
 export interface IBootStatement {
+  /** The relation this statement exists for: the seeded rel for an Initial
+   *  row (and for the struct-intern statements that row needs before it can
+   *  be inserted), the head rel for a level recompute. The subscribe-cone
+   *  filter reads it; nothing else does. */
+  readonly rel: string;
   readonly sql: string;
   readonly params: readonly IRowValue[];
 }
@@ -436,9 +441,56 @@ export interface IQueryPlan {
 
 /** The subscribe cone as an emitted module spells it: one "name/arity" string
  *  per rel, sorted. Seeded by the module's own query decls and closed over the
- *  rule graph (2_subscribe.pl); a module with no query decl lists every rel it
- *  declares or mentions. Nothing reads it yet. */
+ *  rule graph (2_subscribe.pl); a module with no query decl lists nothing
+ *  (ruling zero_query_semantics). Read by ISubscribeCone. */
 export type ISubscribedRel = string;
+
+/** Whether an emitted module evaluates rels outside its own subscribe cone.
+ *  "off" is the default and every filter below must then return the array the
+ *  emitter wrote, by reference. */
+export type ISubscribePruneMode = "off" | "on";
+
+/**
+ * The emitted module's own cone filter, applied once at module scope.
+ *
+ * Ingestion is never pruned (ruling edge_before_first_subscribe: an edge rel
+ * ingests eagerly into storage, evaluation is what goes lazy), so every filter
+ * that touches storage takes `arrivalTargets` and keeps those rels whether or
+ * not a query reaches them. Only derivation -- level statements, edge
+ * statements and the boot-time level recompute -- is prunable.
+ */
+export interface ISubscribeCone {
+  /** Reads SPREFA_TSV2_SUBSCRIBE_PRUNE. "on" is the only value that prunes. */
+  mode(): ISubscribePruneMode;
+  relations(
+    mode: ISubscribePruneMode,
+    relations: readonly IIncrementalRelationPlan[],
+    subscribedRels: readonly ISubscribedRel[],
+    arrivalTargets: readonly string[],
+  ): readonly IIncrementalRelationPlan[];
+  levels(
+    mode: ISubscribePruneMode,
+    statements: readonly IIncrementalLevelStatement[],
+    subscribedRels: readonly ISubscribedRel[],
+  ): readonly IIncrementalLevelStatement[];
+  edges(
+    mode: ISubscribePruneMode,
+    statements: readonly IIncrementalEdgeStatement[],
+    subscribedRels: readonly ISubscribedRel[],
+  ): readonly IIncrementalEdgeStatement[];
+  retention(
+    mode: ISubscribePruneMode,
+    statements: readonly IIncrementalRetentionStatement[],
+    subscribedRels: readonly ISubscribedRel[],
+    arrivalTargets: readonly string[],
+  ): readonly IIncrementalRetentionStatement[];
+  boot(
+    mode: ISubscribePruneMode,
+    statements: readonly IBootStatement[],
+    subscribedRels: readonly ISubscribedRel[],
+    arrivalTargets: readonly string[],
+  ): readonly IBootStatement[];
+}
 
 /**
  * What a compiled `.dl6` module actually exports: `IGenProgram`'s five pinned
