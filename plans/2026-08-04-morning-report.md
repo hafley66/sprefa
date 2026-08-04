@@ -1,146 +1,147 @@
-# Morning report (overnight 2026-08-04)
+# Morning report 2026-08-04 (drawn)
 
-Five opus agents ran overnight. Two fixes are merged into sprefa main, three
-investigations ended in documents waiting on your calls. Each item below opens
-with the problem as you would hit it, then what happened overnight.
+## 0. The whole night, one board
 
-## Shipped into sprefa main
+```
+                      OVERNIGHT (5 opus agents)
+   ┌────────────────────┬──────────────────────┬─────────────────────┐
+   │ MERGED to main     │ DECISION DOCS        │ HANDED to instant-  │
+   │                    │ (waiting on you)     │ fable (stalled!)    │
+   ├────────────────────┼──────────────────────┼─────────────────────┤
+   │ 1 ticks$ decouple  │ 4 fold-wall cause    │ 6 reactive review   │
+   │ 2 prune flag (L2)  │ 5 duel verdict       │   12 findings       │
+   │   +typecheck fixed │ 3 host-edge hole     │   ONE KEYPRESS      │
+   └────────────────────┴──────────────────────┴─────────────────────┘
+   main: plunit 324 · conf 289/0 · text-door 202/202 · golden-flex ✔ · tsc ✔
+   UNPUSHED. push+tag = yours.
+```
 
-### 1. The engine died when its last viewer left
+## 1. MERGED: engine no longer dies with its last viewer
 
-The problem: the v6 served engine only turns its tick loop while something is
-subscribed to `ticks$` (the stream of tick results). Close the last browser
-tab or drop the last query, and the engine tears its pipeline down. The next
-arrival that gets submitted is then refused with "engine is not running", even
-though the process is alive and the data is fine. In app terms: walk away from
-the dashboard, come back, and submits made while nobody watched were rejected.
+```
+BEFORE                                   AFTER (share resetOnRefCountZero:false)
+arrivals ─▶ concatMap ─▶ share() ─▶ ticks$      arrivals ─▶ concatMap ─▶ share(keep) ─▶ ticks$
+                │                                        │
+   reader count 1→0 = LANE TORN DOWN             reader count 1→0 = lane stays up
+   running=false                                 running stays true
+   next submit ✗ "engine is not running"         next submit ✓ ticks, late reader
+                                                 sees everything, numbering 1..n
+   │t1 sub│t2 unsub│t3 submit ✗│                 │t1 sub│t2 unsub│t3 submit ✓ tick│t4 sub sees it│
+```
+Kept on purpose: submit before the FIRST-ever subscribe still errors (lane has
+never connected; batch would vanish). Eager-connect = separate card.
 
-Why it existed: the pipeline is shared with rx `share()`, whose default
-disconnects the source when the reader count hits zero. The engine's alive
-flag was riding that reader count.
+## 2. MERGED: laziness ladder step 2 (prune behind flag, default OFF)
 
-What shipped: one option on that share, `resetOnRefCountZero: false`, so the
-lane stays connected once anything has ever subscribed. Readers now come and
-go freely; ticks keep processing; a late reader sees everything that happened
-while nobody watched; tick numbers do not restart. A 2-test fail-first file
-pins it (both tests red before the fix, green after). All gates green.
+```
+                     ladder
+  ✔ 0 qcols          (query carries columns)
+  ✔ 1 cone+wire      (subscribedRels computed, consumed by nothing)   ← was here
+  ✔ 2 PRUNE FLAG     (tick path filters to the cone)                  ← now here
+  □ 3 harness roots + oracle parity
 
-One neighboring behavior deliberately kept: submitting before ANYTHING has
-ever subscribed is still an error, because the pipeline has never connected at
-that point and the batch would silently vanish. Making that work needs an
-eager-connect at construction; separate card if you want it.
+  SPREFA_TSV2_SUBSCRIBE_PRUNE
+        =off (default)                    =on
+  ┌──────────────────────────┐   ┌───────────────────────────────────┐
+  │ SAME ARRAYS BY REFERENCE │   │ statements/rels/boot filtered to  │
+  │ + text-door 202/202      │   │ cone ∪ arrivalTargets             │
+  │ = provably identical     │   │ ingestion NEVER pruned (keep()=   │
+  └──────────────────────────┘   │ replay ruling)                    │
+                                 └───────────────────────────────────┘
+  4-combination gate (all tested):
+              │ flag off              │ flag on
+  query prog  │ fixture rows verbatim │ subscribed rels byte-equal;
+              │                       │ unsubscribed: [] + 0 statements
+  zero-query  │ derives as today      │ derives NOTHING; ingest still lands
+```
+Bonus: tsc was red all night (202 errors, field declared on interface, never
+emitted). Fixed in this lane. First clean typecheck since the rename.
 
-### 2. Laziness step 2: the engine can now skip work nobody asked for
+## 3. YOUR RULING: the host edge the cone cannot see
 
-The problem this ladder exists for: a compiled program evaluates every rule on
-every tick even when no query reads the results. All the cone work so far
-(query columns, subscribe cone, the strict "no query subscribes to nothing"
-ruling) computed WHICH rels a program's queries actually need, but nothing
-consumed that answer yet. The engine still did all the work.
+```
+        query ──▶ response_rel ──▶ (cone walks rule bodies backward)
+                      ▲
+                      │ fires only if…
+        __host_demand_N ──▶ [ live host runs ] ──▶ __host_response_N
+              ▲                                          │
+              └────────────── MISSING EDGE ◀─────────────┘
+                     (no rule body connects them; the pairing
+                      exists only in the host wiring)
 
-What shipped: the emitted module now filters its tick work down to the
-subscribe cone when the env flag `SPREFA_TSV2_SUBSCRIBE_PRUNE=on` is set. OFF
-(the default, and the only mode anyone should run today) is proven identical
-two ways: the filter literally returns the original arrays by reference, and
-the byte-identity gate over all 202 compiled programs still passes. ON is
-graded by a 4-way test matrix: query-bearing and zero-query programs, each
-with the flag off and on. Ingestion is never pruned (your keep()-is-the-replay
-ruling: rows must land in storage even when nothing reads them yet).
+  replay fixtures: responses injected directly  → hole INVISIBLE, gates green
+  live host + flag on: demand never derives → host never runs → rel = [] silently
 
-Bonus that mattered: typecheck had been red for every lane all night (202
-errors). Root cause was an earlier step declaring a field on the emitted
-program's interface without emitting the field. This lane fixed it; the
-typecheck leg of green-all is clean for the first time since the rename.
+  ∴ RULE UNTIL RULED: flag stays OFF for host-bearing programs.
+  The fix widens the oracle-shared constant AND un-prunes the only pruning
+  fixture, so it wants your word, twice.
+```
 
-### 3. Safety rule that came out of it, needing your ruling
+## 4. YOUR GO: fold wall root cause (1a and 1b were ONE defect)
 
-A program with a live host (tree-sitter, shell) breaks under the flag: the
-cone knows a query needs the host's RESPONSE rel, but nothing tells it the
-paired DEMAND rel matters too, and without demand rows the host never fires.
-Under replay fixtures this is invisible (schedules inject responses directly),
-which is why every gate passes. Under a live host, flag on = the subscribed
-rel silently stays empty.
+```
+  program has ANY `seq`/`pre` rule?
+        │yes                                │no
+        ▼                                   ▼
+  runOrderedTick            runIncrementalTick (fixpoint ✔)
+  level plane =
+  DELETE + 1 INSERT per clause, NO LOOP     ← emit_ts.pl:1566-1582, :1953
+        │
+        ▼
+  self-ref rule ceiling = ITS CLAUSE COUNT
+  2 clauses → chain stops at 2   (golden-flex fold = the bug you saw)
+  3 clauses → stops at exactly 3 (measured; ceiling MOVES with clauses)
 
-So: the flag stays OFF for host-bearing programs until the demand/response
-pairing edge is added to the cone. That edge is exactly the host
-co-subscription question you have owed a ruling on since the cone-wire lane
-found it. It now has a measured consequence attached. The fix touches the
-module the oracle shares, and it would also make the only pruning fixture
-fully-subscribed (weakening the prune gate), so both halves want a decision
-rather than a quiet patch.
+  proof both ways: sed the dispatch line → incremental → third link LANDS
+  (minimal repro s6_seq.dl6 = 8 lines AND real golden-flex)
 
-## Investigations that ended in decision docs
+  side finds: MODE PARITY gate compares ordered runs to THEMSELVES
+              (EMITTER_MODE emitted, never read) · naive door has its own wall
+```
+Fix site is the ordered path's level plane. Shares emit_ts.pl with the duel's
+one() change → sequence the two lanes.
 
-### 4. Why the golden-flex fold stops at two links: root cause found
+## 5. YOUR TWO WORDS: duel verdict
 
-Backstory: the compose lab found a self-referential fold in golden-flex stops
-at exactly two links no matter when the third arrives (defect 1b), and
-separately that a whole chain arriving in one batch only closes one step
-(defect 1a). The cause did not minimize that night.
+```
+   kimi ────┐  block sugar ▷ graft        FUSE = opus spine
+   flash ───┤  reconcile table,           + 5 grafts
+            │  loud-loser ▷ graft         − 3 discards (both typed-merges
+   opus ━━━━┷━━ BASE (only leg whose        assumed machinery that does
+                claims re-execute clean)    not exist)
 
-The overnight lane minimized it, and 1a and 1b turned out to be ONE defect.
-The trigger: if a program contains even one ordered edge rule (`seq` or
-`pre`), the emitter routes the ENTIRE program onto its "ordered" tick path.
-That path rebuilds level rels by running each rule clause once per tick, with
-no loop to fixpoint. A self-referential rule with 2 clauses can therefore
-never build a chain longer than 2; add a third clause and the ceiling moves to
-exactly 3 (measured). golden-flex has ordered rules, so its fold hits this;
-the two-rule test program had none, so it chained fine. Hand-editing the
-generated file to use the incremental path makes the third link land on both
-the minimal repro and real golden-flex.
+   opus's key find: lower.pl:1560-1566, ONE TriggerKind test
+   = arm-order (concat) vs arrival-order (merge) fork.
+   Widen it → one_pick_order closed for new AND legacy shapes, oracle untouched.
 
-The 8-line minimal repro, the falsification ledger, and the fix site
-(emit_ts.pl's ordered-tick level plane) are in sprefa-lab-foldwall/FOLDWALL.md.
-Two side-findings: the golden's MODE PARITY gate is meaningless for ordered
-programs (the mode variable is emitted but never read, so the gate compares a
-run to itself), and the naive referee door has its own separate one-round bug.
+   WORD 1: reserved door name   throttle(1)  vs  zip(tick)
+   WORD 2: block sugar          same wave    vs  later
+```
 
-Your call: dispatch the fix lane. It is well-scoped now (add fixpoint to the
-ordered path's level recompute), but it shares a file with the one() emitter
-change from the duel plan, so the two lanes want sequencing.
+## 6. INSTANT: review delivered, courier frozen
 
-### 5. The one()/merge design duel: verdict in, two spelling calls are yours
+```
+  fable-main ──6 envelopes──▶ instant-fable ✋ FROZEN at "approve `bus list`?"
+                                   │              (verifying MY envelope is real:
+                                   ▼               anti-injection doing its job)
+                          UNSTICK: tmux attach -t instant-fable → press 2
 
-Backstory: three plan lanes (kimi, flash, opus) got the identical design
-contract for the merge/one construct family. An overnight auditor read all
-three, verified their file citations against the tree, and re-ran the opus
-leg's compiler probes.
+  REVIEW-reactive.md, 12 findings, drawn small:
+  ┌ waterfall bar click ─▶ resurrects dead lane (3rd call site, + boot replay 4th)
+  ├ your brush drag ──✗ wiped every 8s by refreshRogue → store notify → nowMs churn
+  ├ ticks after 1st session ──✗ never paint: bump(1) hits React Object.is bailout
+  ├ one failed list_sessions ─▶ liveness graded vs boot-time list FOREVER (??-chain)
+  ├ InTabStrip + MailPreview ─ NO live feed at all (button-only)
+  └ useAgentTree ─ rebuilds arrays every render → every memo below it is dead
+```
 
-Verdict: build on the opus plan. It was the only leg whose claims all
-survived re-execution, and it found the single emitter gate (one TriggerKind
-test in lower.pl) that decides arm-order vs arrival-order, meaning your
-"arrival time wins" ruling can be closed for the new construct AND for
-existing negation-guard programs in one change, oracle untouched. Five
-specific sections from kimi and flash get grafted in; three sections
-(including both typed-merge designs, which assumed compiler machinery that
-measurably does not exist) get dropped. Full grading table in
-plans/2026-08-04-rxprim-duel-verdict.md.
+## 7. Loose ends board
 
-Waiting on you, in that doc's tail: the reserved name for the one-per-tick
-door (`throttle(1)` per opus, `zip(tick)` per the shelf sketch), and whether
-the block sugar ships with the property or later.
-
-## Instant
-
-The reactive review you asked for is done: 12 findings, delivered to
-instant-fable as REVIEW-reactive.md next to its brief. Highlights in plain
-terms: clicking any waterfall bar resurrects a dead lane (same bug as the row
-click, third call site); the brush selection you drag gets wiped every 8
-seconds by an unrelated background refresh; after the first session loads,
-later sessions' tick marks never paint (a one-character React bug); one failed
-tmux query permanently downgrades liveness grading until reload; two of the
-three mail views have no live feed at all and only update on a button.
-
-The blocker: instant-fable spent the night frozen at a permission prompt,
-verifying MY message to it was genuine (its anti-injection check doing its
-job, then stalling on approval). It has 6 unread envelopes. One keypress:
-`tmux attach -t instant-fable`, press 2. Nothing lands in instant until then.
-
-## Loose ends nobody owns yet
-
-- roundtrip.sh rewrites 126 checked-in dl_view files at base (stale printer
-  output); every overnight lane stepped around it.
-- flash-prolog worktree fate and the 9 unmerged sprefa branches still await
-  your word (inventory in the 20260803.9 session save).
-- sprefa main is unpushed and greener than it has ever been; push+tag is
-  yours.
+```
+  YOURS TODAY            NOBODY'S YET                  STANDING
+  ├ push + tag           ├ roundtrip rewrites 126      ├ rxprim worktrees x3
+  ├ duel words 1+2       │  dl_view files (stale       │  + foldwall kept for
+  ├ fold-wall fix GO     │  printer corpus)            │  your read, then die
+  ├ host-edge ruling     ├ flash-prolog fate           └ monitor still watching
+  └ instant-fable key    └ 9 unmerged branches                instant-fable
+```
