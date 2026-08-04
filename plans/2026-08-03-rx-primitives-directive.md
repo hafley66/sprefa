@@ -64,3 +64,15 @@ is plunit-green). Spec sketch:
 - rx: merge(a$.pipe(map(tag pre_commit)), b$.pipe(map(tag timer)));
   scan folds with match over the tag (exhaustiveness checker-enforced
   because the tag is an enum, never a bare atom).
+
+## CORRECTION (same night, after reading the grammar): the sketches above
+use INVENTED syntax. Real surface: enums have NO keyword — an enum is a
+rel decl whose columns are a semicolon disjunction of variant
+constructors: `rel body(page(view: view) ; redirect(to: text)).`
+(plunit_tests.pl:1118, enum_decl term). Match uses PARENS with
+semicolon-prefixed arms and per-arm plane arrows `|->` / `|+>`
+(golden-flex.dl6:446-457). The word scan is banned for file enumeration
+(files-hosts.dl6:5-6, named refusal); the fold construct's name routes
+through the stream_cards. Any any/one block design must follow the
+match block's actual shape: `( ; label-or-guard ARROW head ... )`, not
+braces.
