@@ -452,6 +452,29 @@ host_input_contract(gh_pr_batch,
                      col(bucket, int)],
                     [identity, identity, freshness]).
 
+% @comment-ok: user directive 2026-08-04 (env/pwd/git-root/config in dl6)
+% ═══ env / filesystem / config hosts ════════════════════════════════════════
+%
+% Four ordinary sh hosts: the default `shell` executor runs them, the BODY
+% lives at the call site, and these rows fix the input-role contracts only.
+%
+% env_var: name is identity and returns; bucket is freshness (re-asks).
+host_input_contract(env_var,
+                    [col(name, text), col(bucket, int)],
+                    [identity, freshness]).
+% pwd: no identity input, bucket alone is the freshness witness.
+host_input_contract(pwd,
+                    [col(bucket, int)],
+                    [freshness]).
+% git_toplevel: dir is identity and returns; not-a-repo answers zero rows.
+host_input_contract(git_toplevel,
+                    [col(dir, text), col(bucket, int)],
+                    [identity, freshness]).
+% toml_json: config_path is identity and returns; the doc is one json value.
+host_input_contract(toml_json,
+                    [col(config_path, text), col(bucket, int)],
+                    [identity, freshness]).
+
 host_input_roles(Name, Inputs, Roles) :-
     ( host_input_contract(Name, Inputs, ContractRoles)
     -> Roles = ContractRoles
