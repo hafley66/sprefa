@@ -12,13 +12,35 @@
  * TICK SHAPE (identical at every cardinality; a batch is simply empty at 0):
  *   1  quarantined('weed')                the anti-join's one row, always
  *   2  tree + sensor                      the value plane arrives whole
+ *      + dispatch_manifest + leg 1        the composition scenario opens
  *   3  pick_event                         triggers every edge rule at once
+ *      + leg 2                            the fold's second link
  *   4  __host_response_weigh              the host's answers (see below)
  *   5  interval(1, bucket)                the bind row
  *   6  grade_ripe / grade_green / grade_bruised   the enum's variant rels
+ *      + dispatch variant                 the second enum's variant rels
+ *      + dispatch_ack + dispatch_seal     the two `any` triggers, one tick
  *   7  retire_event                       the edge-arm match block
  *   8  DELETE half the trees              departures: finalize/1 fires here
  *   9  (empty)                            the settle tick departures land in
+ *
+ * THE FOLD IS TWO LINKS, ON TWO TICKS, AND BOTH NUMBERS ARE MEASURED WALLS.
+ * ONE LINK PER TICK: a chain pushed inside a single batch runs to fixpoint in
+ * the oracle and ONE round in the emitter, and later ticks never finish it.
+ * TWO LINKS TOTAL: a third leg was written here first and never landed in the
+ * emitter, on tick 6, 7 or 9 alike, while the oracle had it every time. A
+ * two-rule program with the same fold shape chains to depth 4 with both doors
+ * identical, so the wall belongs to something this program has and that one
+ * does not; a negated level body (the reconcile-every-tick trigger) was the
+ * first guess and it does NOT reproduce it. COMPOSE.md finding 1 carries the
+ * diffs.
+ *
+ * THE `dispatch` VARIANT CONTENT IS UNIQUE PER INDEX. An enum variant rel is
+ * keyed on its CONTENT columns, so two ids carrying equal content replace each
+ * other -- which is what `grade` does above on purpose. Here the tag is joined
+ * back to a per-id json route, so a replacement would silently shrink the
+ * 100-row leg to a handful of tickets and grade the composition on almost
+ * nothing.
  *
  * THE HOST ANSWERS ARE SYNTHESIZED, NOT GUESSED. `weigh`'s witness digest is
  * built by the emitted SQL as
@@ -125,6 +147,50 @@ function gradeRow(index: number): IArrivalRow {
   return { rel: "grade_bruised", sign: "add", row: [index, "hail"] };
 }
 
+/** Only the rail variant carries hops above two, which is what keeps the
+ *  dispatch match block's three guards disjoint per ticket. */
+function hopsOf(index: number): number {
+  return index % 3 === 2 ? 3 + (index % 2) : 1 + (index % 2);
+}
+
+function dispatchManifestRow(index: number): IArrivalRow {
+  const routeName = index % 3 === 0 ? "north" : index % 3 === 1 ? "south" : "east";
+  return {
+    rel: "dispatch_manifest",
+    sign: "add",
+    row: [
+      index,
+      StructPlane.canonicalText({
+        crates: [index, index + 1],
+        route: { hops: hopsOf(index), name: routeName },
+      }),
+    ],
+  };
+}
+
+/** Leg `step` of dispatch `index`: leg ids are index*10+step so the previous
+ *  leg is nameable without a lookup, and step 1 points at 0 to say "first". */
+function dispatchLegRow(index: number, step: number): IArrivalRow {
+  const origin: StructValue = { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } };
+  return {
+    rel: "dispatch_leg",
+    sign: "add",
+    row: [
+      index * 10 + step,
+      index,
+      step === 1 ? 0 : index * 10 + (step - 1),
+      index + step,
+      origin as unknown as string,
+    ],
+  };
+}
+
+function dispatchVariantRow(index: number): IArrivalRow {
+  if (index % 3 === 0) return { rel: "dispatch_air", sign: "add", row: [index, index] };
+  if (index % 3 === 1) return { rel: "dispatch_road", sign: "add", row: [index, 1_000 + index] };
+  return { rel: "dispatch_rail", sign: "add", row: [index, 2_000 + index] };
+}
+
 function indices(count: number): readonly number[] {
   return Array.from({ length: count }, (_unused, offset) => offset + 1);
 }
@@ -139,11 +205,18 @@ export function scheduleFor(count: number): readonly IArrivalBatch[] {
       ...all.map((index) => ({ rel: "sensor", sign: "add", row: [index, index % 4 !== 0] }) as IArrivalRow),
       ...all.map(orchardJsonRow),
       ...all.map(orchardListRow),
+      ...all.map(dispatchManifestRow),
+      ...all.map((index) => dispatchLegRow(index, 1)),
     ],
-    all.flatMap((index) => [pickRow(index), ...orchardTagSourceRows(index)]),
+    all.flatMap((index) => [pickRow(index), ...orchardTagSourceRows(index), dispatchLegRow(index, 2)]),
     all.map(hostAnswerRow),
     [{ rel: "interval", sign: "add", row: [1, 1_800_000] }],
-    all.map(gradeRow),
+    all.flatMap((index) => [
+      gradeRow(index),
+      dispatchVariantRow(index),
+      { rel: "dispatch_ack", sign: "add", row: [index] } as IArrivalRow,
+      { rel: "dispatch_seal", sign: "add", row: [index] } as IArrivalRow,
+    ]),
     all.map((index) => ({ rel: "retire_event", sign: "add", row: [index] }) as IArrivalRow),
     half.map((index) => ({ ...treeRow(index), sign: "del" }) as IArrivalRow),
     [],
@@ -157,9 +230,22 @@ export function perturbedSchedule(count: number): readonly IArrivalBatch[] {
   const extra = 999;
   return [
     ...scheduleFor(count),
-    [treeRow(extra), { rel: "sensor", sign: "add", row: [extra, true] }, orchardJsonRow(extra), orchardListRow(extra)],
-    [pickRow(extra), ...orchardTagSourceRows(extra)],
-    [hostAnswerRow(extra), gradeRow(extra)],
+    [
+      treeRow(extra),
+      { rel: "sensor", sign: "add", row: [extra, true] },
+      orchardJsonRow(extra),
+      orchardListRow(extra),
+      dispatchManifestRow(extra),
+      dispatchLegRow(extra, 1),
+    ],
+    [pickRow(extra), ...orchardTagSourceRows(extra), dispatchLegRow(extra, 2)],
+    [
+      hostAnswerRow(extra),
+      gradeRow(extra),
+      dispatchVariantRow(extra),
+      { rel: "dispatch_ack", sign: "add", row: [extra] },
+      { rel: "dispatch_seal", sign: "add", row: [extra] },
+    ],
     [{ ...treeRow(extra), sign: "del" }],
     [],
   ];
