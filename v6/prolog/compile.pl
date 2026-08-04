@@ -11,6 +11,7 @@
             compile_fixture/4,
             compile_dl6/2,
             compile_program/6,
+            dl6_seeded_form/3,
             measure_phase/3,
             restore_phase_outcome/1,
             write_compile_trace/2,
@@ -219,15 +220,40 @@ compile_dl6(File, OutFile) :-
     ),
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
+    dl6_seeded_form(Prog, Initial, ProgOut),
     catch(
-        compile_program_phases(Name, fixture(Name, Prog, [], [], []),
-                               Bindings, [], OutFile, emit_ts:emit_program,
+        compile_program_phases(Name, fixture(Name, ProgOut, Initial, [], []),
+                               Bindings, Initial, OutFile, emit_ts:emit_program,
                                PhaseMeasurements),
         Error,
         throw_text_door_error(File, Error)
     ),
     write_compile_trace(
         Name, [phase(parse, ParseMeasurement) | PhaseMeasurements]).
+
+% Shared by the two text-door callers that parse .dl6 themselves.
+% Ground bodiless clauses become seed rows; non-ground ones stay refused.
+dl6_seeded_form(Prog, Initial, ProgOut) :-
+    Prog = prog(Decls, Rules),
+    !,
+    partition_dl6_facts(Rules, Initial, RealRules),
+    ProgOut = prog(Decls, RealRules).
+dl6_seeded_form(Prog, [], Prog).
+
+partition_dl6_facts([], [], []).
+partition_dl6_facts([Rule | Rules], [Fact | Facts], Rest) :-
+    dl6_fact(Rule, Fact),
+    !,
+    partition_dl6_facts(Rules, Facts, Rest).
+partition_dl6_facts([Rule | Rules], Facts, [Rule | Rest]) :-
+    partition_dl6_facts(Rules, Facts, Rest).
+
+dl6_fact((Head <- true), Head) :-
+    !,
+    ground(Head).
+dl6_fact(Term, Term) :-
+    ground(Term),
+    \+ Term = match(_, _).
 
 % EXPORTED because `bop check` is the SECOND caller of the text door and was
 % getting an unlocated refusal for the identical file (cold-author defect D3):

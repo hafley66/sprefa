@@ -13,7 +13,7 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
-:- use_module('../../compile', [ read_fixture_term/4, program_plan/2 ]).
+:- use_module('../../compile', [ read_fixture_term/4, program_plan/2, compile_dl6/2 ]).
 :- use_module('../../0_refusal_messages',
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
@@ -3921,3 +3921,78 @@ test(term_door_dot_chain_as_a_goal_refuses_by_name) :-
     Refusal == member_not_a_goal(at).
 
 :- end_tests(dot_member_access).
+
+fact_probe_text("rel max_run(limit_lines: int).
+rel doubled_limit(limit_doubled: int).
+
+max_run(2).
+
+doubled_limit(limit_doubled) <-
+  max_run(limit_lines), limit_doubled := limit_lines * 2.
+").
+
+fact_nonground_text("rel max_run(limit_lines: int).
+
+max_run(Limit).
+").
+
+dl6_compile_text(Text, OutFile, Result) :-
+    tmp_file(fact_dl6, File),
+    setup_call_cleanup(
+        open(File, write, Stream),
+        format(Stream, "~s", [Text]),
+        close(Stream)),
+    catch(( with_output_to(string(_), compile_dl6(File, OutFile)),
+            catch(delete_file(File), _, true),
+            Result = ok ),
+          Error,
+          ( catch(delete_file(File), _, true),
+            Result = refused(Error) )).
+
+% A bodiless ground clause must seed a boot row for its rel, and the same
+% program's derived rule must still lower. The non-ground variant keeps the
+% bodiless-clause refusal.
+:- begin_tests(fact_seeding).
+
+test(dl6_fact_seeds_initial) :-
+    fact_probe_text(Text),
+    tmp_file(ts, OutFile),
+    dl6_compile_text(Text, OutFile, Result),
+    (   Result = ok
+    ->  read_seeded_text(OutFile, Emitted),
+        (   sub_atom(Emitted, _, _, _,
+                     'INSERT OR IGNORE INTO "max_run" ("limit_lines") VALUES (?)')
+        ->  true
+        ;   throw(seed_row_missing(Emitted))
+        )
+    ;   throw(compile_failed(Result))
+    ).
+
+test(dl6_fact_nonground_refuses) :-
+    fact_nonground_text(Text),
+    dl6_compile_text(Text, _Out, Result),
+    Result = refused(unsupported_construct(_)).
+
+test(dl6_fact_derives) :-
+    fact_probe_text(Text),
+    tmp_file(ts, OutFile),
+    dl6_compile_text(Text, OutFile, Result),
+    (   Result = ok
+    ->  read_seeded_text(OutFile, Emitted),
+        (   sub_atom(Emitted, _, _, _, 'CREATE TABLE "doubled_limit"'),
+            sub_atom(Emitted, _, _, _, '"limit_doubled"')
+        ->  true
+        ;   throw(derived_rel_missing(Emitted))
+        )
+    ;   throw(compile_failed(Result))
+    ).
+
+read_seeded_text(File, Text) :-
+    setup_call_cleanup(
+        open(File, read, Stream),
+        read_string(Stream, _, Text),
+        close(Stream)),
+    catch(delete_file(File), _, true).
+
+:- end_tests(fact_seeding).
+

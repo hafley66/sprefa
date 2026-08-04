@@ -20,7 +20,8 @@
               [ measure_phase/3,
                 program_plan/2,
                 restore_phase_outcome/1,
-                write_compile_trace/2
+                write_compile_trace/2,
+                dl6_seeded_form/3
               ]).
 :- use_module('compile/parse_dl', [parse_dl_file/4]).
 :- use_module(lower, [lower_program/2, boot_statements/5]).
@@ -46,7 +47,8 @@ compile_dl6_profiled(File, OutFile, LogStream) :-
     ),
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
-    Term = fixture(Name, Prog, [], [], []),
+    dl6_seeded_form(Prog, Initial, ProgOut),
+    Term = fixture(Name, ProgOut, Initial, [], []),
     phase(LogStream, File, 2, plan,
           program_plan(Term-Bindings, Plan),
           PlanMeasurement),
@@ -56,7 +58,7 @@ compile_dl6_profiled(File, OutFile, LogStream) :-
     Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     phase(LogStream, File, 4, boot,
-          boot_statements(Decls, RelPlans, [], LevelStatements,
+          boot_statements(Decls, RelPlans, Initial, LevelStatements,
                           BootStatements),
           BootMeasurement),
     phase(LogStream, File, 5, emit,

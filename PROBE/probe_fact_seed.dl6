@@ -1,0 +1,7 @@
+rel max_run(limit_lines: int).
+rel doubled_limit(limit_doubled: int).
+
+max_run(2).
+
+doubled_limit(limit_doubled) <-
+  max_run(limit_lines), limit_doubled := limit_lines * 2.

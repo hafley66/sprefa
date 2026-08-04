@@ -51,7 +51,7 @@
 
 :- module(bop_check, [bop_check/1, bop_check_env/0]).
 
-:- use_module('../../compile', [compile_program/6, throw_text_door_error/2]).
+:- use_module('../../compile', [compile_program/6, throw_text_door_error/2, dl6_seeded_form/3]).
 :- use_module('../parse_dl', [parse_dl_file/4]).
 :- use_module(library(lists)).
 
@@ -102,7 +102,8 @@ compile_pure(File, Prog, Bindings) :-
         true,
         catch(
             with_output_to(string(_),
-                compile_program(Name, fixture(Name, Prog, [], [], []), Bindings, [], TmpFile, emit_ts:emit_program)),
+                ( dl6_seeded_form(Prog, Initial, ProgOut),
+                  compile_program(Name, fixture(Name, ProgOut, Initial, [], []), Bindings, Initial, TmpFile, emit_ts:emit_program))),
             Error,
             throw_text_door_error(File, Error)),
         catch(delete_file(TmpFile), _, true)).
