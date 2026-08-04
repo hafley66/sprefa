@@ -28,3 +28,19 @@ Status: directive recorded, undesigned. Next step = a design lane with
 the match-block desugar discipline (term_expansion, one construct per
 card, registry.pl row, golden-flex coverage) and rx lowerings for every
 form. Blocked on nothing.
+
+## Refinement (user, same night): "its basically a tick aligned debounce"
+- Same-tick multi-arm today: keyed head folds, bounded log REFUSES
+  (retention_head_conflict_risk, ruled this same night), plain log
+  keeps both. "one of these" is the missing third behavior: arbitrate.
+- The guard-by-sampling spelling is a trap: latest/1 samples the
+  pre-tick set; "did arm A fire THIS tick" is a delta read at offset 0,
+  and negating it across rules is same-tick negation (checker refuses,
+  correctly). Therefore `one { }` must be ONE construct evaluated per
+  tick like match arms are one construct per value: arms in priority
+  order, first with rows wins. No cross-rule negation exists in the
+  lowering.
+  rx: tickBatch$.pipe(map(b => firstNonEmpty([armA(b), armB(b)])))
+- Family name: tick-aligned pulse operators, all match-block shaped:
+  any (merge) / one (per-tick priority pick, rx auditTime-with-priority)
+  / debounce (fire when a tick passes quiet) / scan (fold).
