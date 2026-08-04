@@ -400,6 +400,58 @@ host_input_contract(fetch,
                     [col(ep, text), col(prev, text), col(bucket, int)],
                     [identity, identity, freshness]).
 
+% ═══ ghcacher hosts ═════════════════════════════════════════════════════════
+
+% @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.
+% FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT
+% Invocations stay serial (concatMap, concurrency 1), so neither clone row
+% carries a concurrency column and no knob is registered for one.
+
+% A second NAME for the mirror, never a mode column (repo_column_spelling).
+% `want_sha` is FRESHNESS: an unmoved branch re-asks on the same witness.
+host_input_contract(repo_checkout,
+                    [col(repo_slug, text), col(dest_root, text),
+                     col(want_sha, text)],
+                    [identity, identity, freshness]).
+host_input_contract(repo_mirror_pr_heads,
+                    [col(repo_slug, text), col(dest_root, text),
+                     col(want_sha, text)],
+                    [identity, identity, freshness]).
+
+% The config feeder pair. `bucket` is FRESHNESS on both: the answer is a file's
+% existence and a file's contents, never a clock tick, so no template says it.
+host_input_contract(path_exists,
+                    [col(config_path, text), col(bucket, int)],
+                    [identity, freshness]).
+host_input_contract(read_org_config,
+                    [col(config_path, text), col(bucket, int)],
+                    [identity, freshness]).
+
+% @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.
+% FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT
+% Rate back-off is relational (an over_budget rel anti-joined into due), so
+% there is no sleep, retry or back-off column here. Change detection is this one
+% conditional call against the org events endpoint, so no second host is
+% registered for the private-org fallback.
+
+% One NAME per endpoint family. `prev_etag` is IDENTITY as `fetch`'s `prev` is,
+% so it returns on the response row; a new bucket alone re-fires the poll.
+host_input_contract(gh_rest_cond,
+                    [col(endpoint_path, text), col(prev_etag, text),
+                     col(bucket, int)],
+                    [identity, identity, freshness]).
+
+% @comment-ok: user banner verbatim, ruling design_debt_mode = utility_over_pedantry.
+% FUCKING WARNING: AI IS DUMB AND DECIDED THIS BECAUSE USER IS WANTING SOMETHING USEFUL AND IS DONE BEING PEDANTIC, DONT CAUSE CONTRADICTIONS WHEN POSSIBLE BUT FUCK IT
+% Serial again, one subprocess per batch: no concurrency column here either.
+
+% The aliased batch. `slug_list` is IDENTITY: the set of repositories is what
+% the answer is about, so it returns on the response row alongside `batch_key`.
+host_input_contract(gh_pr_batch,
+                    [col(batch_key, text), col(slug_list, text),
+                     col(bucket, int)],
+                    [identity, identity, freshness]).
+
 host_input_roles(Name, Inputs, Roles) :-
     ( host_input_contract(Name, Inputs, ContractRoles)
     -> Roles = ContractRoles
