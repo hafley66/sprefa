@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,6 +46,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -311,20 +313,20 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["close_request", "open_request", "tab_row"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `INSERT OR IGNORE INTO "queue_next" ("session_id", "next") VALUES (?, ?)`, params: ["session_one", 0] },
-  { sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_a", "body_a"] },
-  { sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_b", "body_b"] },
-  { sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_c", "body_c"] },
-  { sql: `DELETE FROM "live_tab"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id")`, params: [] },
-  { sql: `DELETE FROM "demanded"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id" FROM "live_tab" b0`, params: [] },
-  { sql: `DELETE FROM "queue_head"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, params: [] },
-  { sql: `DELETE FROM "queue_head_tab"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT b0."session_id", b1."tab_id" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal"`, params: [] },
-  { sql: `DELETE FROM "tab_view"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT json_extract(b0."col1", '$.args[0]'), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]')`, params: [] },
+  { rel: "queue_next", sql: `INSERT OR IGNORE INTO "queue_next" ("session_id", "next") VALUES (?, ?)`, params: ["session_one", 0] },
+  { rel: "tab_row", sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_a", "body_a"] },
+  { rel: "tab_row", sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_b", "body_b"] },
+  { rel: "tab_row", sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, params: ["tab_c", "body_c"] },
+  { rel: "live_tab", sql: `DELETE FROM "live_tab"`, params: [] },
+  { rel: "live_tab", sql: `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id")`, params: [] },
+  { rel: "demanded", sql: `DELETE FROM "demanded"`, params: [] },
+  { rel: "demanded", sql: `INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id" FROM "live_tab" b0`, params: [] },
+  { rel: "queue_head", sql: `DELETE FROM "queue_head"`, params: [] },
+  { rel: "queue_head", sql: `INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, params: [] },
+  { rel: "queue_head_tab", sql: `DELETE FROM "queue_head_tab"`, params: [] },
+  { rel: "queue_head_tab", sql: `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT b0."session_id", b1."tab_id" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal"`, params: [] },
+  { rel: "tab_view", sql: `DELETE FROM "tab_view"`, params: [] },
+  { rel: "tab_view", sql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT json_extract(b0."col1", '$.args[0]'), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]')`, params: [] },
 ];
 
 type Snapshot = {
@@ -841,19 +843,29 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, rels).pipe(map(() => rels))),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -879,11 +891,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

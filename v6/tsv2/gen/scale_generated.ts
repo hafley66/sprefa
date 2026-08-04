@@ -45,6 +45,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }

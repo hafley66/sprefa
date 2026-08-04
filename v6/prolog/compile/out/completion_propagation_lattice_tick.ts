@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,6 +46,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -257,14 +259,14 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["end_a_signal", "end_b_signal", "end_c_signal", "open_inner", "open_outer"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `INSERT OR IGNORE INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?)`, params: ["outer_x", "inner_x"] },
-  { sql: `INSERT OR IGNORE INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?)`, params: ["outer_y", "inner_y"] },
-  { sql: `INSERT OR IGNORE INTO "open_outer" ("outer_id") VALUES (?)`, params: ["outer_x"] },
-  { sql: `INSERT OR IGNORE INTO "open_outer" ("outer_id") VALUES (?)`, params: ["outer_y"] },
-  { sql: `DELETE FROM "live_outer"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id")`, params: [] },
-  { sql: `DELETE FROM "live_inner"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, params: [] },
+  { rel: "open_inner", sql: `INSERT OR IGNORE INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?)`, params: ["outer_x", "inner_x"] },
+  { rel: "open_inner", sql: `INSERT OR IGNORE INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?)`, params: ["outer_y", "inner_y"] },
+  { rel: "open_outer", sql: `INSERT OR IGNORE INTO "open_outer" ("outer_id") VALUES (?)`, params: ["outer_x"] },
+  { rel: "open_outer", sql: `INSERT OR IGNORE INTO "open_outer" ("outer_id") VALUES (?)`, params: ["outer_y"] },
+  { rel: "live_outer", sql: `DELETE FROM "live_outer"`, params: [] },
+  { rel: "live_outer", sql: `INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id")`, params: [] },
+  { rel: "live_inner", sql: `DELETE FROM "live_inner"`, params: [] },
+  { rel: "live_inner", sql: `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, params: [] },
 ];
 
 type Snapshot = {
@@ -499,18 +501,28 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -539,11 +551,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

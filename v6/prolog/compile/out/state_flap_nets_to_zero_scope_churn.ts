@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,6 +46,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -239,14 +241,14 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["fetch_result", "poll_due"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `INSERT OR IGNORE INTO "open_fetch" ("endpoint") VALUES (?)`, params: ["gh_repos"] },
-  { sql: `INSERT OR IGNORE INTO "phase" ("endpoint", "col2") VALUES (?, ?)`, params: ["gh_repos", "fetching"] },
-  { sql: `DELETE FROM "scope_done"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching')`, params: [] },
-  { sql: `DELETE FROM "live_fetch"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint")`, params: [] },
-  { sql: `DELETE FROM "demanded"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint" FROM "live_fetch" b0`, params: [] },
+  { rel: "open_fetch", sql: `INSERT OR IGNORE INTO "open_fetch" ("endpoint") VALUES (?)`, params: ["gh_repos"] },
+  { rel: "phase", sql: `INSERT OR IGNORE INTO "phase" ("endpoint", "col2") VALUES (?, ?)`, params: ["gh_repos", "fetching"] },
+  { rel: "scope_done", sql: `DELETE FROM "scope_done"`, params: [] },
+  { rel: "scope_done", sql: `INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching')`, params: [] },
+  { rel: "live_fetch", sql: `DELETE FROM "live_fetch"`, params: [] },
+  { rel: "live_fetch", sql: `INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint")`, params: [] },
+  { rel: "demanded", sql: `DELETE FROM "demanded"`, params: [] },
+  { rel: "demanded", sql: `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint" FROM "live_fetch" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -616,18 +618,28 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -653,11 +665,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

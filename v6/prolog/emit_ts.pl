@@ -172,6 +172,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
     [ [ 'import { concatMap, forkJoin, map, of, type Observable } from "rxjs";',
       '',
       RuntimeImport,
+      'import { SubscribeCone } from "../runtime/3_subscribe.ts";',
       'import { multisetDiff } from "../runtime/diff.ts";',
       'import { selectRows } from "../runtime/rows.ts";'
       ],
@@ -268,7 +269,7 @@ naive_reference_normalize_lines(true,
 incremental_reference_normalize_lines(false, []) :- !.
 incremental_reference_normalize_lines(true,
     [ '    concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,',
-      '      (targets) => IncrementalRuntime.applyArrivals(seam, targets, INCREMENTAL_RELATIONS),',
+      '      (targets) => IncrementalRuntime.applyArrivals(seam, targets, SUBSCRIBED_RELATIONS),',
       '    ).pipe(map((normalized) => { arrivals = normalized; }))),'
     ]).
     % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
@@ -289,6 +290,7 @@ local_types_lines(
       'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
+      '  rel: string;',
       '  sql: string;',
       '  params: readonly IRowValue[];',
       '}',
@@ -735,10 +737,12 @@ boot_lines(BootStatements, Lines) :-
     maplist(boot_entry_line, BootStatements, EntryLines),
     append([ ['const boot: readonly IBootStatement[] = ['], EntryLines, ['];'] ], Lines).
 
-boot_entry_line(bootstmt(Sql, Params), Line) :-
+boot_entry_line(bootstmt(Rel, Sql, Params), Line) :-
+    js_string(Rel, RelText),
     js_template(Sql, Template),
     params_array_text(Params, ParamsText),
-    format(atom(Line), '  { sql: ~w, params: ~w },', [Template, ParamsText]).
+    format(atom(Line), '  { rel: ~w, sql: ~w, params: ~w },',
+           [RelText, Template, ParamsText]).
 
 % ═══ snapshot type + reader (forkJoin over selectRows, one entry per rel) ════
 
@@ -1791,7 +1795,7 @@ retention_tick_lines_ordered(false, []).
 % promoteFrontiers is what then reports the staged rows as carryPending.
 departure_stage_incremental_lines([], []) :- !.
 departure_stage_incremental_lines(DepartureRefs,
-    ['    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, rels).pipe(map(() => rels))),']) :-
+    ['    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),']) :-
     DepartureRefs \== [].
 
 departure_stage_naive_lines([], []) :- !.
@@ -1806,6 +1810,52 @@ incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
     format(atom(SafeLine), 'const INCREMENTAL_PROGRAM_SAFE = ~w;', [IncrementalSafe]),
     format(atom(ReconcileLine), 'const RECONCILE_EVERY_TICK = ~w;',
            [ReconcileEveryTick]).
+
+% ═══ subscribe-cone pruning (ladder step 2, DEFAULT OFF) ═════════════════════
+%
+% Read once, at module scope: the filters are pure and the emitted arrays never
+% change, so a per-tick call would buy nothing. With the flag off every
+% SUBSCRIBED_* const IS the array above it, by reference.
+%
+% incrementalPlan stays UNPRUNED on purpose: it describes the compiled program
+% (tests read statements out of it by rel name), where the consts below are the
+% tick path's own working lists.
+%
+% Only the incremental path can honor a cone. The naive referee rebuilds every
+% level rel from one fused SQL string and the ordered path replays whole
+% relations, so with the flag on those two refuse by name rather than answering
+% a pruned question with an unpruned tick.
+subscribe_prune_lines(HasRetention, DerivedEdgeCarryRequired, HasOrderedProgram,
+                      Lines) :-
+    subscribe_prune_tick_path_line(DerivedEdgeCarryRequired, HasOrderedProgram,
+                                   TickPathLine),
+    ( HasRetention == true
+    -> RetentionLine =
+       ['const SUBSCRIBED_RETENTION_STATEMENTS = SubscribeCone.retention(SUBSCRIBE_PRUNE, INCREMENTAL_RETENTION_STATEMENTS, subscribedRels, arrivalTargets);']
+    ;  RetentionLine = []
+    ),
+    append(
+    [ [ 'const SUBSCRIBE_PRUNE = SubscribeCone.mode();',
+        TickPathLine,
+        'if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {',
+        '  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);',
+        '}',
+        'const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);',
+        'const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);',
+        'const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);'
+      ],
+      RetentionLine,
+      [ 'const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);' ]
+    ], Lines).
+
+% Typed `string`, not left to inference: a literal-typed const makes the guard
+% below a comparison tsgo reports as having no overlap (TS2367).
+subscribe_prune_tick_path_line(_, true,
+    'const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";') :- !.
+subscribe_prune_tick_path_line(true, _,
+    'const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";') :- !.
+subscribe_prune_tick_path_line(_, _,
+    'const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;').
 
 incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
     ( HasRetention == true
@@ -1870,7 +1920,7 @@ advance_tick_naive_line(true,
 % text stays byte-identical to what the previous emitter wrote.
 pre_edge_level_reconcile_lines([], [], []) :- !.
 pre_edge_level_reconcile_lines(EdgeStatements,
-    ['    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),'],
+    ['    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),'],
     % The tick pipeline is emitted as TWO chained pipes when the reconcile line
     % is present, split at the edge boundary: the mid-tick phases (arrivals ->
     % frozen level plane -> edges -> post-write level growth), then the closing
@@ -1901,28 +1951,28 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'
-    ;  MergeLine = '    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, INCREMENTAL_RELATIONS)),',
-       PostEdgeLevelLine = '    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
+    ;  MergeLine = '    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),',
+       PostEdgeLevelLine = '    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),'
     ),
-    RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),',
+    RecomputeLine = '    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),',
     run_tick_dispatch_lines(DerivedEdgeCarryRequired, HasStructTypes,
                             HasOrderedProgram, DispatchLines),
     ( HasRetention == true
     -> RetentionLines =
-       ['    concatMap(() => IncrementalRuntime.applyRetention(seam, INCREMENTAL_RETENTION_STATEMENTS, INCREMENTAL_RELATIONS)),']
+       ['    concatMap(() => IncrementalRuntime.applyRetention(seam, SUBSCRIBED_RETENTION_STATEMENTS, SUBSCRIBED_RELATIONS)),']
     ; RetentionLines = []
     ),
     append(
     [ [ 'function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      '  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe('
+      '  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe('
       ],
       AdvanceTickLines,
       NormalizeLines,
-      [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),',
-      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),'
+      [ '    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),',
+      '    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),'
       ],
       PreEdgeReconcileLines,
-      [ '    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),',
+      [ '    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),',
       MergeLine,
       PostEdgeLevelLine
       ],
@@ -1930,11 +1980,11 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       RetentionLines,
       [
       RecomputeLine,
-      '    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),'
+      '    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),'
       ],
       DepartureStageLines,
       [
-      '    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(',
+      '    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(',
       '      map((carryPending): ITickDeltas => ({ rels, carryPending })),',
       '    )),',
       '  );',
@@ -2025,6 +2075,9 @@ edge_resolve_call_expr(HeadRef, Index, Expr) :-
     pascal_case(HeadRef, Pascal),
     format(atom(Expr), 'resolve~w_~wWrites(seam, before, arrivals)', [Pascal, Index]).
 
+% `boot` is the ONE field the cone filter reaches from out here: the tick path
+% takes its lists from the SUBSCRIBED_* consts, but boot is run by the harness
+% off this object.
 program_export_lines(Name,
     [ 'export const program: IGenProgramWithBoot = {',
       NameLine,
@@ -2032,11 +2085,12 @@ program_export_lines(Name,
       '  relColumns,',
       '  relColumnTypes,',
       '  arrivalTargets,',
-      '  boot,',
+      '  boot: SUBSCRIBED_BOOT,',
       '  finalSelect,',
       '  hostPlans,',
       '  bindPlans,',
       '  queryPlans,',
+      '  subscribedRels,',
       '  unsupportedExecution,',
       '  tick: runTick,',
       '};'
@@ -2120,6 +2174,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     retraction_guard(Plan, RetractionGuard),
     incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
                            IncrementalModeLines),
+    subscribe_prune_lines(HasRetention, DerivedEdgeCarryRequired,
+                          HasOrderedProgram, SubscribePruneLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                                   HasRetention, UsesTick, DepartureRefs,
                                   HasStructTypes, HasOrderedProgram,
@@ -2143,7 +2199,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       OrderedPreLines, OrderedOccurrenceLines, OrderedCarryLines,
       RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
       AdvanceTickFnLines, RunNaiveTickFnLines, RunOrderedTickFnLines,
-      IncrementalModeLines, RunIncrementalTickFnLines,
+      IncrementalModeLines, SubscribePruneLines, RunIncrementalTickFnLines,
       StructTickWrapperLines, IncrementalPlanExportLines,
       ProgramExportLines
     ],

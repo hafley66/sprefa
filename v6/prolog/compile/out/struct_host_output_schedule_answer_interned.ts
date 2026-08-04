@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
@@ -48,6 +49,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -228,13 +230,13 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["__host_response_scan_span", "source_path", "span"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `INSERT OR IGNORE INTO "source_path" ("path") VALUES (?)`, params: ["a.rs"] },
-  { sql: `DELETE FROM "__host_demand_scan_span"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "__host_demand_scan_span" ("identity_digest", "witness_digest", "path") SELECT ('identity|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path" FROM "source_path" b0`, params: [] },
-  { sql: `DELETE FROM "host_span"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "host_span" ("path", "at") SELECT b0."path", b1."at" FROM "source_path" b0, "__host_response_scan_span" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path")`, params: [] },
-  { sql: `DELETE FROM "host_start"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "host_start" ("path", "start") SELECT b0."path", b1."start" FROM "host_span" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, params: [] },
+  { rel: "source_path", sql: `INSERT OR IGNORE INTO "source_path" ("path") VALUES (?)`, params: ["a.rs"] },
+  { rel: "__host_demand_scan_span", sql: `DELETE FROM "__host_demand_scan_span"`, params: [] },
+  { rel: "__host_demand_scan_span", sql: `INSERT OR IGNORE INTO "__host_demand_scan_span" ("identity_digest", "witness_digest", "path") SELECT ('identity|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path" FROM "source_path" b0`, params: [] },
+  { rel: "host_span", sql: `DELETE FROM "host_span"`, params: [] },
+  { rel: "host_span", sql: `INSERT OR IGNORE INTO "host_span" ("path", "at") SELECT b0."path", b1."at" FROM "source_path" b0, "__host_response_scan_span" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|scan_span' || '|' || 'path' || ':' || 'text' || '=' || b0."path")`, params: [] },
+  { rel: "host_start", sql: `DELETE FROM "host_start"`, params: [] },
+  { rel: "host_start", sql: `INSERT OR IGNORE INTO "host_start" ("path", "start") SELECT b0."path", b1."start" FROM "host_span" b0, "__ref_span" b1 WHERE b1."__id" = b0."at"`, params: [] },
 ];
 
 type Snapshot = {
@@ -361,19 +363,29 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.applyArrivals(seam, targets, INCREMENTAL_RELATIONS),
+      (targets) => IncrementalRuntime.applyArrivals(seam, targets, SUBSCRIBED_RELATIONS),
     ).pipe(map((normalized) => { arrivals = normalized; }))),
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -402,11 +414,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

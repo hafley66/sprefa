@@ -76,9 +76,9 @@ test("boot_runner_preserves_an_integer_into_a_text_column", async () => {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, [TEXT_COLUMN_DDL]));
   const statements: readonly IBootStatement[] = [
-    { sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: [1] },
-    { sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: [40] },
-    { sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: ["src/db.rs"] },
+    { rel: "probe", sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: [1] },
+    { rel: "probe", sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: [40] },
+    { rel: "probe", sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: ["src/db.rs"] },
   ];
   await firstValueFrom(BootRunner.run(seam, statements).pipe(toArray()));
   const rows = await readProbe(seam, "probe");
@@ -94,7 +94,7 @@ test("boot_runner_leaves_an_integer_column_an_integer", async () => {
   await firstValueFrom(ScratchStore.boot(seam, [INT_COLUMN_DDL]));
   await firstValueFrom(
     BootRunner.run(seam, [
-      { sql: 'INSERT INTO "probe_int" ("value") VALUES (?)', params: [7] },
+      { rel: "probe_int", sql: 'INSERT INTO "probe_int" ("value") VALUES (?)', params: [7] },
     ]).pipe(toArray()),
   );
   const rows = await readProbe(seam, "probe_int");

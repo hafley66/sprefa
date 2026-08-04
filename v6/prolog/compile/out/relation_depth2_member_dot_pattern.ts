@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
@@ -48,6 +49,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -234,16 +236,16 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["raw"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `DELETE FROM "fpath"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "fpath" ("name") SELECT b0."path_name" FROM "raw" b0`, params: [] },
-  { sql: `DELETE FROM "repo"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "repo" ("name") SELECT b0."repo_name" FROM "raw" b0`, params: [] },
-  { sql: `DELETE FROM "file"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "raw" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name"`, params: [] },
-  { sql: `DELETE FROM "span"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name"`, params: [] },
-  { sql: `DELETE FROM "dcoord"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "dcoord" ("path_name", "start", "end") SELECT b2."name", b0."start", b0."end" FROM "span" b0, "__ref_file" b1, "__ref_fpath" b2 WHERE b1."__id" = b0."file" AND b2."__id" = b1."at"`, params: [] },
+  { rel: "fpath", sql: `DELETE FROM "fpath"`, params: [] },
+  { rel: "fpath", sql: `INSERT OR IGNORE INTO "fpath" ("name") SELECT b0."path_name" FROM "raw" b0`, params: [] },
+  { rel: "repo", sql: `DELETE FROM "repo"`, params: [] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name") SELECT b0."repo_name" FROM "raw" b0`, params: [] },
+  { rel: "file", sql: `DELETE FROM "file"`, params: [] },
+  { rel: "file", sql: `INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "raw" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name"`, params: [] },
+  { rel: "span", sql: `DELETE FROM "span"`, params: [] },
+  { rel: "span", sql: `INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name"`, params: [] },
+  { rel: "dcoord", sql: `DELETE FROM "dcoord"`, params: [] },
+  { rel: "dcoord", sql: `INSERT OR IGNORE INTO "dcoord" ("path_name", "start", "end") SELECT b2."name", b0."start", b0."end" FROM "span" b0, "__ref_file" b1, "__ref_fpath" b2 WHERE b1."__id" = b0."file" AND b2."__id" = b1."at"`, params: [] },
 ];
 
 type Snapshot = {
@@ -376,19 +378,29 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.applyArrivals(seam, targets, INCREMENTAL_RELATIONS),
+      (targets) => IncrementalRuntime.applyArrivals(seam, targets, SUBSCRIBED_RELATIONS),
     ).pipe(map((normalized) => { arrivals = normalized; }))),
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -417,11 +429,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

@@ -20,6 +20,7 @@
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multisetDiff } from "../runtime/diff.ts";
 import { selectRows } from "../runtime/rows.ts";
 import type {
@@ -45,6 +46,7 @@ interface IBindPlanData { readonly name: string; readonly columns: readonly IHos
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
+  rel: string;
   sql: string;
   params: readonly IRowValue[];
 }
@@ -220,23 +222,23 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 const arrivalTargets: readonly string[] = ["eprintln_hit", "waiver_block_comment", "waiver_trailing_comment"];
 
 const boot: readonly IBootStatement[] = [
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/config.rs", 44] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 118] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 133] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/setup/vscode.rs", 61] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/setup/wire.rs", 92] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/cli/mod.rs", 88] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 175] },
-  { sql: `INSERT OR IGNORE INTO "waiver_trailing_comment" ("path", "waiver_line") VALUES (?, ?)`, params: ["src/cli/mod.rs", 88] },
-  { sql: `DELETE FROM "eprintln_waiver_line"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_block_comment" b0`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_trailing_comment" b0`, params: [] },
-  { sql: `DELETE FROM "eprintln_waived"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_no") SELECT b0."path", b1."line_no" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_no" - 1)) AND (b0."waiver_line" <= b1."line_no")`, params: [] },
-  { sql: `DELETE FROM "eprintln_counted"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_counted" ("path", "line_no") SELECT b0."path", b0."line_no" FROM "eprintln_hit" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = b0."path" AND n0."line_no" = b0."line_no")`, params: [] },
-  { sql: `DELETE FROM "eprintln_count"`, params: [] },
-  { sql: `INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 GROUP BY b0."path" HAVING count(*) > 0`, params: [] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/config.rs", 44] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 118] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 133] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/setup/vscode.rs", 61] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/setup/wire.rs", 92] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/cli/mod.rs", 88] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, params: ["src/daemon/client.rs", 175] },
+  { rel: "waiver_trailing_comment", sql: `INSERT OR IGNORE INTO "waiver_trailing_comment" ("path", "waiver_line") VALUES (?, ?)`, params: ["src/cli/mod.rs", 88] },
+  { rel: "eprintln_waiver_line", sql: `DELETE FROM "eprintln_waiver_line"`, params: [] },
+  { rel: "eprintln_waiver_line", sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_block_comment" b0`, params: [] },
+  { rel: "eprintln_waiver_line", sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_trailing_comment" b0`, params: [] },
+  { rel: "eprintln_waived", sql: `DELETE FROM "eprintln_waived"`, params: [] },
+  { rel: "eprintln_waived", sql: `INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_no") SELECT b0."path", b1."line_no" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_no" - 1)) AND (b0."waiver_line" <= b1."line_no")`, params: [] },
+  { rel: "eprintln_counted", sql: `DELETE FROM "eprintln_counted"`, params: [] },
+  { rel: "eprintln_counted", sql: `INSERT OR IGNORE INTO "eprintln_counted" ("path", "line_no") SELECT b0."path", b0."line_no" FROM "eprintln_hit" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = b0."path" AND n0."line_no" = b0."line_no")`, params: [] },
+  { rel: "eprintln_count", sql: `DELETE FROM "eprintln_count"`, params: [] },
+  { rel: "eprintln_count", sql: `INSERT OR IGNORE INTO "eprintln_count" ("path", "col2") SELECT b0."path", count(*) FROM "eprintln_counted" b0 GROUP BY b0."path" HAVING count(*) > 0`, params: [] },
 ];
 
 type Snapshot = {
@@ -372,16 +374,26 @@ const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
 const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
+const SUBSCRIBE_PRUNE = SubscribeCone.mode();
+const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
+  throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
+}
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, INCREMENTAL_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, INCREMENTAL_EDGE_STATEMENTS, INCREMENTAL_RELATIONS)),
+  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, INCREMENTAL_LEVEL_STATEMENTS, INCREMENTAL_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, INCREMENTAL_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, INCREMENTAL_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
       map((carryPending): ITickDeltas => ({ rels, carryPending })),
     )),
   );
@@ -410,11 +422,12 @@ export const program: IGenProgramWithBoot = {
   relColumns,
   relColumnTypes,
   arrivalTargets,
-  boot,
+  boot: SUBSCRIBED_BOOT,
   finalSelect,
   hostPlans,
   bindPlans,
   queryPlans,
+  subscribedRels,
   unsupportedExecution,
   tick: runTick,
 };

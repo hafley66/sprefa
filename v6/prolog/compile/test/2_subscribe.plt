@@ -199,10 +199,47 @@ cone_head((Head <+ Body), Name/Arity, Body) :- functor(Head, Name, Arity).
 
 % ── the wire: the cone reaches the emitted module ────────────────────────────
 
+% The cone reaches the TICK PATH through the SUBSCRIBED_* consts, and the flag
+% that selects them is off unless the environment says otherwise
+% (runtime/3_subscribe.ts owns the env name; this pins that the module asks).
+test(emitted_module_prunes_the_tick_path_behind_the_flag) :-
+    string_codes(
+      "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n? job(7, secs).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    emitted_text(emitted_module_prunes_the_tick_path_behind_the_flag,
+                 Program, Bindings, Text),
+    once(sub_atom(Text, _, _, _, 'const SUBSCRIBE_PRUNE = SubscribeCone.mode();')),
+    once(sub_atom(Text, _, _, _,
+                  'const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);')),
+    once(sub_atom(Text, _, _, _,
+                  'IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)')),
+    once(sub_atom(Text, _, _, _, '  boot: SUBSCRIBED_BOOT,')),
+    % incrementalPlan describes the compiled program rather than the tick
+    % path's working lists, so it stays unpruned.
+    once(sub_atom(Text, _, _, _, '  levels: INCREMENTAL_LEVEL_STATEMENTS,')),
+    % Only the incremental path can honor a cone; the naive referee and the
+    % ordered path name themselves instead of answering a pruned question with
+    % an unpruned tick.
+    once(sub_atom(Text, _, _, _, 'const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;')),
+    once(sub_atom(Text, _, _, _,
+                  'if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {')),
+    !.
+
+% Every boot statement names its rel, which is the only thing that lets the
+% filter keep ingestion (a seeded source row) while dropping derivation (a
+% level head's t=0 recompute).
+test(emitted_boot_statements_name_their_rel) :-
+    string_codes(
+      "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\njob(Id, Secs) <- seed(Id, Secs).\n? job(7, secs).\n",
+      Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    emitted_text(emitted_boot_statements_name_their_rel, Program, Bindings, Text),
+    once(sub_atom(Text, _, _, _, '{ rel: "job", sql: `DELETE FROM "job"`, params: [] },')),
+    !.
+
 % The hand-computed cone of this program: the query seeds job/2, job's one rule
-% body reads seed/2, and unread/1 is declared and reachable from nothing. The
-% emitted constant is what a lazy consumer would read; nothing consumes it yet,
-% so this line is the whole receipt that the compiler computed it at all.
+% body reads seed/2, and unread/1 is declared and reachable from nothing.
 test(emitted_module_carries_the_hand_computed_cone) :-
     string_codes(
       "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n? job(7, secs).\n",
