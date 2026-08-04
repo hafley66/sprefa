@@ -1,9 +1,9 @@
 % 2_subscribe.plt : receipts for subscribed_rels/4 (the lazy-compute seed).
 %
 % One predicate, compute only, wired to nothing yet. These pin the two
-% branches of the spec: the null-query compat rule, and the subscribe
-% dependency closure (transitive, positive and negated reads, sampler
-% wrappers included).
+% branches of the spec: the strict null-query rule (no query, nothing, per
+% ruling zero_query_semantics 2026-08-03), and the subscribe dependency closure
+% (transitive, positive and negated reads, sampler wrappers included).
 
 :- use_module(library(plunit)).
 :- use_module(library(lists)).
@@ -25,16 +25,18 @@
 
 :- begin_tests(subscribe_cone).
 
-% An empty query list means no analysis entry point; the compat rule puts the
-% whole program on the subscribe side, so every declared rel is in the cone.
-test(zero_query_all_rels) :-
+% Strict per ruling zero_query_semantics 2026-08-03: an empty query list means
+% no analysis entry point, so NOTHING is subscribed -- even for a program whose
+% rules form a fully connected chain. Harness-side subscription roots arrive
+% with the pruning rung.
+test(zero_query_subscribes_nothing) :-
     Decls = [kind(root/1, log), keep(root/1, all),
              kind(mid/2, set),
              kind(top/1, set)],
     Rules = [(mid(Left, Right) <- root(Left), root(Right)),
              (top(Result) <- mid(_, Result))],
     subscribed_rels(Decls, Rules, [], Cone),
-    Cone == [mid/2, root/1, top/1].
+    Cone == [].
 
 % The cone is only the query's subscribe chain; the rule nowhere reachable
 % from the seed (e <- d) stays out even though d and e are declared.
@@ -74,30 +76,30 @@ test(negation_included) :-
 % look nothing like that.
 
 % EXTENSION 1: a real .dl6 `rel` declaration lands as col_type/3 rows, never
-% kind/2 -- kind/2 only appears for a log rel. The decl walk therefore reads
-% the same four forms analyze.pl:declared_refs/2 reads, which is what the
-% zero-query compat value is built from.
+% kind/2 -- kind/2 only appears for a log rel. Seeding from an explicit query
+% still walks that shape; the seed and the one rule's read both show up.
 test(decl_walk_reads_the_real_decl_forms) :-
     string_codes(
-      "rel seed(id: int).\nrel job(id: int).\nrel trail(id: int) log keep(all).\n",
+      "rel seed(id: int).\nrel job(id: int).\nrel trail(id: int) log keep(all).\njob(Id) <- seed(Id).\n",
       Codes),
     parse_dl(Codes, prog(Decls, Rules), _, []),
     \+ memberchk(kind(seed/1, _), Decls),
-    subscribed_rels(Decls, Rules, [], Cone),
-    Cone == [job/1, seed/1, trail/1],
+    subscribed_rels(Decls, Rules, [job(Id)], Cone),
+    Cone == [job/1, seed/1],
     !.
 
-% The decl half of the compat value is analyze.pl's declared_refs/2 by a
-% different route; drift between them would silently shrink or widen the
-% constant every emitted module carries.
-test(declared_rels_match_analyze) :-
+% The earlier parity against analyze.pl:declared_refs/2 anchored the DELETE of
+% the compat value. Under the strict null-query rule a decl the analyze pass
+% still sees must not leak into a query-less cone by accident.
+test(declared_rels_do_not_leak_into_a_queryless_cone) :-
     string_codes(
       "rel seed(id: int).\nrel job(id: int).\nrel trail(id: int) log keep(all).\n",
       Codes),
     parse_dl(Codes, prog(Decls, Rules), _, []),
     declared_refs(Decls, AnalyzeRefs),
+    memberchk(seed/1, AnalyzeRefs),
     subscribed_rels(Decls, Rules, [], Cone),
-    Cone == AnalyzeRefs,
+    Cone == [],
     !.
 
 % EXTENSION 2: edge arms. `<+` rules carry subscribe exactly as `<-` rules do,
@@ -212,16 +214,16 @@ test(emitted_module_carries_the_hand_computed_cone) :-
                   'export const subscribedRels: readonly string[] = ["job/2", "seed/2"];')),
     !.
 
-% The compat rule at the emit seam: no query decl means no analysis entry
-% point, so every rel the program declares or mentions is on the subscribe side.
-test(zero_query_module_carries_every_rel) :-
+% Strict at the emit seam, matching zero_query_subscribes_nothing: no query
+% decl, no analysis entry point, so the emitted constant is empty.
+test(zero_query_module_subscribes_nothing) :-
     string_codes(
       "rel seed(id: int, secs: int).\nrel job(id: int, secs: int).\nrel unread(id: int).\njob(Id, Secs) <- seed(Id, Secs).\n",
       Codes),
     parse_dl(Codes, Program, Bindings, []),
-    emitted_text(zero_query_module_carries_every_rel, Program, Bindings, Text),
+    emitted_text(zero_query_module_subscribes_nothing, Program, Bindings, Text),
     once(sub_atom(Text, _, _, _,
-                  'export const subscribedRels: readonly string[] = ["job/2", "seed/2", "unread/1"];')),
+                  'export const subscribedRels: readonly string[] = [];')),
     !.
 
 emitted_text(Name, Program, Bindings, Text) :-
