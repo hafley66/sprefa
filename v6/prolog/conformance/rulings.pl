@@ -581,3 +581,6 @@ ruling(one_pick_order, arrival_order_per_tick, user,
 
 ruling(one_admission_no_lockout, both_folds_stay_sound, user,
        'user 2026-08-03: "we cannot lock ourselves out of 2 choices that are both sound". First-wins (scan((acc,row) => acc ?? row), state==history, log-vs-key vacuous) and one-per-tick takeover (zip(perKey, ticks$), keyed, each admission replaces visibly) are BOTH sound constructs; ruling one() = first-wins never forecloses the serializer spelling. Neither is built yet; the design lane prices both.').
+
+ruling(one_decl_surface, rel_declaration_only, user,
+       'user 2026-08-03: "i dont want a non rel declaration feature fucks with the other features bc muh constraint soundness". Whatever one()/admission becomes, it lands as a rel-declaration property beside key(1) and log keep() so the existing decl checkers (edge_head_conflict_risk, retention_head_conflict_risk, type gate) see it natively; a freestanding construct class with unpriced decl interactions is refused at the design stage. Standing note: the keyed-vs-log split itself is disliked and will be revisited; no new feature may deepen the split before that revisit.').
