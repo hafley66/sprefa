@@ -1,3 +1,0 @@
-rel max_run(limit_lines: int).
-
-max_run(Limit).

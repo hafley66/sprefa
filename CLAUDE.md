@@ -43,10 +43,12 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 - **eprintln never comes back** (2026-07-18): no `eprintln!` in src/**;
   `tracing` only; rare CLI-UX lines carry `@eprintln-ok`. `.dl/no-new-eprintln.dl`
   ratchets to zero.
-- **Labs run on OPUS only** (2026-07-29). Delegation lanes: codex per
-  `claude-research/skills_archive/commands/codex-delegate.md`; opencode flash
-  (per the live opencode-orchestration skill) for mechanical
-  brief-following only (evidence: plans/2026-08-02-flash-vs-opus-lane-report.md).
+- **Labs run on flash4** (user-set 2026-08-04, supersedes the 2026-07-29
+  OPUS-only law): openrouter/deepseek/deepseek-v4-flash-0731 per the live
+  opencode-orchestration skill, spawned via `bus dispatch`. Opus stays for
+  diagnosis/mid-task trade-offs; codex lanes per
+  `claude-research/skills_archive/commands/codex-delegate.md`
+  (evidence: plans/2026-08-02-flash-vs-opus-lane-report.md).
 
 ## Worktree dispatch law (2026-07-28)
 - Every worktree agent's FIRST action: `git merge --ff-only <sha>` (coordinator
@@ -59,6 +61,10 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 
 ## Lab protocol (2026-07-27)
 - Planner seeds a header/contract file first; no lab starts blank.
+- **Plan lanes ship two docs** (user-set 2026-08-03): PLAN.md (receipts,
+  citations, for the auditor) + PLAN.visual.human.unga.md (plain words, ascii
+  diagrams, zero citations, for Chris). A plan without the unga doc is
+  undelivered.
 - Implementation agents run in worktrees; main-tree ownership = coordinator only.
 - **Labs die on landing**: durable output distills to fixtures/rulings/plans/ARCH,
   lab files deleted, plan doc records the last-copy commit hash.

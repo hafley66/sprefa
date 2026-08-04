@@ -129,12 +129,9 @@ sh waiver_marker(path: text, digest: text) -> (line: int) =
   `"$DL_COMMENT_BUDGET_FEED" markers {path} {digest}`.
 
 # ── sources ────────────────────────────────────────────────────────────────
-# Two arrivals start a grading, and they are arrivals rather than bodiless
-# facts because the TEXT DOOR HAS NO FACT SEAM: compile_dl6/2 passes
-# `Initial = []` (compile.pl:207-224) where the term door takes seed rows from
-# its fixture/5, so `max_run(2).` in .dl6 text refuses with
-# `level_rule_no_positive_body`. Recorded rather than worked around; the
-# ghcacher goldens all seed the same way.
+# Both seeds arrive on the schedule. A bodiless `max_run(2).` fact also
+# compiles now, but a seed-route change regenerates the pinned tick log, so
+# the threshold stays an arrival until the goldens are re-cut.
 #
 # MAX_RUN is a row rather than a literal in a rule, so the threshold is data.
 rel max_run(limit_lines: int).
