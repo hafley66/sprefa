@@ -34,7 +34,7 @@ delta is empty (`expand` with an empty-batch stop).
 |---|---|---|
 | `interp/` | IR interpreter | rules live as DATA (structs describing atoms/joins); generic tuple storage; one engine loop reads the IR every batch. Zero per-program types |
 | `rxgraph/` | rx operator graph | the program is a graph of boxed operator objects (map/filter/join/distinct) wired at startup; deltas flow through trait-object calls. The dynamic-dispatch indirection is the exhibit |
-| `mono/` | monomorphized rust | the code a souffle-style generator WOULD emit for this exact program, written out: concrete u32 types, concrete FxHashMap/Vec indices, the semi-naive loop unrolled for these two rules. The readable "generated" source IS the exhibit; keep it one obvious file |
+| `mono/` | compiler-emitted rust | lower `v6/prolog/labs/emit_rust_shootout/emit_rust.pl` with `swipl -g main -t halt`; it writes this crate's `src/main.rs`: concrete u32 types, concrete FxHashMap/Vec indices, the semi-naive loop unrolled for these two rules, seen-set sharded per source node. The readable "generated" source IS the exhibit; keep it one obvious file |
 
 All three implement the same semi-naive algorithm; only the indirection
 layer differs. No rayon, single thread (a `--threads` flag may exist,
