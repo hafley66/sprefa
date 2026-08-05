@@ -72,10 +72,11 @@ impl<F: Fn(&Row) -> bool> Operator for FilterOp<F> {
 }
 
 /// Distinct: emit only rows absent from the shared seen set, so each output is globally new.
+/// Sharded per `from` node to match mono, so the standings price dispatch.
 #[derive(Clone)]
 pub struct DistinctOp {
     pub name: &'static str,
-    pub seen: Rc<RefCell<HashSet<(u32, u32)>>>,
+    pub seen: Rc<RefCell<Vec<HashSet<u32>>>>,
 }
 
 impl Operator for DistinctOp {
@@ -87,7 +88,11 @@ impl Operator for DistinctOp {
         {
             let mut seen = self.seen.borrow_mut();
             for row in &input.rows {
-                if seen.insert((row.from, row.to)) {
+                let bucket = row.from as usize;
+                if seen.len() <= bucket {
+                    seen.resize(bucket + 1, HashSet::default());
+                }
+                if seen[bucket].insert(row.to) {
                     kept.push(*row);
                 }
             }
@@ -270,7 +275,7 @@ impl Program {
 /// Build the reachability program over the given edges.
 /// Wiring: seed -> [join, sink], join -> [fixpoint], fixpoint -> [join, sink].
 pub fn build_reachability(edges: &[Row]) -> Program {
-    let shared_seen: Rc<RefCell<HashSet<(u32, u32)>>> = Rc::new(RefCell::new(HashSet::default()));
+    let shared_seen: Rc<RefCell<Vec<HashSet<u32>>>> = Rc::new(RefCell::new(Vec::new()));
 
     let mut right: HashMap<u32, Vec<u32>> = HashMap::default();
     for edge in edges {
