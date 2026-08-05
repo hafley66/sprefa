@@ -1,0 +1,15 @@
+[package]
+name = "mono"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone crate: the empty [workspace] table stops cargo from joining the
+# repo-root sprefa-dl workspace (the shootout lanes are independent crates).
+[workspace]
+
+[dependencies]
+fxhash = "0.2"
+libc = "0.2"
+
+[profile.release]
+debug = 0
