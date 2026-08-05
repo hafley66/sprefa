@@ -1,0 +1,130 @@
+# prose-laws.dl6 -- the prose Stop-hook rules as dl6 relations. Port of
+# ~/projects/claude-research/prose-prod/prose-prod.mjs.
+#
+# Each rule is one rel over sentence_row, unioned into the violation output rel
+# (rule_id, seq, sentence):
+#   em_dash, neg_parallelism (same + cross sentence), deictic_filler,
+#   one_word_sentence, banned_stem, nothing_sentence (evaluative + contrast +
+#   no receipt).
+#
+# Hosts fetch raw facts only: the node feed walks the transcripts and splits
+# sentences. Sentence-split-on-boundary stays in the feed script (see
+# feed-sentences.mjs); a sentence-boundary builtin is the not-yet-covered gap.
+# All classification lives here as regexp/2 rules.
+#
+# dl6 has no case-insensitive regexp flag (the (?i) spelling is refused as
+# regexp_pattern_outside_subset), so case coverage is spelled as explicit case
+# variants in every pattern. A literal apostrophe in a regexp is also refused
+# (quote_in_literal: the pattern lowers into a SQL single-quoted string), so the
+# contraction forms of prose-prod (Here's, n't, it's/that's, [A-Za-z'-]) are
+# dropped; the long/uneapostrophed forms carry each rule.
+
+sh feed_sentences(start_token: text) -> (side: text, seq: int, sentence: text) =
+  `: {start_token}; "$PROSE_LAWS_FEED" "$PROSE_LAWS_MODE" {start_token}`.
+
+rel probe_row(start_token: text).
+
+rel sentence_row(side: text, seq: int, sentence: text).
+sentence_row(side, seq, sentence) <-
+  probe_row(start_token),
+  feed_sentences(start_token, side, seq, sentence).
+
+# ── em-dash ────────────────────────────────────────────────────────────────
+rel em_dash(side: text, seq: int).
+em_dash(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence, "—").
+
+# ── one-word sentence ──────────────────────────────────────────────────────
+rel one_word_sentence(side: text, seq: int).
+one_word_sentence(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence, "^[A-Za-z-]+[\\.!?]$").
+
+# ── deictic filler ─────────────────────────────────────────────────────────
+rel deictic_filler(side: text, seq: int).
+deictic_filler(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "^(Here is|Here are|Below is|Below are|The following|here is|here are|below is|below are|the following)\\b|\\bas follows[:.]").
+
+# ── banned stems ───────────────────────────────────────────────────────────
+# provenance, substrate, load-bearing, regime, support, honest, distill,
+# ground (verb), ruling. Matched at the inflected-stem level like the mjs
+# stemHitsWord: a token is the banned stem plus s/es/ed/ing/ly/ings. ground is
+# matched only in its verbal inflections (grounded/grounding/grounds), never
+# as the bare prepositional noun.
+rel banned_stem(side: text, seq: int).
+banned_stem(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b([Pp]rovenance|[Pp]rovenances|[Ss]ubstrate|[Ss]ubstrates|[Ll]oad[- ][Bb]earings?|[Rr]egime|[Rr]egimes|[Ss]upport(s|ed|ing)?|[Hh]onest(ly)?|[Dd]istill(s|ed|ing)?|[Gg]rounded|[Gg]rounding|[Gg]rounds|[Rr]uling|[Rr]ulings)\\b").
+
+# ── negative parallelism ───────────────────────────────────────────────────
+# Same sentence: "not X, Y" (with an optional but/just/rather bridge) and the
+# "start with Not..." flourish. Cross sentence: a sentence bearing not followed
+# by a sentence opening with It is/That is/This is. Apostrophe contraction forms
+# from prose-prod (n't, it's, that's) are dropped -- see the header note.
+rel neg_parallelism(side: text, seq: int).
+neg_parallelism(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b(not|Not)\\s+[^,.;:]{1,50},\\s*(but\\s+|But\\s+|just\\s+|Just\\s+|rather\\s+|Rather\\s+)?[a-zA-Z]").
+neg_parallelism(side, seq) <-          # "Not X. / not X. ..." sentence flourish
+  sentence_row(side, seq, sentence),
+  regexp(sentence, "^(not|Not)\\s+\\w+.*[\\.!]$").
+neg_parallelism(side, seq) <-          # cross sentence: not then It is/That is/This is
+  sentence_row(side, seq, s1),
+  next_seq := seq + 1,
+  sentence_row(side, next_seq, s2),
+  regexp(s1, "\\bnot\\b|\\bNot\\b"),
+  regexp(s2, "^(It|That|This)( is| was)\\b").
+
+# ── nothing sentence ───────────────────────────────────────────────────────
+# Half 1 evaluative copula + Half 2 strawman contrast, minus any receipt
+# bearer. Receipt tokens (digit, hex run, path fragment, colon-number,
+# percent, quoted span) exempt a sentence.
+rel receipt_bearing(side: text, seq: int).
+receipt_bearing(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "[0-9]|[0-9a-fA-F]{8,}|\\.(pl|rs|ts|md)\\b|:[0-9]+|%|[\"”“‘’]").
+
+rel evaluative(side: text, seq: int).
+evaluative(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b(is|are|was|were|looks?|seems?|remains?|Is|Are|Was|Were|Looks?|Seems?|Remains?)\\s+(genuine|real|solid|correct|clean|right|fine|good|proper|sound|legit|robust|reasonable|sensible|Genuine|Real|Solid|Correct|Clean|Right|Fine|Good|Proper|Sound|Legit|Robust|Reasonable|Sensible)\\b").
+
+rel strawman(side: text, seq: int).
+strawman(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b(rather than|as opposed to|instead of being|not merely|not just|Rather than|As opposed to|Instead of being|Not merely|Not just)\\b").
+
+rel nothing_sentence(side: text, seq: int).
+nothing_sentence(side, seq) <-
+  evaluative(side, seq),
+  strawman(side, seq),
+  not(receipt_bearing(side, seq)).
+
+# ── unified violation output ───────────────────────────────────────────────
+rel violation(rule_id: text, seq: int, sentence: text).
+violation("em-dash", seq, sentence) <-
+  em_dash(side, seq), sentence_row(side, seq, sentence).
+violation("neg-parallelism", seq, sentence) <-
+  neg_parallelism(side, seq), sentence_row(side, seq, sentence).
+violation("deictic-filler", seq, sentence) <-
+  deictic_filler(side, seq), sentence_row(side, seq, sentence).
+violation("one-word-sentence", seq, sentence) <-
+  one_word_sentence(side, seq), sentence_row(side, seq, sentence).
+violation("banned-stem", seq, sentence) <-
+  banned_stem(side, seq), sentence_row(side, seq, sentence).
+violation("nothing-sentence", seq, sentence) <-
+  nothing_sentence(side, seq), sentence_row(side, seq, sentence).
+
+rel sentence_side_count(side: text, sentence_count: int).
+sentence_side_count(side, count(seq)) <-
+  sentence_row(side, seq, _).
+
+? violation(rule_id, seq, sentence).
