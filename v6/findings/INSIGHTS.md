@@ -68,6 +68,13 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   chain@1M (18.59M vs 18.42M, inside noise). Peak RSS is 1.6x to 5x lower than
   rxgraph in every case. The emitter is `v6/prolog/labs/emit_rust_shootout/emit_rust.pl`
   (`swipl -g main -t halt`), which writes `mono/src/main.rs`.
+  ↳ REVISED 2026-08-05, fable: that spread was measuring the seen-set layout,
+  since only mono had been rewritten to shard. With rxgraph sharded to match
+  (`DistinctOp`, lib.rs:76) and interp's allocation fixed, the ladder rerun gives
+  **mono 8 of 9, rxgraph taking chain@1M** (22.27M vs 19.96M). The mono margin over
+  rxgraph is 1.08x to 1.52x, and over interp 6.7x to 10.3x. Any shootout row where
+  one entrant got a data-structure rewrite the others did not is a layout
+  measurement wearing a design label.
 - (2026-08-05, fable) The dedup data structure, not the indirection layer, decided
   the earlier upset. The hand-written mono held one flat `FxHashSet<Pair(u64)>` of
   ~10M entries and took **9907-10540ms** on chain@10k; the emitted version shards
@@ -89,6 +96,24 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
 - (2026-08-05, fable) `Pair` in the retired hand mono carried a comment claiming
   "packed into one u32"; it was `Pair(u64)`, `size_of == 8`. The comment shipped
   through a full standings run without anyone checking it against the type.
+- (2026-08-05, fable) **Swapping the global allocator hid an allocation-volume bug,
+  and stopped paying once the bug was fixed.** exec_shootout interp, macOS aarch64,
+  fixpoint ms best of 3. On the original code (`Tuple = Vec<u32>`, one heap block per
+  derived row): system 2695 / mimalloc 2032 / jemalloc 2408 at chain@10k, and system
+  10862 / mimalloc 7521 / jemalloc 8192 at layered@100k, so mimalloc bought 1.33x to
+  1.44x. After inline `SmallVec<[u32;4]>` tuples plus a dense `Vec<Option<NodeId>>`
+  binding table: system 1463 / mimalloc 1439 / jemalloc 1494 at chain@10k, and system
+  4950 / mimalloc 6652 / jemalloc 4467 at layered@100k. mimalloc REGRESSES on the
+  fixed code and takes peak RSS from 2.2GB to 4.1GB. Default stays the platform
+  allocator; both alternatives live behind `--features mimalloc-global` /
+  `jemalloc-global` for future A/B. snmalloc-rs and rpmalloc are untested here.
+- (2026-08-05, fable) macOS `sample <pid>` is enough to find this class of defect, no
+  instrumentation build needed. interp on layered@100k, 4599 top-of-stack samples:
+  malloc/free **39.5%**, hashing the `Vec`-keyed dedup set 18.3%, `match_body` (the
+  thing the engine exists to exhibit) 15.2%, memcmp/memmove 11.0%, the per-row
+  bindings hashmap 5.9%. After the fix, 3352 samples: malloc/free **1.3%**, dedup set
+  30.1%, `match_body` 26.0%. Two `Vec` allocations per candidate row were hiding in
+  the inner loop (`constraints`, `bound_here`) on top of the tuple itself.
 - _(add Rust findings here — allocator behavior, memcap interactions, macOS vs Linux
   rusage quirks, sea-orm/rusqlite overhead observed.)_
 
