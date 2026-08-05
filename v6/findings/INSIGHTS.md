@@ -75,6 +75,17 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   the same input file, same derived count 9996213 and checksum df09b2f409f8b9a8.
   40x from one storage-layout change, at half the RSS (117MB vs 300MB). A shootout
   row measures the impl you wrote, and a hand-written entrant is a confound.
+- (2026-08-05, fable) ROOT CAUSE of that 40x, isolated by holding the derive loop
+  fixed and swapping only the seen-set type (chain@10k, derived 9996213 all three):
+  flat `FxHashSet<Pair(u64)>` 7135ms, flat `FxHashSet<(u32,u32)>` 249ms, sharded
+  `Vec<FxHashSet<u32>>` 138ms. **fxhash over one `u64` cannot spread a packed pair.**
+  FxHash's finish is a multiply, and a product's low bits depend only on the
+  operands' low bits, so for `Pair((source<<32)|target)` the low bits of the hash
+  carry `target` alone. hashbrown indexes buckets with those low bits: over 9M keys
+  built from 3000x3000 ids, `Pair(u64)` yields **3000** distinct low-24-bit values
+  against **6825320** for `(u32,u32)`, whose second write mixes `source` down via
+  the rotate. The hand impl's comment called the packing "for pointer-sized
+  hashing", which is exactly what broke it.
 - (2026-08-05, fable) `Pair` in the retired hand mono carried a comment claiming
   "packed into one u32"; it was `Pair(u64)`, `size_of == 8`. The comment shipped
   through a full standings run without anyone checking it against the type.
