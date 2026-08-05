@@ -18,6 +18,7 @@
 | [MAP.md](MAP.md) | 245 | v6 — the living map (algorithms · unification · exploration · DONE) |
 | [READINESS.md](READINESS.md) | 189 | v5 golden use-cases: readiness |
 | [README.md](README.md) | 110 | V6 |
+| [TELEMETRY.md](TELEMETRY.md) | 118 | TELEMETRY |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
 | [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
@@ -216,6 +217,20 @@
 71:## Crate map
 88:## Docs
 101:## Agent skills
+```
+
+### TELEMETRY.md
+```
+1:# TELEMETRY
+5:## TOC
+15:## The standard envelope
+32:## Mapping the standard fields onto `registry.pl`'s `trace_event/2`
+52:## Emitter inventory
+64:## What was added per site
+77:## Legacy aliases
+91:## Constraint notes
+106:## UNBUILT next steps
+113:## Reader: perf-n1
 ```
 
 ### bench-cli/CONTRACT.md

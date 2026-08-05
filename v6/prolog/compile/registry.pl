@@ -575,12 +575,16 @@ http_route('GET',  '/stats', 'read process memory and SQLite storage statistics.
 % Key spelling is lower snake case and every elapsed value ends _ms, which is
 % the convention 6_profile.pl:7-9 states and the TS side had drifted from
 % (`ms`, `witnessDigest`). WIRE keys only: TS locals stay camelCase.
+% `actor`/`seam` sit on the LINE and on no nested record; the tick channel
+% event is the tick_line prefix before `actor` (traceSchema.test.ts slices it).
 trace_event(tick_line,
             [ field(tick,       int,           stable),
               field(rels,       int,           stable),
               field(rows,       int,           stable),
               field(statements, int,           stable),
               field(wall_ms,    real,          timing),
+              field(actor,      text,          stable),
+              field(seam,       text,          stable),
               field(rules,      list(rule),    stable),
               field(effects,    list(effect),  stable),
               field(binds,      list(bind),    stable),

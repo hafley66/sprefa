@@ -64,6 +64,8 @@ function install(logPath: string): void {
     const event = message as TickEvent;
     const line: IServeTickLine = {
       ...event,
+      actor: "tsv2.serve",
+      seam: "tick",
       rules: pendingRules,
       effects: pendingEffects,
       binds: pendingBinds,

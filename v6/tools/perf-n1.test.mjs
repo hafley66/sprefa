@@ -89,3 +89,39 @@ test("malformed lines are skipped and counted, valid lines still aggregate", () 
   assert.equal(rows[0].statements, 2);
   assert.equal(rows[0].rows, 52);
 });
+
+test("standard envelope (any line with actor and seam) parses as one statement per line, rows/ms mapped", () => {
+  // Standard envelope: one fixture line per emitter: dl (bind seam),
+  // tsv2 serve (host seam), tsv2 runtime (sql seam).
+  const lines = [
+    '{"actor":"dl.runtime","seam":"bind","unit":"clock_bucket","rows":5,"ms":1.5,"tick":1}',
+    '{"actor":"tsv2.serve","seam":"host","unit":"weigh","rows":3,"ms":2.0,"tick":2}',
+    '{"actor":"tsv2.runtime","seam":"sql","unit":"prog:R/1#1","rows":7,"ms":4.0,"tick":3}',
+  ];
+
+  const { rows, skipCount } = processJsonlLines(lines, 10);
+  assert.equal(skipCount, 0);
+  assert.equal(rows.length, 3);
+  for (const row of rows) assert.equal(row.statements, 1);
+  assert.deepEqual(
+    rows.find((row) => row.unit === "weigh"),
+    { tick: 2, unit: "weigh", statements: 1, rows: 3, wall_ms: 2.0 },
+  );
+  assert.deepEqual(
+    rows.find((row) => row.unit === "clock_bucket"),
+    { tick: 1, unit: "clock_bucket", statements: 1, rows: 5, wall_ms: 1.5 },
+  );
+});
+
+test("standard envelope rows/ms aggregate across lines of one (tick, unit)", () => {
+  const lines = [
+    '{"actor":"tsv2.runtime","seam":"sql","unit":"prog:R/1#1","rows":7,"ms":4.0,"tick":3}',
+    '{"actor":"tsv2.runtime","seam":"sql","unit":"prog:R/1#1","rows":2,"ms":1.0,"tick":3}',
+  ];
+
+  const { rows } = processJsonlLines(lines, 10);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].statements, 2);
+  assert.equal(rows[0].rows, 9);
+  assert.equal(rows[0].wall_ms, 5.0);
+});

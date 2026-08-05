@@ -715,6 +715,8 @@ export interface IServeWatchEvent {
 /** One JSONL line per tick: the tick's own span plus every effect, bind, and
  *  watcher firing observed since the previous line. */
 export interface IServeTickLine extends IServeTickEvent {
+  readonly actor: string;
+  readonly seam: string;
   readonly rules: readonly IServeRuleEvent[];
   readonly effects: readonly IServeEffectEvent[];
   readonly binds: readonly IServeBindEvent[];
