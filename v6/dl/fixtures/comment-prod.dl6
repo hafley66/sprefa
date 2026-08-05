@@ -1,9 +1,9 @@
 # comment-prod.dl6 -- the comment budget with the STRING AND SYNTAX LOGIC IN
-# THE LANGUAGE: comment nodes via ast/4, prose/exemption/extension routing/
-# waiver via regexp/2. Hosts fetch raw facts only (git plumbing + file lines);
-# no python flag precomputation, no host-side glob, no marker grep.
+# THE LANGUAGE: comment nodes via native cst { } pattern blocks, prose/
+# exemption/routing/waiver via regexp/2. Hosts fetch raw facts only (git
+# plumbing + file lines); no python flags, no host-side glob, no marker grep.
 #
-# Deviation from the strict rail, stated: ast/4's minted host reads the
+# Deviation from the strict rail, stated: cst's minted host reads the
 # WORKTREE file (the contract's `extract query <path>`), while raw_line and
 # the diff legs grade the STAGED BLOB. An unstaged edit between stage and
 # commit can therefore skew node spans; the blob-strict rail
@@ -55,22 +55,25 @@ rel graded_go_file(file_path: text, blob_digest: text).
 graded_go_file(file_path, blob_digest) <-
   graded_file(file_path, blob_digest), regexp(file_path, "\\.go$").
 
-rel comment_span(file_path: text, line: int, end_line: int).
-comment_span(file_path, line, end_line) <-
+rel comment_span(file_path: text, line: int, end_line: int, comment_text: text).
+comment_span(file_path, line, end_line, comment_text) <-
   graded_ts_file(file_path, blob_digest),
-  ast(file_path, blob_digest, 'ts', "(comment) @comment_text").
-comment_span(file_path, line, end_line) <-
+  cst(file_path, blob_digest, ts) { (comment) @comment_text }.
+comment_span(file_path, line, end_line, comment_text) <-
   graded_rust_file(file_path, blob_digest),
-  ast(file_path, blob_digest, 'rust', "[ (line_comment) @comment_text (block_comment) @comment_text ]").
-comment_span(file_path, line, end_line) <-
+  cst(file_path, blob_digest, rust) {
+    [ (line_comment) @comment_text
+      (block_comment) @comment_text ]
+  }.
+comment_span(file_path, line, end_line, comment_text) <-
   graded_go_file(file_path, blob_digest),
-  ast(file_path, blob_digest, 'go', "(comment) @comment_text").
+  cst(file_path, blob_digest, go) { (comment) @comment_text }.
 
 rel comment_line_row(file_path: text, line_number: int, line_text: text).
 comment_line_row(file_path, line_number, line_text) <-
   graded_file(file_path, blob_digest),
   raw_line(file_path, blob_digest, line_number, line_text),
-  comment_span(file_path, span_start, span_end),
+  comment_span(file_path, span_start, span_end, _),
   line_number >= span_start,
   line_number =< span_end.
 
