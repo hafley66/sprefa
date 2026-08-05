@@ -242,7 +242,7 @@ program_violation(ast_lang_unknown, prog(_, Rules), Lang) :-
     member(Rule, Rules),
     rule_body_goal(Rule, ast(_, _, Lang, _)),
     (   \+ atom(Lang)
-    ;   \+ memberchk(Lang, [rust, ts, tsx, js, go, kotlin, md, html])
+    ;   \+ memberchk(Lang, [rust, ts, tsx, js, go, kotlin, md, md_inline, html])
     ),
     !.
 
