@@ -54,6 +54,17 @@ tree-sitter-kotlin-sg = "0.4"
 # MIT superset grammar for ISO Prolog plus the SWI/DCG/ProbLog syntax used by
 # v6/prolog. ABI 14 and LanguageFn match the tree-sitter 0.25 runtime above.
 tree-sitter-prolog = "0.1"
+# tree-sitter-md is the markdown front-end v5 carries (root Cargo.toml:116,
+# src/cst.rs + src/ingest/mod.rs). LANGUAGE = block, INLINE_LANGUAGE = inline.
+
+# Block parse is byte-identical to the v5 oracle's; default-features-0 deps
+# only tree-sitter-language, pairing with the 0.25 runtime.
+
+# `md` exposes LANGUAGE, `md_inline` INLINE_LANGUAGE; both drop in unchanged.
+tree-sitter-md = "0.5"
+# tree-sitter-html is the html front-end; already a strict transitive of
+# ast-grep-language at 0.23.2, so cargo UNIFIES one copy, no new tree-sitter.
+tree-sitter-html = "0.23"
 # serde on the FLAT wire envelope only (never on the generic Node<F>). The store
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }

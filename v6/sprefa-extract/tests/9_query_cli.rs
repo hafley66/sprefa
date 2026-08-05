@@ -152,3 +152,75 @@ fn query_bad_digest_exits_two_with_one_line_stderr() {
     assert_eq!(stderr.lines().count(), 1);
     assert!(stderr.contains("git cat-file blob"));
 }
+
+fn temp_file(name: &str, content: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "query_cli_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join(name);
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+fn query_markdown_block_grammar_emits_headings_jsonl() {
+    let path = temp_file("sample.md", "# Title\n\nA paragraph.\n\n```js\ncode\n```\n");
+    let path = path.to_str().unwrap();
+    let output = run(&[
+        "query",
+        "--lang",
+        "md",
+        "--query",
+        "(atx_heading) @heading",
+        path,
+    ]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"end_line\":2,\"heading\":\"# Title\\n\",\"line\":1}\n"
+    );
+}
+
+#[test]
+fn query_markdown_inline_grammar_drops_in_without_structural_change() {
+    let path = temp_file("sample_inline.md", "This is *em* and [link](url).");
+    let path = path.to_str().unwrap();
+    let output = run(&[
+        "query",
+        "--lang",
+        "md_inline",
+        "--query",
+        "[(emphasis) @em (inline_link) @lnk]",
+        path,
+    ]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"em\":\"*em*\",\"end_line\":1,\"line\":1}\n{\"end_line\":1,\"line\":1,\"lnk\":\"[link](url)\"}\n"
+    );
+}
+
+#[test]
+fn query_html_grammar_emits_tag_names_jsonl() {
+    let path = temp_file("sample.html", "<div class=\"x\"><p>hi</p></div>");
+    let path = path.to_str().unwrap();
+    let output = run(&[
+        "query",
+        "--lang",
+        "html",
+        "--query",
+        "(element (start_tag (tag_name) @tag))",
+        path,
+    ]);
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "{\"end_line\":1,\"line\":1,\"tag\":\"div\"}\n{\"end_line\":1,\"line\":1,\"tag\":\"p\"}\n"
+    );
+}

@@ -78,6 +78,9 @@ fn cat_blob(oid: &str) -> Result<Vec<u8>, String> {
 
 fn query_language(name: &str) -> Result<tree_sitter::Language, String> {
     let language = match name {
+        "md" => return Ok(tree_sitter::Language::new(tree_sitter_md::LANGUAGE)),
+        "md_inline" => return Ok(tree_sitter::Language::new(tree_sitter_md::INLINE_LANGUAGE)),
+        "html" => return Ok(tree_sitter::Language::new(tree_sitter_html::LANGUAGE)),
         "rust" => SupportLang::from_str("rust"),
         "ts" => SupportLang::from_str("ts"),
         "tsx" => SupportLang::from_str("tsx"),
