@@ -1,0 +1,22 @@
+# Standalone crate: its own empty [workspace] table decouples it from the
+# repo-root v5 workspace so `cargo build`/`cargo test` here run isolated.
+[workspace]
+
+[package]
+name = "exec-shootout-harness"
+version = "0.1.0"
+edition = "2021"
+description = "exec_shootout harness: seeded graph generator, tiny naive reference engine, case tuner, engine runner (best-of-3), and STANDINGS.md writer."
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[[bin]]
+name = "ref_engine"
+path = "src/bin/ref_engine.rs"
+
+[dependencies]
+fxhash = "0.2"
+libc = "0.2"

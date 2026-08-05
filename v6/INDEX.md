@@ -20,6 +20,7 @@
 | [README.md](README.md) | 110 | V6 |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
+| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -38,6 +39,7 @@
 | [hs-prolog/idioms/IDIOMS.md](hs-prolog/idioms/IDIOMS.md) | 395 | Haskell idioms that professional projects actually use |
 | [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
+| [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 34 | exec_shootout STANDINGS |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -84,6 +86,7 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/comment_rail_golden/README.md](tsv2/goldens/comment_rail_golden/README.md) | 215 | Comment-budget rail golden |
@@ -271,6 +274,16 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
+```
+
+### bench-cli/out/STANDINGS.md
+```
+1:# bench-cli standings
+17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
+50:## Real programs
+52:### callgraph_derivation
+62:## Scale shapes
+65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -524,6 +537,15 @@
 85:## Metrics and STANDINGS
 101:## Correctness
 108:## Ground rules
+```
+
+### labs/exec_shootout/STANDINGS.md
+```
+1:# exec_shootout STANDINGS
+7:## chain
+14:## grid
+21:## layered
+28:## Engine builds
 ```
 
 ### plans/2026-07-19-reactive-style-port.md
@@ -1258,6 +1280,14 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
