@@ -28,7 +28,7 @@ staged_file(file_path, blob_digest) <-
 rel exempt_file(file_path: text).
 exempt_file(file_path) <-
   staged_file(file_path, _),
-  regexp(file_path, "\\.(md|markdown|txt|json|lock|jsonl|csv|svg)$|test|spec|fixture|golden|conformance|LICENSE|node_modules/|target/|dist/").
+  regexp(file_path, "\\.(md|markdown|txt|json|lock|jsonl|csv|svg)$|test|spec|fixture|golden|conformance|LICENSE|node_modules/|target/|dist/|prolog/ARCH\\.pl$").
 
 rel graded_file(file_path: text, blob_digest: text).
 graded_file(file_path, blob_digest) <-

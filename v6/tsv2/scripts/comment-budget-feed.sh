@@ -18,6 +18,7 @@ is_exempt_path() {
     *.md|*.markdown|*.txt|*.json|*.lock|*.jsonl|*.csv|*.svg) return 0 ;;
     *test*|*spec*|*fixture*|*golden*|*conformance*) return 0 ;;
     */LICENSE*|*/node_modules/*|*/target/*|*/dist/*) return 0 ;;
+    */prolog/ARCH.pl) return 0 ;;
   esac
   return 1
 }
