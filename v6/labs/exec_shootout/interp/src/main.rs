@@ -54,7 +54,9 @@ struct Rule {
 struct RelationData {
     arity: usize,
     rows: Vec<Tuple>,
-    members: FxHashSet<Tuple>,
+    // Sharded on column 0, the same layout mono and rxgraph use, so the
+    // standings price rule-reading rather than the dedup structure.
+    members: Vec<FxHashSet<Tuple>>,
     index: Vec<FxHashMap<NodeId, Vec<usize>>>,
 }
 
@@ -63,7 +65,7 @@ impl RelationData {
         RelationData {
             arity,
             rows: Vec::new(),
-            members: FxHashSet::default(),
+            members: Vec::new(),
             index: if indexed {
                 (0..arity).map(|_| FxHashMap::default()).collect()
             } else {
@@ -73,7 +75,11 @@ impl RelationData {
     }
 
     fn insert(&mut self, tuple: Tuple) -> bool {
-        if !self.members.insert(tuple.clone()) {
+        let shard = tuple[0] as usize;
+        if self.members.len() <= shard {
+            self.members.resize(shard + 1, FxHashSet::default());
+        }
+        if !self.members[shard].insert(tuple.clone()) {
             return false;
         }
         let row = self.rows.len();
@@ -230,11 +236,6 @@ fn evaluate_rule(program: &Program, rule: &Rule, sources: &[RowSource]) -> Vec<T
 // ----- program construction (the exhibit: program as data) ------
 
 fn build_program() -> Program {
-    // relation 0: edge(x, y), indexed for joins on any column.
-    let edge = RelationData::new(2, true);
-    // relation 1: reachable(x, y), indexed on both columns.
-    let reachable = RelationData::new(2, true);
-
     let mut rules = Vec::new();
 
     // rule 0: reachable(x, y) <- edge(x, y)
@@ -263,10 +264,26 @@ fn build_program() -> Program {
         ],
     });
 
-    Program {
-        relations: vec![edge, reachable],
-        rules,
+    // A relation read in full needs an index to probe; one read only through the
+    // delta is scanned, so indexing it costs a Vec push per row for no probe.
+    let probed = probed_relations(&rules);
+    let relations = (0..2)
+        .map(|relation| RelationData::new(2, probed.contains(&relation)))
+        .collect();
+
+    Program { relations, rules }
+}
+
+fn probed_relations(rules: &[Rule]) -> FxHashSet<usize> {
+    let mut probed = FxHashSet::default();
+    for rule in rules {
+        for atom in &rule.body {
+            if atom.relation != rule.head_relation {
+                probed.insert(atom.relation);
+            }
+        }
     }
+    probed
 }
 
 // Run semi-naive evaluation: seed from the non-recursive rule, then fold the
