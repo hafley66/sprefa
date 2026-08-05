@@ -2,10 +2,29 @@
 // lives as DATA; the loop re-reads the rules each batch, nothing specialized.
 
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::time::Instant;
 
+#[cfg(feature = "mimalloc-global")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "jemalloc-global")]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+const ALLOCATOR_NAME: &str = if cfg!(feature = "mimalloc-global") {
+    "mimalloc"
+} else if cfg!(feature = "jemalloc-global") {
+    "jemalloc"
+} else {
+    "system"
+};
+
 type NodeId = u32;
-type Tuple = Vec<u32>;
+// Inline for arity <= 4, which is every relation this IR carries. A heap
+// Vec per derived row put 39.5% of a profiled run inside malloc/free.
+type Tuple = SmallVec<[u32; 4]>;
 
 // ----- term, atom, rule: the IR -------------------------------
 
@@ -87,7 +106,7 @@ fn match_body(
     program: &Program,
     body: &[Atom],
     body_sources: &[RowSource],
-    bindings: &mut FxHashMap<usize, NodeId>,
+    bindings: &mut [Option<NodeId>],
     position: usize,
     head_args: &[Term],
     outputs: &mut Vec<Tuple>,
@@ -96,7 +115,7 @@ fn match_body(
         let head: Tuple = head_args
             .iter()
             .map(|term| match term {
-                Term::Variable(variable) => bindings[variable],
+                Term::Variable(variable) => bindings[*variable].expect("head variable is bound"),
                 Term::Constant(value) => *value,
             })
             .collect();
@@ -109,12 +128,12 @@ fn match_body(
 
     // Column constraints come from constants and already-bound variables;
     // free variables are bound by whichever tuple matches here.
-    let mut constraints: Vec<(usize, NodeId)> = Vec::new();
+    let mut constraints: SmallVec<[(usize, NodeId); 4]> = SmallVec::new();
     for (column, term) in atom.args.iter().enumerate() {
         match term {
             Term::Variable(variable) => {
-                if let Some(value) = bindings.get(variable) {
-                    constraints.push((column, *value));
+                if let Some(value) = bindings[*variable] {
+                    constraints.push((column, value));
                 }
             }
             Term::Constant(value) => constraints.push((column, *value)),
@@ -152,11 +171,11 @@ fn match_body(
             continue;
         }
 
-        let mut bound_here: Vec<usize> = Vec::new();
+        let mut bound_here: SmallVec<[usize; 4]> = SmallVec::new();
         for (column, term) in atom.args.iter().enumerate() {
             if let Term::Variable(variable) = term {
-                if !bindings.contains_key(variable) {
-                    bindings.insert(*variable, tuple[column]);
+                if bindings[*variable].is_none() {
+                    bindings[*variable] = Some(tuple[column]);
                     bound_here.push(*variable);
                 }
             }
@@ -173,14 +192,28 @@ fn match_body(
         );
 
         for variable in &bound_here {
-            bindings.remove(variable);
+            bindings[*variable] = None;
         }
     }
 }
 
+fn max_variable_id(rule: &Rule) -> usize {
+    let body_terms = rule.body.iter().flat_map(|atom| atom.args.iter());
+    rule.head_args
+        .iter()
+        .chain(body_terms)
+        .filter_map(|term| match term {
+            Term::Variable(variable) => Some(*variable),
+            Term::Constant(_) => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 // Compute all head tuples a rule can derive against per-atom row sources.
 fn evaluate_rule(program: &Program, rule: &Rule, sources: &[RowSource]) -> Vec<Tuple> {
-    let mut bindings = FxHashMap::default();
+    // Variable ids are dense, so bindings index directly instead of hashing.
+    let mut bindings = vec![None; max_variable_id(rule) + 1];
     let mut outputs = Vec::new();
     match_body(
         program,
@@ -383,7 +416,7 @@ fn parse_input(contents: &str, program: &mut Program) -> Result<usize, String> {
             .next()
             .and_then(|field| field.parse::<NodeId>().ok())
             .ok_or_else(|| "edge line missing right node".to_string())?;
-        if program.relations[0].insert(vec![left, right]) {
+        if program.relations[0].insert(Tuple::from_slice(&[left, right])) {
             inserted += 1;
         }
     }
@@ -416,6 +449,8 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    eprintln!("interp: allocator={ALLOCATOR_NAME}");
 
     let loaded_clock = Instant::now();
     let mut program = build_program();

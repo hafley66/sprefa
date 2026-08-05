@@ -10,6 +10,16 @@ path = "src/main.rs"
 [dependencies]
 rustc-hash = "2"
 libc = "0.2"
+smallvec = "1"
+mimalloc = { version = "0.1", optional = true }
+tikv-jemallocator = { version = "0.6", optional = true }
+
+# Allocator is swappable so the standings can price allocator choice against
+# allocation volume; default is the platform allocator.
+[features]
+default = []
+mimalloc-global = ["dep:mimalloc"]
+jemalloc-global = ["dep:tikv-jemallocator"]
 
 # Standalone crate: empty workspace table keeps this crate out of the
 # repo-root workspace so cargo does not complain about a nested non-member.
