@@ -64,7 +64,7 @@
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
-| [prolog/LANG.md](prolog/LANG.md) | 100 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
+| [prolog/LANG.md](prolog/LANG.md) | 103 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
 | [prolog/compile/SCOREBOARD.md](prolog/compile/SCOREBOARD.md) | 555 | TSV2 Phase C scoreboard |
 | [prolog/compile/SYNTAX.md](prolog/compile/SYNTAX.md) | 377 | SYNTAX.md -- phase D parser surface (parse_dl.pl / print_dl.pl) |
@@ -1012,10 +1012,10 @@
 ```
 1:# LANG snapshot for labs (2026-07-27) — the candidate language, unbanked
 13:## Surface
-49:## Semantics
-72:## Known open questions (find more; do not silently resolve)
-80:## Context files (read before working)
-88:## Lab style laws (non-negotiable)
+52:## Semantics
+75:## Known open questions (find more; do not silently resolve)
+83:## Context files (read before working)
+91:## Lab style laws (non-negotiable)
 ```
 
 ### prolog/compile/PIPELINE.md

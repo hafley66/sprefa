@@ -24,7 +24,12 @@
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
-:- use_module('../../1_expansion', [ expansion_phase/3, expand_program/3 ]).
+:- use_module('../../0_ast_expand',
+              [ expand_ast_program/2,
+                expand_ast_program_with_bindings/3 ]).
+:- use_module('../../1_expansion',
+              [ expansion_phase/3, expand_program/3,
+                expand_program_with_bindings/4 ]).
 % remaining_line_column/3 is exported for the parse_error_positions unit, which
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a refusal happens to land
@@ -2819,11 +2824,87 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                42-seq, 44-dot, 45-coalesce, 50-relation_edge].
+                42-seq, 44-dot, 45-coalesce, 46-ast, 50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
     expansion_phase(30, row_spread, unwired).
+
+test(ast_mints_one_host_and_rewrites_the_rule) :-
+    Query = "[ (function_item name: (identifier) @function_name) ] (#match? @function_name \"^handle_\")",
+    Program = prog(
+        [col_type(file/2, path, text), col_type(file/2, digest, text)],
+        [ (def(FunctionName, Line) <-
+             (file(Path, Digest), ast(Path, Digest, rust, Query))) ]),
+    Bindings = [function_name=FunctionName, line=Line,
+                path=Path, digest=Digest],
+    expand_ast_program_with_bindings(Program, Bindings,
+                                     prog(Decls, [DemandRule, Rule])),
+    memberchk(
+        sh_decl('__ast_q1',
+                [col(path, text), col(digest, text)],
+                [col(function_name, text), col(line, int), col(end_line, int)],
+                template(Command)),
+    Decls),
+    Command ==
+      ": {digest}; \"$DL_EXTRACT_BIN\" query --lang rust --query '[ (function_item name: (identifier) @function_name) ] (#match? @function_name \"^handle_\")' {path}",
+    memberchk(keyed('__host_response___ast_q1'/7, [1, 2]), Decls),
+    memberchk(col_type('__host_demand___ast_q1'/4, digest, text), Decls),
+    memberchk(col_type('__host_response___ast_q1'/7, end_line, int), Decls),
+    DemandRule =
+      ('__host_demand___ast_q1'(Identity, Witness, Path, Digest) <-
+          file(Path, Digest)),
+    Rule =
+      (def(FunctionName, Line) <-
+          (file(Path, Digest), (WitnessValue := Witness, Response))),
+    Response =.. [ResponseName, WitnessValue, _Ordinal, Path, Digest,
+                  FunctionName, Line, _EndLine],
+    ResponseName == '__host_response___ast_q1',
+    Identity = concat(["identity|__ast_q1", '|path:text=', Path,
+                       '|digest:text=', Digest]),
+    Witness = concat(["witness|__ast_q1", '|path:text=', Path,
+                      '|digest:text=', Digest]).
+
+test(ast_reuses_host_for_identical_language_and_query) :-
+    Query = "(identifier) @name",
+    Program = prog([], [
+        (first(Name) <- ast(Path, Digest, rust, Query)),
+        (second(Name) <- ast(Path, Digest, rust, Query))
+    ]),
+    Bindings = [name=Name, path=Path, digest=Digest],
+    expand_ast_program_with_bindings(Program, Bindings,
+                                     prog(Decls, _)),
+    findall(Name, member(sh_decl(Name, _, _, _), Decls), HostNames),
+    HostNames == ['__ast_q1'].
+
+test(ast_query_must_be_a_string,
+    [throws(unsupported_construct(ast_query_not_literal))]) :-
+    expand_ast_program(
+        prog([], [(found(_Name) <- ast(_Path, _Digest, rust, _Query))]), _).
+
+test(ast_language_is_restricted,
+    [throws(unsupported_construct(ast_lang_unknown(plain)))]) :-
+    expand_ast_program(
+        prog([], [(found(_Name) <- ast(_Path, _Digest, plain,
+                                     "(identifier) @name"))]), _).
+
+test(ast_language_must_be_a_known_atom,
+    [throws(unsupported_construct(ast_lang_unknown(_)))]) :-
+    expand_ast_program(
+        prog([], [(found(_Name) <- ast(_Path, _Digest, _Language,
+                                     "(identifier) @name"))]), _).
+
+test(ast_query_rejects_single_quote,
+    [throws(unsupported_construct(ast_query_single_quote))]) :-
+    expand_ast_program(
+        prog([], [(found(_Name) <- ast(_Path, _Digest, rust,
+                                     "(identifier) @name 'literal'"))]), _).
+
+test(ast_query_requires_a_named_capture,
+    [throws(unsupported_construct(ast_no_named_capture))]) :-
+    expand_ast_program(
+        prog([], [(found(_Name) <- ast(_Path, _Digest, rust,
+                                     "(identifier)"))]), _).
 
 test(seq_expands_to_the_shared_four_rule_cursor_block) :-
     Program = prog(

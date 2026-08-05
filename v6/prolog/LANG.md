@@ -16,6 +16,9 @@ ambiguities/redundancies, and report. Deviating is fine IF the lab's verdict
   subset is literals, character classes, `.`, anchors, `* + ? {n,m}`, groups,
   alternation, and `\d \w \s \b`; Rust-regex and PCRE may differ outside it.
   Rx lowering: `filter(row => /pattern/.test(row.textColumn))`.
+- `ast(path, digest, lang, query)` runs one full tree-sitter query host. Known
+  languages are `rust`, `ts`, `tsx`, `js`, `go`, and `kotlin`; named captures,
+  `line`, and `end_line` are host output columns.
 
 - Keywords: `enum`, `struct`, `rel`, `bind`. Nothing else. (`source`, `fact`,
   `rule`, `external`, `register` all died: inference or unbundling.)

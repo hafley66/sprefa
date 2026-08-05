@@ -182,6 +182,7 @@ refusal_source_module(parse_dl).
 refusal_source_module(enum_expand).
 refusal_source_module(match_expand).
 refusal_source_module(coalesce_expand).
+refusal_source_module(ast_expand).
 refusal_source_module(dot_expand).
 refusal_source_module(type_plane).
 refusal_source_module(expansion).
