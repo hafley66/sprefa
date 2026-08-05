@@ -16,6 +16,8 @@ struct QueryCli {
     lang: String,
     #[arg(long)]
     query: String,
+    #[arg(long)]
+    digest: Option<String>,
     path: PathBuf,
 }
 
@@ -26,8 +28,7 @@ where
 {
     let cli = QueryCli::try_parse_from(args).map_err(one_line)?;
     let language = query_language(&cli.lang)?;
-    let bytes = std::fs::read(&cli.path)
-        .map_err(|error| format!("query input '{}': {error}", cli.path.display()))?;
+    let bytes = source_bytes(&cli.path, cli.digest.as_deref())?;
     let source = std::str::from_utf8(&bytes)
         .map_err(|error| format!("query input '{}': {error}", cli.path.display()))?;
     let mut parser = TreeParser::new();
@@ -46,6 +47,33 @@ where
     })?;
     validate_predicates(&query)?;
     stream_matches(&query, tree.root_node(), source.as_bytes())
+}
+
+fn source_bytes(path: &PathBuf, digest: Option<&str>) -> Result<Vec<u8>, String> {
+    match digest {
+        Some(oid) => cat_blob(oid),
+        None => std::fs::read(path)
+            .map_err(|error| format!("query input '{}': {error}", path.display())),
+    }
+}
+
+fn cat_blob(oid: &str) -> Result<Vec<u8>, String> {
+    let output = std::process::Command::new("git")
+        .arg("cat-file")
+        .arg("blob")
+        .arg(oid)
+        .output()
+        .map_err(|error| format!("git cat-file blob {oid}: {error}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("git cat-file blob failed");
+        return Err(format!("git cat-file blob {oid}: {reason}"));
+    }
+    Ok(output.stdout)
 }
 
 fn query_language(name: &str) -> Result<tree_sitter::Language, String> {
