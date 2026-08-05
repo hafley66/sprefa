@@ -9,6 +9,7 @@
 :- module(program_check,
           [ program_violation/3,
             first_violation/3,
+            ast_capture_names/2,
             % Declaration queries shared by both doors.
             relation_kind/3,
             declared_key/3
@@ -180,6 +181,70 @@ program_violation(regexp_operand_not_text, prog(Decls, Rules),
     rule_body_column_variable(Table, Rule, Operand, Ref, Column, Type),
     Type \== text,
     !.
+
+program_violation(ast_query_not_literal, prog(_, Rules), ast_query_not_literal) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, ast(_, _, _, Query)),
+    \+ string(Query),
+    !.
+
+program_violation(ast_lang_unknown, prog(_, Rules), Lang) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, ast(_, _, Lang, _)),
+    (   \+ atom(Lang)
+    ;   \+ memberchk(Lang, [rust, ts, tsx, js, go, kotlin])
+    ),
+    !.
+
+program_violation(ast_query_single_quote, prog(_, Rules), ast_query_single_quote) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, ast(_, _, _, Query)),
+    string(Query),
+    sub_string(Query, _, 1, _, "'"),
+    !.
+
+program_violation(ast_no_named_capture, prog(_, Rules), ast_no_named_capture) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, ast(_, _, _, Query)),
+    string(Query),
+    ast_capture_names(Query, []),
+    !.
+
+ast_capture_names(Query, Names) :-
+    string_codes(Query, Codes),
+    ast_capture_codes(Codes, [], ReversedNames),
+    reverse(ReversedNames, Names).
+
+ast_capture_codes([], Names, Names).
+ast_capture_codes([0'@ | Rest], Seen, Names) :-
+    ast_capture_identifier(Rest, IdentifierCodes, Remaining),
+    IdentifierCodes \== [],
+    atom_codes(Name, IdentifierCodes),
+    ( memberchk(Name, Seen)
+    -> ast_capture_codes(Remaining, Seen, Names)
+    ; ast_capture_codes(Remaining, [Name | Seen], Names)
+    ),
+    !.
+ast_capture_codes([_ | Rest], Seen, Names) :-
+    ast_capture_codes(Rest, Seen, Names).
+
+ast_capture_identifier([Code | Rest], [Code | More], Remaining) :-
+    ast_identifier_start(Code),
+    ast_identifier_tail(Rest, More, Remaining),
+    !.
+ast_capture_identifier(Rest, [], Rest).
+
+ast_identifier_tail([Code | Rest], [Code | More], Remaining) :-
+    ast_identifier_code(Code),
+    !,
+    ast_identifier_tail(Rest, More, Remaining).
+ast_identifier_tail(Rest, [], Rest).
+
+ast_identifier_start(Code) :- code_type(Code, alpha), !.
+ast_identifier_start(0'_).
+
+ast_identifier_code(Code) :- code_type(Code, alnum), !.
+ast_identifier_code(0'_).
 
 regexp_pattern_outside_subset(Pattern) :-
     string_codes(Pattern, Codes),

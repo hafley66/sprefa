@@ -8,7 +8,8 @@
 %
 :- module(expansion,
           [ expansion_phase/3,
-            expand_program/3
+            expand_program/3,
+            expand_program_with_bindings/4
           ]).
 
 :- use_module(library(lists)).
@@ -18,6 +19,7 @@
 :- use_module('0_coalesce_expand', []).
 :- use_module('0_dot_expand', []).
 :- use_module('0_relation_edge_expand', []).
+:- use_module('0_ast_expand', []).
 
 % ── the order, stated once ───────────────────────────────────────────────────
 
@@ -46,21 +48,37 @@ expansion_phase(44, dot,         dot_expand:expand_dot_in_context).
 %                 loses the atom that makes its head target visible to
 %                 stratification.
 expansion_phase(45, coalesce,    coalesce_expand:expand_coalesce_in_context).
+expansion_phase(46, ast,         ast_expand:expand_ast_in_context).
 expansion_phase(50, relation_edge,
                 relation_edge_expand:expand_relation_edges_in_context).
 
 % ── the fold ─────────────────────────────────────────────────────────────────
 
 expand_program(SurfaceProgram, ExpandedProgram, ExpansionContext) :-
+    expand_program_run(SurfaceProgram, [], ExpandedProgram,
+                       ExpansionContext).
+
+expand_program_with_bindings(SurfaceProgram, Bindings,
+                             ExpandedProgram, ExpansionContext) :-
+    expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
+                       ExpansionContext).
+
+expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
+                   ExpansionContext) :-
     SurfaceProgram = prog(SurfaceDecls, _),
-    enum_context(SurfaceDecls, ExpansionContext),
+    enum_context(SurfaceDecls, EnumContext),
     findall(Order-Name-Expander,
             expansion_phase(Order, Name, Expander),
             UnorderedPhases),
     msort(UnorderedPhases, OrderedPhases),
-    foldl(run_phase(ExpansionContext), OrderedPhases,
-          SurfaceProgram, ExpandedProgram).
+    foldl(run_phase(expansion_context(EnumContext, Bindings)),
+          OrderedPhases,
+          SurfaceProgram, ExpandedProgram),
+    ExpansionContext = EnumContext.
 
 run_phase(_, _-_-unwired, Program, Program) :- !.
-run_phase(Context, _-_-Expander, Program, Expanded) :-
+run_phase(Context, _-ast-Expander, Program, Expanded) :-
     call(Expander, Context, Program, Expanded).
+run_phase(expansion_context(EnumContext, _), _-_-Expander,
+          Program, Expanded) :-
+    call(Expander, EnumContext, Program, Expanded).

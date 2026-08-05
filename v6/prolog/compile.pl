@@ -21,7 +21,8 @@
 
 :- use_module(library(lists)).
 :- use_module('0_refusal_messages', []).
-:- use_module('1_expansion', [expand_program/3]).
+:- use_module('1_expansion',
+              [ expand_program/3, expand_program_with_bindings/4 ]).
 :- use_module('1_host_expand', [prepare_program/5]).
 :- use_module(analyze).
 :- use_module('3_clock_check', [check_clock_program/1]).
@@ -130,7 +131,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
-    expand_program(HostProg, ExpandedProg, _),
+    expand_program_with_bindings(HostProg, Bindings, ExpandedProg, _),
     materialize_reference_target_rels(ExpandedProg, Prog),
     Prog = prog(Decls, Rules),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
