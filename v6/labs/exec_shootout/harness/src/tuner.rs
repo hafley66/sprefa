@@ -49,8 +49,12 @@ fn largest_leq(mut low: u64, mut high: u64, mut value: impl FnMut(u64) -> u64, l
 fn tune_chain(scale: u32) -> Tuned {
     let scale_64 = scale as u64;
     let high = scale_64.max(2);
-    let upper =
-        largest_leq(2, high, |segment_len| chain_derived(segment_len, scale_64), BAND_MAX);
+    let upper = largest_leq(
+        2,
+        high,
+        |segment_len| chain_derived(segment_len, scale_64),
+        BAND_MAX,
+    );
     let lower = largest_leq(
         2,
         upper,
@@ -76,14 +80,26 @@ fn tune_chain(scale: u32) -> Tuned {
     }
 }
 
-fn tune_grid() -> Tuned {
+fn grid_target_derived(scale: u32) -> u64 {
+    let scale_log = (scale as f64).log10();
+    let lower_log = 10_000f64.log10();
+    let upper_log = 1_000_000f64.log10();
+    let fraction = ((scale_log - lower_log) / (upper_log - lower_log)).clamp(0.0, 1.0);
+    let low_log = (BAND_MIN as f64).log10();
+    let high_log = (BAND_MAX as f64).log10();
+    let result_log = low_log + fraction * (high_log - low_log);
+    10f64.powf(result_log).round() as u64
+}
+
+fn tune_grid(scale: u32) -> Tuned {
+    let target = grid_target_derived(scale);
     let upper = largest_leq(2, 10_000, |side| grid_derived(side, side), BAND_MAX);
     let lower = largest_leq(2, upper, |side| grid_derived(side, side), BAND_MIN - 1) + 1;
     let mut chosen = lower;
     let mut best_distance = u64::MAX;
     for side in lower..=upper {
         let derived = grid_derived(side, side);
-        let distance = derived.abs_diff(MIDPOINT);
+        let distance = derived.abs_diff(target);
         if distance < best_distance {
             best_distance = distance;
             chosen = side;
@@ -172,6 +188,39 @@ pub fn tune(family: Family, scale: u32) -> Tuned {
     match family {
         Family::Chain => tune_chain(scale),
         Family::Layered => tune_layered(scale, seed),
-        Family::Grid => tune_grid(),
+        Family::Grid => tune_grid(scale),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn grid_key(params: Params) -> (u32, u32) {
+        match params {
+            Params::Grid { rows, cols } => (rows, cols),
+            other => panic!("not a grid: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn grid_tuner_is_scale_aware_and_in_band() {
+        let scales = [10_000u32, 100_000, 1_000_000];
+        let tuned: Vec<Tuned> = scales
+            .iter()
+            .map(|scale| tune(Family::Grid, *scale))
+            .collect();
+        let keys: Vec<(u32, u32)> = tuned.iter().map(|entry| grid_key(entry.params)).collect();
+        assert!(keys[0] != keys[1]);
+        assert!(keys[1] != keys[2]);
+        assert!(keys[0] != keys[2]);
+        for entry in &tuned {
+            assert!(
+                entry.derived >= BAND_MIN && entry.derived <= BAND_MAX,
+                "params {:?} derived {} out of band",
+                entry.params,
+                entry.derived
+            );
+        }
     }
 }

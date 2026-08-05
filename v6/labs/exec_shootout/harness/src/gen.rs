@@ -17,9 +17,18 @@ pub fn family_name(family: Family) -> &'static str {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Params {
-    Chain { segment_len: u32 },
-    Layered { layers: u32, width: u32, fanout: u32 },
-    Grid { rows: u32, cols: u32 },
+    Chain {
+        segment_len: u32,
+    },
+    Layered {
+        layers: u32,
+        width: u32,
+        fanout: u32,
+    },
+    Grid {
+        rows: u32,
+        cols: u32,
+    },
 }
 
 pub fn params_label(family: Family, params: Params) -> String {
@@ -27,7 +36,14 @@ pub fn params_label(family: Family, params: Params) -> String {
         (Family::Chain, Params::Chain { segment_len }) => {
             format!("segment_len={segment_len}")
         }
-        (Family::Layered, Params::Layered { layers, width, fanout }) => {
+        (
+            Family::Layered,
+            Params::Layered {
+                layers,
+                width,
+                fanout,
+            },
+        ) => {
             format!("layers={layers} width={width} fanout={fanout}")
         }
         (Family::Grid, Params::Grid { rows, cols }) => {
@@ -46,9 +62,11 @@ pub struct Generated {
 pub fn generate(_family: Family, params: Params, scale: u32, seed: u64) -> Generated {
     match params {
         Params::Chain { segment_len } => generate_chain(segment_len, scale),
-        Params::Layered { layers, width, fanout } => {
-            generate_layered(layers, width, fanout, seed)
-        }
+        Params::Layered {
+            layers,
+            width,
+            fanout,
+        } => generate_layered(layers, width, fanout, seed),
         Params::Grid { rows, cols } => generate_grid(rows, cols),
     }
 }

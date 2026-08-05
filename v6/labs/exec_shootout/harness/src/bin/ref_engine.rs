@@ -34,7 +34,10 @@ fn main() {
 
     let rss = peak_rss_kb();
 
-    println!("{{\"event\":\"loaded\",\"edges\":{},\"ms\":{}}}", edge_count, load_ms);
+    println!(
+        "{{\"event\":\"loaded\",\"edges\":{},\"ms\":{}}}",
+        edge_count, load_ms
+    );
     println!(
         "{{\"event\":\"fixpoint\",\"derived\":{},\"ms\":{}}}",
         result.derived, fixpoint_ms

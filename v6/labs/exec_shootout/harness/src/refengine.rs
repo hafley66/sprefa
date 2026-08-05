@@ -168,7 +168,6 @@ pub fn derive_count_bitset(edges: &[(u32, u32)], node_count: u32) -> u64 {
     total
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,7 +205,13 @@ mod tests {
 
     #[test]
     fn bitset_counter_matches_reference_on_dag() {
-        let edges = vec![(0u32, 1u32), (0u32, 2u32), (1u32, 3u32), (2u32, 3u32), (3u32, 4u32)];
+        let edges = vec![
+            (0u32, 1u32),
+            (0u32, 2u32),
+            (1u32, 3u32),
+            (2u32, 3u32),
+            (3u32, 4u32),
+        ];
         let node_count = 5;
         assert_eq!(
             derive_count_bitset(&edges, node_count),

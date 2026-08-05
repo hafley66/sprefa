@@ -75,8 +75,14 @@ fn write_input(path: &str, nodes: u32, edges: &[(u32, u32)]) {
     }
 }
 
-fn best_of_three(binary: &str, input: &str, runs: u32, timeout: std::time::Duration) -> RunOutcome {
+fn best_of_three(
+    binary: &str,
+    input: &str,
+    runs: u32,
+    timeout: std::time::Duration,
+) -> (Option<RunOutcome>, bool) {
     let mut best: Option<RunOutcome> = None;
+    let mut any_failure = false;
     for _ in 0..runs {
         match runner::run_engine(binary, input, timeout) {
             Ok(outcome) => {
@@ -90,11 +96,11 @@ fn best_of_three(binary: &str, input: &str, runs: u32, timeout: std::time::Durat
             }
             Err(error) => {
                 eprintln!("engine run failed for {}: {}", binary, error);
-                std::process::exit(1);
+                any_failure = true;
             }
         }
     }
-    best.expect("at least one run")
+    (best, any_failure)
 }
 
 fn main() {
@@ -155,8 +161,14 @@ fn main() {
     });
     let engines = resolve_engines(&engine_tokens);
     std::fs::create_dir_all(&work_dir).expect("create work dir");
-    if !Path::new(&standings_path).parent().map_or(true, std::path::Path::exists) {
-        eprintln!("harness: standings parent dir does not exist: {}", standings_path);
+    if !Path::new(&standings_path)
+        .parent()
+        .map_or(true, std::path::Path::exists)
+    {
+        eprintln!(
+            "harness: standings parent dir does not exist: {}",
+            standings_path
+        );
         std::process::exit(1);
     }
 
@@ -164,9 +176,26 @@ fn main() {
     let meta = RunMeta { command_line };
     let timeout = runner::DEFAULT_TIMEOUT;
 
+    let mut build_rows: Vec<BuildRow> = Vec::new();
+
+    if measure_builds {
+        for engine in &engines {
+            if engine.is_reference {
+                continue;
+            }
+            if let Some(seconds) = measure_build(&engine.path) {
+                build_rows.push(BuildRow {
+                    name: engine.name.clone(),
+                    size_bytes: engine.size_bytes,
+                    build_seconds: Some(seconds),
+                });
+            }
+        }
+    }
+
     let families = [Family::Chain, Family::Layered, Family::Grid];
     let mut cases: Vec<CaseStanding> = Vec::new();
-    let mut build_rows: Vec<BuildRow> = Vec::new();
+    let mut had_failure = false;
 
     for family in families {
         for scale in &scales {
@@ -182,45 +211,53 @@ fn main() {
                 std::process::exit(1);
             }
 
-            if measure_builds {
-                for engine in &engines {
-                    if engine.is_reference {
-                        continue;
-                    }
-                    if let Some(seconds) = measure_build(&engine.path) {
-                        build_rows.push(BuildRow {
-                            name: engine.name.clone(),
-                            size_bytes: engine.size_bytes,
-                            build_seconds: Some(seconds),
-                        });
-                    }
-                }
-            }
-
             let mut engine_rows: Vec<EngineRow> = Vec::new();
             let mut participants: Vec<(String, EngineEvent)> = Vec::new();
 
             for engine in &engines {
                 let runs = if engine.is_reference { 1 } else { 3 };
-                let outcome = best_of_three(&engine.path, &input_path, runs, timeout);
-                engine_rows.push(EngineRow {
-                    name: engine.name.clone(),
-                    is_reference: engine.is_reference,
-                    derived: outcome.event.derived,
-                    fixpoint_ms: outcome.event.fixpoint_ms,
-                    load_ms: outcome.event.load_ms,
-                    peak_rss_kb: outcome.event.peak_rss_kb,
-                    runs_used: runs,
-                });
-                participants.push((engine.name.clone(), outcome.event));
+                let (best, any_failure) = best_of_three(&engine.path, &input_path, runs, timeout);
+                if any_failure {
+                    had_failure = true;
+                }
+                match best {
+                    Some(outcome) => {
+                        engine_rows.push(EngineRow {
+                            name: engine.name.clone(),
+                            is_reference: engine.is_reference,
+                            derived: outcome.event.derived,
+                            fixpoint_ms: outcome.event.fixpoint_ms,
+                            load_ms: outcome.event.load_ms,
+                            peak_rss_kb: outcome.event.peak_rss_kb,
+                            runs_used: runs,
+                            dnf: false,
+                        });
+                        participants.push((engine.name.clone(), outcome.event));
+                    }
+                    None => {
+                        engine_rows.push(EngineRow {
+                            name: engine.name.clone(),
+                            is_reference: engine.is_reference,
+                            derived: 0,
+                            fixpoint_ms: 0,
+                            load_ms: 0,
+                            peak_rss_kb: 0,
+                            runs_used: 0,
+                            dnf: true,
+                        });
+                    }
+                }
             }
 
             let mut truth: Option<EngineEvent> = None;
             if scale == 10_000 {
                 let ref_path = format!("{}/ref_engine", exe_dir());
-                let outcome = runner::run_engine(&ref_path, &input_path, timeout)
-                    .unwrap_or_else(|error| {
-                        eprintln!("harness: reference engine failed on {}: {}", input_path, error);
+                let outcome =
+                    runner::run_engine(&ref_path, &input_path, timeout).unwrap_or_else(|error| {
+                        eprintln!(
+                            "harness: reference engine failed on {}: {}",
+                            input_path, error
+                        );
                         std::process::exit(1);
                     });
                 truth = Some(outcome.event);
@@ -254,13 +291,15 @@ fn main() {
                         load_ms: 0,
                         peak_rss_kb: 0,
                         runs_used: 1,
+                        dnf: false,
                     });
                 }
             } else {
                 if participants.len() >= 2 {
                     let baseline = &participants[0].1;
                     for (engine_name, event) in participants.iter().skip(1) {
-                        if event.derived != baseline.derived || event.checksum != baseline.checksum {
+                        if event.derived != baseline.derived || event.checksum != baseline.checksum
+                        {
                             eprintln!(
                                 "harness: MISMATCH at {} scale={} engine={} vs {}: derived {} vs {}",
                                 gen::family_name(family),
@@ -306,6 +345,10 @@ fn main() {
         "harness: run complete; standings written to {}",
         standings_path
     );
+    if had_failure {
+        eprintln!("harness: one or more engine runs failed; exiting nonzero");
+        std::process::exit(1);
+    }
 }
 
 fn default_standings_path() -> String {

@@ -107,11 +107,7 @@ pub struct RunOutcome {
     pub stderr: String,
 }
 
-pub fn run_engine(
-    binary: &str,
-    input_path: &str,
-    timeout: Duration,
-) -> Result<RunOutcome, String> {
+pub fn run_engine(binary: &str, input_path: &str, timeout: Duration) -> Result<RunOutcome, String> {
     let mut child = Command::new(binary)
         .arg("--input")
         .arg(input_path)
@@ -134,7 +130,9 @@ pub fn run_engine(
         {
             if !status.success() {
                 let _ = child.wait();
-                let stderr = stderr_reader.join().map_err(|_| "stderr thread panicked".to_string())?;
+                let stderr = stderr_reader
+                    .join()
+                    .map_err(|_| "stderr thread panicked".to_string())?;
                 return Err(format!("engine exited nonzero: {:?}\n{}", status, stderr));
             }
             let mut stdout_buffer = String::new();
@@ -144,7 +142,9 @@ pub fn run_engine(
                 .expect("stdout pipe")
                 .read_to_string(&mut stdout_buffer)
                 .map_err(|error| format!("cannot read stdout: {}", error))?;
-            let stderr = stderr_reader.join().map_err(|_| "stderr thread panicked".to_string())?;
+            let stderr = stderr_reader
+                .join()
+                .map_err(|_| "stderr thread panicked".to_string())?;
             let (loaded, fixpoint, done) = parse_events(&stdout_buffer)?;
             let event = EngineEvent {
                 edges: loaded.edges,
@@ -191,5 +191,14 @@ mod tests {
     fn rejects_missing_event() {
         let sample = "{\"event\":\"loaded\",\"edges\":3,\"ms\":1}\n";
         assert!(parse_events(sample).is_err());
+    }
+
+    #[test]
+    fn reports_nonzero_child_exit() {
+        match run_engine("false", "/nonexistent", Duration::from_secs(5)) {
+            Err(error) if error.contains("nonzero") => {}
+            Err(other) => panic!("expected nonzero-exit error, got: {}", other),
+            Ok(_) => panic!("false unexpectedly succeeded"),
+        }
     }
 }

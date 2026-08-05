@@ -9,6 +9,7 @@ pub struct EngineRow {
     pub load_ms: u64,
     pub peak_rss_kb: i64,
     pub runs_used: u32,
+    pub dnf: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -52,11 +53,7 @@ impl CaseStanding {
     }
 }
 
-pub fn write_standings(
-    cases: &[CaseStanding],
-    builds: &[BuildRow],
-    meta: &RunMeta,
-) -> String {
+pub fn write_standings(cases: &[CaseStanding], builds: &[BuildRow], meta: &RunMeta) -> String {
     let mut output = String::new();
     output.push_str("# exec_shootout STANDINGS\n\n");
     output.push_str("Run command: `");
@@ -88,7 +85,7 @@ pub fn write_standings(
         let best_engine = standing
             .rows
             .iter()
-            .filter(|row| !row.is_reference)
+            .filter(|row| !row.is_reference && !row.dnf)
             .min_by_key(|row| row.fixpoint_ms)
             .map(|row| row.name.clone())
             .unwrap_or_else(|| "-".to_string());
@@ -99,12 +96,16 @@ pub fn write_standings(
             } else {
                 0.0
             };
-            let throughput_text = if row.is_reference {
+            let throughput_text = if row.dnf {
+                "DNF".to_string()
+            } else if row.is_reference {
                 "(reference)".to_string()
             } else {
                 format!("{:.0}", throughput)
             };
             let (load_show, fp_show, rss_show) = if row.is_reference {
+                ("-".to_string(), "-".to_string(), "-".to_string())
+            } else if row.dnf {
                 ("-".to_string(), "-".to_string(), "-".to_string())
             } else {
                 (
@@ -112,6 +113,12 @@ pub fn write_standings(
                     format!("{}", row.fixpoint_ms),
                     format!("{}", row.peak_rss_kb),
                 )
+            };
+            let name = row.name.clone();
+            let derived_text = if row.dnf {
+                "DNF".to_string()
+            } else {
+                format!("{}", row.derived)
             };
             let scale_text = if row_index == 0 {
                 format!("{}", standing.scale)
@@ -128,14 +135,13 @@ pub fn write_standings(
             } else {
                 String::new()
             };
-            let name = row.name.clone();
             output.push_str(&format!(
                 "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                 scale_text,
                 params_text,
                 edges_text,
                 name,
-                row.derived,
+                derived_text,
                 throughput_text,
                 load_show,
                 fp_show,
@@ -161,7 +167,10 @@ pub fn write_standings(
                 ));
             }
             None => {
-                output.push_str(&format!("| {} | {} | n/a |\n", build.name, build.size_bytes));
+                output.push_str(&format!(
+                    "| {} | {} | n/a |\n",
+                    build.name, build.size_bytes
+                ));
             }
         }
     }
