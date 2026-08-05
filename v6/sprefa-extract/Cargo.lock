@@ -934,6 +934,7 @@ dependencies = [
  "oxc_syntax",
  "proc-macro2",
  "prost",
+ "regex",
  "serde",
  "serde_json",
  "syn 2.0.119",

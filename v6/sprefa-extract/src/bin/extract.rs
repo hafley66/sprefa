@@ -33,6 +33,9 @@ use help::{
     SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
 };
 
+#[path = "../0_query.rs"]
+mod query;
+
 #[derive(Parser)]
 #[command(
     name = "extract",
@@ -246,6 +249,13 @@ fn stream_scip_family(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("query") {
+        if let Err(error) = query::run(std::env::args().skip(1)) {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
     let cli = Cli::parse();
 
     if cli.schema {
