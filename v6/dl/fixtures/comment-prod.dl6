@@ -3,12 +3,6 @@
 # exemption/routing/waiver via regexp/2. Hosts fetch raw facts only (git
 # plumbing + file lines); no python flags, no host-side glob, no marker grep.
 #
-# Deviation from the strict rail, stated: cst's minted host reads the
-# WORKTREE file (the contract's `extract query <path>`), while raw_line and
-# the diff legs grade the STAGED BLOB. An unstaged edit between stage and
-# commit can therefore skew node spans; the blob-strict rail
-# (comment_rail_golden) remains the pre-commit leg until `extract query`
-# grows a --blob door.
 
 sh staged_file_list(index_digest: text)
   -> (file_path: text, blob_digest: text, exempt_flag: int) =

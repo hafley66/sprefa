@@ -10,6 +10,36 @@ fn run(args: &[&str]) -> std::process::Output {
         .expect("extract binary runs")
 }
 
+fn run_in(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_extract"))
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("extract binary runs")
+}
+
+fn git(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .expect("git runs")
+}
+
+fn temp_repo() -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!(
+        "blobdoor_query_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    dir
+}
+
 #[test]
 fn query_emits_flat_jsonl_for_plain_and_alternating_patterns() {
     let plain = run(&[
@@ -81,4 +111,44 @@ fn query_rejects_unknown_language_and_invalid_query_with_exit_two() {
     let invalid = run(&["query", "--lang", "rust", "--query", "(", RUST]);
     assert_eq!(invalid.status.code(), Some(2));
     assert!(String::from_utf8(invalid.stderr).unwrap().lines().count() == 1);
+}
+
+#[test]
+fn query_with_digest_reads_the_staged_blob() {
+    let dir = temp_repo();
+    let fixture = std::fs::canonicalize(RUST).unwrap();
+    let fixture = fixture.to_str().unwrap();
+    let hash = git(&dir, &["hash-object", "-w", fixture]);
+    let oid = String::from_utf8(hash.stdout).unwrap().trim().to_string();
+
+    let query = "(function_item name: (identifier) @name) @item";
+    let via_path = run(&["query", "--lang", "rust", "--query", query, RUST]);
+    let via_digest = run_in(
+        &dir,
+        &[
+            "query", "--lang", "rust", "--query", query, "--digest", &oid, RUST,
+        ],
+    );
+
+    assert!(via_path.status.success());
+    assert!(via_digest.status.success());
+    assert_eq!(via_digest.stdout, via_path.stdout);
+}
+
+#[test]
+fn query_bad_digest_exits_two_with_one_line_stderr() {
+    let output = run(&[
+        "query",
+        "--lang",
+        "rust",
+        "--query",
+        "(identifier) @name",
+        "--digest",
+        "0000000000000000000000000000000000000000",
+        RUST,
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(stderr.lines().count(), 1);
+    assert!(stderr.contains("git cat-file blob"));
 }

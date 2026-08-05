@@ -2896,7 +2896,7 @@ test(ast_mints_one_host_and_rewrites_the_rule) :-
                 template(Command)),
     Decls),
     Command ==
-      ": {digest}; \"$DL_EXTRACT_BIN\" query --lang rust --query '[ (function_item name: (identifier) @function_name) ] (#match? @function_name \"^handle_\")' {path}",
+      "\"$DL_EXTRACT_BIN\" query --lang rust --query '[ (function_item name: (identifier) @function_name) ] (#match? @function_name \"^handle_\")' --digest {digest} {path}",
     memberchk(keyed('__host_response___ast_q1'/7, [1, 2]), Decls),
     memberchk(col_type('__host_demand___ast_q1'/4, digest, text), Decls),
     memberchk(col_type('__host_response___ast_q1'/7, end_line, int), Decls),
