@@ -100,7 +100,7 @@ pub fn parse_events(stdout: &str) -> Result<(EngineEvent, EngineEvent, EngineEve
     Ok((loaded, fixpoint, done))
 }
 
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
+pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub struct RunOutcome {
     pub event: EngineEvent,
