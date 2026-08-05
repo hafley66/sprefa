@@ -38,6 +38,7 @@
 | [hs-prolog/idioms/CONTRACT.md](hs-prolog/idioms/CONTRACT.md) | 154 | Lane L4: what professional Haskell actually does for logs, tracing, and debugging |
 | [hs-prolog/idioms/IDIOMS.md](hs-prolog/idioms/IDIOMS.md) | 395 | Haskell idioms that professional projects actually use |
 | [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
+| [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -522,6 +523,19 @@
 123:## The two memory numbers
 168:## Unproven
 176:## What I could not do
+```
+
+### labs/exec_shootout/CONTRACT.md
+```
+1:# exec_shootout CONTRACT — three rust execution strategies, one harness, one number each
+8:## TOC
+17:## The workload
+31:## The three engines (one crate each, one binary each)
+43:## CLI + IO contract
+69:## Graph families and scales
+85:## Metrics and STANDINGS
+101:## Correctness
+108:## Ground rules
 ```
 
 ### plans/2026-07-19-reactive-style-port.md
