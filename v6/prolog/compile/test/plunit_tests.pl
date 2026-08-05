@@ -4103,4 +4103,47 @@ read_seeded_text(File, Text) :-
         close(Stream)),
     catch(delete_file(File), _, true).
 
+% Facts must survive the query (program/3) parse form, not only prog/2.
+fact_query_text("rel max_run(limit_lines: int).
+rel doubled_limit(limit_doubled: int).
+
+max_run(2).
+
+doubled_limit(limit_doubled) <-
+  max_run(limit_lines), limit_doubled := limit_lines * 2.
+
+? doubled_limit(limit_doubled).
+").
+
+test(dl6_fact_seeds_with_query_form) :-
+    fact_query_text(Text),
+    tmp_file(ts, OutFile),
+    dl6_compile_text(Text, OutFile, Result),
+    (   Result = ok
+    ->  read_seeded_text(OutFile, _)
+    ;   throw(compile_failed(Result))
+    ).
+
+% The operand identity check: a text operand beside an int column in the SAME
+% atom must not refuse (regexp_operand_not_text once matched by unification).
+regexp_mixed_atom_text("rel raw_line(line_number: int, line_text: text).
+rel prose_line(line_number: int).
+
+raw_line(1, \"alpha\").
+
+prose_line(line_number) <-
+  raw_line(line_number, line_text), regexp(line_text, \"[A-Za-z]\").
+
+? prose_line(line_number).
+").
+
+test(regexp_operand_beside_int_column_compiles) :-
+    regexp_mixed_atom_text(Text),
+    tmp_file(ts, OutFile),
+    dl6_compile_text(Text, OutFile, Result),
+    (   Result = ok
+    ->  read_seeded_text(OutFile, _)
+    ;   throw(compile_failed(Result))
+    ).
+
 :- end_tests(fact_seeding).

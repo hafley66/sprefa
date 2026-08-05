@@ -1,0 +1,167 @@
+# comment-prod.dl6 -- the comment budget with the STRING AND SYNTAX LOGIC IN
+# THE LANGUAGE: comment nodes via ast/4, prose/exemption/extension routing/
+# waiver via regexp/2. Hosts fetch raw facts only (git plumbing + file lines);
+# no python flag precomputation, no host-side glob, no marker grep.
+#
+# Deviation from the strict rail, stated: ast/4's minted host reads the
+# WORKTREE file (the contract's `extract query <path>`), while raw_line and
+# the diff legs grade the STAGED BLOB. An unstaged edit between stage and
+# commit can therefore skew node spans; the blob-strict rail
+# (comment_rail_golden) remains the pre-commit leg until `extract query`
+# grows a --blob door.
+
+sh staged_file_list(index_digest: text)
+  -> (file_path: text, blob_digest: text, exempt_flag: int) =
+  `: {index_digest}; "$DL_COMMENT_BUDGET_FEED" staged`.
+
+sh added_line_span(path: text, digest: text) -> (line: int) =
+  `: {digest}; "$DL_COMMENT_BUDGET_FEED" added {path}`.
+
+sh raw_line(path: text, digest: text) -> (line: int, line_text: text) =
+  `: {digest}; "$DL_COMMENT_BUDGET_FEED" raw-lines {path} {digest}`.
+
+rel max_run(limit_lines: int).
+max_run(2).
+
+rel staged_probe(index_digest: text).
+
+# exempt_flag from the feed is IGNORED: exemption is a rule here.
+rel staged_file(file_path: text, blob_digest: text).
+staged_file(file_path, blob_digest) <-
+  staged_probe(index_digest),
+  staged_file_list(index_digest, file_path, blob_digest, _).
+
+rel exempt_file(file_path: text).
+exempt_file(file_path) <-
+  staged_file(file_path, _),
+  regexp(file_path, "\\.(md|markdown|txt|json|lock|jsonl|csv|svg)$|test|spec|fixture|golden|conformance|LICENSE|node_modules/|target/|dist/").
+
+rel graded_file(file_path: text, blob_digest: text).
+graded_file(file_path, blob_digest) <-
+  staged_file(file_path, blob_digest),
+  not(exempt_file(file_path)).
+
+# extension routing is a rule, one leg per grammar family; dl6 OR = one head,
+# many rules.
+rel graded_ts_file(file_path: text, blob_digest: text).
+graded_ts_file(file_path, blob_digest) <-
+  graded_file(file_path, blob_digest), regexp(file_path, "\\.(ts|tsx|js)$").
+
+rel graded_rust_file(file_path: text, blob_digest: text).
+graded_rust_file(file_path, blob_digest) <-
+  graded_file(file_path, blob_digest), regexp(file_path, "\\.rs$").
+
+rel graded_go_file(file_path: text, blob_digest: text).
+graded_go_file(file_path, blob_digest) <-
+  graded_file(file_path, blob_digest), regexp(file_path, "\\.go$").
+
+rel comment_span(file_path: text, line: int, end_line: int).
+comment_span(file_path, line, end_line) <-
+  graded_ts_file(file_path, blob_digest),
+  ast(file_path, blob_digest, 'ts', "(comment) @comment_text").
+comment_span(file_path, line, end_line) <-
+  graded_rust_file(file_path, blob_digest),
+  ast(file_path, blob_digest, 'rust', "[ (line_comment) @comment_text (block_comment) @comment_text ]").
+comment_span(file_path, line, end_line) <-
+  graded_go_file(file_path, blob_digest),
+  ast(file_path, blob_digest, 'go', "(comment) @comment_text").
+
+rel comment_line_row(file_path: text, line_number: int, line_text: text).
+comment_line_row(file_path, line_number, line_text) <-
+  graded_file(file_path, blob_digest),
+  raw_line(file_path, blob_digest, line_number, line_text),
+  comment_span(file_path, span_start, span_end),
+  line_number >= span_start,
+  line_number =< span_end.
+
+rel comment_line_mark(file_path: text, line_number: int).
+comment_line_mark(file_path, line_number) <-
+  comment_line_row(file_path, line_number, _).
+
+rel shebang_line(file_path: text, line_number: int).
+shebang_line(file_path, line_number) <-
+  comment_line_row(file_path, line_number, line_text),
+  line_number == 1,
+  regexp(line_text, "^#!").
+
+# prose = a comment line whose text carries a letter; delimiter-only lines,
+# dividers and the shebang are glue.
+rel prose_line(file_path: text, line_number: int).
+prose_line(file_path, line_number) <-
+  comment_line_row(file_path, line_number, line_text),
+  regexp(line_text, "[A-Za-z]"),
+  not(shebang_line(file_path, line_number)).
+
+rel line_successor(file_path: text, successor_line: int).
+line_successor(file_path, successor_line) <-
+  comment_line_mark(file_path, line_number), successor_line := line_number + 1.
+
+rel line_predecessor(file_path: text, predecessor_line: int).
+line_predecessor(file_path, predecessor_line) <-
+  comment_line_mark(file_path, line_number), predecessor_line := line_number - 1.
+
+rel run_start(file_path: text, start_line: int).
+run_start(file_path, start_line) <-
+  comment_line_mark(file_path, start_line),
+  not(line_successor(file_path, start_line)).
+
+rel run_end(file_path: text, end_line: int).
+run_end(file_path, end_line) <-
+  comment_line_mark(file_path, end_line),
+  not(line_predecessor(file_path, end_line)).
+
+rel run_end_candidate(file_path: text, start_line: int, end_line: int).
+run_end_candidate(file_path, start_line, end_line) <-
+  run_start(file_path, start_line), run_end(file_path, end_line),
+  end_line >= start_line.
+
+rel run_extent(file_path: text, start_line: int, end_line: int).
+run_extent(file_path, start_line, min(end_line)) <-
+  run_end_candidate(file_path, start_line, end_line).
+
+rel run_prose_row(file_path: text, start_line: int, end_line: int, prose_line_number: int).
+run_prose_row(file_path, start_line, end_line, prose_line_number) <-
+  run_extent(file_path, start_line, end_line),
+  prose_line(file_path, prose_line_number),
+  prose_line_number >= start_line,
+  prose_line_number =< end_line.
+
+rel run_prose_count(file_path: text, start_line: int, end_line: int, prose_count: int).
+run_prose_count(file_path, start_line, end_line, count(prose_line_number)) <-
+  run_prose_row(file_path, start_line, end_line, prose_line_number).
+
+rel long_run(file_path: text, start_line: int, end_line: int, comment_line_count: int).
+long_run(file_path, start_line, end_line, comment_line_count) <-
+  run_prose_count(file_path, start_line, end_line, comment_line_count),
+  max_run(limit_lines),
+  comment_line_count > limit_lines.
+
+rel touched_run(file_path: text, start_line: int, end_line: int).
+touched_run(file_path, start_line, end_line) <-
+  long_run(file_path, start_line, end_line, _),
+  graded_file(file_path, blob_digest),
+  added_line_span(file_path, blob_digest, added_line_number),
+  added_line_number >= start_line,
+  added_line_number =< end_line.
+
+# the waiver is grammar-gated for free: comment_line_row only holds lines
+# inside comment nodes, so a marker in a string literal never appears here.
+rel waiver_line(file_path: text, line_number: int).
+waiver_line(file_path, line_number) <-
+  comment_line_row(file_path, line_number, line_text),
+  regexp(line_text, "@comment-ok:").
+
+rel waived_run(file_path: text, start_line: int, end_line: int).
+waived_run(file_path, start_line, end_line) <-
+  long_run(file_path, start_line, end_line, _),
+  waiver_line(file_path, marker_line),
+  marker_line >= start_line,
+  marker_line =< end_line.
+
+rel violation_run(file_path: text, start_line: int, end_line: int, comment_line_count: int).
+violation_run(file_path, start_line, end_line, comment_line_count) <-
+  long_run(file_path, start_line, end_line, comment_line_count),
+  touched_run(file_path, start_line, end_line),
+  not(waived_run(file_path, start_line, end_line)).
+
+? violation_run(file_path, start_line, end_line, comment_line_count).

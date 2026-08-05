@@ -121,7 +121,7 @@ const PARSES_CLEAN: &[&str] = &[
     "ARCH.pl",
     "compile/1_emit_registry_docs.pl",
     "compile/2_emit_cli_inventory.pl",
-    "compile/6_profile.pl",
+    "6_profile.pl",
     "compile/oracle_dump.pl",
     "compile/registry.pl",
     "compile/scripts/bop_check.pl",

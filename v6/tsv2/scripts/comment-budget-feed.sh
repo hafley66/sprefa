@@ -98,11 +98,22 @@ markers_body() {
   grep -n '@comment-ok:' "$1" 2>/dev/null | awk -F: '{ printf "{\"line\":%d}\n", $1 }'
 }
 
+raw_lines_body() {
+  python3 -c '
+import json, sys
+with open(sys.argv[1], "rb") as handle:
+    for number, raw in enumerate(handle, 1):
+        text = raw.decode("utf-8", "replace").rstrip("\n")
+        print(json.dumps({"line": number, "line_text": text}, separators=(",", ":")))
+' "$1"
+}
+
 case "${1:-}" in
   staged) staged ;;
   added) [ $# -eq 2 ] || die "usage: added <path>"; added "$2" ;;
   nodes) [ $# -eq 3 ] || die "usage: nodes <path> <blob>"; with_staged_blob "$2" "$3" nodes_body ;;
   comment-lines) [ $# -eq 3 ] || die "usage: comment-lines <path> <blob>"; with_staged_blob "$2" "$3" comment_lines_body ;;
   markers) [ $# -eq 3 ] || die "usage: markers <path> <blob>"; with_staged_blob "$2" "$3" markers_body ;;
-  *) die "usage: comment-budget-feed.sh staged | added <path> | nodes <path> <blob> | comment-lines <path> <blob> | markers <path> <blob>" ;;
+  raw-lines) [ $# -eq 3 ] || die "usage: raw-lines <path> <blob>"; with_staged_blob "$2" "$3" raw_lines_body ;;
+  *) die "usage: comment-budget-feed.sh staged | added <path> | nodes <path> <blob> | comment-lines <path> <blob> | markers <path> <blob> | raw-lines <path> <blob>" ;;
 esac

@@ -178,7 +178,8 @@ program_violation(regexp_operand_not_text, prog(Decls, Rules),
     member(Rule, Rules),
     rule_body_goal(Rule, regexp(Operand, _)),
     var(Operand),
-    rule_body_column_variable(Table, Rule, Operand, Ref, Column, Type),
+    rule_body_column_variable(Table, Rule, BodyVariable, Ref, Column, Type),
+    BodyVariable == Operand,
     Type \== text,
     !.
 

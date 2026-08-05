@@ -239,6 +239,11 @@ dl6_seeded_form(Prog, Initial, ProgOut) :-
     !,
     partition_dl6_facts(Rules, Initial, RealRules),
     ProgOut = prog(Decls, RealRules).
+dl6_seeded_form(Prog, Initial, ProgOut) :-
+    Prog = program(Decls, Rules, Queries),
+    !,
+    partition_dl6_facts(Rules, Initial, RealRules),
+    ProgOut = program(Decls, RealRules, Queries).
 dl6_seeded_form(Prog, [], Prog).
 
 partition_dl6_facts([], [], []).
@@ -249,12 +254,20 @@ partition_dl6_facts([Rule | Rules], [Fact | Facts], Rest) :-
 partition_dl6_facts([Rule | Rules], Facts, [Rule | Rest]) :-
     partition_dl6_facts(Rules, Facts, Rest).
 
+% Structured-term arguments (e.g. a ts_query value) are not seed-row shaped;
+% they keep the rule path their fixtures already compile through.
 dl6_fact((Head <- true), Head) :-
     !,
-    ground(Head).
+    ground(Head),
+    fact_args_atomic(Head).
 dl6_fact(Term, Term) :-
     ground(Term),
-    \+ Term = match(_, _).
+    \+ Term = match(_, _),
+    fact_args_atomic(Term).
+
+fact_args_atomic(Fact) :-
+    Fact =.. [_ | Args],
+    forall(member(Arg, Args), atomic(Arg)).
 
 % EXPORTED because `bop check` is the SECOND caller of the text door and was
 % getting an unlocated refusal for the identical file (cold-author defect D3):
