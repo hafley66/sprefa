@@ -43,7 +43,21 @@ export function classifyLine(parsed) {
     };
   }
 
+  if (parsed.seam === "edb" && typeof parsed.sql === "string") {
+    return {
+      kind: "edb",
+      tick: tickOf(parsed.tick),
+      units: [{ unit: normalizeSql(parsed.sql), rows: 0, wall_ms: toNumber(parsed.ms) }],
+    };
+  }
+
   return null;
+}
+
+// Literals collapse to `?` so every statement of one shape shares a unit; a high
+// statements count on one shape IS the N+1 census for the EDB write plane.
+function normalizeSql(sql) {
+  return sql.replace(/\d+/g, "?").replace(/\s+/g, " ").slice(0, 120);
 }
 
 function tickOf(value) {

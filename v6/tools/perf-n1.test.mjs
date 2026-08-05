@@ -55,6 +55,22 @@ test("suspect stays 0 on a batched fixture (1 statement, 50 rows)", () => {
   assert.equal(computeSuspect(rows[0].statements, rows[0].rows, 10), 0);
 });
 
+test("edb lines aggregate by normalized sql shape", () => {
+  // Standalone EDB shape: {seam:"edb", sql, ms} from v6/dl/src/0_trace.ts
+  // onSqlMessage; digits collapse to ? so per-row statements share one unit.
+  const lines = [
+    '{"level":30,"time":1,"seam":"edb","sql":"SELECT kind FROM relbase_node WHERE path = 7","ms":0.2}',
+    '{"level":30,"time":1,"seam":"edb","sql":"SELECT kind FROM relbase_node WHERE path = 9","ms":0.3}',
+  ];
+
+  const { rows } = processJsonlLines(lines, 10);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].tick, "-");
+  assert.equal(rows[0].unit, "SELECT kind FROM relbase_node WHERE path = ?");
+  assert.equal(rows[0].statements, 2);
+  assert.equal(rows[0].wall_ms, 0.5);
+});
+
 test("malformed lines are skipped and counted, valid lines still aggregate", () => {
   // dl shape: PerfTickLine + PerfBindEntry { rel, rows, ms } from
   // v6/dl/src/0_trace.ts + v6/dl/src/0_types.ts. Served beside a shape-less
