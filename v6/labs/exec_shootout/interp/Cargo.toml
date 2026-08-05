@@ -1,0 +1,16 @@
+[package]
+name = "interp"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "interp"
+path = "src/main.rs"
+
+[dependencies]
+rustc-hash = "2"
+libc = "0.2"
+
+# Standalone crate: empty workspace table keeps this crate out of the
+# repo-root workspace so cargo does not complain about a nested non-member.
+[workspace]
