@@ -291,6 +291,9 @@ const ROW_MATCH_TEMP_TABLE = "_row_match_candidates";
 /** SQLite's compiled-in compound-select/VALUES-row cap (default 500): the ceiling on
  *  how many `(...)` tuples one multi-row INSERT ... VALUES statement may hold. */
 const ROW_MATCH_INSERT_CHUNK = 500;
+/** Per-connection "CREATE TEMP already issued" mark; `IF NOT EXISTS` keeps a re-issue
+ *  idempotent and `relMaxColumnWidth(relDecls)` is fixed for a runtime's lifetime. */
+const rowMatchTableReady = new WeakSet<Db>();
 
 function relMaxColumnWidth(relDecls: ReadonlyMap<string, RelDecl>): number {
   let max = 1;
@@ -361,6 +364,8 @@ function loadRowMatchCandidates(
   rowWidth: number,
 ): Observable<QueryResult[]> {
   return defer(() => {
+    const createTemp = !rowMatchTableReady.has(db);
+    if (createTemp) rowMatchTableReady.add(db);
     const allColumns = Array.from({ length: relMaxColumnWidth(relDecls) }, (_, index) => `c${index}`).join(", ");
     const usedColumns = Array.from({ length: rowWidth }, (_, index) => `c${index}`).join(", ");
     const chunks: StoredRow[][] = [];
@@ -368,7 +373,7 @@ function loadRowMatchCandidates(
       chunks.push(rows.slice(chunkStart, chunkStart + ROW_MATCH_INSERT_CHUNK));
     }
     return executeAll$(db, [
-      `CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`,
+      ...(createTemp ? [`CREATE TEMP TABLE IF NOT EXISTS ${ROW_MATCH_TEMP_TABLE} (${allColumns})`] : []),
       `DELETE FROM ${ROW_MATCH_TEMP_TABLE}`,
       ...chunks.map(
         (chunk) => `INSERT INTO ${ROW_MATCH_TEMP_TABLE}(${usedColumns}) VALUES ${chunk.map(sqlTuple).join(",")}`,

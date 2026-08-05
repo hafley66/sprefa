@@ -791,6 +791,41 @@ test("F2: a tick-pipeline fault rejects the in-flight commit() with the original
   }
 });
 
+test("COUNT: loadRowMatchCandidates emits its CREATE TEMP once per Db, and a DELETE per call, across two commits", async () => {
+  const { rt, dbPath } = await bootFixture(singleEdbRelProgram("node", ["path"]));
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  try {
+    const statements: string[] = [];
+    const listener = (message: unknown): void => {
+      const { sql } = message as { sql?: unknown };
+      if (typeof sql === "string") statements.push(sql);
+    };
+    sqlChannel.subscribe(listener);
+    try {
+      await rt.commit(edbBatch({ node: [{ path: "a.ts" }] }));
+      await rt.commit(edbBatch({ node: [{ path: "b.ts" }] }));
+    } finally {
+      sqlChannel.unsubscribe(listener);
+    }
+
+    const creates = statements.filter((sql) => /^CREATE TEMP TABLE IF NOT EXISTS _row_match_candidates/.test(sql));
+    const deletes = statements.filter((sql) => sql === "DELETE FROM _row_match_candidates");
+    assert.equal(
+      creates.length,
+      1,
+      `expected exactly one CREATE TEMP for the row-match table across two commits; saw ${creates.length}`,
+    );
+    assert.equal(
+      deletes.length,
+      2,
+      `expected one DELETE per loadRowMatchCandidates call across two commits; saw ${deletes.length}`,
+    );
+  } finally {
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+});
+
 test("execute$ carries the failing statement's own text (truncated) in the thrown error", async () => {
   const dbPath = path.join(os.tmpdir(), `dl-execute-diag-${Date.now()}.sqlite`);
   const db = open_db(`file:${dbPath}`);
