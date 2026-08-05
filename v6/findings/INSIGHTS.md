@@ -107,6 +107,20 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   fixed code and takes peak RSS from 2.2GB to 4.1GB. Default stays the platform
   allocator; both alternatives live behind `--features mimalloc-global` /
   `jemalloc-global` for future A/B. snmalloc-rs and rpmalloc are untested here.
+- (2026-08-05, fable) mono's own profile is clean, and two obvious fixes to it measured
+  as nothing. chain@1M, 590 top-of-stack samples: `main` (the inlined derive loop)
+  36.3%, per-source `FxHashSet<u32>` insert 29.8%, `reserve_rehash` 8.6%,
+  memset/bzero 8.8%, malloc/free 11.5%. Pre-sizing the shard vector from the input
+  header plus swapping two delta buffers instead of allocating one per round gave
+  153ms against 151ms at chain@10k and 503ms against 501ms at chain@1M, so the change
+  was reverted. `Vec` growth was already amortized; the remaining allocation belongs
+  to the hash tables themselves.
+- (2026-08-05, fable) Dedup layout D, one bitmap per source (`Vec<u64>`, target id as
+  bit index), runs chain@10k in **37ms against the sharded hash sets' 146ms**, a 3.9x
+  win in 7.5MB. It does not generalize by scale: the allocation is `nodes^2 / 8`
+  bytes, which is 7.5MB at 7746 nodes and **125GB** at chain@1M's 999,989 nodes. A
+  generator that picks the dedup structure from a cardinality estimate beats any
+  fixed choice, and that decision belongs in the emitter rather than in the runtime.
 - (2026-08-05, fable) macOS `sample <pid>` is enough to find this class of defect, no
   instrumentation build needed. interp on layered@100k, 4599 top-of-stack samples:
   malloc/free **39.5%**, hashing the `Vec`-keyed dedup set 18.3%, `match_body` (the

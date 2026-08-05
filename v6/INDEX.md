@@ -24,7 +24,7 @@
 | [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
-| [findings/INSIGHTS.md](findings/INSIGHTS.md) | 228 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
+| [findings/INSIGHTS.md](findings/INSIGHTS.md) | 242 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
 | [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 116 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
 | [hs-prolog/AUDIT/CONTRACT.md](hs-prolog/AUDIT/CONTRACT.md) | 153 | Audit lane: hunt cheats and bad couplings in the Haskell work |
@@ -332,12 +332,12 @@
 1:# v6 INSIGHTS — SQL · Rust · Graph (one living ledger)
 21:## 1 · SQL insights (SQLite mechanics under the RAM microscope)
 37:## 2 · Rust insights (allocation, measurement, the honest footprint)
-120:## 3 · Graph-theory insights (the covering set on-disk)
-143:## APPENDIX — FROZEN CONTRACT (do not drift; all three jobs code to THIS)
-145:### A. `src/reach.rs` public API (graph = `cx_dep`, keys are i64)
-189:### B. node ↔ key bridge (for the agreement test)
-196:### C. uniform measurement (`src/measure.rs`) — the anti-guess rule
-221:### D. ownership (disjoint, this wave)
+134:## 3 · Graph-theory insights (the covering set on-disk)
+157:## APPENDIX — FROZEN CONTRACT (do not drift; all three jobs code to THIS)
+159:### A. `src/reach.rs` public API (graph = `cx_dep`, keys are i64)
+203:### B. node ↔ key bridge (for the agreement test)
+210:### C. uniform measurement (`src/measure.rs`) — the anti-guess rule
+235:### D. ownership (disjoint, this wave)
 ```
 
 ### findings/PINS.md
