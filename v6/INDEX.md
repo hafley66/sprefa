@@ -24,7 +24,7 @@
 | [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
-| [findings/INSIGHTS.md](findings/INSIGHTS.md) | 175 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
+| [findings/INSIGHTS.md](findings/INSIGHTS.md) | 192 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
 | [findings/PINS.md](findings/PINS.md) | 6 | Pins |
 | [findings/soft-delete-durable-scan.md](findings/soft-delete-durable-scan.md) | 116 | Soft-delete / tombstone scan — is weight>0 filtering in the counting cascade? |
 | [hs-prolog/AUDIT/CONTRACT.md](hs-prolog/AUDIT/CONTRACT.md) | 153 | Audit lane: hunt cheats and bad couplings in the Haskell work |
@@ -40,7 +40,7 @@
 | [hs-prolog/idioms/IDIOMS.md](hs-prolog/idioms/IDIOMS.md) | 395 | Haskell idioms that professional projects actually use |
 | [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
-| [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 94 | exec_shootout STANDINGS |
+| [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 70 | exec_shootout STANDINGS |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -332,12 +332,12 @@
 1:# v6 INSIGHTS — SQL · Rust · Graph (one living ledger)
 21:## 1 · SQL insights (SQLite mechanics under the RAM microscope)
 37:## 2 · Rust insights (allocation, measurement, the honest footprint)
-67:## 3 · Graph-theory insights (the covering set on-disk)
-90:## APPENDIX — FROZEN CONTRACT (do not drift; all three jobs code to THIS)
-92:### A. `src/reach.rs` public API (graph = `cx_dep`, keys are i64)
-136:### B. node ↔ key bridge (for the agreement test)
-143:### C. uniform measurement (`src/measure.rs`) — the anti-guess rule
-168:### D. ownership (disjoint, this wave)
+84:## 3 · Graph-theory insights (the covering set on-disk)
+107:## APPENDIX — FROZEN CONTRACT (do not drift; all three jobs code to THIS)
+109:### A. `src/reach.rs` public API (graph = `cx_dep`, keys are i64)
+153:### B. node ↔ key bridge (for the agreement test)
+160:### C. uniform measurement (`src/measure.rs`) — the anti-guess rule
+185:### D. ownership (disjoint, this wave)
 ```
 
 ### findings/PINS.md

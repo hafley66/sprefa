@@ -61,6 +61,23 @@ This doc is the counterpart to `HYPOTHESES.md` (untested ideas) and `DECISIONS.m
   `sqlite_hw_kb` is read via `dlsym(RTLD_DEFAULT, "sqlite3_memory_highwater")` (global,
   no handle) — sound. `insert_ms≈0` in the seed run is real: the retract engines fold
   insert into build, so the insert phase is a no-op for those cells.
+- (2026-08-05, fable) exec_shootout, full ladder rerun (`v6/labs/exec_shootout/STANDINGS.md`,
+  9 cases x 3 families x 3 runs): **compiler-emitted rust wins all 9**, 1.01x to 2.4x
+  over the rx operator graph and 6x to 21x over the IR interpreter. Chain@10k 62.1M
+  vs 34.8M derived rows/sec; layered@100k 21.4M vs 9.9M; the closest case is
+  chain@1M (18.59M vs 18.42M, inside noise). Peak RSS is 1.6x to 5x lower than
+  rxgraph in every case. The emitter is `v6/prolog/labs/emit_rust_shootout/emit_rust.pl`
+  (`swipl -g main -t halt`), which writes `mono/src/main.rs`.
+- (2026-08-05, fable) The dedup data structure, not the indirection layer, decided
+  the earlier upset. The hand-written mono held one flat `FxHashSet<Pair(u64)>` of
+  ~10M entries and took **9907-10540ms** on chain@10k; the emitted version shards
+  the seen set per source node (`Vec<FxHashSet<u32>>`) and takes **161-264ms** on
+  the same input file, same derived count 9996213 and checksum df09b2f409f8b9a8.
+  40x from one storage-layout change, at half the RSS (117MB vs 300MB). A shootout
+  row measures the impl you wrote, and a hand-written entrant is a confound.
+- (2026-08-05, fable) `Pair` in the retired hand mono carried a comment claiming
+  "packed into one u32"; it was `Pair(u64)`, `size_of == 8`. The comment shipped
+  through a full standings run without anyone checking it against the type.
 - _(add Rust findings here — allocator behavior, memcap interactions, macOS vs Linux
   rusage quirks, sea-orm/rusqlite overhead observed.)_
 
