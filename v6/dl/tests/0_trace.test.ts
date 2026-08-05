@@ -135,6 +135,38 @@ test("on: a real commit against a derived-rel program emits one parseable JSONL 
   }
 });
 
+test("EDB plane: execute$ publishes seam:\"edb\" sql events with a numeric duration", async () => {
+  // The EDB write phase (applyEdbTxn's insertRows/deleteRows/insertDeltaRows, all
+  // funneled through 3_runtime.ts's execute$) is invisible to the tick-keyed
+  // sqlTraceFor seam, which only sees the fixpoint phase. Subscribe directly to the
+  // shared sprefa:sql channel and commit an EDB write: the captured events must carry
+  // seam "edb" and a numeric ms, proving the ingest path now reaches the trace spine.
+  const sqlChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.sql);
+  const { rt, dbPath } = await bootParentFixture();
+  const captured: Record<string, unknown>[] = [];
+  const listener = (message: unknown): void => {
+    captured.push(message as Record<string, unknown>);
+  };
+  sqlChannel.subscribe(listener);
+  try {
+    await rt.commit(edbBatch({ parent: PARENT_ROWS }));
+  } finally {
+    sqlChannel.unsubscribe(listener);
+    await rt.dispose();
+    cleanupDbFile(dbPath);
+  }
+
+  const edbLines = captured.filter((event) => event.seam === "edb");
+  assert.ok(
+    edbLines.length > 0,
+    `expected at least one EDB-plane sql event tagged seam:"edb", saw ${captured.length} total captured`,
+  );
+  for (const line of edbLines) {
+    assert.equal(typeof line.sql, "string");
+    assert.equal(typeof line.ms, "number", "EDB sql event must carry a numeric duration");
+  }
+});
+
 test("on: effectDone/bindDone/ingestDone fold into the same tick's line with the exact field shapes", async () => {
   // F4 (2026-07-28 cleanup audit): this case pinned effects/ingest exactly but left
   // `binds` (PerfBindEntry, the input-side twin of `effects` -- 1_binds.ts's BindRunner

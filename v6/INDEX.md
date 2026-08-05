@@ -39,7 +39,7 @@
 | [hs-prolog/idioms/IDIOMS.md](hs-prolog/idioms/IDIOMS.md) | 395 | Haskell idioms that professional projects actually use |
 | [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
-| [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 34 | exec_shootout STANDINGS |
+| [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 94 | exec_shootout STANDINGS |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -543,9 +543,9 @@
 ```
 1:# exec_shootout STANDINGS
 7:## chain
-14:## grid
-21:## layered
-28:## Engine builds
+25:## grid
+43:## layered
+61:## Engine builds
 ```
 
 ### plans/2026-07-19-reactive-style-port.md

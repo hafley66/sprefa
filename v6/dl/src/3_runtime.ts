@@ -314,11 +314,14 @@ const SQL_ERROR_EXCERPT_LENGTH = 800;
  *  lost. */
 export const execute$ = (db: Db, sql: string): Observable<QueryResult> =>
   defer(() => {
-    // Test-observability seam (F1, 0_trace.ts's rawSql doc comment): every SQL
-    // statement 3_runtime.ts runs passes through here, so this is the one place that
-    // can make the executed text visible to a test subscribing to the sql channel --
-    // near-free when nothing subscribes (diagnostics_channel's hasSubscribers guard).
-    PerfTrace.rawSql(sql);
+    // The one place every statement reaches db.execute; one hasSubscribers read
+    // decides the branch, so the unsubscribed path pays nothing (0_trace.ts header).
+    if (PerfTrace.sqlActive()) {
+      const startedAt = performance.now();
+      return from(db.execute(sql)).pipe(
+        tap(() => PerfTrace.edbSql(sql, performance.now() - startedAt)),
+      );
+    }
     return from(db.execute(sql));
   }).pipe(
     catchError((failure: unknown) => {

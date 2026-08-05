@@ -26,15 +26,6 @@
  *   IS statement N's wall time. `finishSqlTrace` closes out a run's LAST statement,
  *   which has no "next" call to diff against.
  *
- *   SEAM GAP (report honestly, not invented away): 3_runtime.ts's EDB-plane writes
- *   (insertRows/deleteRows/insertDeltaRows inside applyEdbTxn) run through that
- *   file's own hand-rolled `execute$`/`executeAll$` helpers, which call
- *   `db.execute` directly and never touch SqlRunner or its trace hook at all — a
- *   pre-existing gap in 3_runtime.ts, independent of this arc. Seam 1 therefore
- *   only sees the FIXPOINT/derived phase (evalProgramSql), not the raw EDB write
- *   phase. Routing applyEdbTxn's writes through SqlRunner is a real fix but is a
- *   bigger touch than "tick-boundary hook only, minimal" authorizes here.
- *
  *   sprefa:effect — one event per finished host effect (1_hosts.ts,
  *   HostRunner.runEffectOnce): `effectDone` is called explicitly at each of that
  *   method's three exit points (cache hit / success / error), because those three
@@ -114,9 +105,10 @@ const ingestChannel = diagnostics_channel.channel(PERF_CHANNEL_NAMES.ingest);
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface SqlEvent {
-  readonly tick: number;
+  readonly tick?: number;
   readonly sql: string;
   readonly ms: number;
+  readonly seam: "fixpoint" | "edb";
 }
 
 interface EffectEvent {
@@ -160,7 +152,7 @@ function closeOpenStatement(tick: number, now: number): void {
   const open = openStatementByTick.get(tick);
   if (!open) return;
   openStatementByTick.delete(tick);
-  sqlChannel.publish({ tick, sql: open.sql, ms: now - open.startedAt } satisfies SqlEvent);
+  sqlChannel.publish({ tick, sql: open.sql, ms: now - open.startedAt, seam: "fixpoint" } satisfies SqlEvent);
 }
 
 function sqlTraceFor(tick: number): (sql: string) => void {
@@ -181,13 +173,24 @@ function finishSqlTrace(tick: number): void {
   closeOpenStatement(tick, performance.now());
 }
 
-/** Untethered from any tick: no `ms`, no open/close bookkeeping, and (see
- *  onSqlMessage above) invisible to the tick-keyed aggregator. See IPerfTrace's
- *  doc comment (0_types.ts) for why this exists and why it is safe to call from
- *  every statement 3_runtime.ts runs, unconditionally. */
+/** Untethered text-only publish on the same channel: no tick, no seam, invisible to
+ *  the tick-keyed aggregator. `execute$` now calls `edbSql` below instead. */
 function rawSql(sql: string): void {
   if (!sqlChannel.hasSubscribers) return;
   sqlChannel.publish({ sql } satisfies Pick<SqlEvent, "sql">);
+}
+
+/** True when the `sprefa:sql` channel has a subscriber: the single off-path read that
+ *  decides whether 3_runtime.ts's `execute$` pays for EDB-plane tracing at all. */
+function sqlActive(): boolean {
+  return sqlChannel.hasSubscribers;
+}
+
+/** One EDB-plane statement (3_runtime.ts `execute$`), wall time in `ms`, tagged
+ *  `seam: "edb"` so a grep separates it from the fixpoint plane's tick events. */
+function edbSql(sql: string, ms: number): void {
+  if (!sqlChannel.hasSubscribers) return;
+  sqlChannel.publish({ sql, ms, seam: "edb" } satisfies SqlEvent);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,10 +228,14 @@ function bufferFor(tick: number): TickBuffer {
 
 function onSqlMessage(message: unknown): void {
   const event = message as SqlEvent;
-  // rawSql (F1's test-observability seam, below) publishes on this SAME channel with
-  // no `tick` at all -- ignore anything that isn't a real tick-keyed SqlEvent so a raw
-  // publish never mints a phantom buffer entry that no real tick ever flushes.
-  if (typeof event.tick !== "number") return;
+  // Tickless events never mint a phantom buffer entry: rawSql (no seam) publishes
+  // nothing, EDB events emit one standalone line per statement.
+  if (typeof event.tick !== "number") {
+    if (event.seam === "edb" && logger) {
+      logger.info({ seam: "edb", sql: event.sql, ms: round2(event.ms) });
+    }
+    return;
+  }
   const buffer = bufferFor(event.tick);
   buffer.stmtCount += 1;
   buffer.stmtMsTotal += event.ms;
@@ -400,6 +407,8 @@ export const PerfTrace: IPerfTrace = {
   sqlTraceFor,
   finishSqlTrace,
   rawSql,
+  sqlActive,
+  edbSql,
   effectDone,
   bindDone,
   ingestDone,
