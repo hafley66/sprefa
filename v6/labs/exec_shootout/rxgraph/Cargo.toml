@@ -1,0 +1,16 @@
+[package]
+name = "rxgraph"
+version = "0.1.0"
+edition = "2021"
+description = "exec_shootout lane: rx operator graph engine for the reachability workload"
+
+[dependencies]
+fxhash = "0.2.1"
+libc = "0.2"
+
+# Standalone crate: excluded from the repo's root workspace so this lane owns
+# its own lockfile and build.
+[workspace]
+
+[profile.release]
+opt-level = 3
