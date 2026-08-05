@@ -1112,6 +1112,8 @@ check_supported_subset_expanded(Program) :-
                               % check; this one is about what the program
                               % wrote down and so belongs to both doors.
                               head_column_type_conflict,
+                              cst_capture_unused,
+                              cst_variable_uncaptured,
                               regexp_pattern_not_literal,
                               regexp_pattern_outside_subset,
                               regexp_pattern_invalid,
@@ -1221,6 +1223,9 @@ compiler_refusal(head_column_type_conflict,
                           BodyRef, BodyColumn, BodyType),
                  head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                            BodyRef, BodyColumn, BodyType)).
+compiler_refusal(cst_capture_unused, Name, cst_capture_unused(Name)).
+compiler_refusal(cst_variable_uncaptured, Name,
+                 cst_variable_uncaptured(Name)).
 compiler_refusal(regexp_pattern_not_literal, Payload, Payload).
 compiler_refusal(regexp_pattern_outside_subset, Payload, Payload).
 compiler_refusal(regexp_pattern_invalid, Payload, Payload).

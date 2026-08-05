@@ -72,6 +72,8 @@
 :- use_module(registry,
               [ surface/5, body_surface_for_term/6,
                 wrapper_lower_role/3, host_input_roles/3 ]).
+:- use_module('../0_cst_query',
+              [ parse_cst_query/2, ts_query_capture_names/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -81,6 +83,7 @@
 :- dynamic(rel_column_order_fact/2).
 :- dynamic(host_signature_fact/3).
 :- dynamic(source_statement_fact/3).
+:- discontiguous body_item/5.
 
 % The four position values below live in non-backtrackable globals, not in
 % dynamic facts like the rest of this file's parse state, because a dynamic
@@ -542,8 +545,8 @@ statement(Kind, Item, Vars0, Vars, S0, S) :-
     ; decl_b_stmt(Item0, S1, S2) -> Kind = decl_list, Item = Item0, Vars = Vars0, S = S2
     ; sh_decl_stmt(Item0, S1, S2) -> Kind = decl_list, Item = [Item0], Vars = Vars0, S = S2
     ; query_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = query, Item = Item0, Vars = Vars1, S = S2
-    ; match_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
-    ; rule_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, Item = Item0, Vars = Vars1, S = S2
+    ; match_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, annotate_cst_item(Item0, Vars1, Item), Vars = Vars1, S = S2
+    ; rule_stmt(Item0, Vars0, Vars1, S1, S2) -> Kind = rule, annotate_cst_item(Item0, Vars1, Item), Vars = Vars1, S = S2
     ).
 
 % ═══ dialect-A decl: `rel Name(col[: type], ...) [log] [keep(all|count(N))]
@@ -1204,12 +1207,110 @@ body(Body, Vars0, Vars, S0, S) :-
 % prefix negation (!rel(args)), then a plain host/relation or mutation atom.
 
 body_item(Item, Vars0, Vars, S0, S) :-
+    cst_item(Item, Vars0, Vars, S0, S),
+    !.
+body_item(Item, Vars0, Vars, S0, S) :-
     surface(Name/Arity, _, AnalyzeRole, LowerRole, Status),
     wrapper_lower_role(LowerRole, Shape, _),
     keyword_call(Name, InnerCodes, S0, S),
     !,
     parse_surface_wrapper(Shape, Arity, InnerCodes, Args, Vars0, Vars),
     build_surface_item(Name, AnalyzeRole, Status, Args, Item).
+
+cst_item(cst(Path, Digest, Language, Query), Vars0, Vars, S0, S) :-
+    word(`cst`, S0, S1),
+    ws0(S1, S2), lit_dcg(`(`, S2, S3),
+    expr(Path, Vars0, Vars1, S3, S4),
+    ws0(S4, S5), lit_dcg(`,`, S5, S6),
+    expr(Digest, Vars1, Vars2, S6, S7),
+    ws0(S7, S8), lit_dcg(`,`, S8, S9),
+    ws0(S9, S10), ident(Language, S10, S11),
+    ws0(S11, S12), lit_dcg(`)`, S12, S13),
+    ws0(S13, S14), lit_dcg(`{`, S14, S15),
+    cst_block_codes(S15, InnerCodes, S16),
+    parse_cst_query_or_error(InnerCodes, S16, Query),
+    S = S16,
+    Vars = Vars2.
+
+parse_cst_query_or_error(Codes, Remaining, Query) :-
+    catch(parse_cst_query(Codes, Query), _,
+          ( mark_furthest(Remaining), parse_failure(cst_query) )),
+    !.
+
+cst_block_codes([0'} | Rest], [], Rest) :- !.
+cst_block_codes([0'" | Rest], Codes, S) :-
+    cst_block_string(Rest, StringCodes, S1),
+    cst_block_codes(S1, MoreCodes, S),
+    append([0'" | StringCodes], MoreCodes, Codes),
+    !.
+cst_block_codes([Code | Rest], [Code | More], S) :-
+    cst_block_codes(Rest, More, S).
+
+cst_block_string([0'" | Rest], [0'"], Rest) :- !.
+cst_block_string([0'\\, Code | Rest], [0'\\, Code | More], S) :-
+    !,
+    cst_block_string(Rest, More, S).
+cst_block_string([Code | Rest], [Code | More], S) :-
+    cst_block_string(Rest, More, S).
+
+annotate_cst_item((Head <- Body), Vars, (Head <- Annotated)) :-
+    !,
+    term_variables((Head, Body), RuleVariables),
+    annotate_cst_body(Body, Head, Vars, RuleVariables, Annotated).
+annotate_cst_item((Head <+ Body), Vars, (Head <+ Annotated)) :-
+    !,
+    term_variables((Head, Body), RuleVariables),
+    annotate_cst_body(Body, Head, Vars, RuleVariables, Annotated).
+annotate_cst_item(match(Source, Arms), Vars, match(Source, AnnotatedArms)) :-
+    !,
+    annotate_cst_arms(Arms, Vars, AnnotatedArms).
+annotate_cst_item(Item, _, Item).
+
+annotate_cst_arms((Left ; Right), Vars, (AnnotatedLeft ; AnnotatedRight)) :-
+    !,
+    annotate_cst_item(Left, Vars, AnnotatedLeft),
+    annotate_cst_arms(Right, Vars, AnnotatedRight).
+annotate_cst_arms(Arm, Vars, Annotated) :-
+    annotate_cst_item(Arm, Vars, Annotated).
+
+annotate_cst_body((Left, Right), Head, Vars, RuleVariables,
+                  (AnnotatedLeft, AnnotatedRight)) :-
+    !,
+    annotate_cst_body(Left, Head, Vars, RuleVariables, AnnotatedLeft),
+    annotate_cst_body(Right, Head, Vars, RuleVariables, AnnotatedRight).
+annotate_cst_body(cst(Path, Digest, Language, Query), Head, Vars,
+                  RuleVariables,
+                  cst(Path, Digest, Language, Query,
+                      cst_bindings(CaptureNames, CandidateNames, RuleNames))) :-
+    !,
+    ts_query_capture_names(Query, CaptureNames),
+    term_variables((Path, Digest), InputVariables),
+    cst_variable_names(RuleVariables, Vars, RuleNames),
+    cst_variable_names(InputVariables, Vars, InputNames),
+    cst_body_variable_names(Head, Path, Digest, Vars, InputNames,
+                            CandidateNames).
+annotate_cst_body(Item, _, _, _, Item).
+
+cst_body_variable_names(Head, Path, Digest, Vars, InputNames, Names) :-
+    term_variables(Head, HeadVariables),
+    term_variables((Path, Digest), InputVariables),
+    cst_variable_names(HeadVariables, Vars, HeadNames),
+    cst_variable_names(InputVariables, Vars, InputNames0),
+    append(InputNames, InputNames0, ExcludedNames0),
+    sort(ExcludedNames0, ExcludedNames),
+    subtract(HeadNames, ExcludedNames, WithoutInputs),
+    subtract(WithoutInputs, [line, end_line], Names).
+
+cst_variable_names([], _, []).
+cst_variable_names([Variable | Rest], Vars, Names) :-
+    ( cst_variable_name(Variable, Vars, Name) -> Names = [Name | More] ; Names = More ),
+    cst_variable_names(Rest, Vars, More).
+
+cst_variable_name(Variable, [Name-Candidate | _], Name) :-
+    Variable == Candidate,
+    !.
+cst_variable_name(Variable, [_ | Rest], Name) :-
+    cst_variable_name(Variable, Rest, Name).
 body_item(Item, Vars, Vars, S0, S) :-
     surface(Name/0, _, _, word(_), _),
     atom_codes(Name, NameCodes),

@@ -33,6 +33,7 @@
                 host_executor_contract/2,
                 host_input_roles/3
               ]).
+:- use_module('0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -153,6 +154,13 @@ normalize_rule_shape((Head <+ Body), (Head <+ Body)).
 compile_value_terms(Term, Term) :-
     var(Term),
     !.
+compile_value_terms(Term, Text) :-
+    nonvar(Term),
+    ( Term = cst(_, _, _, _)
+    ; Term = cst(_, _, _, _, _)
+    ),
+    !,
+    Text = Term.
 compile_value_terms(Term, Text) :-
     nonvar(Term),
     Term = ts_query(_),
@@ -414,80 +422,7 @@ compile_query(Query, _) :-
     throw(query_mismatch(Query)).
 
 compile_ts_query(ts_query(Patterns), Text) :-
-    maplist(ts_pattern_text, Patterns, Parts),
-    atomics_to_string(Parts, "\n", Text),
-    !.
-compile_ts_query(Term, _) :-
-    Term = sg_pattern(_, _, _),
-    throw(unmapped_feature(slot_sg_metavariable_semantics, Term)).
-compile_ts_query(Term, _) :-
-    throw(unmapped_feature(slot_ts_query_term, Term)).
-
-ts_pattern_text(group(Root, Predicates), Text) :-
-    ts_pattern_text(Root, RootText),
-    maplist(ts_pattern_text, Predicates, PredicateTexts),
-    append([RootText], PredicateTexts, Parts),
-    atomics_to_string(Parts, " ", Inner),
-    format(string(Text), "(~s)", [Inner]).
-ts_pattern_text(node(Type, Children), Text) :-
-    atom(Type),
-    maplist(ts_pattern_text, Children, ChildTexts),
-    ( ChildTexts == []
-    -> format(string(Text), "(~w)", [Type])
-    ; atomics_to_string(ChildTexts, " ", ChildrenText),
-      format(string(Text), "(~w ~s)", [Type, ChildrenText])
-    ).
-ts_pattern_text(field(Name, Pattern), Text) :-
-    atom(Name),
-    ts_pattern_text(Pattern, PatternText),
-    format(string(Text), "~w: ~s", [Name, PatternText]).
-ts_pattern_text(capture(Name, Pattern), Text) :-
-    atom(Name),
-    ts_pattern_text(Pattern, PatternText),
-    format(string(Text), "~s @~w", [PatternText, Name]).
-ts_pattern_text(capture_ref(Name), Text) :-
-    atom(Name),
-    format(string(Text), "@~w", [Name]).
-ts_pattern_text(anonymous(Value), Text) :-
-    ts_quoted(Value, Text).
-ts_pattern_text(string(Value), Text) :-
-    ts_quoted(Value, Text).
-ts_pattern_text(predicate(eq, Left, Right), Text) :-
-    ts_pattern_text(Left, LeftText),
-    ts_pattern_text(Right, RightText),
-    format(string(Text), "(#eq? ~s ~s)", [LeftText, RightText]).
-ts_pattern_text(predicate(match, Left, Right), Text) :-
-    ts_pattern_text(Left, LeftText),
-    ts_pattern_text(Right, RightText),
-    format(string(Text), "(#match? ~s ~s)", [LeftText, RightText]).
-ts_pattern_text(quant(optional, Pattern), Text) :-
-    ts_quantified(Pattern, "?", Text).
-ts_pattern_text(quant(zero_or_more, Pattern), Text) :-
-    ts_quantified(Pattern, "*", Text).
-ts_pattern_text(quant(one_or_more, Pattern), Text) :-
-    ts_quantified(Pattern, "+", Text).
-ts_pattern_text(alternative(Patterns), Text) :-
-    maplist(ts_pattern_text, Patterns, Parts),
-    atomics_to_string(Parts, " ", Inner),
-    format(string(Text), "[~s]", [Inner]).
-ts_pattern_text(wildcard, "_").
-ts_pattern_text(named_wildcard, "(_)").
-ts_pattern_text(Term, _) :-
-    throw(unmapped_feature(slot_ts_pattern_form, Term)).
-
-ts_quantified(Pattern, Glyph, Text) :-
-    ts_pattern_text(Pattern, PatternText),
-    string_concat(PatternText, Glyph, Text).
-
-ts_quoted(Value, Quoted) :-
-    string_codes(Value, Codes),
-    phrase(ts_escaped_codes(Codes), Escaped),
-    string_codes(EscapedString, Escaped),
-    format(string(Quoted), "\"~s\"", [EscapedString]).
-
-ts_escaped_codes([]) --> [].
-ts_escaped_codes([0'\\ | Rest]) --> "\\\\", ts_escaped_codes(Rest).
-ts_escaped_codes([0'" | Rest]) --> "\\\"", ts_escaped_codes(Rest).
+    serialize_ts_query(ts_query(Patterns), Text).
 ts_escaped_codes([Code | Rest]) --> [Code], ts_escaped_codes(Rest).
 
 expand_probe_rules([], _, _, [], []).

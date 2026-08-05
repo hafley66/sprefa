@@ -36,6 +36,7 @@
                 expression/5,
                 host_input_contract/3
               ]).
+:- use_module('0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -391,11 +392,24 @@ print_body_item(Term, Bindings, Text) :-
     maplist(print_arg(Bindings), Values, ValueTexts),
     atomic_list_concat(ValueTexts, ', ', ValuesText),
     format(atom(Text), "~w(~w)", [Name, ValuesText]).
+print_body_item(cst(Path, Digest, Language, Query, _), Bindings, Text) :-
+    !,
+    print_cst_body(Path, Digest, Language, Query, Bindings, Text).
+print_body_item(cst(Path, Digest, Language, Query), Bindings, Text) :-
+    !,
+    print_cst_body(Path, Digest, Language, Query, Bindings, Text).
 print_body_item(Term, Bindings, Text) :-
     body_surface_for_term(Term, _, _, _, LowerRole, _), !,
     print_surface_body_item(LowerRole, Term, Bindings, Text).
 print_body_item(Term, Bindings, Text) :-
     print_term(Term, Bindings, 0, top, Text).
+
+print_cst_body(Path, Digest, Language, Query, Bindings, Text) :-
+    print_term(Path, Bindings, 0, top, PathText),
+    print_term(Digest, Bindings, 0, top, DigestText),
+    serialize_ts_query(Query, QueryText),
+    format(atom(Text), "cst(~w, ~w, ~w) { ~s }",
+           [PathText, DigestText, Language, QueryText]).
 
 print_surface_body_item(LowerRole, Term, Bindings, Text) :-
     wrapper_lower_role(LowerRole, Shape, _), !,

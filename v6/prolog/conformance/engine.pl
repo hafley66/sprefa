@@ -136,6 +136,8 @@ engine_check_order([ key_position_out_of_range,
                      % program contradicting a STRUCT type still reports the
                      % ref-flavoured name it always did.
                      head_column_type_conflict,
+                     cst_capture_unused,
+                     cst_variable_uncaptured,
                      regexp_pattern_not_literal,
                      regexp_pattern_outside_subset,
                      regexp_pattern_invalid,
@@ -205,6 +207,9 @@ engine_refusal(head_column_type_conflict,
                         BodyRef, BodyColumn, BodyType),
                head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                          BodyRef, BodyColumn, BodyType)).
+engine_refusal(cst_capture_unused, Name, cst_capture_unused(Name)).
+engine_refusal(cst_variable_uncaptured, Name,
+               cst_variable_uncaptured(Name)).
 engine_refusal(regexp_pattern_not_literal, Payload, Payload).
 engine_refusal(regexp_pattern_outside_subset, Payload, Payload).
 engine_refusal(regexp_pattern_invalid, Payload, Payload).

@@ -35,6 +35,7 @@
 % through parse_dl/4 alone only reaches the positions a refusal happens to land
 % on.
 :- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3 ]).
+:- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
@@ -1657,6 +1658,54 @@ test(native_ts_query_exact_text) :-
       Text),
     Text ==
       "((call_expression function: (identifier) @callee) (#eq? @callee \"fetch\"))\n(comment)?\n_*".
+
+native_cst_source(
+  "found(name, other) <-\n  file(path, digest),\n  cst(path, digest, rust) {\n    [ (function_item name: (identifier) @other) ]\n    (#match? @other \"^handle_\")\n  }.\n").
+
+test(native_cst_block_parses_to_ts_query) :-
+    native_cst_source(Text),
+    string_codes(Text, Codes),
+    parse_dl(Codes, prog([], [Rule]), Bindings, []),
+    Rule = (found(Name, Other) <- (file(Path, Digest), Cst)),
+    Cst = cst(Path, Digest, rust, Query, _),
+    Query = ts_query([
+      group(
+        alternative([
+          node(function_item,
+               [field(name, capture(other, node(identifier, [])))])
+        ]),
+        [predicate(match, capture_ref(other), string("^handle_"))]
+      )
+    ]),
+    Bindings = [name=Name, other=Other, path=Path, digest=Digest].
+
+test(native_cst_query_round_trips_fixture) :-
+    fixture_file('2_hosts_wiring.pl', File),
+    read_fixture_term(File, native_ts_query_term, Term, _),
+    Term = fixture(_, program(_, Rules, _), _, _, _),
+    member(Rule, Rules),
+    sub_term(ts_query(QueryPatterns), Rule),
+    compile_ts_query(ts_query(QueryPatterns), Text),
+    string_codes(Text, Codes),
+    parse_cst_query(Codes, ts_query(QueryPatterns)).
+
+test(native_cst_capture_unused,
+     [throws(unsupported_construct(cst_capture_unused(other)))]) :-
+    string_codes("found(name) <- cst(path, digest, rust) { (identifier) @other }.", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_ast_program_with_bindings(Program, Bindings, _).
+
+test(native_cst_variable_uncaptured,
+     [throws(unsupported_construct(cst_variable_uncaptured(name)))]) :-
+    string_codes("found(name, other) <- cst(path, digest, rust) { (identifier) @other }.", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_ast_program_with_bindings(Program, Bindings, _).
+
+test(native_cst_match_uses_regexp_subset,
+     [throws(unsupported_construct(regexp_pattern_outside_subset("a(?=b)")))]) :-
+    string_codes("found(other) <- cst(path, digest, rust) { (identifier) @other (#match? @other \"a(?=b)\") }.", Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    expand_ast_program_with_bindings(Program, Bindings, _).
 
 test(emitter_carries_world_plans_and_demand_sql) :-
     fixture_file('2_hosts_wiring.pl', File),

@@ -171,6 +171,55 @@ program_violation(regexp_pattern_invalid, prog(_, Rules),
     regexp_pattern_pcre_error(Pattern, Message),
     !.
 
+program_violation(cst_capture_unused, prog(_, Rules), Name) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule,
+                   cst(_, _, _, _, cst_bindings(CaptureNames, _, RuleNames))),
+    member(Name, CaptureNames),
+    \+ memberchk(Name, RuleNames),
+    !.
+
+program_violation(cst_variable_uncaptured, prog(_, Rules), Name) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule,
+                   cst(_, _, _, _, cst_bindings(CaptureNames, CandidateNames,
+                                                 _))),
+    member(Name, CandidateNames),
+    \+ memberchk(Name, CaptureNames),
+    !.
+
+program_violation(cst_regexp_pattern_not_literal, prog(_, Rules),
+                  regexp_pattern_not_literal) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, cst(_, _, _, Query, _)),
+    cst_regexp_pattern(Query, Pattern),
+    \+ string(Pattern),
+    !.
+
+program_violation(cst_regexp_pattern_outside_subset, prog(_, Rules),
+                  regexp_pattern_outside_subset(Pattern)) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, cst(_, _, _, Query, _)),
+    cst_regexp_pattern(Query, Pattern),
+    string(Pattern),
+    regexp_pattern_outside_subset(Pattern),
+    !.
+
+program_violation(cst_regexp_pattern_invalid, prog(_, Rules),
+                  regexp_pattern_invalid(Pattern, Message)) :-
+    member(Rule, Rules),
+    rule_body_goal(Rule, cst(_, _, _, Query, _)),
+    cst_regexp_pattern(Query, Pattern),
+    string(Pattern),
+    \+ regexp_pattern_outside_subset(Pattern),
+    regexp_pattern_pcre_error(Pattern, Message),
+    !.
+
+cst_regexp_pattern(Query, Pattern) :-
+    sub_term(predicate(Kind, _, Right), Query),
+    memberchk(Kind, [match, not_match]),
+    ( Right = string(Pattern) -> true ; Pattern = Right ).
+
 program_violation(regexp_operand_not_text, prog(Decls, Rules),
                   regexp_operand_not_text(Ref, Column, Type)) :-
     type_definitions(Decls, Types),

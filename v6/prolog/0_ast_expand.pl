@@ -7,6 +7,7 @@
 :- use_module(library(lists)).
 :- use_module('0_program_check',
               [ first_violation/3, ast_capture_names/2 ]).
+:- use_module('0_cst_query', [ serialize_ts_query/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -16,8 +17,10 @@ expand_ast_program(Program, Expanded) :-
     expand_ast_program_with_bindings(Program, [], Expanded).
 
 expand_ast_program_with_bindings(Program, Bindings, Expanded) :-
-    ast_refusal(Program),
-    Program = prog(Decls, Rules0),
+    cst_refusal(Program),
+    normalize_cst_program(Program, Normalized),
+    ast_refusal(Normalized),
+    Normalized = prog(Decls, Rules0),
     rewrite_rules(Rules0, Bindings, 1, [], Rules, HostDecls, RelationDecls),
     append([Decls, HostDecls, RelationDecls], ExpandedDecls),
     Expanded = prog(ExpandedDecls, Rules).
@@ -38,6 +41,49 @@ ast_refusal(Program) :-
     ast_refusal_term(Name, Payload, Reason),
     throw(unsupported_construct(Reason)).
 ast_refusal(_).
+
+cst_refusal(Program) :-
+    first_violation(
+        Program,
+        [cst_capture_unused, cst_variable_uncaptured,
+         cst_regexp_pattern_not_literal, cst_regexp_pattern_outside_subset,
+         cst_regexp_pattern_invalid],
+        violation(Name, Payload)),
+    cst_refusal_term(Name, Payload, Reason),
+    throw(unsupported_construct(Reason)).
+cst_refusal(_).
+
+cst_refusal_term(cst_capture_unused, Name, cst_capture_unused(Name)).
+cst_refusal_term(cst_variable_uncaptured, Name,
+                 cst_variable_uncaptured(Name)).
+cst_refusal_term(cst_regexp_pattern_not_literal, Payload, Payload).
+cst_refusal_term(cst_regexp_pattern_outside_subset, Payload, Payload).
+cst_refusal_term(cst_regexp_pattern_invalid, Payload, Payload).
+
+normalize_cst_program(prog(Decls, Rules), prog(Decls, NormalizedRules)) :-
+    maplist(normalize_cst_rule, Rules, NormalizedRules).
+
+normalize_cst_rule((Head <- Body), (Head <- Normalized)) :-
+    !,
+    normalize_cst_body(Body, Normalized).
+normalize_cst_rule((Head <+ Body), (Head <+ Normalized)) :-
+    !,
+    normalize_cst_body(Body, Normalized).
+normalize_cst_rule(Rule, Rule).
+
+normalize_cst_body((Left, Right), (NormalizedLeft, NormalizedRight)) :-
+    !,
+    normalize_cst_body(Left, NormalizedLeft),
+    normalize_cst_body(Right, NormalizedRight).
+normalize_cst_body(cst(Path, Digest, Language, Query, _),
+                   ast(Path, Digest, Language, Text)) :-
+    !,
+    serialize_ts_query(Query, Text).
+normalize_cst_body(cst(Path, Digest, Language, Query),
+                   ast(Path, Digest, Language, Text)) :-
+    !,
+    serialize_ts_query(Query, Text).
+normalize_cst_body(Body, Body).
 
 ast_refusal_term(ast_query_not_literal, _, ast_query_not_literal).
 ast_refusal_term(ast_lang_unknown, Lang, ast_lang_unknown(Lang)).
