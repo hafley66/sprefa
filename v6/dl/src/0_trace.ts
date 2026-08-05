@@ -134,6 +134,12 @@ function round2(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/** Standard-envelope `unit` for an EDB statement: literals collapse to `?` so
+ *  every statement of one shape shares a unit (mirror of perf-n1's normalizer). */
+function normalizeSql(sql: string): string {
+  return sql.replace(/\d+/g, "?").replace(/\s+/g, " ").slice(0, 120);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Open-statement tracking for the SQL seam's timestamp-diff trick (see file header).
 // Kept separate from the per-tick aggregation buffer below: this map exists
@@ -232,7 +238,7 @@ function onSqlMessage(message: unknown): void {
   // nothing, EDB events emit one standalone line per statement.
   if (typeof event.tick !== "number") {
     if (event.seam === "edb" && logger) {
-      logger.info({ seam: "edb", sql: event.sql, ms: round2(event.ms) });
+      logger.info({ seam: "edb", sql: event.sql, ms: round2(event.ms), actor: "dl.runtime", unit: normalizeSql(event.sql) });
     }
     return;
   }
@@ -333,7 +339,7 @@ function flushTick(tick: number): void {
     ingest: buffer.ingest,
     rss_kb: Math.floor(memcap.sample() / 1024),
   };
-  logger.info(line);
+  logger.info({ ...line, actor: "dl.runtime", seam: "tick", ms: line.wall_ms });
 }
 
 /** The tick-boundary hook (3_runtime.ts's clearScratchRels): closes out this tick's

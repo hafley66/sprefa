@@ -51,6 +51,16 @@ export function classifyLine(parsed) {
     };
   }
 
+  // Standard envelope (any line with actor and seam): unit read straight off the
+  // line, one statement per line, rows/ms summed by the caller.
+  if (typeof parsed.actor === "string" && typeof parsed.seam === "string") {
+    return {
+      kind: "std",
+      tick: tickOf(parsed.tick),
+      units: [{ unit: parsed.unit == null ? "" : String(parsed.unit), rows: toNumber(parsed.rows), wall_ms: toNumber(parsed.ms) }],
+    };
+  }
+
   return null;
 }
 

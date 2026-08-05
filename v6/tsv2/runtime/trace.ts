@@ -26,6 +26,14 @@ export const RuntimeTrace: IRuntimeTrace = {
 
   rule(ruleId, rows, wallMs): void {
     if (!ruleChannel.hasSubscribers) return;
-    ruleChannel.publish({ rule: ruleId, rows, wall_ms: wallMs } satisfies IServeRuleEvent);
+    ruleChannel.publish({
+      rule: ruleId,
+      rows,
+      wall_ms: wallMs,
+      actor: "tsv2.runtime",
+      seam: "sql",
+      unit: ruleId,
+      ms: wallMs,
+    } satisfies IServeRuleEvent);
   },
 };

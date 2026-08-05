@@ -690,11 +690,16 @@ export interface IServeEffectEvent {
   readonly error?: string;
 }
 
-/** One emitted statement that ran, named by the rule it was lowered from. */
+/** One emitted statement that ran, named by the rule it was lowered from.
+ *  `rule` is the legacy name; the standard envelope adds `unit` and `ms`. */
 export interface IServeRuleEvent {
   readonly rule: string;
   readonly rows: number;
   readonly wall_ms: number;
+  readonly actor: string;
+  readonly seam: string;
+  readonly unit: string;
+  readonly ms: number;
 }
 
 export interface IServeBindEvent {

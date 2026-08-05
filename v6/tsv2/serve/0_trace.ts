@@ -62,8 +62,10 @@ function install(logPath: string): void {
   });
   tickChannel.subscribe((message) => {
     const event = message as TickEvent;
-    const line: IServeTickLine = {
+    const line: IServeTickLine & { actor: "tsv2.serve"; seam: "tick" } = {
       ...event,
+      actor: "tsv2.serve",
+      seam: "tick",
       rules: pendingRules,
       effects: pendingEffects,
       binds: pendingBinds,
