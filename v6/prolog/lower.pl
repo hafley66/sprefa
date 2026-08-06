@@ -627,6 +627,23 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
                  'INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")'
                ]).
 
+% ═══ step g1 SCAFFOLD: the program catalog (rulings.pl:613 catalog_universe) ═
+% Rows describing this program's OWN rel decls, through the door tick_table_ddl/1 uses. A column is a CHILD ROW of its rel, so it carries a type and an annotation exactly the way a rel does: kind in {primitive, rel, column}, ordinal 0 on a rel and the 1-based argument position on a column, parent_id 0 until module nesting lands, type_id another rel_id or 0.
+catalog_ddl_contract('__catalog_rel',
+                     [ rel_id-int, parent_id-int, ordinal-int,
+                       local_name-text, kind-text, type_id-int ]).
+
+% TODO(g1): CREATE TABLE plus CREATE INDEX on (parent_id, local_name), the index being what a name-resolution walk over children reads. Returning [] keeps every emitted module byte-identical until the bodies land.
+% Prior art for the one-node-one-row shape: typescript-go internal/checker/types.go:673 gives every type one struct with an id, a kind mask and a variant pointer.
+catalog_table_ddl([]).
+
+% TODO(g1): ids assigned by POSITION so a recompile is byte-stable -- primitives text/int/float/bool/json take 1..5, then one row per rel in sorted AllRefs order (compile.pl:157), then that rel's columns in declaration order.
+% One INSERT OR IGNORE carrying every row in a single VALUES list (N+1 law), idempotent because serve/3_engine.ts:225 replays the DDL on every swap.
+catalog_row_ddl(_Decls, _RelPlans, []).
+
+% TODO(g2): conformance/ticklog.pl needs the same seed only once a FIXTURE derives from a catalog row; a DDL-time seed emits no delta at any tick, so g1 alone cannot diverge from the oracle.
+% TODO(g3): __catalog_annotation(target_id, name, value) is the ONLY future DDL statement here, because nesting, generics and column types all land as rows in the table above.
+
 compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
     ( regexp_goal(Goal)
     -> compile_regexp_goal(Goal, Bound0, Text),
@@ -3483,11 +3500,14 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     maplist(pre_ddl(RelPlans), PreRefs, PreDdl),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
+    % TODO(g1): gate on program_uses_catalog/2 (analyze.pl, mirroring program_uses_tick/2 at analyze.pl:180) once the bodies land; both predicates return [] today, so this append is a no-op on all 212 emitted modules.
+    catalog_table_ddl(CatalogTableDdl),
+    catalog_row_ddl(Decls, RelPlans, CatalogRowDdl),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
     append([RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl,
-            TickDdl], Ddl),
+            TickDdl, CatalogTableDdl, CatalogRowDdl], Ddl),
     maplist(delta_statement, RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
