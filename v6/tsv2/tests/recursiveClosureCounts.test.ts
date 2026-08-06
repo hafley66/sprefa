@@ -10,14 +10,17 @@
  * insert reads "__frontier_<rel>" under "_phase" >= 0 and nothing retires the
  * frontier between rounds.
  *
- * The receipt is statements per tick against closure DEPTH. A one-pass closure
- * runs a fixed statement count at every depth; a per-round loop runs one insert
- * plus its staging per round, so its count grows with the chain length.
+ * The receipt is statements per tick against closure DEPTH, pinned EXACTLY.
+ * The expand fill (rx expand over the wavefront pair) pays 3 statements per
+ * round -- clear idle wave, hop, absorb -- and every one touches only wavefront
+ * rows, so the pinned shape is affine: STATEMENTS_FLAT + 3 * (depth + 1).
+ * The defect class this rail exists for pays per round AND re-reads the whole
+ * frontier each round; any change to the per-round shape moves these exact
+ * numbers and fails the pin.
  *
- * FAIL-PRE-FIX RECEIPT, taken by restoring the round loop from the parent
- * commit and re-running this file: "closure must not pay per round: depth 3 ran
- * 39 statements, depth 8 ran 59, depth 16 ran 91", actual [39, 59, 91] against
- * the pinned 33. The growth is 4 statements per extra round.
+ * FAIL-PRE-FIX RECEIPT (naive loop, restored from e3997cec's parent and rerun):
+ * [39, 59, 91], slope 4 per round with each round re-reading everything. The
+ * one-pass CTE era pinned [36, 36, 36]; the expand fill pins [48, 63, 87].
  *
  * The chain is fed as ONE arrival batch of consecutive same-rel rows, which the
  * arrival plane batches into one insert, so the count this file measures is the
@@ -51,7 +54,10 @@ function chainArrivals(depth: number): readonly IArrivalRow[] {
 
 /** Pinned rather than only compared: an equality assertion alone would still
  *  hold if every depth grew together. Measured at depths 3, 8 and 16. */
-const STATEMENTS_PER_TICK = 36;
+const STATEMENTS_FLAT = 36;
+const STATEMENTS_PER_ROUND = 3;
+const statementsAtDepth = (depth: number): number =>
+  STATEMENTS_FLAT + STATEMENTS_PER_ROUND * (depth + 1);
 
 async function runOneTick(depth: number) {
   const seam = ScratchStore.open(":memory:");
@@ -73,8 +79,8 @@ test("in-tick closure statements are flat in the recursion depth", async () => {
 
   assert.deepEqual(
     [shallow.statementCount, middle.statementCount, deep.statementCount],
-    [STATEMENTS_PER_TICK, STATEMENTS_PER_TICK, STATEMENTS_PER_TICK],
-    `closure must not pay per round: depth 3 ran ${shallow.statementCount} statements, depth 8 ran ${middle.statementCount}, depth 16 ran ${deep.statementCount}`,
+    [statementsAtDepth(3), statementsAtDepth(8), statementsAtDepth(16)],
+    `closure pays exactly ${STATEMENTS_PER_ROUND} wavefront statements per round: depth 3 ran ${shallow.statementCount} statements, depth 8 ran ${middle.statementCount}, depth 16 ran ${deep.statementCount}`,
   );
   // Non-vacuity: the transitive closure of a path of n edges is n(n+1)/2 rows,
   // so a flat count over these numbers is flat over real derivation.

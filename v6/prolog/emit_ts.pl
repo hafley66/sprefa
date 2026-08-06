@@ -970,12 +970,13 @@ incremental_level_statement_entry_line(RelPlans,
     % statement text is now the text sqlite receives, byte for byte.
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
-    ref_count_sql_text(RefCountSql, RefCountText),
+    ref_count_sql_text(RefCountSql, RefCountText, ExpandText),
     aggregate_sql_text(AggregateSql, AggregateText),
     format(atom(Line),
-           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, aggregateSql: ~w },',
+           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, expandSql: ~w, aggregateSql: ~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
-            SelectTemplate, RecomputeTemplate, RefCountText, AggregateText]).
+            SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
+            AggregateText]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -998,19 +999,35 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-ref_count_sql_text(none, null) :- !.
+ref_count_sql_text(none, null, null) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                                CollectZeroSql, ClearNewSql, FillNewSql,
                                StageAddSql, StageFrontierSql,
-                               StageNextFrontierSql, InsertNewSql),
-                 Text) :-
+                               StageNextFrontierSql, InsertNewSql, ExpandPlan),
+                 Text, ExpandText) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
              ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
              StageNextFrontierSql, InsertNewSql],
             Templates),
     atomic_list_concat(Templates, ', ', Joined),
-    format(atom(Text), '[~w]', [Joined]).
+    format(atom(Text), '[~w]', [Joined]),
+    expand_sql_text(ExpandPlan, ExpandText).
+
+expand_sql_text(none, null) :- !.
+expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
+                           AbsorbASql, AbsorbBSql),
+                Text) :-
+    maplist(js_template, [ClearASql, ClearBSql, HopABSql, HopBASql,
+                          AbsorbASql, AbsorbBSql],
+            [ClearATemplate, ClearBTemplate, HopABTemplate, HopBATemplate,
+             AbsorbATemplate, AbsorbBTemplate]),
+    maplist(js_template, SeedSqls, SeedTemplates),
+    atomic_list_concat(SeedTemplates, ', ', SeedJoined),
+    format(atom(Text),
+           '{ clearASql: ~w, clearBSql: ~w, seedSqls: [~w], hopABSql: ~w, hopBASql: ~w, absorbASql: ~w, absorbBSql: ~w }',
+           [ClearATemplate, ClearBTemplate, SeedJoined, HopABTemplate,
+            HopBATemplate, AbsorbATemplate, AbsorbBTemplate]).
 
 % The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
 % scope, seed it from this tick's staged deltas, delete the scoped groups

@@ -2387,7 +2387,7 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
                   refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
-                             StageNextFrontierSql, InsertNewSql)) :-
+                             StageNextFrontierSql, InsertNewSql, ExpandPlan)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
@@ -2408,9 +2408,11 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
     ( rules_read_head_recursively(HeadRef, Rules)
     -> recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules,
                                   QuotedRefCountTable, HeadColumns,
-                                  HeadColumnsSql, SeedSql)
+                                  HeadColumnsSql, SeedSql),
+       level_expand_plan(RelPlans, HeadRef, Rules, ExpandPlan)
     ;  counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
-                                HeadColumnsSql, SeedSql)
+                                HeadColumnsSql, SeedSql),
+       ExpandPlan = none
     ),
     format(atom(UpdateSql),
            'UPDATE ~w AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0)',
@@ -2487,6 +2489,67 @@ recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
            [QuotedRefCountTable, HeadColumnsSql, QuotedHeadTable,
             HeadColumnsSql, RecursiveUnionSql, HeadColumnsSql,
             QuotedHeadTable]).
+
+% rx `expand` spelling of the recursive seed: same fixpoint as the CTE, and
+% the refCount table's WITHOUT ROWID key keeps downstream scan order identical.
+level_expand_plan(RelPlans, HeadRef, Rules,
+                  expandplan(ClearASql, ClearBSql, SeedSqls,
+                             HopABSql, HopBASql, AbsorbASql, AbsorbBSql)) :-
+    partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
+    expand_table_name(HeadRef, a, TableA),
+    expand_table_name(HeadRef, b, TableB),
+    quote_ident(TableA, QuotedTableA),
+    quote_ident(TableB, QuotedTableB),
+    ref_count_table_name(HeadRef, RefCountTable),
+    quote_ident(RefCountTable, QuotedRefCountTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    format(atom(ClearASql), 'DELETE FROM ~w', [QuotedTableA]),
+    format(atom(ClearBSql), 'DELETE FROM ~w', [QuotedTableB]),
+    maplist(expand_seed_sql(RelPlans, QuotedTableA, HeadColumnsSql),
+            BaseRules, SeedSqls),
+    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableA,
+                   QuotedTableB, QuotedRefCountTable, HeadColumns,
+                   HeadColumnsSql, HopABSql),
+    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableB,
+                   QuotedTableA, QuotedRefCountTable, HeadColumns,
+                   HeadColumnsSql, HopBASql),
+    expand_absorb_sql(QuotedRefCountTable, QuotedTableA, HeadColumnsSql, AbsorbASql),
+    expand_absorb_sql(QuotedRefCountTable, QuotedTableB, HeadColumnsSql, AbsorbBSql).
+
+expand_table_name(Name/_Arity, a, TableName) :-
+    format(atom(TableName), '__expand_a_~w', [Name]).
+expand_table_name(Name/_Arity, b, TableName) :-
+    format(atom(TableName), '__expand_b_~w', [Name]).
+
+expand_seed_sql(RelPlans, QuotedWaveTable, HeadColumnsSql, Rule, SeedSql) :-
+    level_recursive_arm(RelPlans, Rule, BaseArm),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w)',
+           [QuotedWaveTable, HeadColumnsSql, HeadColumnsSql, BaseArm]).
+
+% The WITH clause shadows the head's table name with the source wavefront, so
+% the recursive arm text is reused verbatim; only frontier rows feed the hop.
+expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedFromTable,
+               QuotedIntoTable, QuotedRefCountTable, HeadColumns,
+               HeadColumnsSql, HopSql) :-
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
+    maplist(level_recursive_arm(RelPlans), RecursiveRules, RecursiveArms),
+    atomic_list_concat(RecursiveArms, ' UNION ALL ', ArmsSql),
+    qualified_equalities(HeadColumns, x, n, EqualityParts),
+    atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
+    format(atom(HopSql),
+           'WITH ~w (~w) AS (SELECT ~w FROM ~w) INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w) x WHERE NOT EXISTS (SELECT 1 FROM ~w n WHERE ~w)',
+           [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql, QuotedFromTable,
+            QuotedIntoTable, HeadColumnsSql, HeadColumnsSql, ArmsSql,
+            QuotedRefCountTable, EqualitySql]).
+
+expand_absorb_sql(QuotedRefCountTable, QuotedWaveTable, HeadColumnsSql, AbsorbSql) :-
+    format(atom(AbsorbSql),
+           'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, 1 FROM ~w',
+           [QuotedRefCountTable, HeadColumnsSql, HeadColumnsSql, QuotedWaveTable]).
 
 rules_read_head_recursively(HeadRef, Rules) :-
     member(Rule, Rules),
@@ -3303,7 +3366,33 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
 ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
-ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl, NewDdl, ZeroIndexDdl]) :-
+ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
+    ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
+    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, expandplan(_, _, _, _, _, _, _))
+    -> expand_wave_ddl(RelPlans, HeadRef, WaveDdl),
+       append([Ddl, NewDdl, ZeroIndexDdl], WaveDdl, DdlList)
+    ;  DdlList = [Ddl, NewDdl, ZeroIndexDdl]
+    ).
+
+expand_wave_ddl(RelPlans, HeadRef, [DdlA, DdlB]) :-
+    relplan_columns(RelPlans, HeadRef, Columns),
+    relplan_column_types(RelPlans, HeadRef, ColumnTypes),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
+    expand_table_name(HeadRef, a, TableA),
+    expand_table_name(HeadRef, b, TableB),
+    quote_ident(TableA, QuotedTableA),
+    quote_ident(TableB, QuotedTableB),
+    format(atom(DdlA),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedTableA, ColumnsSql, PrimaryKeySql]),
+    format(atom(DdlB),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedTableB, ColumnsSql, PrimaryKeySql]).
+
+ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
     table_name(HeadRef, HeadTable),

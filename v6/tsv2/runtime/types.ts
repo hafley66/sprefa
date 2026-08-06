@@ -169,10 +169,29 @@ export interface IIncrementalLevelStatement {
     clear: string,
     seed: string,
     update: string,
+    stageRetract: string,
     collectZero: string,
+    clearNew: string,
+    fillNew: string,
+    stageAdd: string,
+    stageFrontier: string,
+    stageNextFrontier: string,
     insertNew: string,
   ] | null;
+  /** rx `expand` spelling of supportSql[1] for a RECURSIVE head; optional so
+   *  pre-expand emitted modules (gen_served) stay loadable. */
+  readonly expandSql?: IExpandSeedPlan | null;
   readonly aggregateSql: IAggregateLevelPlan | null;
+}
+
+export interface IExpandSeedPlan {
+  readonly clearASql: string;
+  readonly clearBSql: string;
+  readonly seedSqls: readonly string[];
+  readonly hopABSql: string;
+  readonly hopBASql: string;
+  readonly absorbASql: string;
+  readonly absorbBSql: string;
 }
 
 export interface IIncrementalRetentionStatement {

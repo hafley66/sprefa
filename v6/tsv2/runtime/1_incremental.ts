@@ -561,14 +561,49 @@ function reconcileRefCountStatement(
     sql: copy.tableName(relation) === relation.nextFrontierTableName ? stageNextFrontier! : stageFrontier!,
     args: [copy.phase],
   }));
-  const sql: SqlStatement[] = [
-    ...[clear, seed, update, stageRetract, collectZero, clearNew, fillNew, stageAdd].map(
-      (text): SqlStatement => ({ sql: text!, args: [] }),
-    ),
+  const toStatements = (texts: readonly string[]): SqlStatement[] =>
+    texts.map((text): SqlStatement => ({ sql: text, args: [] }));
+  const tail: SqlStatement[] = [
+    ...toStatements([update!, stageRetract!, collectZero!, clearNew!, fillNew!, stageAdd!]),
     ...frontierStages,
     { sql: insertNew!, args: [] },
   ];
-  return seam.runner.batch(seam.db, sql).pipe(map(() => undefined));
+  const expandPlan = statement.expandSql ?? null;
+  if (expandPlan === null) {
+    return seam.runner
+      .batch(seam.db, [...toStatements([clear!, seed!]), ...tail])
+      .pipe(map(() => undefined));
+  }
+  // rx expand over the wavefront pair: hop fills the idle wave from the busy
+  // one, absorb folds it into the refCount table, roles swap until a hop is 0.
+  const round = (fillsB: boolean): Observable<number> =>
+    seam.runner
+      .batch(
+        seam.db,
+        toStatements(
+          fillsB
+            ? [expandPlan.clearBSql, expandPlan.hopABSql, expandPlan.absorbBSql]
+            : [expandPlan.clearASql, expandPlan.hopBASql, expandPlan.absorbASql],
+        ),
+      )
+      .pipe(map((results) => results[1]!.rowsAffected));
+  const seedWave = toStatements([
+    clear!,
+    expandPlan.clearASql,
+    expandPlan.clearBSql,
+    ...expandPlan.seedSqls,
+    expandPlan.absorbASql,
+  ]);
+  return seam.runner.batch(seam.db, seedWave).pipe(
+    concatMap(() =>
+      round(true).pipe(
+        expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
+        last(),
+      ),
+    ),
+    concatMap(() => seam.runner.batch(seam.db, tail)),
+    map(() => undefined),
+  );
 }
 
 /** `1` when some delta table already holds a retraction this tick. The gate

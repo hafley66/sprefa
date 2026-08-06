@@ -460,7 +460,10 @@ test(departure_arm_reads_the_departure_frontier) :-
         EdgeStatements),
     % The departure table is emitted for the LISTENED rel only.
     memberchk('CREATE TEMP TABLE "__departure_frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)', Ddl),
-    memberchk('CREATE INDEX "__departure_frontier_latest_phase" ON "__departure_frontier_latest" ("_phase")', Ddl),
+    % The _phase index was deleted after a 747-module sweep found it chosen by
+    % zero query plans (PR #7, d2715e9b); its absence is the pinned state.
+    \+ ( member(IndexDdl, Ddl),
+         sub_atom(IndexDdl, _, _, _, '__departure_frontier_latest_phase') ),
     \+ ( member(OtherDdl, Ddl),
          sub_atom(OtherDdl, _, _, _, '__departure_frontier_'),
          \+ sub_atom(OtherDdl, _, _, _, '__departure_frontier_latest') ).
@@ -521,15 +524,16 @@ test(acyclic_ref_count_statements_are_emitted) :-
     Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
     memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
-                        refcountsql(ClearSql, SeedSql, UpdateSql,
-                                   CollectZeroSql, InsertNewSql),
+                        refcountsql(ClearSql, SeedSql, UpdateSql, _,
+                                   CollectZeroSql, _, _, _, _, _,
+                                   InsertNewSql, none),
                         none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
     once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__refcount"')),
-    once(sub_atom(UpdateSql, _, _, _, 'SET "__refcount" = "__refcount" -')),
-    CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__refcount" <= 0 RETURNING "target"',
-    once(sub_atom(InsertNewSql, _, _, _, 'WHERE NOT EXISTS')).
+    once(sub_atom(UpdateSql, _, _, _, 'SET "__refcount" = COALESCE(')),
+    CollectZeroSql == 'DELETE FROM "effect_call" WHERE "__refcount" <= 0',
+    once(sub_atom(InsertNewSql, _, _, _, 'INSERT OR IGNORE INTO "effect_call"')).
 
 test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     RelPlans = [
@@ -543,11 +547,20 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     ],
     level_ref_count_sql(
         RelPlans, path/1, Rules,
-        refcountsql(_, SeedSql, _, _, _)),
+        refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),
     once(sub_atom(SeedSql, _, _, _, 'FROM "path" b0')),
+    % The rx-expand spelling of the same fixpoint rides beside the CTE: the
+    % hop shadows the head name with the wavefront and dedups on the absorbed
+    % refCount table, so the two spellings fill identical WITHOUT ROWID keys.
+    ExpandPlan = expandplan(_, _, [SeedArm], HopAB, HopBA, AbsorbA, _),
+    once(sub_atom(SeedArm, _, _, _, 'INSERT OR IGNORE INTO "__expand_a_path"')),
+    once(sub_atom(HopAB, _, _, _, 'WITH "path" ("node") AS (SELECT "node" FROM "__expand_a_path")')),
+    once(sub_atom(HopAB, _, _, _, 'NOT EXISTS (SELECT 1 FROM "__support_next_path"')),
+    once(sub_atom(HopBA, _, _, _, 'FROM "__expand_b_path")')),
+    once(sub_atom(AbsorbA, _, _, _, 'SELECT "node", 1 FROM "__expand_a_path"')),
     Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], []),
     retraction_guard(Plan, 'recursive-cte-reseed').
 
