@@ -3,6 +3,7 @@ import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } fr
 import type {
   IAggregateLevelPlan,
   IArrivalBatch,
+  IDredPlan,
   IIncrementalEdgeStatement,
   IIncrementalLevelStatement,
   IIncrementalRelationPlan,
@@ -569,40 +570,198 @@ function reconcileRefCountStatement(
     { sql: insertNew!, args: [] },
   ];
   const expandPlan = statement.expandSql ?? null;
-  if (expandPlan === null) {
-    return seam.runner
-      .batch(seam.db, [...toStatements([clear!, seed!]), ...tail])
-      .pipe(map(() => undefined));
-  }
-  // rx expand over the wavefront pair: hop fills the idle wave from the busy
-  // one, absorb folds it into the refCount table, roles swap until a hop is 0.
-  const round = (fillsB: boolean): Observable<number> =>
+  const recompute = (): Observable<void> => {
+    if (expandPlan === null) {
+      return seam.runner
+        .batch(seam.db, [...toStatements([clear!, seed!]), ...tail])
+        .pipe(map(() => undefined));
+    }
+    // rx expand over the wavefront pair: hop fills the idle wave from the busy
+    // one, absorb folds it into the refCount table, roles swap until a hop is 0.
+    const round = (fillsB: boolean): Observable<number> =>
+      seam.runner
+        .batch(
+          seam.db,
+          toStatements(
+            fillsB
+              ? [expandPlan.clearBSql, expandPlan.hopABSql, expandPlan.absorbBSql]
+              : [expandPlan.clearASql, expandPlan.hopBASql, expandPlan.absorbASql],
+          ),
+        )
+        .pipe(map((results) => results[1]!.rowsAffected));
+    const seedWave = toStatements([
+      clear!,
+      expandPlan.clearASql,
+      expandPlan.clearBSql,
+      ...expandPlan.seedSqls,
+      expandPlan.absorbASql,
+    ]);
+    return seam.runner.batch(seam.db, seedWave).pipe(
+      concatMap(() =>
+        round(true).pipe(
+          expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
+          last(),
+        ),
+      ),
+      concatMap(() => seam.runner.batch(seam.db, tail)),
+      map(() => undefined),
+    );
+  };
+  const dredPlan = statement.dredSql ?? null;
+  if (dredPlan === null) return recompute();
+  const arrivalTail: SqlStatement[] = [
+    ...toStatements([stageAdd!]),
+    ...frontierStages,
+  ];
+  return maintainHeadInPlace(
+    seam,
+    dredPlan,
+    relations,
+    toStatements,
+    { clearNew: clearNew!, arrivalTail },
+    recompute,
+  );
+}
+
+/**
+ * IDredPlan's driver. The tick kind picks the half: `retractionGuardSql` is
+ * the SAME gate the two recompute passes already read, so a purely additive
+ * tick never touches the DRed statements at all.
+ */
+function maintainHeadInPlace(
+  seam: ISqlSeam,
+  plan: IDredPlan,
+  relations: readonly IIncrementalRelationPlan[],
+  toStatements: (texts: readonly string[]) => SqlStatement[],
+  arrivals: { readonly clearNew: string; readonly arrivalTail: SqlStatement[] },
+  recompute: () => Observable<void>,
+): Observable<void> {
+  const walk = (
+    round: (fillsB: boolean) => Observable<number>,
+  ): Observable<number> =>
+    round(true).pipe(
+      expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
+      last(),
+    );
+  const assertRound = (fillsB: boolean): Observable<number> =>
     seam.runner
       .batch(
         seam.db,
         toStatements(
           fillsB
-            ? [expandPlan.clearBSql, expandPlan.hopABSql, expandPlan.absorbBSql]
-            : [expandPlan.clearASql, expandPlan.hopBASql, expandPlan.absorbASql],
+            ? [plan.clearPongSql, plan.assertHopABSql, plan.commitBSql, plan.arrivalBSql]
+            : [plan.clearPingSql, plan.assertHopBASql, plan.commitASql, plan.arrivalASql],
         ),
       )
       .pipe(map((results) => results[1]!.rowsAffected));
-  const seedWave = toStatements([
-    clear!,
-    expandPlan.clearASql,
-    expandPlan.clearBSql,
-    ...expandPlan.seedSqls,
-    expandPlan.absorbASql,
-  ]);
-  return seam.runner.batch(seam.db, seedWave).pipe(
-    concatMap(() =>
-      round(true).pipe(
-        expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
-        last(),
-      ),
+  const assertHalf = (): Observable<void> =>
+    seam.runner
+      .batch(
+        seam.db,
+        toStatements([
+          arrivals.clearNew,
+          plan.clearPingSql,
+          plan.clearPongSql,
+          ...plan.assertSeedSqls,
+          plan.commitASql,
+          plan.arrivalASql,
+        ]),
+      )
+      .pipe(
+        concatMap(() => walk(assertRound)),
+        concatMap(() => seam.runner.batch(seam.db, arrivals.arrivalTail)),
+        map(() => undefined),
+      );
+  // Resolves true when the cone outgrew a quarter of the head. The walk writes
+  // only TEMP tables until `headDeleteSql`, so bailing costs nothing but them.
+  const dredHalf = (): Observable<boolean> =>
+    seam.runner.scalar(seam.db, plan.headCountSql).pipe(
+      concatMap((headCount) => {
+        const coneCap = Math.floor(headCount / 4);
+        let coneCount = 0;
+        let bailed = false;
+        const overDeleteRound = (fillsB: boolean): Observable<number> => {
+          if (coneCount > coneCap) {
+            bailed = true;
+            return of(0);
+          }
+          return seam.runner
+            .batch(
+              seam.db,
+              toStatements(
+                fillsB
+                  ? [plan.clearPongSql, plan.dredHopABSql, plan.coneAbsorbBSql]
+                  : [plan.clearPingSql, plan.dredHopBASql, plan.coneAbsorbASql],
+              ),
+            )
+            .pipe(
+              map((results) => {
+                coneCount += results[2]!.rowsAffected;
+                return results[1]!.rowsAffected;
+              }),
+            );
+        };
+        const reviveRound = (fillsB: boolean): Observable<number> =>
+          seam.runner
+            .batch(
+              seam.db,
+              toStatements(
+                fillsB
+                  ? [plan.clearPongSql, plan.reviveHopABSql, plan.commitBSql, plan.coneDropBSql]
+                  : [plan.clearPingSql, plan.reviveHopBASql, plan.commitASql, plan.coneDropASql],
+              ),
+            )
+            .pipe(map((results) => results[1]!.rowsAffected));
+        return seam.runner
+          .batch(
+            seam.db,
+            toStatements([
+              plan.clearPingSql,
+              plan.clearPongSql,
+              plan.clearConeSql,
+              ...plan.dredSeedSqls,
+              plan.coneAbsorbASql,
+            ]),
+          )
+          .pipe(
+            map((results) => {
+              coneCount = results[results.length - 1]!.rowsAffected;
+            }),
+            concatMap(() => walk(overDeleteRound)),
+            concatMap(() => {
+              if (bailed) return of(true);
+              return seam.runner
+                .batch(
+                  seam.db,
+                  toStatements([
+                    plan.coneTrimSql,
+                    plan.headDeleteSql,
+                    plan.clearPingSql,
+                    plan.clearPongSql,
+                    ...plan.rederiveSeedSqls,
+                    plan.commitASql,
+                    plan.coneDropASql,
+                  ]),
+                )
+                .pipe(
+                  concatMap(() => walk(reviveRound)),
+                  concatMap(() =>
+                    seam.runner.batch(seam.db, toStatements([plan.stageRetractSql])),
+                  ),
+                  map(() => false),
+                );
+            }),
+          );
+      }),
+    );
+  return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
+    concatMap((result) =>
+      Number(result.rows[0]?.has_retraction ?? 0) === 0
+        ? assertHalf()
+        : dredHalf().pipe(
+            concatMap((bailed) => (bailed ? recompute() : assertHalf())),
+          ),
     ),
-    concatMap(() => seam.runner.batch(seam.db, tail)),
-    map(() => undefined),
   );
 }
 

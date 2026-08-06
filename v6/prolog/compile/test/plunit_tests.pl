@@ -526,7 +526,7 @@ test(acyclic_ref_count_statements_are_emitted) :-
     memberchk(levelstmt(effect_call/1, _, _, _,
                         refcountsql(ClearSql, SeedSql, UpdateSql, _,
                                    CollectZeroSql, _, _, _, _, _,
-                                   InsertNewSql, none),
+                                   InsertNewSql, none, none),
                         none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
@@ -547,7 +547,8 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     ],
     level_ref_count_sql(
         RelPlans, path/1, Rules,
-        refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan)),
+        refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
+                    DredPlan)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),

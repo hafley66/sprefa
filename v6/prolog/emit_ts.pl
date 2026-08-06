@@ -970,13 +970,13 @@ incremental_level_statement_entry_line(RelPlans,
     % statement text is now the text sqlite receives, byte for byte.
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
-    ref_count_sql_text(RefCountSql, RefCountText, ExpandText),
+    ref_count_sql_text(RefCountSql, RefCountText, ExpandText, DredText),
     aggregate_sql_text(AggregateSql, AggregateText),
     format(atom(Line),
-           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, expandSql: ~w, aggregateSql: ~w },',
+           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, expandSql: ~w, dredSql: ~w, aggregateSql: ~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
-            AggregateText]).
+            DredText, AggregateText]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -999,12 +999,13 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-ref_count_sql_text(none, null, null) :- !.
+ref_count_sql_text(none, null, null, null) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                                CollectZeroSql, ClearNewSql, FillNewSql,
                                StageAddSql, StageFrontierSql,
-                               StageNextFrontierSql, InsertNewSql, ExpandPlan),
-                 Text, ExpandText) :-
+                               StageNextFrontierSql, InsertNewSql, ExpandPlan,
+                               DredPlan),
+                 Text, ExpandText, DredText) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
              ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
@@ -1012,7 +1013,8 @@ ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
             Templates),
     atomic_list_concat(Templates, ', ', Joined),
     format(atom(Text), '[~w]', [Joined]),
-    expand_sql_text(ExpandPlan, ExpandText).
+    expand_sql_text(ExpandPlan, ExpandText),
+    dred_sql_text(DredPlan, DredText).
 
 expand_sql_text(none, null) :- !.
 expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
@@ -1028,6 +1030,42 @@ expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
            '{ clearASql: ~w, clearBSql: ~w, seedSqls: [~w], hopABSql: ~w, hopBASql: ~w, absorbASql: ~w, absorbBSql: ~w }',
            [ClearATemplate, ClearBTemplate, SeedJoined, HopABTemplate,
             HopBATemplate, AbsorbATemplate, AbsorbBTemplate]).
+
+dred_sql_text(none, null) :- !.
+dred_sql_text(dredplan(ClearPingSql, ClearPongSql, ClearConeSql,
+                       AssertSeedSqls, AssertHopABSql, AssertHopBASql,
+                       CommitASql, CommitBSql, ArrivalASql, ArrivalBSql,
+                       DredSeedSqls, DredHopABSql, DredHopBASql,
+                       ConeAbsorbASql, ConeAbsorbBSql, ConeTrimSql,
+                       HeadDeleteSql, RederiveSeedSqls, ReviveHopABSql,
+                       ReviveHopBASql, ConeDropASql, ConeDropBSql,
+                       StageRetractSql, HeadCountSql),
+              Text) :-
+    maplist(js_template,
+            [ClearPingSql, ClearPongSql, ClearConeSql, AssertHopABSql,
+             AssertHopBASql, CommitASql, CommitBSql, ArrivalASql, ArrivalBSql,
+             DredHopABSql, DredHopBASql, ConeAbsorbASql, ConeAbsorbBSql,
+             ConeTrimSql, HeadDeleteSql, ReviveHopABSql, ReviveHopBASql,
+             ConeDropASql, ConeDropBSql, StageRetractSql, HeadCountSql],
+            [ClearPingT, ClearPongT, ClearConeT, AssertHopABT, AssertHopBAT,
+             CommitAT, CommitBT, ArrivalAT, ArrivalBT, DredHopABT, DredHopBAT,
+             ConeAbsorbAT, ConeAbsorbBT, ConeTrimT, HeadDeleteT, ReviveHopABT,
+             ReviveHopBAT, ConeDropAT, ConeDropBT, StageRetractT, HeadCountT]),
+    sql_template_array(AssertSeedSqls, AssertSeedText),
+    sql_template_array(DredSeedSqls, DredSeedText),
+    sql_template_array(RederiveSeedSqls, RederiveSeedText),
+    format(atom(Text),
+           '{ clearPingSql: ~w, clearPongSql: ~w, clearConeSql: ~w, assertSeedSqls: ~w, assertHopABSql: ~w, assertHopBASql: ~w, commitASql: ~w, commitBSql: ~w, arrivalASql: ~w, arrivalBSql: ~w, dredSeedSqls: ~w, dredHopABSql: ~w, dredHopBASql: ~w, coneAbsorbASql: ~w, coneAbsorbBSql: ~w, coneTrimSql: ~w, headDeleteSql: ~w, rederiveSeedSqls: ~w, reviveHopABSql: ~w, reviveHopBASql: ~w, coneDropASql: ~w, coneDropBSql: ~w, stageRetractSql: ~w, headCountSql: ~w }',
+           [ClearPingT, ClearPongT, ClearConeT, AssertSeedText, AssertHopABT,
+            AssertHopBAT, CommitAT, CommitBT, ArrivalAT, ArrivalBT,
+            DredSeedText, DredHopABT, DredHopBAT, ConeAbsorbAT, ConeAbsorbBT,
+            ConeTrimT, HeadDeleteT, RederiveSeedText, ReviveHopABT,
+            ReviveHopBAT, ConeDropAT, ConeDropBT, StageRetractT, HeadCountT]).
+
+sql_template_array(Sqls, Text) :-
+    maplist(js_template, Sqls, Templates),
+    atomic_list_concat(Templates, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
 
 % The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
 % scope, seed it from this tick's staged deltas, delete the scoped groups

@@ -181,6 +181,9 @@ export interface IIncrementalLevelStatement {
   /** rx `expand` spelling of supportSql[1] for a RECURSIVE head; optional so
    *  pre-expand emitted modules (gen_served) stay loadable. */
   readonly expandSql?: IExpandSeedPlan | null;
+  /** In-place maintenance of the same RECURSIVE head; optional for the same
+   *  reason. Present only when every rule of the head is monotone. */
+  readonly dredSql?: IDredPlan | null;
   readonly aggregateSql: IAggregateLevelPlan | null;
 }
 
@@ -192,6 +195,41 @@ export interface IExpandSeedPlan {
   readonly hopBASql: string;
   readonly absorbASql: string;
   readonly absorbBSql: string;
+}
+
+/** Head maintenance with no beside-table: head-row presence IS the truth
+ *  `sprefa-store` keeps in `cx_row.weight` (engine.rs:407, :454). */
+export interface IDredPlan {
+  readonly clearPingSql: string;
+  readonly clearPongSql: string;
+  readonly clearConeSql: string;
+  readonly assertSeedSqls: readonly string[];
+  readonly assertHopABSql: string;
+  readonly assertHopBASql: string;
+  readonly commitASql: string;
+  readonly commitBSql: string;
+  readonly arrivalASql: string;
+  readonly arrivalBSql: string;
+  /** DRed runs BEFORE assert on a mixed tick: a rederived row must not
+   *  double-stage. Seeds read `_sign = -1`. */
+  readonly dredSeedSqls: readonly string[];
+  readonly dredHopABSql: string;
+  readonly dredHopBASql: string;
+  readonly coneAbsorbASql: string;
+  readonly coneAbsorbBSql: string;
+  readonly coneTrimSql: string;
+  readonly headDeleteSql: string;
+  readonly rederiveSeedSqls: readonly string[];
+  readonly reviveHopABSql: string;
+  readonly reviveHopBASql: string;
+  readonly coneDropASql: string;
+  readonly coneDropBSql: string;
+  /** What is left in the cone once the revive walk stops IS the retraction
+   *  set; a dead cycle has no surviving anchor and therefore dies. */
+  readonly stageRetractSql: string;
+  /** Prices the mid-walk bail at cone > head/4. The bail fires before the
+   *  head delete, so nothing outside the TEMP tables has moved. */
+  readonly headCountSql: string;
 }
 
 export interface IIncrementalRetentionStatement {
