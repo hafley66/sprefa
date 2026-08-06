@@ -227,15 +227,16 @@ check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     ;   true
     ).
 
-% table_name/2 drops the arity, so two arities of one name would emit
-% CREATE TABLE twice for one table.
-check_single_arity_per_name(Refs) :-
-    (   member(Name/LowArity, Refs),
-        member(Name/HighArity, Refs),
-        LowArity < HighArity
-    ->  throw_as_compiler_refusal(rel_arity_collision(Name, LowArity, HighArity))
-    ;   true
-    ).
+% table_name/2 drops the arity, so two arities of one name collide on one table.
+% Refs arrives sorted, so equal names are adjacent and one walk answers it.
+check_single_arity_per_name([]).
+check_single_arity_per_name([_]) :- !.
+check_single_arity_per_name([Name/LowArity, Name/HighArity | _]) :-
+    LowArity \== HighArity,
+    !,
+    throw_as_compiler_refusal(rel_arity_collision(Name, LowArity, HighArity)).
+check_single_arity_per_name([_ | Rest]) :-
+    check_single_arity_per_name(Rest).
 
 compile_dl6(File, OutFile) :-
     catch(
