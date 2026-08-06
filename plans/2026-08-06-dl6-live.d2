@@ -7,77 +7,250 @@ vars: {
 }
 
 classes: {
-  hot: {style.fill: "#fee2e2"; style.stroke: "#b91c1c"; style.stroke-width: 3}
-  warm: {style.fill: "#ffedd5"; style.stroke: "#c2410c"; style.stroke-width: 2}
-  cool: {style.fill: "#fef9c3"; style.stroke: "#ca8a04"}
-  cold: {style.fill: "#f3f4f6"; style.stroke: "#9ca3af"}
-  code: {style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-size: 12}
-  head: {style.fill: "#eef2ff"; style.stroke: "#4338ca"; style.stroke-width: 2}
-  plan: {style.fill: "#f0f9ff"; style.stroke: "#0369a1"}
+  hot: { style.fill: "#fee2e2"; style.stroke: "#b91c1c"; style.stroke-width: 3 }
+  warm: { style.fill: "#ffedd5"; style.stroke: "#c2410c"; style.stroke-width: 2 }
+  cool: { style.fill: "#fef9c3"; style.stroke: "#ca8a04" }
+  cold: { style.fill: "#f3f4f6"; style.stroke: "#9ca3af" }
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-size: 12 }
+  driver: { style.fill: "#ede9fe"; style.stroke: "#6d28d9"; style.stroke-width: 2 }
+  runtime: { style.fill: "#dcfce7"; style.stroke: "#15803d"; style.stroke-width: 2 }
+  emitted: { style.fill: "#fef3c7"; style.stroke: "#b45309"; style.stroke-width: 2 }
+  seam: { style.fill: "#e0f2fe"; style.stroke: "#0369a1"; style.stroke-width: 2 }
+  sqlite: { style.fill: "#dbeafe"; style.stroke: "#1d4ed8"; style.stroke-width: 3 }
+  source: { style.fill: "#fae8ff"; style.stroke: "#a21caf"; style.stroke-width: 2 }
+  compiler: { style.fill: "#fce7f3"; style.stroke: "#be185d"; style.stroke-width: 2 }
+  plan: { style.fill: "#f0f9ff"; style.stroke: "#0369a1" }
+  head: { style.fill: "#eef2ff"; style.stroke: "#4338ca"; style.stroke-width: 2 }
 }
 
 masthead: |~md
-  # dl6, documented by running it
-  Regenerate with `just dl6-doc`. Every number is produced by
-  `labs/exec_shootout/dl6/bench.sh`, read out of `FACTS.json`.
+  # Who runs this SQL
+
+  **Every box on this page is a link.** Click one and your editor opens at
+  that file and line. Nothing here was typed by hand: `just dl6-doc` runs
+  the benchmark, reads `FACTS.json`, and writes this file.
 
   `grid_10000` · 3,960 edges · **1,069,200 derived rows** · checksum `9d7239568960d6a8`
 
   | | |
   |---|---|
-  | fixpoint | **2206 ms** (484,678 rows/sec) |
-  | load | 26 ms |
-  | peak RSS | 732 MB |
+  | fixpoint | **2261 ms** (472,888 rows/sec) |
+  | peak RSS | 725 MB |
   | statements per tick | 17 |
-  | measured on | v24.15.0 · darwin/arm64 |
-  | at | 2026-08-06T18:56:47.399Z |
+  | measured | v24.15.0 · darwin/arm64 · 2026-08-06T19:06:03.304Z |
   | batches | **split**, so cost lands per statement |
-  | baseline | `FACTS.baseline.json` from 2026-08-06T18:55:29.322Z |
+  | baseline | `FACTS.baseline.json`, 2026-08-06T18:55:29.322Z |
+
+  Links use `vscode://`. Set `DL6_DOC_LINKS=file` for the other kind.
 ~|
+
+chain: "the call chain, driver down to C" {
+  style.fill: "#ffffff"
+  style.stroke: "#374151"
+
+driver: |~md
+  ### 1 · the driver
+  `run.ts` reads the edge file and hands every edge to the
+  tick loop as ONE arrival batch.
+
+  ```
+  TickFold.run(program, seam, [arrivals], 1_000_000)
+  ```
+
+  [`v6/labs/exec_shootout/dl6/run.ts:144`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/run.ts:144)
+~|
+driver.shape: rectangle
+driver.class: driver
+driver.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/run.ts:144
+driver.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/run.ts:144
+
+tickfold: |~md
+  ### 2 · the tick loop
+  `TickFold.run` drains the batch queue, calling the program's
+  own `tick` once per tick and emitting one tick-log line each.
+
+  [`v6/tsv2/runtime/tickLoop.ts:39`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/tickLoop.ts:39)
+~|
+tickfold.shape: rectangle
+tickfold.class: runtime
+tickfold.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/tickLoop.ts:39
+tickfold.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/tickLoop.ts:39
+
+emitted: |~md
+  ### 3 · the COMPILED program
+  `.compiled/reachability.ts`, written by the prolog compiler from
+  `reachability.dl6`. Its `runIncrementalTick` names the phases:
+
+  ```
+  prepareTick -> applyArrivals -> applyLevelsBeforeEdges
+    -> applyEdges -> recomputeLevelsAfterEdges
+    -> readBoundary -> promoteFrontiers
+  ```
+
+  This file is GENERATED. Regenerate it, never edit it.
+
+  [`v6/prolog/compile/scripts/compile_dl6.sh:1`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/compile/scripts/compile_dl6.sh:1)
+~|
+emitted.shape: rectangle
+emitted.class: emitted
+emitted.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/compile/scripts/compile_dl6.sh:1
+emitted.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/compile/scripts/compile_dl6.sh:1
+
+levels: |~md
+  ### 4 · the level phase
+  For a head on a CYCLE of the level graph, this calls the refCount
+  reconcile once. Everything else stays a single pass.
+
+  [`v6/tsv2/runtime/1_incremental.ts:819`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:819)
+~|
+levels.shape: rectangle
+levels.class: runtime
+levels.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:819
+levels.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:819
+
+reconcile: |~md
+  ### 5 · THE THING THAT RUNS THE SQL
+  `reconcileRefCountStatement` takes the emitted `supportSql`
+  array, picks which frontier copies this pass wants, and hands
+  the whole list to the seam as one atomic batch.
+
+  Nothing here builds SQL. Every string came from the compiler.
+
+  [`v6/tsv2/runtime/1_incremental.ts:536`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:536)
+~|
+reconcile.shape: rectangle
+reconcile.class: runtime
+reconcile.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:536
+reconcile.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/runtime/1_incremental.ts:536
+
+seam: |~md
+  ### 6 · the SQL seam
+  `SqlRunner.batch` is the only place TypeScript touches the
+  database. It wraps `db.batch` in an Observable and counts
+  statements. The bench wraps THIS to time each shape.
+
+  [`v6/sprefa-store/js/src/engine/sqlRunner.ts:38`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/sprefa-store/js/src/engine/sqlRunner.ts:38)
+~|
+seam.shape: rectangle
+seam.class: seam
+seam.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/sprefa-store/js/src/engine/sqlRunner.ts:38
+seam.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/sprefa-store/js/src/engine/sqlRunner.ts:38
+
+sqlite: |~md
+  ### 7 · SQLite
+  `@libsql/client` over the bundled native SQLite, opened at
+  `:memory:` for this benchmark. Everything below is C.
+
+  [`v6/tsv2/package.json:22`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/package.json:22)
+~|
+sqlite.shape: rectangle
+sqlite.class: sqlite
+sqlite.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/package.json:22
+sqlite.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/tsv2/package.json:22
+
+  driver -> tickfold
+  tickfold -> emitted
+  emitted -> levels
+  levels -> reconcile
+  reconcile -> seam
+  seam -> sqlite
+}
+masthead -> chain
+
+emitter: "where the SQL strings come from" {
+  style.fill: "#ffffff"
+  style.stroke: "#be185d"
+
+dl6src: |~md
+  ### the program, as written
+  ```
+  reachable(Source, Target) <- edge(Source, Target).
+  reachable(Source, Target) <- reachable(Source, Mid),
+                               edge(Mid, Target).
+  ```
+
+  [`v6/labs/exec_shootout/dl6/reachability.dl6:2`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/reachability.dl6:2)
+~|
+dl6src.shape: rectangle
+dl6src.class: source
+dl6src.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/reachability.dl6:2
+dl6src.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/labs/exec_shootout/dl6/reachability.dl6:2
+
+lowerpl: |~md
+  ### the predicate that WROTE every statement below
+  `level_ref_count_sql/4` formats all 11 `supportSql` strings.
+  Change the SQL on this page by changing this predicate.
+
+  [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+~|
+lowerpl.shape: rectangle
+lowerpl.class: compiler
+lowerpl.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+lowerpl.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+
+emitpl: |~md
+  ### the predicate that PRINTS them into TypeScript
+  `ref_count_sql_text/2` renders the term as a JS array literal.
+
+  [`v6/prolog/emit_ts.pl:1002`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/emit_ts.pl:1002)
+~|
+emitpl.shape: rectangle
+emitpl.class: compiler
+emitpl.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/emit_ts.pl:1002
+emitpl.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/emit_ts.pl:1002
+
+  dl6src -> lowerpl: "compiled by"
+  lowerpl -> emitpl: "printed by"
+}
+chain -> emitter: "step 3 is this file's output"
 
 legend: |~md
-  ### colour is share of the tick
+  ### colour on the statements below is share of the tick
   | | |
   |---|---|
-  | 🟥 hot | 40% or more |
-  | 🟧 warm | 10% to 40% |
-  | 🟨 cool | 1% to 10% |
-  | ⬜ cold | under 1% |
+  | 🟥 | 40% or more |
+  | 🟧 | 10% to 40% |
+  | 🟨 | 1% to 10% |
+  | ⬜ | under 1% |
+
+  Every statement below was handed to step 6 by step 5.
 ~|
 legend.class: head
-masthead -> legend
+emitter -> legend
 
-s0: "supportSql[1] seed scratch, the recursive CTE · 1396 ms · 64.2%" {
+s0: "supportSql[1] seed the scratch table, the recursive CTE · 1430 ms · 64.1%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: hot
 
   sql: |`sql
-    INSERT INTO "__support_next_reachable" ("source", "target",
-      "__refcount")
-    WITH RECURSIVE "reachable" ("source", "target") AS (
-    SELECT b0."source" AS "source", b0."target" AS "target"
-    FROM "edge" b0
-    UNION
-    SELECT b0."source" AS "source", b1."target" AS "target"
-    FROM "reachable" b0, "edge" b1
-    WHERE b1."source" = b0."target")
-    SELECT "source", "target", 1
-    FROM "reachable"
+  INSERT INTO "__support_next_reachable" ("source", "target",
+    "__refcount")
+  WITH RECURSIVE "reachable" ("source", "target") AS (
+  SELECT b0."source" AS "source", b0."target" AS "target"
+  FROM "edge" b0
+  UNION
+  SELECT b0."source" AS "source", b1."target" AS "target"
+  FROM "reachable" b0, "edge" b1
+  WHERE b1."source" = b0."target")
+  SELECT "source", "target", 1
+  FROM "reachable"
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **1395.7 ms** · flat |
-    | share of tick | **64.2%** |
+    | wall | **1429.7 ms** · flat |
+    | share of tick | **64.1%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `CO-ROUTINE reachable`
     - `SETUP`
     - `SCAN b0`
@@ -85,183 +258,181 @@ s0: "supportSql[1] seed scratch, the recursive CTE · 1396 ms · 64.2%" {
     - `SCAN b0`
     - `SEARCH b1 USING PRIMARY KEY (source=?)`
     - `SCAN reachable`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 legend -> s0
 
-s1: "supportSql[7] stage additions to the delta · 299 ms · 13.7%" {
+s1: "supportSql[7] stage additions into the delta · 308 ms · 13.8%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: warm
 
   sql: |`sql
-    INSERT INTO "__delta_reachable" ("_sign", "_sequence",
-      "source", "target")
-    SELECT 1, "rowid" - 1, "source", "target"
-    FROM "__new_reachable"
+  INSERT INTO "__delta_reachable" ("_sign", "_sequence",
+    "source", "target")
+  SELECT 1, "rowid" - 1, "source", "target"
+  FROM "__new_reachable"
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **298.8 ms** · flat |
-    | share of tick | **13.7%** |
+    | wall | **307.7 ms** · flat |
+    | share of tick | **13.8%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `SCAN __new_reachable`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s0 -> s1
 
-s2: "supportSql[8] stage the frontier copy · 201 ms · 9.2%" {
+s2: "supportSql[8] stage the frontier copy · 203 ms · 9.1%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cool
 
   sql: |`sql
-    INSERT INTO "__frontier_reachable" ("_phase", "_sequence",
-      "source", "target")
-    SELECT ?, "rowid" - 1, "source", "target"
-    FROM "__new_reachable"
+  INSERT INTO "__frontier_reachable" ("_phase", "_sequence",
+    "source", "target")
+  SELECT ?, "rowid" - 1, "source", "target"
+  FROM "__new_reachable"
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **200.6 ms** · ▼ 17 ms vs baseline |
-    | share of tick | **9.2%** |
+    | wall | **202.7 ms** · ▼ 15 ms |
+    | share of tick | **9.1%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `SCAN __new_reachable`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s1 -> s2
 
-s3: "supportSql[10] fill the head · 139 ms · 6.4%" {
+s3: "supportSql[6] fill the new-row set, ONE antijoin · 145 ms · 6.5%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cool
 
   sql: |`sql
-    INSERT OR IGNORE INTO "reachable" ("source", "target",
-      "__refcount")
-    SELECT n."source", n."target", n."__refcount"
-    FROM "__support_next_reachable" n
+  INSERT INTO "__new_reachable" ("source", "target",
+    "__refcount")
+  SELECT n."source", n."target", n."__refcount"
+  FROM "__support_next_reachable" n
+  LEFT JOIN "reachable" h
+  ON n."source" = h."source" AND n."target" = h."target"
+  WHERE h."source" IS NULL
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **139.1 ms** · flat |
-    | share of tick | **6.4%** |
+    | wall | **144.9 ms** · flat |
+    | share of tick | **6.5%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `SCAN n`
+    - `SEARCH h USING PRIMARY KEY (source=? AND target=?) LEFT-JOIN`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s2 -> s3
 
-s4: "supportSql[6] fill the new-row set, ONE antijoin · 139 ms · 6.4%" {
+s4: "supportSql[10] fill the head · 143 ms · 6.4%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cool
 
   sql: |`sql
-    INSERT INTO "__new_reachable" ("source", "target",
-      "__refcount")
-    SELECT n."source", n."target", n."__refcount"
-    FROM "__support_next_reachable" n
-    LEFT JOIN "reachable" h
-    ON n."source" = h."source" AND n."target" = h."target"
-    WHERE h."source" IS NULL
+  INSERT OR IGNORE INTO "reachable" ("source", "target",
+    "__refcount")
+  SELECT n."source", n."target", n."__refcount"
+  FROM "__support_next_reachable" n
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **138.8 ms** · flat |
+    | wall | **143.5 ms** · flat |
     | share of tick | **6.4%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `SCAN n`
-    - `SEARCH h USING PRIMARY KEY (source=? AND target=?) LEFT-JOIN`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s3 -> s4
 
-s5: "supportSql[3] stage retractions · 1 ms · 0.0%" {
+s5: "supportSql[2] set each head row's count from the scratch table · 0 ms · 0.0%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cold
 
   sql: |`sql
-    INSERT INTO "__delta_reachable" ("_sign", "_sequence",
-      "source", "target")
-    SELECT -1, row_number() OVER () - 1, "source", "target"
-    FROM "reachable"
-    WHERE "__refcount" <= 0
+  UPDATE "reachable" AS h SET "__refcount" = COALESCE((
+  SELECT n."__refcount"
+  FROM "__support_next_reachable" n
+  WHERE n."source" = h."source" AND n."target" = h."target"),
+    0)
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
-    | | |
-    |---|---|
-    | wall | **1.0 ms** · flat |
-    | share of tick | **0.0%** |
-    | executions | 1 |
-    | rows returned | 0 |
-    | head rel | `reachable` |
-
-    ### query plan
-    - `CO-ROUTINE (subquery-2)`
-    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
-    - `SCAN (subquery-2)`
-  ~|
-  runtime.class: plan
-}
-s4 -> s5
-
-s6: "supportSql[2] subtract into the head's own count · 0 ms · 0.0%" {
-  grid-columns: 2
-  grid-gap: 24
-  class: cold
-
-  sql: |`sql
-    UPDATE "reachable" AS h SET "__refcount" = COALESCE((
-    SELECT n."__refcount"
-    FROM "__support_next_reachable" n
-    WHERE n."source" = h."source" AND n."target" = h."target"), 0)
-  `|
-  sql.class: code
-
-  runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
     | wall | **0.2 ms** · flat |
@@ -270,56 +441,108 @@ s6: "supportSql[2] subtract into the head's own count · 0 ms · 0.0%" {
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
     - `SCAN h`
     - `CORRELATED SCALAR SUBQUERY 1`
     - `SEARCH n USING PRIMARY KEY (source=? AND target=?)`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+}
+s4 -> s5
+
+s6: "supportSql[3] stage retractions into the delta · 0 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 20
+  class: cold
+
+  sql: |`sql
+  INSERT INTO "__delta_reachable" ("_sign", "_sequence",
+    "source", "target")
+  SELECT -1, row_number() OVER () - 1, "source", "target"
+  FROM "reachable"
+  WHERE "__refcount" <= 0
+  `|
+  sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
+
+  runtime: |~md
+    ### measured
+    | | |
+    |---|---|
+    | wall | **0.1 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### SQLite's plan for it
+    - `CO-ROUTINE (subquery-2)`
+    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
+    - `SCAN (subquery-2)`
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+  ~|
+  runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s5 -> s6
 
-s7: "supportSql[0] clear scratch · 0 ms · 0.0%" {
+s7: "supportSql[0] clear the scratch table · 0 ms · 0.0%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cold
 
   sql: |`sql
-    DELETE
-    FROM "__support_next_reachable"
+  DELETE
+  FROM "__support_next_reachable"
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
-    | wall | **0.0 ms** · flat |
+    | wall | **0.1 ms** · flat |
     | share of tick | **0.0%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
+    
 
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s6 -> s7
 
-s8: "supportSql[5] clear the new-row set · 0 ms · 0.0%" {
+s8: "supportSql[4] delete what fell to zero · 0 ms · 0.0%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cold
 
   sql: |`sql
-    DELETE
-    FROM "__new_reachable"
+  DELETE
+  FROM "reachable"
+  WHERE "__refcount" <= 0
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
     | wall | **0.0 ms** · flat |
@@ -328,27 +551,32 @@ s8: "supportSql[5] clear the new-row set · 0 ms · 0.0%" {
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
+    ### SQLite's plan for it
+    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
 
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s7 -> s8
 
-s9: "supportSql[4] delete what fell to zero · 0 ms · 0.0%" {
+s9: "supportSql[5] clear the new-row set · 0 ms · 0.0%" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: cold
 
   sql: |`sql
-    DELETE
-    FROM "reachable"
-    WHERE "__refcount" <= 0
+  DELETE
+  FROM "__new_reachable"
   `|
   sql.class: code
+  sql.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
+  sql.tooltip: written by v6/prolog/lower.pl:2386
 
   runtime: |~md
-    ### runtime
+    ### measured
     | | |
     |---|---|
     | wall | **0.0 ms** · flat |
@@ -357,59 +585,75 @@ s9: "supportSql[4] delete what fell to zero · 0 ms · 0.0%" {
     | rows returned | 0 |
     | head rel | `reachable` |
 
-    ### query plan
-    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
+    ### SQLite's plan for it
+    
+
+    ### written by
+    [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
   ~|
   runtime.class: plan
+  runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s8 -> s9
 
 unrun: |~md
-  ### emitted but never executed on this workload
+  ### emitted, and this workload never ran it
   - `supportSql[9] stage the next-frontier copy`
   - `insertSql, the delta join`
   - `boundarySql edge`
   - `boundarySql reachable`
 
-  Every one is dead weight for `grid_10000` and live for some other program.
+  Dead weight for `grid_10000`, live for some other program.
 ~|
 unrun.class: cold
 s9 -> unrun
 
-schema: "the schema this tick writes into" {
+schema: "the tables all of that writes into" {
   grid-columns: 2
-  grid-gap: 24
+  grid-gap: 20
   class: head
 
   tables: |`sql
-    CREATE TABLE "edge" ("source" INTEGER NOT NULL, "target"
-      INTEGER NOT NULL, PRIMARY KEY ("source", "target")) WITHOUT
-      ROWID
-    CREATE TABLE "reachable" ("source" INTEGER NOT NULL, "target"
-      INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1,
-      PRIMARY KEY ("source", "target")) WITHOUT ROWID
-    CREATE TEMP TABLE "__delta_edge" ("_sign" INTEGER NOT NULL,
-      "_sequence" INTEGER NOT NULL, "source" INTEGER NOT NULL,
-      "target" INTEGER NOT NULL)
-    CREATE INDEX "__delta_edge_sign"
-    ON "__delta_edge" ("_sign")
-    CREATE INDEX "__delta_edge_group"
-    ON "__delta_edge" ("source", "target")
-    CREATE TEMP TABLE "__frontier_edge" ("_phase" INTEGER NOT
-      NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
-      NULL, "target" INTEGER NOT NULL)
-    CREATE INDEX "__frontier_edge_phase"
-    ON "__frontier_edge" ("_phase")
-    CREATE TEMP TABLE "__next_frontier_edge" ("_phase" INTEGER NOT
-      NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
-      NULL, "target" INTEGER NOT NULL)
+  CREATE TABLE "edge" ("source" INTEGER NOT NULL, "target"
+    INTEGER NOT NULL, PRIMARY KEY ("source", "target"))
+    WITHOUT ROWID
+
+  CREATE TABLE "reachable" ("source" INTEGER NOT NULL,
+    "target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL
+    DEFAULT 1, PRIMARY KEY ("source", "target")) WITHOUT ROWID
+
+  CREATE TEMP TABLE "__delta_edge" ("_sign" INTEGER NOT NULL,
+    "_sequence" INTEGER NOT NULL, "source" INTEGER NOT NULL,
+    "target" INTEGER NOT NULL)
+
+  CREATE INDEX "__delta_edge_sign"
+  ON "__delta_edge" ("_sign")
+
+  CREATE INDEX "__delta_edge_group"
+  ON "__delta_edge" ("source", "target")
+
+  CREATE TEMP TABLE "__frontier_edge" ("_phase" INTEGER NOT
+    NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
+    NULL, "target" INTEGER NOT NULL)
+
+  CREATE INDEX "__frontier_edge_phase"
+  ON "__frontier_edge" ("_phase")
+
+  CREATE TEMP TABLE "__next_frontier_edge" ("_phase" INTEGER
+    NOT NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER
+    NOT NULL, "target" INTEGER NOT NULL)
+
+  CREATE TEMP TABLE "__delta_reachable" ("_sign" INTEGER NOT
+    NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
+    NULL, "target" INTEGER NOT NULL)
   `|
   tables.class: code
+  tables.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:3264
 
   cost: |~md
-    ### what every staged row pays
-    7 indexes on this program, so each staged row
-    costs its table write plus one btree write per index over that table.
+    ### what a staged row pays
+    7 indexes, so every staged row costs its table
+    write plus one btree write per index over that table.
 
     - `__delta_edge_sign`
     - `__delta_edge_group`
@@ -418,7 +662,11 @@ schema: "the schema this tick writes into" {
     - `__delta_reachable_group`
     - `__frontier_reachable_phase`
     - `reachable_zero`
+
+    ### written by
+    [`v6/prolog/lower.pl:3264`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:3264)
   ~|
   cost.class: plan
+  cost.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:3264
 }
 unrun -> schema
