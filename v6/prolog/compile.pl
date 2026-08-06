@@ -127,12 +127,28 @@ materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
             MissingColumns),
     append(Decls0, MissingColumns, Decls).
 
+% The catalog rel is compiler-known, so its columns come from lower.pl's
+% contract rather than from whatever variables a caller's rule happened to use.
+materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    program_uses_catalog(prog(Decls0, Rules), UsesCatalog),
+    (   UsesCatalog == true
+    ->  catalog_ddl_contract(CatalogName, ColumnSpecs),
+        length(ColumnSpecs, Arity),
+        findall(col_type(CatalogName/Arity, Column, Type),
+                ( member(Column-Type, ColumnSpecs),
+                  \+ memberchk(col_type(CatalogName/Arity, Column, Type), Decls0) ),
+                CatalogColumns),
+        append(Decls0, CatalogColumns, Decls)
+    ;   Decls = Decls0
+    ).
+
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
     prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
     expand_program_with_bindings(HostProg, Bindings, ExpandedProg, _),
-    materialize_reference_target_rels(ExpandedProg, Prog),
+    materialize_reference_target_rels(ExpandedProg, ReferencedProg),
+    materialize_catalog_rel(ReferencedProg, Prog),
     Prog = prog(Decls, Rules),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
     % here, and the sugared entry expands again. That second expansion was the
@@ -156,7 +172,11 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
     derived_refs(Rules, DerivedRefs),
-    subtract(AllRefs, DerivedRefs, ArrivalTargets),
+    % The catalog is seeded by DDL, so it is never an arrival target; leaving it
+    % in would open the serve door to writes against a compiler-owned table.
+    catalog_ddl_contract(CatalogName, CatalogSpecs),
+    length(CatalogSpecs, CatalogArity),
+    subtract(AllRefs, [CatalogName/CatalogArity | DerivedRefs], ArrivalTargets),
     % EXPRESSION + AGGREGATE LIFT: one program-wide typing fixpoint replaces
     % the per-ref rel_column_types/7 call. Same answer for every column that
     % has a literal witness or a declaration (so every pre-lift fixture keeps

@@ -136,7 +136,10 @@
             struct_type_plans/2,
             % The compiler half of the json capture-type table, exported for
             % the unit that pins it equal to body.pl:json_capture_type/2.
-            json_capture_json_type/2 ]).
+            json_capture_json_type/2,
+            % The catalog's column contract, read by compile.pl so the ordinary
+            % rel path builds the table from real decls instead of caller spellings.
+            catalog_ddl_contract/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -633,13 +636,75 @@ catalog_ddl_contract('__catalog_rel',
                      [ rel_id-int, parent_id-int, ordinal-int,
                        local_name-text, kind-text, type_id-int ]).
 
-% TODO(g1): CREATE TABLE plus CREATE INDEX on (parent_id, local_name), the index being what a name-resolution walk over children reads. Returning [] keeps every emitted module byte-identical until the bodies land.
-% Prior art for the one-node-one-row shape: typescript-go internal/checker/types.go:673 gives every type one struct with an id, a kind mask and a variant pointer.
-catalog_table_ddl([]).
+% The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
+% injects the contract's col_type decls; only the child-walk index is minted here.
+catalog_table_ddl([
+    'CREATE INDEX IF NOT EXISTS "__catalog_rel_parent" ON "__catalog_rel" ("parent_id", "local_name")']).
 
-% TODO(g1): ids assigned by POSITION so a recompile is byte-stable -- primitives text/int/float/bool/json take 1..5, then one row per rel in sorted AllRefs order (compile.pl:157), then that rel's columns in declaration order.
-% One INSERT OR IGNORE carrying every row in a single VALUES list (N+1 law), idempotent because serve/3_engine.ts:225 replays the DDL on every swap.
-catalog_row_ddl(_Decls, _RelPlans, []).
+% Ids are assigned by POSITION for a byte-stable recompile: the five
+% primitives take 1..5, then each rel, then its columns (one INSERT OR IGNORE).
+catalog_row_ddl(_Decls, RelPlans, [Statement]) :-
+    catalog_primitive_rows(1, PrimitiveRows),
+    catalog_rel_rows(RelPlans, 6, _FinalId, RelRows),
+    append(PrimitiveRows, RelRows, AllRows),
+    foldl(catalog_row_part, AllRows, [], ReversedParts),
+    reverse(ReversedParts, Parts),
+    atomic_list_concat(Parts, ',', ValuesText),
+    format(atom(Statement),
+           'INSERT OR IGNORE INTO "__catalog_rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id") VALUES ~w',
+           [ValuesText]).
+
+catalog_primitive_rows(StartId, PrimitiveRows) :-
+    catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).
+
+catalog_primitive_rows(_, [], Acc, Rows) :- reverse(Acc, Rows).
+catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
+    NextId is Id + 1,
+    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0) | Acc], Rows).
+
+catalog_rel_rows([], Id, Id, []).
+catalog_rel_rows([RelPlan | Rest], Id0, FinalId, Rows) :-
+    RelPlan = relplan(Name/_, _Kind, Columns, _Key, ColumnTypes),
+    RelRow = row(Id0, 0, 0, Name, rel, 0),
+    IdAfterRel is Id0 + 1,
+    catalog_column_rows(Columns, ColumnTypes, Id0, 1, IdAfterRel, IdAfterColumns, ColumnRows),
+    catalog_rel_rows(Rest, IdAfterColumns, FinalId, RestRows),
+    append([RelRow | ColumnRows], RestRows, Rows).
+
+catalog_column_rows([], _ColumnTypes, _RelId, _Ordinal, Id, Id, []).
+catalog_column_rows([ColumnName | RestColumns], ColumnTypes, RelId, Ordinal, Id0, IdFinal, [ColumnRow | MoreRows]) :-
+    nth1(Ordinal, ColumnTypes, ColumnType),
+    catalog_type_id(ColumnType, TypeId),
+    NextId is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    catalog_column_rows(RestColumns, ColumnTypes, RelId, NextOrdinal, NextId, IdFinal, MoreRows),
+    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId).
+
+% Primitive id for a column's boundary type: the five primitives take 1..5,
+% every other boundary (ref(_), a struct name, a list) is 0.
+catalog_type_id(text, 1) :- !.
+catalog_type_id(int, 2) :- !.
+catalog_type_id(float, 3) :- !.
+catalog_type_id(bool, 4) :- !.
+catalog_type_id(json, 5) :- !.
+catalog_type_id(_, 0).
+
+catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId), Acc, [Part | Acc]) :-
+    sql_text_literal(Name, NameLiteral),
+    sql_text_literal(Kind, KindLiteral),
+    format(atom(Part), '(~d,~d,~d,~w,~w,~d)',
+           [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId]).
+
+% SQL string literal: single-quoted, embedded single quotes doubled.
+sql_text_literal(Text, Literal) :-
+    atom_codes(Text, Codes),
+    double_single_quotes(Codes, EscapedCodes),
+    append([0''' | EscapedCodes], [0'''], LiteralCodes),
+    atom_codes(Literal, LiteralCodes).
+
+double_single_quotes([], []).
+double_single_quotes([39 | Rest], [39, 39 | More]) :- !, double_single_quotes(Rest, More).
+double_single_quotes([Code | Rest], [Code | More]) :- double_single_quotes(Rest, More).
 
 % TODO(g2): conformance/ticklog.pl needs the same seed only once a FIXTURE derives from a catalog row; a DDL-time seed emits no delta at any tick, so g1 alone cannot diverge from the oracle.
 % TODO(g3): __catalog_annotation(target_id, name, value) is the ONLY future DDL statement here, because nesting, generics and column types all land as rows in the table above.
@@ -3500,9 +3565,11 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     maplist(pre_ddl(RelPlans), PreRefs, PreDdl),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
-    % TODO(g1): gate on program_uses_catalog/2 (analyze.pl, mirroring program_uses_tick/2 at analyze.pl:180) once the bodies land; both predicates return [] today, so this append is a no-op on all 212 emitted modules.
-    catalog_table_ddl(CatalogTableDdl),
-    catalog_row_ddl(Decls, RelPlans, CatalogRowDdl),
+    program_uses_catalog(prog(Decls, Rules), UsesCatalog),
+    ( UsesCatalog == true
+    -> catalog_table_ddl(CatalogTableDdl),
+       catalog_row_ddl(Decls, RelPlans, CatalogRowDdl)
+    ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
