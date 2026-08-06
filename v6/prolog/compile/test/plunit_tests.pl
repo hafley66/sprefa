@@ -580,7 +580,7 @@ test(catalog_table_shape) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % The catalog is seeded by DDL, so the serve door must never accept a write
@@ -617,24 +617,26 @@ test(catalog_ids_are_positional) :-
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [CatalogSeed]),
     forall(member(Expected, [
-        "(1,0,0,'text','primitive',0,0,0,'')",
-        "(2,0,0,'int','primitive',0,0,0,'')",
-        "(3,0,0,'float','primitive',0,0,0,'')",
-        "(4,0,0,'bool','primitive',0,0,0,'')",
-        "(5,0,0,'json','primitive',0,0,0,'')",
-        "(6,0,0,'catalog_reader','module',0,0,6,'52371c9ee530d976')",
-        "(7,6,0,'__rel','rel',0,9,6,'a50fabb173953929')",
-        "(8,7,1,'rel_id','column',2,0,6,'210a0e861adc4989')",
-        "(9,7,2,'parent_id','column',2,0,6,'3dfbea898eadeb93')",
-        "(10,7,3,'ordinal','column',2,0,6,'ab17af67932ed307')",
-        "(11,7,4,'local_name','column',1,0,6,'948bb03d43fcc827')",
-        "(12,7,5,'kind','column',1,0,6,'56d4a76105fd8276')",
-        "(13,7,6,'type_id','column',2,0,6,'b60b045694bf1009')",
-        "(14,7,7,'arity','column',2,0,6,'d8d2c7818bc3cb8d')",
-        "(15,7,8,'module_id','column',2,0,6,'5df6bcaf1b4b63d6')",
-        "(16,7,9,'h_id','column',1,0,6,'ce54bffcf0312dd1')",
-        "(17,6,0,'rel_named','rel',0,1,6,'839df246b6d13056')",
-        "(18,17,1,'col1','column',1,0,6,'b9055ded7691bfca')"]),
+        "(1,0,0,'text','primitive',0,0,0,'','','')",
+        "(2,0,0,'int','primitive',0,0,0,'','','')",
+        "(3,0,0,'float','primitive',0,0,0,'','','')",
+        "(4,0,0,'bool','primitive',0,0,0,'','','')",
+        "(5,0,0,'json','primitive',0,0,0,'','','')",
+        "(6,0,0,'catalog_reader','module',0,0,6,'52371c9ee530d976','','')",
+        "(7,6,0,'__rel','rel',0,11,6,'c8bc0fb4f25c0d4d','f2182fe30f5b2637','')",
+        "(8,7,1,'rel_id','column',2,0,6,'386b6b00bce37976','','')",
+        "(9,7,2,'parent_id','column',2,0,6,'d426b510b7af6bc3','','')",
+        "(10,7,3,'ordinal','column',2,0,6,'f364570dc03dcb51','','')",
+        "(11,7,4,'local_name','column',1,0,6,'3d2a7e77d1c0bf5b','','')",
+        "(12,7,5,'kind','column',1,0,6,'6a61f74e56f4331f','','')",
+        "(13,7,6,'type_id','column',2,0,6,'d831bab463b00b7a','','')",
+        "(14,7,7,'arity','column',2,0,6,'9371b6a42561aab3','','')",
+        "(15,7,8,'module_id','column',2,0,6,'c02aa3c15163f01c','','')",
+        "(16,7,9,'h_id','column',1,0,6,'e1dced9b3224ccea','','')",
+        "(17,7,10,'h_schema','column',1,0,6,'0967c02f99ba48cf','','')",
+        "(18,7,11,'h_rule','column',1,0,6,'df4d6ca44aae0adf','','')",
+        "(19,6,0,'rel_named','rel',0,1,6,'839df246b6d13056','32b13250133857cf','180433c603fbd8c6')",
+        "(20,19,1,'col1','column',1,0,6,'b9055ded7691bfca','','')"]),
         sub_atom(CatalogSeed, _, _, _, Expected)).
 
 % Two rel names that differ only by module must produce DIFFERENT h_id
@@ -650,7 +652,8 @@ test(catalog_module_scope_distinguishes_h_id) :-
 module_rel_h_id(ModuleName, HId) :-
     Prog = prog([], [ (rel_named(LocalName) <-
                          '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
-                                 _TypeId, _Arity, _ModuleId, _HId)) ]),
+                                 _TypeId, _Arity, _ModuleId, _HId,
+                                 _HSchema, _HRule)) ]),
     Term = fixture(ModuleName, Prog, [], [], []),
     once(( program_plan(Term-[], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
@@ -665,12 +668,70 @@ module_rel_h_id(ModuleName, HId) :-
 catalog_program(fixture(catalog_reader, Prog, [], [], [])) :-
     Prog = prog([], [ (rel_named(LocalName) <-
                          '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
-                                 _TypeId, _Arity, _ModuleId, _HId)) ]).
+                                 _TypeId, _Arity, _ModuleId, _HId,
+                                 _HSchema, _HRule)) ]).
 
 catalog_lowered(_Name, Ddl) :-
     catalog_program(Term),
     once(( program_plan(Term-[], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)) )).
+
+% The whole point of the pair: identity (h_id) is stable while shape moves.
+% Adding a column to a rel changes h_schema but leaves h_id untouched.
+test(catalog_h_schema_tracks_shape_not_identity) :-
+    CatRule = (rel_named(LocalName) <-
+                 '__rel'(_I, _P, _O, LocalName, rel,
+                         _A, _B, _C, _D, _E, _F)),
+    ProgA = prog([ type_decl(thing, [col(a, int), col(b, int)]) ], [CatRule]),
+    ProgB = prog([ type_decl(thing, [col(a, int), col(c, int)]) ], [CatRule]),
+    hash_probe_rel_shape(ProgA, thing, 2, SchemaA, HIdA),
+    hash_probe_rel_shape(ProgB, thing, 2, SchemaB, HIdB),
+    SchemaA \== SchemaB,
+    HIdA == HIdB.
+
+% The derivation fingerprint is stable across two compiles of the same program
+% and moves when the rule body moves. Two identical bodies are two derivations:
+% msort (not sort) keeps both, so the count participates in the hash.
+test(catalog_h_rule_stable_and_distinguishes_derivation) :-
+    CatRule = (rel_named(LocalName) <-
+                 '__rel'(_I, _P, _O, LocalName, rel,
+                         _A, _B, _C, _D, _E, _F)),
+    ProgV1 = prog([], [ (derived(X) <- src_a(X)), CatRule ]),
+    ProgV2 = prog([], [ (derived(X) <- src_b(X)), CatRule ]),
+    hash_probe_rel_rule(ProgV1, derived, 1, RuleOne),
+    hash_probe_rel_rule(ProgV1, derived, 1, RuleOneAgain),
+    hash_probe_rel_rule(ProgV2, derived, 1, RuleTwo),
+    RuleOne == RuleOneAgain,
+    RuleOne \== RuleTwo,
+    RuleOne \== ''.
+
+% Seed for the two fingerprint tests: one INSERT row per compile, the rel row
+% of RelName/Arity carries h_id, h_schema and h_rule as its last three fields,
+% each a 16-hex literal separated by ',' (a quote-comma-quote gap of 3 chars).
+hash_probe_rel_shape(Prog, RelName, Arity, Schema, HId) :-
+    hash_probe_rel_seed(Prog, Seed),
+    format(atom(Marker), ",'~w','rel',0,~d,6,'", [RelName, Arity]),
+    sub_atom(Seed, MarkerStart, MarkerLen, _, Marker),
+    HIdStart is MarkerStart + MarkerLen,
+    sub_atom(Seed, HIdStart, 16, _, HId),
+    SchemaStart is HIdStart + 19,
+    sub_atom(Seed, SchemaStart, 16, _, Schema).
+
+hash_probe_rel_rule(Prog, RelName, Arity, Rule) :-
+    hash_probe_rel_seed(Prog, Seed),
+    format(atom(Marker), ",'~w','rel',0,~d,6,'", [RelName, Arity]),
+    sub_atom(Seed, MarkerStart, MarkerLen, _, Marker),
+    HIdStart is MarkerStart + MarkerLen,
+    SchemaStart is HIdStart + 19,
+    RuleStart is SchemaStart + 19,
+    sub_atom(Seed, RuleStart, 16, _, Rule).
+
+hash_probe_rel_seed(Prog, Seed) :-
+    Term = fixture(hash_probe, Prog, [], [], []),
+    once(( program_plan(Term-[], Plan),
+           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+           member(Seed, Ddl),
+           sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )).
 
 % table_name/2 drops the arity, so a name at two arities would collide on the
 % dropped table; the compiler refuses before any DDL is minted.
