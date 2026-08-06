@@ -82,7 +82,9 @@ function scheduleProbe(seam: ISqlSeam, everyLines: number): (line: ITickLogLine)
   };
 }
 
-function parseArgs(argv: readonly string[]): { input: string; module: string } | null {
+function parseArgs(
+  argv: readonly string[],
+): { input: string; module: string; extraDdl: string | undefined } | null {
   const flags = new Map<string, string>();
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index];
@@ -93,7 +95,17 @@ function parseArgs(argv: readonly string[]): { input: string; module: string } |
   const input = flags.get("input");
   const module = flags.get("module");
   if (input === undefined || module === undefined) return null;
-  return { input, module };
+  return { input, module, extraDdl: flags.get("extra-ddl") };
+}
+
+// A/B lever for schema experiments: statements appended after the emitted DDL,
+// one per line, so an index can be priced without regenerating the module.
+function extraDdlStatements(path: string | undefined): readonly string[] {
+  if (path === undefined) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function main(): void {
@@ -113,7 +125,8 @@ function main(): void {
   import(resolve(args.module))
     .then((loaded: { program: IProgram }) => {
       const program = loaded.program;
-      ScratchStore.boot(seam, program.ddl)
+      const bootDdl = [...program.ddl, ...extraDdlStatements(args.extraDdl)];
+      ScratchStore.boot(seam, bootDdl)
         .pipe(
           concatMap(() => BootRunner.run(seam, program.boot)),
           map(() => {
