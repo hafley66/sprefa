@@ -344,6 +344,11 @@ scale-floor:
 
 # ── benches ──
 
+# core dl6 bench; writes labs/exec_shootout/dl6/FACTS.md, whose header states the env knobs
+# (expect: grid_10000 derived=1069200 checksum=9d7239568960d6a8)
+dl6-bench:
+	bash {{v6}}/labs/exec_shootout/dl6/bench.sh
+
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
 bench:
 	cd {{v6}}/sprefa-store/bench && bash run.sh
