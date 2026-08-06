@@ -1626,6 +1626,50 @@ sites but not against new code. **missing** = nothing.
   does not fire at all: that one costs a whole program rather than a term, and it
   needs a `not(agg(...))` base clause instead of a default.
 
+## 41. A recursive rule stops after one round when its arrivals land in one batch
+
+- WHAT IT LOOKS LIKE: a transitive-closure program returns the one-hop rows and
+  silently omits every multi-hop row. No error, no refusal, no tick-log
+  disagreement; the tick reports `carryPending: false` and the loop exits
+  believing it converged. Feed the same edges one per tick and the answer is
+  correct, which is why every recursive fixture in the suite passes.
+- HOW IT BIT US (2026-08-05, exec_shootout dl6 lane): the lane could not produce
+  a benchmark row for the shipping engine because the pinned 3-node chain
+  checksum did not match. Reproduced outside the lane through the bench-cli
+  adapters, oracle against compiled engine, same program and same schedule:
+
+  | schedule | swipl oracle | tsv2 compiled |
+  |---|---|---|
+  | `[[edge(1,2), edge(2,3)]]` | `reachable: (1,2) (1,3) (2,3)` | `reachable: (1,2) (2,3)` |
+  | `[[edge(1,2)], [edge(2,3)]]` | same 3 rows | same 3 rows |
+
+  The flagship program `flagship_flow_reach_over_resolved_edges.dl6` loses
+  `flow_reach(app, entry, sink, persist)` under the batched schedule, so the
+  defect reaches the alpha flagship and is not an int-column artifact.
+- THE DEFECT CHAIN, in firing order:
+  1. `applyLevelsBeforeEdges` (1_incremental.ts:783) stages level results through
+     `levelFrontierCopies(false)` (1_incremental.ts:335), which writes the
+     frontier table at phase 2 and never the next-frontier table.
+  2. `promoteFrontiers` (1_incremental.ts:1070) reads carry from
+     `EXISTS (SELECT 1 FROM __next_frontier_<rel>)`, which is therefore always
+     empty, so `carryPending` is false and `TickFold` (tickLoop.ts:47) exits.
+  3. The same promote then runs `DELETE FROM __frontier_<rel>` followed by an
+     insert from the empty next-frontier table, so the rows a second round would
+     have joined are destroyed at tick end.
+  4. `recomputeLevelsAfterEdges`, the one path that does write next-frontier
+     (`levelFrontierCopies(true)`), is gated on retractions and on
+     `reconcileEveryTick`, both false for a positive recursive program.
+- WHY NO TEST SAW IT: every recursive fixture feeds one hop per tick
+  (conformance/fixtures/4_flagship_flow.pl:34-35 is two arrival ticks), and the
+  emitted third join arm reads the FULL head table, so one round per tick is
+  sufficient there. The suite has no case where a single arrival batch needs two
+  rounds.
+- FAIL-PRE-FIX TEST OWED: a fixture whose schedule is one batch containing a
+  two-hop chain, graded against the oracle's three rows.
+- RAIL OWED: the drain budget work (plans/2026-08-05-fixpoint-budget.md) replaces
+  the tick-count cap with a work budget over the same durable worklist tables;
+  the carry write is its enabling step, so the rail rides that arc.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
