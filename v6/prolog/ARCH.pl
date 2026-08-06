@@ -14,6 +14,30 @@
 % CALLOUTS (the things to keep distinguished, hard-won this arc)
 % ═════════════════════════════════════════════════════════════════════════════
 %
+% * TWO DL SURFACES, ONE LANGUAGE. compile/parse_dl.pl is the real text door;
+%   v6/dl/grammar/dl.langium is a narrow MVP slice of it. A construct missing
+%   from the langium grammar is usually PRESENT in the real surface. The verdict
+%   on any construct is compile/out/manifest.json (bucket + refusal reason per
+%   fixture), never a comment header.
+%
+% * JSON IS TWO PLANES, ONLY ONE CLOSED. READING compiles: spread/1 array
+%   explode, `$name` key holes, `**` uncapped descent, typed captures
+%   ({k: V: int}), nested objects, the json column type. WRITING is partly
+%   refused: json_group_array/1..2 and struct columns render, while a brace
+%   literal in value or head position raises json_value_expression, and
+%   json_array / json_object heads raise aggregate_head. Consequence:
+%   scan-into-json has no spelling, because `:=` computes arithmetic, concat
+%   and seq only.
+%
+% * AGGREGATES ARE DELTA-LOCAL. A head aggregate groups over ONE body atom;
+%   taking the group key from a second atom raises
+%   aggregate_group_not_delta_local. Materialize the join into its own rel
+%   first, then aggregate over that rel.
+%
+% * NO STRING SPLIT. concat/1 and regexp/2 are the whole string surface; there
+%   is no split or substr, so path-prefix work (ancestor directories) has no
+%   in-language spelling and arrives as facts or from a host.
+%
 % * ONE GRAPH, FIVE BINDING TIMES. ast -> stream_ref -> static_subs ->
 %   runtime_subs -> delta_flow are refinements of each other, not five designs.
 %   Compile owns the first three; sqlite owns the last two, on disk.
