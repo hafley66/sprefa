@@ -1,0 +1,168 @@
+...@_house
+
+# One-column bands; shape vocabulary from _house (receipt/db/scratch/stream/...).
+grid-rows: 7
+grid-columns: 1
+grid-gap: 70
+
+story: "BAND 1  ::  HOW WE GOT HERE  ::  every document is a receipt" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 24
+
+  s1: "JUL 22 store lab (rust+sqlite)\nDRed vs DD vs counting, priced.\nassert + retract_dred proven" {class: [shipped; receipt]}
+  s2: "JUL-AUG tsv2 emitted engine\nprolog compiles .dl6 to SQL\ndeltas, frontiers, ticks" {class: [shipped; receipt]}
+  s3: "AUG 5 23:55 e3997cec\ncorrectness fix adds a loop\nthat never retires its frontier" {class: [danger; receipt]}
+  s4: "AUG 6 AM the 38.4x arc\n106,692 -> 2,200 ms, PR #7" {class: [shipped; receipt]}
+  s5: "AUG 6 PM DRed probe\n54x insert / 37x delete, all MATCH" {class: [shipped; receipt]}
+  s6: "AUG 6 PM expand landing a1274c44\ngrid 2,206 -> 1,998, sweep identical" {class: [chosen; receipt]}
+  s7: "NOW: why is chain_10000\nstill 30s?" {class: [danger; receipt]}
+
+  s1 -> s2 -> s3 -> s4
+  s4 -> s5 -> s6 -> s7
+}
+
+race: "BAND 2  ::  THE RACE  ::  chain_10000 = 9,996,213 rows from 7,743 edges, one checksum" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 5
+  (* -> *)[*].style.font-size: 20
+
+  mono: "mono 🥇  146 ms\nrust, one native structure" {class: [shipped; rival]}
+  rxgraph: "rxgraph 🥈  178 ms\nrust, reactive graph" {class: [shipped; rival]}
+  interp: "interp 🥉  1,375 ms\nrust, interpreted rules" {class: [muted; rival]}
+  dl6: "dl6  30,670 ms\nprolog-emitted SQL on SQLite" {class: [danger; rival]}
+  gap: "the gap is WRITES PER ROW:\nmono writes each row once (~15 ns),\ndl6 writes it SEVEN times (~0.43 µs each).\nband 3 shows all seven" {class: chosen}
+
+  mono -> gap: 1x
+  rxgraph -> gap: 1.2x
+  interp -> gap: 9x
+  dl6 -> gap: 210x {style.stroke-width: 8}
+}
+
+flow: "BAND 3  ::  THE DATAFLOW OF ONE TICK  ::  every edge is a real emitted statement with its measured price. trace a row." {
+  class: stage
+  (* -> *)[*].style.stroke-width: 5
+  (* -> *)[*].style.font-size: 20
+
+  arrivals: "tick input:\n7,743 edge rows (JSON)" {class: [chosen; receipt]}
+
+  edge: "edge  (EDB)\nDEFENSE: user facts need one durable,\nkeyed home; every rule reads it" {class: [shipped; db]}
+  delta_edge: "__delta_edge" {class: [muted; stream]}
+  frontier_edge: "__frontier_edge" {class: [muted; stream]}
+
+  wave_a: "__expand_a  (scratch)\nDEFENSE: hop joins ONLY the frontier,\nnever the whole table = the 38.4x" {class: [designed; scratch]}
+  wave_b: "__expand_b  (scratch)\nDEFENSE: role swap instead of copy;\nempty hop = fixpoint proof" {class: [designed; scratch]}
+  support_next: "__support_next  (scratch)\nDEFENSE: rebuild BESIDE the old answer,\nthen diff: retraction falls out free,\nno bookkeeping can drift" {class: [designed; scratch]}
+
+  head: "reachable  (IDB)\nDEFENSE: the queryable answer;\nrefcount says when a row truly dies" {class: [shipped; db]}
+  new: "__new_  (scratch)\nDEFENSE: birth ORDER. rowid becomes\n_sequence, the order the 420-fixture\noracle pins byte-for-byte" {class: [chosen; scratch]}
+  delta: "__delta_reachable  (stream)\nDEFENSE: readers get EVENTS (+1/-1),\nnot re-reads of state" {class: [danger; stream]}
+  mail_now: "__frontier_reachable  (stream)\nDEFENSE: <+ rules fire per OCCURRENCE;\nthis tick, exactly once" {class: [danger; stream]}
+  mail_next: "__next_frontier_reachable  (stream)\nDEFENSE: a mid-tick correction defers\nits events to NEXT tick, never loses them" {class: [danger; stream]}
+
+  ghost: "👻 NOBODY\n(this program has no <+ rule,\nno subscriber)" {class: muted}
+
+  arrivals -> edge: "INSERT OR IGNORE\n13 ms"
+  arrivals -> delta_edge: "stage ±1\n13 ms"
+  arrivals -> frontier_edge: "stage occurrences\n77 ms"
+
+  edge -> wave_a: "SEED round 0:\nbase arm SELECT"
+  wave_a -> wave_b: "HOP: WITH reachable AS wave_a\nJOIN edge, NOT EXISTS dedup\n11,498 ms / 1,290 rounds" {style.stroke-width: 8}
+  wave_b -> wave_a: "HOP back (role swap)\n11,458 ms / 1,291 rounds" {style.stroke-width: 8}
+  wave_a -> support_next: "ABSORB each round,\npresence = 1"
+  wave_b -> support_next: "ABSORB each round"
+
+  support_next -> head: "UPDATE refcount probe;\nthen OR IGNORE fill:\n10M rows land" {style.stroke-width: 7}
+  head -> delta: "stage -1 rows\nWHERE refcount <= 0\n(none this tick)"
+  support_next -> new: "ANTIJOIN: in next,\nnot in head = 10M NEW" {style.stroke-width: 7}
+  new -> delta: "stage +1 x10M,\nrowid order" {style.stroke-width: 7}
+  new -> mail_now: "copy x10M, phase 2" {style.stroke-width: 7}
+  new -> mail_next: "copy x10M, phase 1" {style.stroke-width: 7}
+
+  delta -> ghost: "read by nobody" {style.stroke-dash: 4}
+  mail_now -> ghost: "read by nobody" {style.stroke-dash: 4}
+  mail_next -> ghost: "read by nobody" {style.stroke-dash: 4}
+
+  bill: "the loop (top half) = 22,956 ms: real derivation.\nthe tail (bottom half) = 7,590 ms,\nmostly writing the three ghost-fed streams.\ntotal 30,670 ms" {class: src}
+  ghost -> bill
+}
+
+tick: "BAND 4  ::  THE SAME TICK AS A SEQUENCE  ::  who writes whom, in order, with row counts" {
+  class: stage
+
+  seq: "" {
+    shape: sequence_diagram
+    drv: "driver (JS)"
+    e: "edge (EDB)"
+    w: "wavefronts (scratch)"
+    sn: "__support_next (scratch)"
+    h: "reachable (IDB)"
+    st: "delta + mailboxes (streams)"
+
+    p1: "PHASE 1  EDB MUTATION: facts land" {
+      drv -> e: "arrivals: 7,743 edges,\nINSERT OR IGNORE"
+    }
+    p2: "PHASE 2  QUERY: derive, writes touch only scratch" {
+      e -> w: "seed round 0 (base arm)"
+      w -> w: "hop x2,581 rounds:\njoin edge, retire frontier"
+      w -> sn: "absorb per round:\n9,996,213 rows total"
+    }
+    p3: "PHASE 3  IDB MUTATION: reconcile the answer" {
+      sn -> h: "UPDATE refcount probe\n(head empty: finds nothing)"
+      sn -> h: "antijoin -> all 10M are NEW;\nOR IGNORE fill lands them"
+    }
+    p4: "PHASE 4  PUBLISH: events for readers" {
+      h -> st: "stage -1 (none this tick)"
+      sn -> st: "stage +1 x10M, copy into\nBOTH mailboxes: 30M writes"
+      drv -> st: "boundary read SKIPPED (unreadRels),\nwrites already paid: LEVER 1 target"
+    }
+  }
+}
+
+consumers: "BAND 5  ::  WHY THE RED STREAMS EXIST  ::  the same edges in a program that has readers" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 5
+  (* -> *)[*].style.font-size: 20
+
+  delta2: "__delta_reachable" {class: [danger; stream]}
+  mail2: "__frontier_reachable" {class: [danger; stream]}
+  rule2: "alert(T) <+ reachable(root,T), critical(T)\nan edge rule: fires once per EVENT" {class: [shipped; sqlstep]}
+  sub2: "UI subscription" {class: [shipped; you]}
+  verdict: "every write has a reader HERE.\nthe bench pays the same writes with zero readers.\nLEVER 1 = stop staging when the listener set is empty" {class: chosen}
+
+  mail2 -> rule2: "joined per occurrence"
+  delta2 -> sub2: "streamed per tick"
+  rule2 -> verdict
+  sub2 -> verdict
+}
+
+worlds: "BAND 6  ::  THE TWO WORLDS  ::  same 10M rows, different physics" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 5
+  (* -> *)[*].style.font-size: 20
+
+  monoCloud: "mono's world\n146 ms" {class: [muted; world]}
+  monoLaw: "one hashmap in RAM.\nderive -> ONE insert -> done.\nno events, no retraction,\nnothing survives exit" {class: muted}
+  dl6Cloud: "dl6's world\n30,670 ms" {class: [shipped; world]}
+  dl6Law: "every row: durable, keyed,\nretractable, joinable, subscribed,\nauditable after SIGKILL.\nseven btrees is the rent" {class: muted}
+
+  monoCloud -> monoLaw
+  dl6Cloud -> dl6Law
+}
+
+levers: "BAND 7  ::  THE LEVERS  ::  priced, in payoff order" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 22
+
+  now: "chain_10000\n30,670 ms, 7 writes/row" {class: [danger; receipt]}
+  l1: "LEVER 1: cone-derived unreadRels\nskip delta + mailboxes + __new_\nwhen nobody listens\n~12s, writes 7 -> 3" {class: [chosen; you]}
+  l2: "LEVER 2: hop absorbs directly\ninto __support_next\n~8-9s, writes 3 -> 2\n(D-variant: 4.4x LOSS on grids,\nneeds a per-shape pick)" {class: [designed; decide]}
+  floor: "THE SQLITE FLOOR ~8s\n2 keyed btree writes per row\nis the medium's rent.\n(pure-SQLite baseline entrant\nbeing built to MEASURE this)" {class: [muted; rival]}
+  l3: "LEVER 3: rust emitter mode\nsame plan, native lowering\n~0.2-0.5s (mono territory)\nPARKED on your word" {class: [shipped; world]}
+
+  now -> l1: "card 3,\nawaiting your word"
+  l1 -> l2: "measure per\nshape first"
+  l2 -> floor
+  floor -> l3: "the only door\npast the floor"
+}

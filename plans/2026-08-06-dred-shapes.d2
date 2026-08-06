@@ -1,0 +1,194 @@
+...@_house
+
+# One-column bands; arrows only live inside a band.
+grid-rows: 6
+grid-columns: 1
+grid-gap: 60
+
+tables: "THE SIX TABLES  ::  two durable, four scratch" {
+  class: stage
+  grid-rows: 2
+  grid-columns: 3
+  grid-gap: 30
+
+  t1: "edge  ::  base rel, durable" {
+    class: shipped
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "the tick mutates THIS.\neverything else reacts" {class: note}
+  }
+
+  t2: "reachable  ::  the head, durable, 2.5M rows" {
+    class: shipped
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "the fixpoint. never rebuilt\nunless the bail fires" {class: note}
+  }
+
+  t3: "delta_edge  ::  what the tick brought" {
+    class: chosen
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "signed in the real runtime;\nsplit +1 / -1 picks the path" {class: note}
+  }
+
+  t4: "ping  ::  TEMP wavefront A" {
+    class: designed
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "current frontier.\nDELETEd, never re-created" {class: note}
+  }
+
+  t5: "pong  ::  TEMP wavefront B" {
+    class: designed
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "next frontier. the two tables\nswap ROLES each round, no copy" {class: note}
+  }
+
+  t6: "cone  ::  TEMP suspect set" {
+    class: danger
+    shape_: "" {
+      shape: sql_table
+      source: "INT, PK"
+      target: "INT, PK"
+    }
+    caption: "everything the deleted edges\nMIGHT have supported" {class: note}
+  }
+}
+
+decide: "THE TICK DECIDES  ::  one fork, one escape hatch" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 24
+  (* -> *)[*].style.bold: true
+
+  tick: "tick delta arrives" {class: chosen}
+  sign: "any -1 rows?" {shape: diamond; class: designed}
+  tick -> sign
+  assertPath: "ASSERT\ngrow-only walk\n(band 3)" {class: shipped}
+  dredPath: "DRED\ntwo-pass delete\n(bands 4+5)" {class: danger}
+  sign -> assertPath: no
+  sign -> dredPath: yes
+  bail: "cone grew past\nhead/4 mid-walk?" {shape: diamond; class: danger}
+  dredPath -> bail
+  rebuild: "abandon, ONE full rebuild\n(2,190 ms, the floor)" {class: muted}
+  finish: "finish pass 2\n(37x win on small cones)" {class: shipped}
+  bail -> rebuild: yes
+  bail -> finish: no
+}
+
+assertBand: "BAND 3  ::  ASSERT, engine.rs:407  ::  insert 1 edge = 40 ms vs 2,179 rebuild" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 24
+
+  delta: "delta_edge (+1)" {class: chosen}
+  seeds: "2 seed statements, one per arm,\nnew atom substituted in" {class: src}
+  ping: "ping" {class: designed}
+  hopSql: |sql
+    INSERT OR IGNORE INTO pong
+    SELECT f.source, e.target FROM ping f
+    JOIN edge e ON e.source = f.target
+    LEFT JOIN reachable h ON h.source = f.source
+                         AND h.target = e.target
+    WHERE h.source IS NULL
+  |
+  pong: "pong" {class: designed}
+  head: "reachable\n(INSERT OR IGNORE)" {class: shipped}
+
+  delta -> seeds -> ping
+  ping -> hopSql: "hop = the recursive\narm's body join"
+  hopSql -> pong
+  pong -> head: commit
+  pong -> ping: "swap roles,\nrepeat until empty" {style.stroke-dash: 4}
+}
+
+overBand: "BAND 4  ::  DRED PASS 1, over-delete, engine.rs:454  ::  hop carries NO head probe (tautology)" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 24
+
+  delta: "delta_edge (-1)" {class: chosen}
+  seeds: "2 seed statements: head rows whose\nderivation USED a deleted edge" {class: src}
+  ping: "ping" {class: designed}
+  hopSql: |sql
+    INSERT OR IGNORE INTO pong
+    SELECT f.source, e.target FROM ping f
+    JOIN edge e ON e.source = f.target
+    WHERE NOT EXISTS (SELECT 1 FROM cone c
+      WHERE c.source = f.source
+        AND c.target = e.target)
+  |
+  pong: "pong" {class: designed}
+  cone: "cone\n(suspects accumulate)" {class: danger}
+  counter: "cone count = sum of changes,\nFREE in the driver -> the bail reads it" {class: chosen}
+  shrink: "reachable MINUS cone\n(up-front delete = the store's\nweight=0 mark; makes pass 2 cheap)" {class: shipped}
+
+  delta -> seeds -> ping
+  ping -> hopSql: "hop forward through\nthe recursive arm"
+  hopSql -> pong
+  pong -> cone: accumulate
+  pong -> ping: "swap, repeat" {style.stroke-dash: 4}
+  cone -> counter
+  cone -> shrink: "after the walk"
+}
+
+rederiveBand: "BAND 5  ::  DRED PASS 2, rederive  ::  a dead cycle has no surviving anchor, so it stays dead" {
+  class: stage
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 24
+
+  cone: "cone (2.17M suspects)" {class: danger}
+  anchors: |sql
+    -- base arm: the edge itself survived
+    cone c JOIN edge e ON e.source = c.source
+                      AND e.target = c.target
+    -- recursive arm: a SURVIVOR still derives it
+    cone c JOIN edge e ON e.target = c.target
+    JOIN reachable r ON r.source = c.source
+                    AND r.target = e.source
+  |
+  revived: "revived rows:\nback into reachable,\nOUT of cone" {class: shipped}
+  forward: "revive propagates forward\nINSIDE the cone, same ping-pong" {class: designed}
+  dead: "rows still in cone at fixpoint\n= TRUE retractions,\nstaged as _sign = -1" {class: danger}
+
+  cone -> anchors: "anchor check,\none EXISTS per arm"
+  anchors -> revived
+  revived -> forward
+  forward -> revived: "repeat until empty" {style.stroke-dash: 4}
+  cone -> dead: "whoever nobody rescued"
+}
+
+numbers: |||md
+  ## the race that set the policy (grid 50x50, delete 100 scattered edges, all checksum-MATCH)
+  | variant | ms | verdict |
+  |---|---|---|
+  | A shipped two-pass | 8,179 | baseline |
+  | B drop head probe in hop | 7,440 | TAKE, the probe is a tautology |
+  | D round-tagged cone, OR IGNORE dedup | 36,209 | REJECT, PK rejection >> NOT EXISTS |
+  | BC defer the head delete | 36,663 | REJECT, pass 2 must probe the SHRUNKEN head |
+  | E = B + mid-walk bail at cone > head/4 | 3,190 | TAKE |
+  | full rebuild | 2,190 | the floor when cone ~ table |
+
+  small-cone ticks: insert one edge 54x, delete one edge 37x, cycle-cut instant and correct.
+
+  spec = dred.mjs (frozen), profile = dredprof.mjs, race = dredopt.mjs, plan = dred-emit-lab-header.md
+
+  &nbsp;
+||| {class: chosen; shape: rectangle}

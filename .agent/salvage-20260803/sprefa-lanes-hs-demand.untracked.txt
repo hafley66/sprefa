@@ -1,0 +1,17 @@
+REPORT.md
+labs/hs-prolog/demand/CONTRACT.md
+labs/hs-prolog/demand/DEMAND.md
+labs/hs-prolog/demand/probes/app/Main.hs
+labs/hs-prolog/demand/probes/cabal.project
+labs/hs-prolog/demand/probes/probes.cabal
+labs/hs-prolog/demand/probes/src/Probe/Collections.hs
+labs/hs-prolog/demand/probes/src/Probe/DCG.hs
+labs/hs-prolog/demand/probes/src/Probe/Exceptions.hs
+labs/hs-prolog/demand/probes/src/Probe/Graph.hs
+labs/hs-prolog/demand/probes/src/Probe/Plunit.hs
+labs/hs-prolog/demand/probes/src/Probe/Printf.hs
+labs/hs-prolog/demand/probes/src/Probe/Process.hs
+labs/hs-prolog/demand/probes/src/Probe/Quant.hs
+labs/hs-prolog/demand/probes/src/Probe/Sugar.hs
+labs/hs-prolog/demand/probes/src/Probe/SugarDsl.hs
+labs/hs-prolog/demand/probes/src/Probe/Tabling.hs

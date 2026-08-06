@@ -1,0 +1,9 @@
+REPORT.md
+labs/hs-prolog/graph/BUY.md
+labs/hs-prolog/graph/CONTRACT.md
+labs/hs-prolog/graph/app/BuyProbe.hs
+labs/hs-prolog/graph/app/Main.hs
+labs/hs-prolog/graph/app/Timing.hs
+labs/hs-prolog/graph/fixtures/Golden.hs
+labs/hs-prolog/graph/graph-scc.cabal
+labs/hs-prolog/graph/src/Graph.hs

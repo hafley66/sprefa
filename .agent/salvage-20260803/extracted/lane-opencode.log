@@ -1,0 +1,172 @@
+[0m
+> build · deepseek/deepseek-v4-flash-0731
+[0m
+[0m$ [0mpwd && ls -la && git log --oneline -3
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash
+total 804
+drwxr-xr-x  67 chrishafley staff   2144 Aug  2 20:39 .
+drwxr-xr-x  81 chrishafley staff   2592 Aug  2 20:38 ..
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 .agent
+drwxr-xr-x   5 chrishafley staff    160 Aug  2 20:38 .agents
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 20:38 .codex
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 .config
+drwxr-xr-x  36 chrishafley staff   1152 Aug  2 20:38 .dl
+-rw-r--r--   1 chrishafley staff     86 Aug  2 20:38 .git
+-rw-r--r--   1 chrishafley staff     50 Aug  2 20:38 .gitattributes
+-rw-r--r--   1 chrishafley staff     77 Aug  2 20:38 .gitbook.yaml
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 .githooks
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 .github
+-rw-r--r--   1 chrishafley staff   2159 Aug  2 20:38 .gitignore
+-rw-r--r--   1 chrishafley staff    641 Aug  2 20:38 .gitmodules
+-rw-r--r--   1 chrishafley staff     23 Aug  2 20:38 .mcp.json
+-rw-r--r--   1 chrishafley staff    341 Aug  2 20:38 .sprefa.toml
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 .vscode
+-rw-r--r--   1 chrishafley staff   1808 Aug  2 20:38 AGENTS.md
+-rw-r--r--   1 chrishafley staff 107496 Aug  2 20:38 CHANGELOG.md
+-rw-r--r--   1 chrishafley staff   4722 Aug  2 20:38 CHECKPOINT.md
+-rw-r--r--   1 chrishafley staff   7356 Aug  2 20:38 CLAUDE.md
+-rw-r--r--   1 chrishafley staff   7625 Aug  2 20:38 CLAUDE.md.disabled
+-rw-r--r--   1 chrishafley staff 151055 Aug  2 20:38 Cargo.lock
+-rw-r--r--   1 chrishafley staff  11844 Aug  2 20:38 Cargo.toml
+-rw-r--r--   1 chrishafley staff   2995 Aug  2 20:38 DEBUG_BRIEF.txt
+-rw-r--r--   1 chrishafley staff 130367 Aug  2 20:38 DEVLOG.md
+-rw-r--r--   1 chrishafley staff  50370 Aug  2 20:38 PLANS.md
+-rw-r--r--   1 chrishafley staff   3194 Aug  2 20:38 PROMPT.md
+-rw-r--r--   1 chrishafley staff 119967 Aug  2 20:38 README.md
+-rw-r--r--   1 chrishafley staff  12029 Aug  2 20:38 RESEARCH.md
+drwxr-xr-x  14 chrishafley staff    448 Aug  2 20:38 anim
+-rw-r--r--   1 chrishafley staff  18291 Aug  2 20:38 arch-codebase-claude.d2
+-rw-r--r--   1 chrishafley staff  26119 Aug  2 20:38 arch-codebase-codex-dark.d2
+-rw-r--r--   1 chrishafley staff  25497 Aug  2 20:38 arch-codebase-codex.d2
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 20:38 archive
+drwxr-xr-x  10 chrishafley staff    320 Aug  2 20:38 assets
+drwxr-xr-x  20 chrishafley staff    640 Aug  2 20:38 bench
+drwxr-xr-x  22 chrishafley staff    704 Aug  2 20:38 book
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 20:38 books
+-rw-r--r--   1 chrishafley staff   5829 Aug  2 20:38 build.rs
+drwxr-xr-x 276 chrishafley staff   8832 Aug  2 20:38 chat_log
+drwxr-xr-x   6 chrishafley staff    192 Aug  2 20:38 deck
+-rw-r--r--   1 chrishafley staff    716 Aug  2 20:38 dist-workspace.toml
+drwxr-xr-x  40 chrishafley staff   1280 Aug  2 20:38 docs
+drwxr-xr-x   6 chrishafley staff    192 Aug  2 20:38 editors
+drwxr-xr-x 148 chrishafley staff   4736 Aug  2 20:38 examples
+-rw-r--r--   1 chrishafley staff  14010 Aug  2 20:38 experiment-sqry-vs-dl.md
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 feedback
+-rwxr-xr-x   1 chrishafley staff   5885 Aug  2 20:38 install-dl.sh
+-rw-r--r--   1 chrishafley staff   1319 Aug  2 20:38 install.sh
+-rw-r--r--   1 chrishafley staff   9057 Aug  2 20:38 justfile
+-rw-r--r--   1 chrishafley staff  17571 Aug  2 20:38 kotlin-import-hazards-research.md
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 20:38 labs
+-rw-r--r--   1 chrishafley staff     53 Aug  2 20:39 lane-opencode.log
+-rw-r--r--   1 chrishafley staff    123 Aug  2 20:38 mg.dl
+-rw-r--r--   1 chrishafley staff    422 Aug  2 20:38 opencode.json
+drwxr-xr-x 289 chrishafley staff   9248 Aug  2 20:38 plans
+drwxr-xr-x   8 chrishafley staff    256 Aug  2 20:38 refactor-suggestions-archive
+drwxr-xr-x  13 chrishafley staff    416 Aug  2 20:38 research
+drwxr-xr-x  11 chrishafley staff    352 Aug  2 20:38 scripts
+drwxr-xr-x  70 chrishafley staff   2240 Aug  2 20:38 src
+drwxr-xr-x  11 chrishafley staff    352 Aug  2 20:38 std
+drwxr-xr-x   7 chrishafley staff    224 Aug  2 20:38 tests
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 tools
+drwxr-xr-x  10 chrishafley staff    320 Aug  2 20:38 tree-sitter-dl
+drwxr-xr-x  27 chrishafley staff    864 Aug  2 20:38 v6
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 20:38 vendor
+92756b54 ledger: codex-delegate.md path moved to skills_archive; point flash delegation at the live opencode-orchestration skill
+a7108169 turbo-minimize CLAUDE.md: 1549 -> 133 lines. Laws + open items + pointers only; full ledger archived verbatim at the tail of .agent/memories/sprefa-task-ledger.md; landed detail stays in ARCH.pl/plans/chat_log
+eb25b8aa state refresh + worktree reconcile: lane-wave ledger section (CLAUDE.md), ARCH rows (v5_lsp_exit_hang done, aggregate_text_refusal + refcount_rename done, cap_self_pgroup_inversion + watch_bind_hazards unbuilt; gate 6/6 PASS), session log post-merge update; 36 merged worktrees removed + 36 merged branches deleted, salvage banked in archive/lane-salvage-2026-08-02 (10 lane REPORTs, 5 flash-alternate patches, 16 dirty-tree patches, 592K)
+[0m
+[0m→ [0mRead RESEARCH.md
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [offset=300, limit=140][0m
+[0m→ [0mRead v6/sprefa-store/js/src/engine/types.ts[90m [offset=70, limit=40][0m
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [limit=300, offset=1][0m
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [limit=230, offset=440][0m
+[0m✗ [0mRead v6/sprefa-store/js/src/spine.ts failed
+[91m[1mError: [0mFile not found: /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/js/src/spine.ts
+[0m
+[0m$ [0mfind /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6 -name "spine*" -o -name "types.ts" 2>/dev/null; echo "---PROLOG---"; ls /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/prolog/compile/ 2>/dev/null; echo "---TS DIR---"; ls /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/js/src/ 2>/dev/null
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/tsv2/runtime/types.ts
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/prolog/conformance/fixtures/spine_semantics.pl
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/js/src/lower/types.ts
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/js/src/engine/spine.ts
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/js/src/engine/types.ts
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/tests/spine.rs
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/sprefa-store/src/spine.rs
+---PROLOG---
+1_emit_registry_docs.pl
+2_emit_cli_inventory.pl
+PIPELINE.md
+SCOREBOARD.md
+SYNTAX.md
+TICK-MODEL.md
+dl_view
+oracle_dump.pl
+out
+parse_dl.pl
+registry.pl
+scripts
+test
+---TS DIR---
+bench
+engine
+gen
+index.ts
+lower
+[0m
+[0m→ [0mRead v6/prolog/compile/2_emit_cli_inventory.pl
+[0m→ [0mRead v6/sprefa-store/js/src/engine/spine.ts
+[0m→ [0mRead v6/prolog/compile/1_emit_registry_docs.pl[90m [limit=40][0m
+[0m
+[0m$ [0mls /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/prolog/labs/openapi_codegen/ 2>/dev/null; echo "---inventory test---"; find /Users/chrishafley/projects/sprefa-plan-schemagen-flash -iname "*inventory*test*" -o -iname "bopCommand*" 2>/dev/null | head; echo "---tsv2 cli---"; ls /Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/tsv2/cli/ 2>/dev/null
+0_facts.pl
+2_parity.mjs
+emit_openapi.pl
+openapi.json
+receipts.sh
+redocly.yaml
+---inventory test---
+/Users/chrishafley/projects/sprefa-plan-schemagen-flash/v6/tsv2/tests/bopCommandInventory.test.ts
+---tsv2 cli---
+0_inventory.ts
+bop.ts
+[0m
+[0m→ [0mRead /Users/chrishafley/projects/hafley-tsp/AGENTS.md[90m [limit=60, offset=125][0m
+[0m→ [0mRead /Users/chrishafley/projects/hafley-tsp/AGENTS.md[90m [limit=45, offset=185][0m
+[0m→ [0mRead v6/tsv2/tests/bopCommandInventory.test.ts
+[0m→ [0mRead v6/prolog/labs/openapi_codegen/emit_openapi.pl[90m [limit=45][0m
+[0m
+[0m$ [0mswipl -q -v 2>/dev/null | head -1; echo "---"; ls /Users/chrishafley/projects/sprefa-plan-schemagen-flash/plan-notes 2>/dev/null || echo "no plan-notes"; cat /Users/chrishafley/projects/sprefa-plan-schemagen-flash/.git 2>/dev/null | head
+---
+no plan-notes
+gitdir: /Users/chrishafley/projects/sprefa/.git/worktrees/sprefa-plan-schemagen-flash
+[0m
+[0m← [0mWrite PLAN.md
+Wrote file successfully.
+[0m
+[0m$ [0mmkdir -p /Users/chrishafley/projects/sprefa-plan-schemagen-flash/plan-notes
+(no output)
+[0m
+[0m← [0mWrite plan-notes/SEED-INVENTORY.md
+Wrote file successfully.
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-plan-schemagen-flash && git status --short && echo "---fk count---" && rg -c '^fk\(' plan-notes/SEED-INVENTORY.md && echo "---column count---" && rg -c '^column\(' plan-notes/SEED-INVENTORY.md
+?? PLAN.md
+?? PROMPT.md
+?? RESEARCH.md
+?? lane-opencode.log
+?? plan-notes/
+---fk count---
+14
+---column count---
+37
+[0m
+Done. Deliverables written: `PLAN.md` (root) and `plan-notes/SEED-INVENTORY.md` (hand-transcribed facts for step 1). No commit, no push.
+
+Key calls:
+- **Fact schema** (`column/5` with Pk position, `table/2`, `index/4`, `fk/4`): target-neutral, `BaseType` closed at 4 members, all dialect owned by emitters.
+- **MVP = (a)** emit the 9 ts row interfaces into a marker section of `spine.ts` (rectified: the twins live in `spine.ts:63-102`, not `types.ts`). Gate = `tests/spineSchema.test.ts` staleness test, pattern-copy of the existing `bopCommandInventory.test.ts` gate, pure swipl diff, CI-runnable.
+- **Seeding**: hand-transcribe (37 cols / 14 fks / 5 indexes / ~60 fact lines), harvest deferred.
+- **Buy**: prolog wins for MVP; openapi-typescript deferred (2-hop), alloy loses (new toolchain + same seeding problem), sea-orm-cli single-target.
+
+Verified counts: 37 columns, 14 FKs, 5 secondary indexes (match `table_names()`/`secondary_indexes()` in `spine.rs`).
+
+Note: `swipl` is not installed in this environment; the MVP gate needs it on PATH in CI (already a dependency of the existing openapi/cli gates).

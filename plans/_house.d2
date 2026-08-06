@@ -91,6 +91,18 @@ classes: {
     style.stroke: "#d0d7de"
     style.font-color: "#24292f"
   }
+
+  # Shape vocabulary: combine with a color class, `class: [shipped; receipt]`.
+  # One MEANING = one shape, in every diagram that imports this file.
+  receipt: {shape: document}
+  db: {shape: cylinder}
+  scratch: {shape: stored_data}
+  stream: {shape: queue}
+  sqlstep: {shape: step}
+  decide: {shape: diamond}
+  rival: {shape: hexagon}
+  world: {shape: cloud}
+  you: {shape: person}
 }
 
 # A sql_table gets NO class: style.fill and style.stroke both paint its ROWS,

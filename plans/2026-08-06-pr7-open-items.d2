@@ -1,0 +1,262 @@
+...@_house
+
+# Grid drops edges between cells, so the gate points at cards by name.
+grid-rows: 3
+grid-columns: 1
+grid-gap: 60
+
+gate: "CONCEPT GATE  ::  yes moves down, no exits right to a card below" {
+  class: stage
+
+  (* -> *)[*].style.stroke-width: 6
+  (* -> *)[*].style.font-size: 28
+  (* -> *)[*].style.bold: true
+
+  q1: "the frontier defect,\nand why 420 fixtures graded IDENTICAL?" {
+    shape: diamond
+    class: designed
+  }
+  c1: "no: CARD 1" {class: muted}
+  q1 -> c1: no
+
+  q2: "why does the supportSql rename\nmove 747 emitted modules?" {
+    shape: diamond
+    class: designed
+  }
+  c2: "no: CARD 2" {class: muted}
+  q1 -> q2: yes
+  q2 -> c2: no
+
+  q3: "what does unreadRels skip,\nwhat would cone-deriving it change?" {
+    shape: diamond
+    class: designed
+  }
+  c3: "no: CARD 3" {class: muted}
+  q2 -> q3: yes
+  q3 -> c3: no
+
+  q4: "who consumes the tick log,\nwhat breaks if SQL builds the line?" {
+    shape: diamond
+    class: designed
+  }
+  c4: "no: CARD 4" {class: muted}
+  q3 -> q4: yes
+  q4 -> c4: no
+
+  q5: "why does retraction on a recursive head\nwork TODAY?" {
+    shape: diamond
+    class: danger
+  }
+  c5: "no: CARD 5,\nthe one design question" {class: muted}
+  q4 -> q5: yes
+  q5 -> c5: no
+
+  q6: "which sweep stage fails,\nwhose defect?" {
+    shape: diamond
+    class: designed
+  }
+  c6: "no: CARD 6" {class: muted}
+  q5 -> q6: yes
+  q6 -> c6: no
+
+  q7: "why is worktree removal\nyours to run?" {
+    shape: diamond
+    class: designed
+  }
+  c7: "no: CARD 7" {class: muted}
+  q6 -> q7: yes
+  q7 -> c7: no
+
+  done: "all concepts held:\ndecide in the order below" {class: chosen}
+  q7 -> done: yes
+}
+
+order: |||md
+  ## decide in this order
+  | order | decision | why this slot |
+  |---|---|---|
+  | 1 | merge PR #7 | everything below sits on its head |
+  | 2 | rename word | own commit ON TOP of the merge, never inside it |
+  | 3 | card 5 design call | largest remaining structural cost, 63% of tick |
+  | 4 | cards 3 + 4 together | both trade marshalling against the tick log oracle |
+  | 5 | dispatch card 6 | independent defect, flash4 lane |
+  | 6 | run card 7 yourself | one command, blocked for agents |
+||| {class: chosen; shape: rectangle}
+
+items: "THE SEVEN CARDS" {
+  class: stage
+  grid-rows: 7
+  grid-columns: 1
+  grid-gap: 40
+
+  card1: "1. PR #7 merge  ::  READY, nothing blocked" {
+    class: stage
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | number |
+      |---|---|
+      | commits on `lab/emit-reconcile` | 21, head 39ae7072, base e3997cec |
+      | ladder | 106,692 ms -> 2,200 ms (38.4x), 1.98 GB -> 724 MB |
+      | defect A | closure loop re-read the whole frontier every round, ONE DAY old |
+      | defect B | every derived row round-tripped through JS, twice through JSON |
+      | why no gate saw A | sweep grades END STATE; a naive closure ends identical |
+      | the rail that now sees it | recursiveClosureCounts.test.ts, 39/59/91 pre-fix vs 36/36/36 |
+      | gates | tsv2 146/1skip, conformance 302/0, sweep 420 byte-identical |
+    ||| {class: shipped; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      merge as-is / read the PR body first / hold.
+      Cards 2..5 all assume this lands first.
+    ||| {class: chosen; shape: rectangle}
+  }
+
+  card2: "2. supportSql -> refCountSql  ::  LAW VIOLATION, awaiting word" {
+    class: danger
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | where |
+      |---|---|
+      | the law: "support" is banned, use refCount | CLAUDE.md:78, rename recorded as EXECUTED 2026-08-02 |
+      | survivors | 1_incremental.ts x7, lower.pl x1 (`__support_next_~w`), types.ts, 3 test files |
+      | also survivors | every emitted module + all of gen_served/ |
+      | comments already say refCount | lower.pl:1857 |
+      | correct names | `refCountSql`, `__ref_next_<rel>` |
+      | why 747 modules move | the string is INSIDE the emitted SQL, so every module's text changes |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      when, never whether. Own commit, sweep as the gate,
+      on top of the merge so PR #7's diff stays readable.
+    ||| {class: chosen; shape: rectangle}
+  }
+
+  card3: "3. unreadRels  ::  opt-in today, general version changes the log" {
+    class: stage
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | number |
+      |---|---|
+      | what it does | a rel nobody reads keeps its rows in SQLite, readBoundary skips it |
+      | measured win | gate 2 went 6,148 -> 2,825 ms, RSS 1.64 GB -> 978 MB |
+      | who declares it | only the dl6 entrant, by hand, per caller |
+      | the general version | derive the set from the subscription cone |
+      | its cost | the observable tick log changes, so the 420-log oracle re-baselines |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      keep opt-in (safe, manual) / derive from the cone
+      (general, re-baseline) / cone-derived but behind a flag.
+      Decide together with card 4: same oracle at risk.
+    ||| {class: chosen; shape: rectangle}
+  }
+
+  card4: "4. tick log built in SQL  ::  last ~33% of marshalling" {
+    class: stage
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | number |
+      |---|---|
+      | today | readBoundary materializes every row as a JS object to print a line |
+      | cost per row | ~140 bytes as a JS object vs ~20 as a btree entry |
+      | the idea | `group_concat` builds the log line inside SQLite |
+      | who it helps | callers that DO read; unreadRels already covers the rest |
+      | the risk | 420 byte-identical tick logs are the sweep's oracle |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      do it and prove byte-identity per fixture / skip until a
+      caller is measured to need it. Decide with card 3.
+    ||| {class: chosen; shape: rectangle}
+  }
+
+  card5: "5. recursive CTE recompute  ::  THE design question" {
+    class: danger
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | where |
+      |---|---|
+      | supportSql reseeds the closure FROM SCRATCH every tick | 1_incremental.ts:819 path |
+      | share of tick | 63% after all optimization, priced 1,420 ms on the probe |
+      | the law it trips | recompute-guard: from-scratch re-derive needs a digest early-out or a waiver |
+      | why retraction works today | ONLY because the recompute is full: rebuild forgets retracted rows for free |
+      | refCount on a recursive head | presence, never a derivation count: lower.pl:2486 seeds `SELECT cols, 1` under a deduping UNION |
+      | so a semi-naive CTE | must solve retraction some OTHER way, counting is not there to lean on |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      digest early-out (cheap, keeps full recompute on change) /
+      `@recompute unguarded` waiver (declare it intended) /
+      semi-naive seeding (largest win, must re-solve retraction).
+    ||| {class: chosen; shape: rectangle}
+  }
+
+  card6: "6. sweep stage 4 duplicate manifest  ::  dispatchable" {
+    class: stage
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | detail |
+      |---|---|
+      | fixture | `enum_decl_variant_rows_round_trip_through_tag_view` |
+      | symptom | duplicate manifest row that HEAD's manifest does not carry |
+      | fixture source | defines the row ONCE, so the generator invents the duplicate |
+      | blast radius | generator only, engine untouched, no other stage red |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the choice
+      dispatch to a flash4 lane with the fixture name and the
+      manifest diff as the receipt, or park. Blocks nothing.
+    ||| {class: muted; shape: rectangle}
+  }
+
+  card7: "7. worktree cleanup  ::  yours to run" {
+    class: stage
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 20
+
+    ctx: |||md
+      ## prior context
+      | fact | detail |
+      |---|---|
+      | count | 21+ stale worktrees under ~/projects/sprefa-lanes |
+      | why agents cannot | `git worktree remove` is blocked by the permission classifier |
+      | keep alive | `emitrace` (PR #7 head) and `sprefa-types` (64c77bb4, in-flight) |
+    ||| {class: src; shape: rectangle}
+
+    choice: |||md
+      ## the command
+      `git worktree list`, then `git worktree remove <path>`
+      per stale tree, `git worktree prune` last.
+    ||| {class: muted; shape: rectangle}
+  }
+}

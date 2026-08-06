@@ -1,0 +1,707 @@
+[0m
+> build · deepseek/deepseek-v4-flash-0731
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy && git merge --ff-only 92756b54dc0cb633e9636234f5358f3324be1ebf && git rev-parse HEAD
+Already up to date.
+92756b54dc0cb633e9636234f5358f3324be1ebf
+[0m
+[0m# [0mTodos
+[•] Read bounded reference files (skills, emit precedents, spine schema)
+[ ] Build 0_facts.pl
+[ ] Build 1_collect.pl
+[ ] Build 2_check.pl
+[ ] Build 3_render.pl
+[ ] Build 4_receipts.sh and run green+sabotages+parity
+[ ] Write MAPPING.md
+[ ] Write REPORT.md with receipts
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy && ls v6/prolog/labs/ 2>/dev/null; echo "---"; ls v6/prolog/labs/alloy_semantics 2>/dev/null; echo "---REPORT---"; ls REPORT.md 2>/dev/null
+csp_idioms
+extract_t2
+generic_scan_instantiation
+json_interop
+json_syntax
+openapi_codegen
+rel_as_stream
+rel_definition_hash
+type_matrix
+---
+---REPORT---
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy && mkdir -p v6/prolog/labs/alloy_semantics && ls v6/prolog/compile/ && echo "---openapi---" && ls v6/prolog/labs/openapi_codegen/
+1_emit_registry_docs.pl
+2_emit_cli_inventory.pl
+PIPELINE.md
+SCOREBOARD.md
+SYNTAX.md
+TICK-MODEL.md
+dl_view
+oracle_dump.pl
+out
+parse_dl.pl
+registry.pl
+scripts
+test
+---openapi---
+0_facts.pl
+2_parity.mjs
+emit_openapi.pl
+openapi.json
+receipts.sh
+redocly.yaml
+[0m
+[0m→ [0mRead /Users/chrishafley/projects/claude-research/skills_archive/alloy-core/SKILL.md
+[0m→ [0mRead /Users/chrishafley/projects/claude-research/skills_archive/alloy-languages/SKILL.md
+[0m→ [0mRead v6/prolog/compile/2_emit_cli_inventory.pl
+[0m→ [0mRead v6/prolog/labs/openapi_codegen/emit_openapi.pl
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [offset=300, limit=120][0m
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [limit=60, offset=240][0m
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [limit=60, offset=180][0m
+[0m✱ [0mGrep "pub mod strings"[90m in v6/sprefa-store/src/spine.rs · 2 matches[0m
+[0m→ [0mRead v6/sprefa-store/src/spine.rs[90m [limit=30, offset=88][0m
+[0m→ [0mRead v6/sprefa-store/js/src/engine/spine.ts[90m [limit=60, offset=60][0m
+[0m→ [0mRead v6/sprefa-store/js/src/engine/spine.ts[90m [limit=40, offset=120][0m
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy && which swipl && swipl --version
+/opt/homebrew/bin/swipl
+SWI-Prolog version 10.0.2 for arm64-darwin
+[0m
+[0m✱ [0mGrep "interface NodeRow|interface EdgeRow|NodeRow|EdgeRow"[90m in v6/sprefa-store/js/src/engine/spine.ts · 11 matches[0m
+[0m→ [0mRead v6/sprefa-store/js/src/engine/types.ts[90m [limit=30, offset=78][0m
+[0m→ [0mRead v6/prolog/labs/openapi_codegen/0_facts.pl
+Base verified (92756b54). All reference reads done. Now building the lab files.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/0_facts.pl
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/1_collect.pl
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/2_check.pl
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/2_check.pl
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/3_render.pl
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/run.pl
+Wrote file successfully.
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -l run.pl -g run -g halt
+ERROR: [Thread main] /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl:24:17: Syntax error: Operator expected
+ERROR: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/3_render.pl:19:
+ERROR:    Domain error: `module_header' expected, found `table(strings,string_table)'
+Warning: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/3_render.pl:19:
+Warning:    Goal (directive) failed: alloy_render:use_module('0_facts')
+ERROR: [Thread main] /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl:24:17: Syntax error: Operator expected
+ERROR: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl:28:
+ERROR:    Domain error: `module_header' expected, found `table(strings,string_table)'
+Warning: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl:28:
+Warning:    Goal (directive) failed: alloy_collect:use_module('0_facts')
+ERROR: [Thread main] /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl:24:17: Syntax error: Operator expected
+ERROR: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/2_check.pl:20:
+ERROR:    Domain error: `module_header' expected, found `table(strings,string_table)'
+Warning: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/2_check.pl:20:
+Warning:    Goal (directive) failed: alloy_check:use_module('0_facts')
+ERROR: [Thread main] -g run: alloy_collect:base_decl/4: Unknown procedure: alloy_collect:(table)/2
+ERROR: [Thread main]   However, there are definitions for:
+ERROR: [Thread main]         (table)/1
+[0m
+[0m→ [0mRead v6/prolog/labs/alloy_semantics/0_facts.pl[90m [limit=6, offset=23][0m
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -g "consult('0_facts.pl')" -g halt 2>&1 | head -20
+ERROR: [Thread main] /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl:24:17: Syntax error: Operator expected
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && sed -n '24p' 0_facts.pl | od -c | head
+0000000                                           [       t   a   b   l
+0000020   e   /   2   ,  \n
+0000025
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && sed -n '23p' 0_facts.pl | od -c | head
+0000000   :   -       m   o   d   u   l   e   (   a   l   l   o   y   _
+0000020   f   a   c   t   s   ,  \n
+0000027
+[0m
+[0m$ [0mcd /tmp && printf ':- module(t,[table/2]).\ntable(x,y).\n' > t.pl && swipl -q -g "consult('t.pl')" -g halt 2>&1 | head; echo "exit $?"
+ERROR: [Thread main] /tmp/t.pl:1:19: Syntax error: Operator expected
+exit 0
+[0m
+[0m$ [0mcd /tmp && swipl -q -g "op(400,yfx,foo). X = (a foo 2)." -g halt -t "between"; echo "---"; printf ':- module(t,[foo/2]).\nfoo(a,b).\n' > t2.pl && swipl -q -l t2.pl -g halt 2>&1 | head
+---
+[0m
+[0m$ [0mcd /tmp && swipl -q -l t.pl -g halt 2>&1 | head; echo "===foo==="; printf ':- module(t,[table/2]).\nfoo(a,b).\n' > t3.pl && swipl -q -l t3.pl -g halt 2>&1 | head; echo "===num==="; printf ':- module(t,[table_color/3]).\ntable_color(a,b,c).\n' > t4.pl && swipl -q -l t4.pl -g halt 2>&1 | head
+ERROR: [Thread main] /tmp/t.pl:1:19: Syntax error: Operator expected
+===foo===
+ERROR: [Thread main] /tmp/t3.pl:1:19: Syntax error: Operator expected
+===num===
+[0m
+[0m$ [0mcd /tmp && swipl -q -g "writeln((table/2))" -g halt 2>&1 | head; echo "==="; swipl -q -g "writeln((x/2))" -g halt 2>&1 | head; echo "=== current_op ==="; swipl -q -g "forall(current_op(_,_,O), (memberchk(O,[table,foo,div])->writeln(O);true))" -g halt 2>&1 | head
+ERROR: [Thread main] -g writeln((table/2)): Syntax error: Operator expected
+ERROR: [Thread main] writeln((table
+ERROR: [Thread main] ** here **
+ERROR: [Thread main] /2)) . 
+===
+x/2
+=== current_op ===
+table
+div
+[0m
+[0m$ [0mcd /tmp && printf 'table(a, b).\n' > t5.pl && swipl -q -l t5.pl -g "listing(table/2)" -g halt 2>&1 | head; echo "==export==="; printf ':- module(m, [table/2]).\ntable(a,b).\n' > t6.pl && swipl -q -l t6.pl -g halt 2>&1 | head
+ERROR: [Thread main] -g listing(table/2): Syntax error: Operator expected
+ERROR: [Thread main] listing(table
+ERROR: [Thread main] ** here **
+ERROR: [Thread main] /2) . 
+==export===
+ERROR: [Thread main] /tmp/t6.pl:1:20: Syntax error: Operator expected
+[0m
+[0m$ [0mcd /tmp && printf ':- module(m, [(table)/2, column/8]).\ntable(a,b).\n' > t7.pl && swipl -q -l t7.pl -g "table(A,_),writeln(A)" -g halt 2>&1 | head
+ERROR: [Thread main] Exported procedure m:column/8 is not defined
+a
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && grep -rn "table/2" *.pl
+0_facts.pl:1:% 0_facts.pl : three real spine tables transcribed as table/2 + column/8.
+0_facts.pl:24:          [ table/2,
+[0m
+[0m← [0mEdit v6/prolog/labs/alloy_semantics/0_facts.pl
+Index: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl
++++ /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/0_facts.pl
+@@ -20,9 +20,9 @@
+ % reference to strings crosses the file boundary and forces an import line
+ % that the renderer derives from ref/2, never hand-writes.
+ 
+ :- module(alloy_facts,
+-          [ table/2,
++          [ (table)/2,
+             column/8
+           ]).
+ 
+ table(strings, string_table).
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -l run.pl -g run -g halt
+ERROR: [Thread main] -g run: alloy_render:decl_term/3: Unknown procedure: alloy_render:decl_table/2
+[0m
+[0m← [0mEdit v6/prolog/labs/alloy_semantics/1_collect.pl
+Index: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
++++ /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
+@@ -20,8 +20,9 @@
+   decl/4,
+   ref/3,
+   import_needed/4,
+   rendered_name/3,
++  decl_table/2,
+   target_file/3,
+   target_kind/2
+ ]).
+ 
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -l run.pl -g run -g halt
+export interface stringsRow {
+  string_id: number;
+  content: string;
+}
+
+import type { stringsRow } from "./core";
+
+export interface nodeRow {
+  node_id: number;
+  family: number;
+  file_id: number;
+  byte_start: number;
+  byte_len: number;
+  kind: number;
+  name_id: number | null;
+}
+
+export interface edgeRow {
+  family: number;
+  src_id: number;
+  dst_id: number;
+  kind: number;
+}
+
+---
+
+pub struct strings {
+  pub string_id: i64,
+  pub content: String,
+}
+
+use super::core::strings;
+
+pub struct node {
+  pub node_id: i64,
+  pub family: i32,
+  pub file_id: i64,
+  pub byte_start: i64,
+  pub byte_len: i64,
+  pub kind: i32,
+  pub name_id: Option<i64>,
+}
+
+pub struct edge {
+  pub family: i32,
+  pub src_id: i64,
+  pub dst_id: i64,
+  pub kind: i32,
+}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -l 1_collect.pl -g "words_pascal(strings,P),writeln(P), rendered_name(ts,s_strings,N),writeln(N)" -g halt 2>&1 | head
+ERROR: [Thread main] -g words_pascal(strings,P),writeln(P), rendered_name(ts,s_strings,N),writeln(N): '<meta-call>'/1: Unknown procedure: words_pascal/2
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -g "code_type(115,to_upper(U)),writeln(U), atom_codes(S,[115,116,114]), writeln(S)" -g halt 2>&1 | head
+115
+str
+[0m
+[0m$ [0mcd /tmp && swipl -q -g "code_type(83,to_lower(L)),writeln(L), code_type(115,to_upper(U)),writeln(U)" -g halt 2>&1 | head
+83
+115
+[0m
+[0m$ [0mcd /tmp && swipl -q -g "code_type(X,to_lower(83)),writeln(X), code_type(Y,to_upper(115)),writeln(Y)" -g halt 2>&1 | head
+115
+83
+[0m
+[0m← [0mEdit v6/prolog/labs/alloy_semantics/1_collect.pl
+Index: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
++++ /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/1_collect.pl
+@@ -115,9 +115,9 @@
+     atomic_list_concat(CapParts, Pascal).
+ 
+ capitalize(Part, Cap) :-
+     atom_codes(Part, [C|Cs]),
+-    code_type(C, to_upper(U)),
++    code_type(U, to_upper(C)),
+     atom_codes(Cap, [U|Cs]).
+ capitalize(Part, Cap) :-
+     Part == '',
+     Cap = ''.
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && swipl -q -l run.pl -g run -g halt
+export interface StringsRow {
+  string_id: number;
+  content: string;
+}
+
+import type { StringsRow } from "./core";
+
+export interface NodeRow {
+  node_id: number;
+  family: number;
+  file_id: number;
+  byte_start: number;
+  byte_len: number;
+  kind: number;
+  name_id: number | null;
+}
+
+export interface EdgeRow {
+  family: number;
+  src_id: number;
+  dst_id: number;
+  kind: number;
+}
+
+---
+
+pub struct Strings {
+  pub string_id: i64,
+  pub content: String,
+}
+
+use super::core::Strings;
+
+pub struct Node {
+  pub node_id: i64,
+  pub family: i32,
+  pub file_id: i64,
+  pub byte_start: i64,
+  pub byte_len: i64,
+  pub kind: i32,
+  pub name_id: Option<i64>,
+}
+
+pub struct Edge {
+  pub family: i32,
+  pub src_id: i64,
+  pub dst_id: i64,
+  pub kind: i32,
+}
+[0m
+Green run works. Now testing sabotages.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && echo "=== S1: unresolved ===" && ALLOW_LAB_SABOTAGE_UNRESOLVED=1 swipl -q -l run.pl -g run -g halt; echo "exit=$?"; echo "=== S2: duplicate ===" && ALLOW_LAB_SABOTAGE_DUPLICATE=1 swipl -q -l run.pl -g run -g halt; echo "exit=$?"
+=== S1: unresolved ===
+codegen_refused(unresolved_ref(graph.ts,s_node,0))
+exit=1
+=== S2: duplicate ===
+codegen_refused(duplicate_name(core.ts,StringsRow))
+exit=1
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/4_receipts.sh
+Wrote file successfully.
+[0m
+Both sabotages fire with no text emitted. Now the receipt script.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh
+############################################################
+# (a) GREEN RUN — both targets, import/use lines derived from ref/2
+############################################################
+
+$ swipl -q -l run.pl -g run -g halt
+export interface StringsRow {
+  string_id: number;
+  content: string;
+}
+
+import type { StringsRow } from "./core";
+
+export interface NodeRow {
+  node_id: number;
+  family: number;
+  file_id: number;
+  byte_start: number;
+  byte_len: number;
+  kind: number;
+  name_id: number | null;
+}
+
+export interface EdgeRow {
+  family: number;
+  src_id: number;
+  dst_id: number;
+  kind: number;
+}
+
+---
+
+pub struct Strings {
+  pub string_id: i64,
+  pub content: String,
+}
+
+use super::core::Strings;
+
+pub struct Node {
+  pub node_id: i64,
+  pub family: i32,
+  pub file_id: i64,
+  pub byte_start: i64,
+  pub byte_len: i64,
+  pub kind: i32,
+  pub name_id: Option<i64>,
+}
+
+pub struct Edge {
+  pub family: i32,
+  pub src_id: i64,
+  pub dst_id: i64,
+  pub kind: i32,
+}
+
+############################################################
+# (b) SABOTAGE 1 — comment out the node decl (env hook)
+#     expect codegen_refused(unresolved_ref) and NO text emitted
+############################################################
+codegen_refused(unresolved_ref(graph.ts,s_node,0))
+exit=1
+
+############################################################
+# (c) SABOTAGE 2 — add a duplicate rendered decl name (env hook)
+#     expect codegen_refused(duplicate_name) and NO text emitted
+############################################################
+codegen_refused(duplicate_name(core.ts,StringsRow))
+exit=1
+
+############################################################
+# (d) PARITY — emitted ts field names+types vs the real spine
+#     strings: spine.ts:63-66 ; node/edge: types.ts:80-95
+#     exact match not required; field names+types must match
+############################################################
+--- emitted ts ---
+diff (real vs emitted) exit=1  (0 = field-for-field identical)
+1,13d0
+<   byte_len: number;
+<   byte_start: number;
+<   content: string;
+<   dst_id: number;
+<   family: number;
+<   family: number;
+<   file_id: number;
+<   kind: number;
+<   kind: number;
+<   name_id: number | null;
+<   node_id: number;
+<   src_id: number;
+<   string_id: number;
+
+--- reference field lines (real) ---
+  byte_len: number;
+  byte_start: number;
+  content: string;
+  dst_id: number;
+  family: number;
+  family: number;
+  file_id: number;
+  kind: number;
+  kind: number;
+  name_id: number | null;
+  node_id: number;
+  src_id: number;
+  string_id: number;
+[0m
+The ts capture failed due to shell quoting in the variable. Let me rewrite the script to call commands directly.
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/4_receipts.sh
+Wrote file successfully.
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh 2>&1 | tail -40
+exit=1
+
+############################################################
+# (d) PARITY - emitted ts field names+types vs the real spine
+#     strings: spine.ts:63-66 ; node/edge: types.ts:80-95
+#     exact match not required; field names+types must match
+############################################################
+--- emitted ts ---
+
+diff (real vs emitted) exit=0   (0 = field-for-field identical)
+1,13d0
+<   byte_len: number;
+<   byte_start: number;
+<   content: string;
+<   dst_id: number;
+<   family: number;
+<   family: number;
+<   file_id: number;
+<   kind: number;
+<   kind: number;
+<   name_id: number | null;
+<   node_id: number;
+<   src_id: number;
+<   string_id: number;
+
+--- reference field lines (real checked-in interfaces) ---
+  byte_len: number;
+  byte_start: number;
+  content: string;
+  dst_id: number;
+  family: number;
+  family: number;
+  file_id: number;
+  kind: number;
+  kind: number;
+  name_id: number | null;
+  node_id: number;
+  src_id: number;
+  string_id: number;
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && cat ts_err.txt; echo "=== direct ==="; swipl -q -l run.pl -g "ts_text(T),format('~s',[T])" -g halt; echo "exit=$?"
+=== direct ===
+exit=0
+[0m
+[0m← [0mEdit v6/prolog/labs/alloy_semantics/3_render.pl
+Index: /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/3_render.pl
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/3_render.pl
++++ /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics/3_render.pl
+@@ -135,6 +135,6 @@
+     format(string(Line), '  pub ~w: ~w', [Name, Type]).
+ 
+ % ---- per-target text helpers (receipt legibility) ----------------------------
+ 
+-ts_text(Text)   :- target_text(ts, Text).
+-rust_text(Text) :- target_text(rust, Text).
++ts_text(Text)   :- collect(ts),   target_text(ts, Text).
++rust_text(Text) :- collect(rust), target_text(rust, Text).
+
+[0m
+`ts_text/1` never runs collect. Let me make the standalone text helpers self-collecting.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh 2>&1 | tail -45
+# (d) PARITY - emitted ts field names+types vs the real spine
+#     strings: spine.ts:63-66 ; node/edge: types.ts:80-95
+#     exact match not required; field names+types must match
+############################################################
+--- emitted ts ---
+export interface StringsRow {
+  string_id: number;
+  content: string;
+}
+
+import type { StringsRow } from "./core";
+
+export interface NodeRow {
+  node_id: number;
+  family: number;
+  file_id: number;
+  byte_start: number;
+  byte_len: number;
+  kind: number;
+  name_id: number | null;
+}
+
+export interface EdgeRow {
+  family: number;
+  src_id: number;
+  dst_id: number;
+  kind: number;
+}
+diff (real vs emitted) exit=0   (0 = field-for-field identical)
+
+--- reference field lines (real checked-in interfaces) ---
+  byte_len: number;
+  byte_start: number;
+  content: string;
+  dst_id: number;
+  family: number;
+  family: number;
+  file_id: number;
+  kind: number;
+  kind: number;
+  name_id: number | null;
+  node_id: number;
+  src_id: number;
+  string_id: number;
+[0m
+Parity is field-for-field identical (exit=0). Let me run the full script top-to-bottom to confirm all receipts.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh > /tmp/receipts_capture.txt 2>&1; echo "script exit=$?"; rm -f ts_out.txt ts_err.txt; echo "cleaned ts_out/ts_err"; ls
+script exit=0
+cleaned ts_out/ts_err
+0_facts.pl
+1_collect.pl
+2_check.pl
+3_render.pl
+4_receipts.sh
+run.pl
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/claude-research/skills_archive && grep -in "mono\|morph\b\|morphization" alloy-core/SKILL.md alloy-languages/SKILL.md; echo "grep exit=$?"
+grep exit=1
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && grep -n "table(strings\|^column(strings\|^column(node\|^column(edge" 0_facts.pl | head; echo "--- collect ---"; grep -n "rendered_name\|words_pascal\|base_decl\|base_ref\|collect(\|import_needed(\|decl_table\|^target_name" 1_collect.pl; echo "--- check ---"; grep -n "check_unresolved\|check_duplicate_names\|check_imports_used\|throw(codegen" 2_check.pl; echo "--- render ---"; grep -n "ts_file(\|rust_mod(\|ts_interface(\|rust_struct(\|import_term\|tree_to_text\|join_text" 3_render.pl
+28:table(strings, string_table).
+33:column(strings, string_id, i64,    false, none,   none,       1,
+35:column(strings, content,   string, false, none,   none,       2,
+39:column(node, node_id,    i64,    false, none,   none,      1,
+41:column(node, family,     i32,    false, none,   none,      2,
+43:column(node, file_id,    i64,    false, none,   none,      3,
+45:column(node, byte_start, i64,    false, none,   none,      4,
+47:column(node, byte_len,   i64,    false, none,   none,      5,
+49:column(node, kind,       i32,    false, none,   none,      6,
+51:column(node, name_id,    i64,    true,  strings, string_id, 7,
+--- collect ---
+23:            rendered_name/3,
+24:            decl_table/2,
+58:collect(Target) :-
+62:    forall(base_decl(Target, Id, Kind, File),
+64:    forall(base_ref(Target, FromFile, Id),
+71:base_decl(Target, Id, Kind, File) :-
+82:base_ref(Target, FromFile, Id) :-
+92:import_needed(Target, FromFile, ToFile, Id) :- col_imp(Target, FromFile, ToFile, Id).
+99:rendered_name(Target, Id, Name) :-
+100:    decl_table(Id, Table),
+103:target_name(ts, Table, Name) :-
+104:    words_pascal(Table, P),
+106:target_name(rust, Table, Name) :-
+107:    words_pascal(Table, Name).
+109:decl_table(Id, Table) :-
+112:words_pascal(Base, Pascal) :-
+--- check ---
+30:    check_unresolved(Target),
+31:    check_duplicate_names(Target),
+32:    check_imports_used(Target).
+35:check_unresolved(Target) :-
+40:             ;  throw(codegen_refused(unresolved_ref(FromFile, Id, N))) ) )).
+46:check_duplicate_names(Target) :-
+53:    -> throw(codegen_refused(duplicate_name(File, Name)))
+71:check_imports_used(Target) :-
+75:             -> throw(codegen_refused(unused_import(FromFile, Id)))
+--- render ---
+4:% at the end. The ts emitter yields ts_file(FileId, Imports, Interfaces) and
+5:% the rust emitter yields rust_mod(FileId, Uses, Structs); the fold happens in
+6:% tree_to_text/3 only.
+38:    maplist(tree_to_text(Target), FileTerms, FileTexts),
+48:              import_term(Target, ToFile, Name, Imp) ),
+51:    -> Tree = ts_file(File, ImpTerms, DeclTerms)
+52:    ;  Tree = rust_mod(File, ImpTerms, DeclTerms) ).
+62:    -> DTerm = ts_interface(Name, Fields)
+63:    ;  DTerm = rust_struct(Name, Fields) ).
+83:import_term(ts, ToFile, Name, ts_import(Name, Path)) :-
+85:import_term(rust, ToFile, Name, rust_use(Path)) :-
+96:tree_to_text(ts, ts_file(_, Imports, Interfaces), Text) :-
+99:    join_text(ImportLines, InterfaceTexts, Text).
+101:tree_to_text(rust, rust_mod(_, Uses, Structs), Text) :-
+104:    join_text(UseLines, StructTexts, Text).
+106:join_text([], Bodies, Text) :-
+108:join_text(Heads, Bodies, Text) :-
+116:ts_interface_text(ts_interface(Name, Fields), Text) :-
+129:rust_struct_text(rust_struct(Name, Fields), Text) :-
+[0m
+[0m← [0mWrite v6/prolog/labs/alloy_semantics/MAPPING.md
+Wrote file successfully.
+[0m
+Both sabotages fire, green emits both targets, parity identical. Now MAPPING.md and REPORT.md.
+Now REPORT.md at worktree root with full verbatim receipts.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh > /tmp/final_receipts.txt 2>&1; echo "exit=$?"; rm -f ts_out.txt ts_err.txt; wc -l /tmp/final_receipts.txt
+exit=0
+125 /tmp/final_receipts.txt
+[0m
+[0m→ [0mRead /tmp/final_receipts.txt
+[0m
+[0m← [0mWrite REPORT.md
+Wrote file successfully.
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lab-alloy/v6/prolog/labs/alloy_semantics && bash 4_receipts.sh >/dev/null 2>&1; echo "receipts exit=$?"; rm -f ts_out.txt ts_err.txt; ls; echo "--- root REPORT ---"; ls /Users/chrishafley/projects/sprefa-lab-alloy/REPORT.md; echo "--- git status ---"; cd /Users/chrishafley/projects/sprefa-lab-alloy && git status --short
+receipts exit=0
+0_facts.pl
+1_collect.pl
+2_check.pl
+3_render.pl
+4_receipts.sh
+MAPPING.md
+run.pl
+--- root REPORT ---
+/Users/chrishafley/projects/sprefa-lab-alloy/REPORT.md
+--- git status ---
+?? REPORT.md
+?? brief.md
+?? lane-opencode.log
+?? v6/prolog/labs/alloy_semantics/
+[0m
+[0m# [0mTodos
+[✓] Read bounded reference files (skills, emit precedents, spine schema)
+[✓] Build 0_facts.pl
+[✓] Build 1_collect.pl
+[✓] Build 2_check.pl
+[✓] Build 3_render.pl
+[✓] Build 4_receipts.sh and run green+sabotages+parity
+[✓] Write MAPPING.md
+[✓] Write REPORT.md with receipts
+[0m
+Done. Lab built under `v6/prolog/labs/alloy_semantics/`, REPORT.md at worktree root, nothing committed.
+
+**Files** (`v6/prolog/labs/alloy_semantics/`):
+- `0_facts.pl` — 3 spine tables as `table/2` + `column/8`, with the deliberate cross-file refs (node.name_id→strings, edge.src_id/dst_id→node)
+- `1_collect.pl` — materializes `decl/4`, `ref/3`, `import_needed/4` per target; name policy
+- `2_check.pl` — 3 invariants, throws `codegen_refused(<reason>)`
+- `3_render.pl` — term-tree emitters (`ts_file`/`rust_mod`), import/use derived from `ref/2`, fold to text at the end
+- `4_receipts.sh` — runs a–d
+- `MAPPING.md`, `REPORT.md`
+
+**Receipts:**
+- (a) green: both targets emitted, `import type { StringsRow } from "./core"` and `use super::core::Strings` derived, not hand-written
+- (b) sabotage 1: `codegen_refused(unresolved_ref(graph.ts,s_node,0))`, exit 1, no text
+- (c) sabotage 2: `codegen_refused(duplicate_name(core.ts,StringsRow))`, exit 1, no text
+- (d) parity: field names+types identical to real spine (diff exit 0), `StringsRow` from spine.ts:63-66, `NodeRow`/`EdgeRow` from types.ts:80-95
+
+**What broke/surprised (in REPORT.md):**
+- `table` is a predefined SWI-Prolog operator (tabling, fx 1150) — `table/2` in a module export list fails to parse; fixed with `(table)/2`
+- `code_type/2` conversion is `code_type(Result, to_upper(Input))` in SWI 10 (reverse of my first guess; names drifted lowercase until fixed)
+- `ts_text/1` needs `collect/1` materialized first
+- node/edge row types live in `types.ts:80-95`, not the brief's `spine.ts:60-105` range
+- sabotages follow the existing `OPENAPI_LAB_DROP` env-hook precedent rather than editing a checked-in file mid-run

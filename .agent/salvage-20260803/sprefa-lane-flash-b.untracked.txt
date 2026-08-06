@@ -1,0 +1,8 @@
+REPORT.md
+brief.md
+lane-artifacts/diff12.txt
+lane-artifacts/diff13.txt
+lane-artifacts/run1.txt
+lane-artifacts/run2.txt
+lane-artifacts/run3_slow.txt
+lane-b-opencode.log
