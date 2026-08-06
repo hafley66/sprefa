@@ -1050,9 +1050,11 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     if (relations.length === 0) return of([]);
     return forkJoin(
       relations.map((relation) =>
-        seam.runner.execute(seam.db, relation.boundarySql).pipe(
-          map((result) => boundaryDelta(relation, result)),
-        ),
+        seam.unreadRels?.has(relation.rel) === true
+          ? of({ rel: relation.rel, add: [], del: [] } satisfies IRelDelta)
+          : seam.runner.execute(seam.db, relation.boundarySql).pipe(
+              map((result) => boundaryDelta(relation, result)),
+            ),
       ),
     );
   },

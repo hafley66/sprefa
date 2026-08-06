@@ -120,7 +120,10 @@ function main(): void {
 
   const loadedStart = performance.now();
   const edges = parseInput(args.input);
-  const seam = ScratchStore.open(":memory:");
+  // This driver reads the final table, never the per-tick deltas, so the
+  // boundary rows would become JS objects only to be discarded.
+  const opened = ScratchStore.open(":memory:");
+  const seam: ISqlSeam = { ...opened, unreadRels: new Set(["edge", "reachable"]) };
 
   import(resolve(args.module))
     .then((loaded: { program: IProgram }) => {

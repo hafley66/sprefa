@@ -61,6 +61,9 @@ export type IArrivalBatch = readonly IArrivalRow[];
 export interface ISqlSeam {
   readonly db: SqliteDb;
   readonly runner: ISqlRunner;
+  /** Rels whose boundary rows no caller reads; absent means every rel is read.
+   *  `readBoundary` counts these in SQL and leaves the rows there. */
+  readonly unreadRels?: ReadonlySet<string>;
 }
 
 /**
