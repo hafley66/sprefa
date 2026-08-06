@@ -116,6 +116,9 @@ export interface IIncrementalRelationPlan {
    * text with one table name swapped.
    */
   readonly departureFrontierTableName?: string;
+  /** Rule readers of this rel's delta/frontier, "name/arity" each; absent
+   *  means unknown-so-observed, so a pre-field module is never skipped. */
+  readonly ruleObservers?: readonly string[];
 }
 
 export interface IIncrementalEdgeStatement {
