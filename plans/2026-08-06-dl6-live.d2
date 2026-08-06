@@ -34,10 +34,10 @@ masthead: |~md
 
   | | |
   |---|---|
-  | fixpoint | **2315 ms** (461,857 rows/sec) |
-  | peak RSS | 726 MB |
+  | fixpoint | **2297 ms** (465,477 rows/sec) |
+  | peak RSS | 728 MB |
   | statements per tick | 17 |
-  | measured | v24.15.0 · darwin/arm64 · 2026-08-06T19:09:35.412Z |
+  | measured | v24.15.0 · darwin/arm64 · 2026-08-06T19:10:56.679Z |
   | batches | **split**, so cost lands per statement |
   | baseline | `FACTS.baseline.json`, 2026-08-06T18:55:29.322Z |
 
@@ -232,11 +232,11 @@ flow: "one tick, as a sequence" {
     runtime -> runtime: "head on a cycle?"
     runtime -> seam: "the 11 refCount statements, ONE batch"
     seam -> db: "batch"
-    db -> db: "WITH RECURSIVE, 1478 ms"
-    db -> db: "antijoin into the scratch set, 146 ms"
-    db -> db: "stage delta, 308 ms"
-    db -> db: "stage frontier, 206 ms"
-    db -> db: "fill the head, 145 ms"
+    db -> db: "WITH RECURSIVE, 1463 ms"
+    db -> db: "antijoin into the scratch set, 145 ms"
+    db -> db: "stage delta, 309 ms"
+    db -> db: "stage frontier, 201 ms"
+    db -> db: "fill the head, 144 ms"
     db -> runtime: "no rows cross"
   }
 
@@ -274,7 +274,7 @@ legend: |~md
 legend.class: head
 flow -> legend
 
-s0: "supportSql[1] seed the scratch table, the recursive CTE · 1478 ms · 64.8%" {
+s0: "supportSql[1] seed the scratch table, the recursive CTE · 1463 ms · 64.7%" {
   grid-columns: 2
   grid-gap: 20
   class: hot
@@ -300,8 +300,8 @@ s0: "supportSql[1] seed the scratch table, the recursive CTE · 1478 ms · 64.8%
     ### measured
     | | |
     |---|---|
-    | wall | **1478.4 ms** · ▲ 97 ms |
-    | share of tick | **64.8%** |
+    | wall | **1463.1 ms** · ▲ 82 ms |
+    | share of tick | **64.7%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -317,13 +317,30 @@ s0: "supportSql[1] seed the scratch table, the recursive CTE · 1478 ms · 64.8%
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__support_next_reachable` **0 rows -> 5 rows**
+
+    **before**
+
+    `__support_next_reachable` is **empty**
+
+    **after**
+
+    | source | target | __refcount |
+    |---|---|---|
+    | 1 | 2 | 1 |
+    | 1 | 3 | 1 |
+    | 1 | 4 | 1 |
+    | 2 | 4 | 1 |
+    | 3 | 4 | 1 |
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 legend -> s0
 
-s1: "supportSql[7] stage additions into the delta · 308 ms · 13.5%" {
+s1: "supportSql[7] stage additions into the delta · 309 ms · 13.7%" {
   grid-columns: 2
   grid-gap: 20
   class: warm
@@ -342,8 +359,8 @@ s1: "supportSql[7] stage additions into the delta · 308 ms · 13.5%" {
     ### measured
     | | |
     |---|---|
-    | wall | **307.9 ms** · flat |
-    | share of tick | **13.5%** |
+    | wall | **309.2 ms** · flat |
+    | share of tick | **13.7%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -353,13 +370,30 @@ s1: "supportSql[7] stage additions into the delta · 308 ms · 13.5%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__delta_reachable` **0 rows -> 5 rows**
+
+    **before**
+
+    `__delta_reachable` is **empty**
+
+    **after**
+
+    | _sign | _sequence | source | target |
+    |---|---|---|---|
+    | 1 | 0 | 1 | 2 |
+    | 1 | 1 | 1 | 3 |
+    | 1 | 2 | 1 | 4 |
+    | 1 | 3 | 2 | 4 |
+    | 1 | 4 | 3 | 4 |
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s0 -> s1
 
-s2: "supportSql[8] stage the frontier copy · 206 ms · 9.0%" {
+s2: "supportSql[8] stage the frontier copy · 201 ms · 8.9%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -378,8 +412,8 @@ s2: "supportSql[8] stage the frontier copy · 206 ms · 9.0%" {
     ### measured
     | | |
     |---|---|
-    | wall | **205.5 ms** · ▼ 12 ms |
-    | share of tick | **9.0%** |
+    | wall | **201.4 ms** · ▼ 16 ms |
+    | share of tick | **8.9%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -389,13 +423,30 @@ s2: "supportSql[8] stage the frontier copy · 206 ms · 9.0%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__frontier_reachable` **0 rows -> 5 rows**
+
+    **before**
+
+    `__frontier_reachable` is **empty**
+
+    **after**
+
+    | _phase | _sequence | source | target |
+    |---|---|---|---|
+    | 2 | 0 | 1 | 2 |
+    | 2 | 1 | 1 | 3 |
+    | 2 | 2 | 1 | 4 |
+    | 2 | 3 | 2 | 4 |
+    | 2 | 4 | 3 | 4 |
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s1 -> s2
 
-s3: "supportSql[6] fill the new-row set, ONE antijoin · 146 ms · 6.4%" {
+s3: "supportSql[6] fill the new-row set, ONE antijoin · 145 ms · 6.4%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -417,7 +468,7 @@ s3: "supportSql[6] fill the new-row set, ONE antijoin · 146 ms · 6.4%" {
     ### measured
     | | |
     |---|---|
-    | wall | **146.0 ms** · flat |
+    | wall | **145.2 ms** · flat |
     | share of tick | **6.4%** |
     | executions | 1 |
     | rows returned | 0 |
@@ -429,13 +480,30 @@ s3: "supportSql[6] fill the new-row set, ONE antijoin · 146 ms · 6.4%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__new_reachable` **0 rows -> 5 rows**
+
+    **before**
+
+    `__new_reachable` is **empty**
+
+    **after**
+
+    | source | target | __refcount |
+    |---|---|---|
+    | 1 | 2 | 1 |
+    | 1 | 3 | 1 |
+    | 1 | 4 | 1 |
+    | 2 | 4 | 1 |
+    | 3 | 4 | 1 |
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
 }
 s2 -> s3
 
-s4: "supportSql[10] fill the head · 145 ms · 6.3%" {
+s4: "supportSql[10] fill the head · 144 ms · 6.4%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -454,8 +522,8 @@ s4: "supportSql[10] fill the head · 145 ms · 6.3%" {
     ### measured
     | | |
     |---|---|
-    | wall | **144.6 ms** · flat |
-    | share of tick | **6.3%** |
+    | wall | **143.7 ms** · flat |
+    | share of tick | **6.4%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -465,6 +533,23 @@ s4: "supportSql[10] fill the head · 145 ms · 6.3%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `reachable` **0 rows -> 5 rows**
+
+    **before**
+
+    `reachable` is **empty**
+
+    **after**
+
+    | source | target | __refcount |
+    |---|---|---|
+    | 1 | 2 | 1 |
+    | 1 | 3 | 1 |
+    | 1 | 4 | 1 |
+    | 2 | 4 | 1 |
+    | 3 | 4 | 1 |
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
@@ -504,6 +589,17 @@ s5: "supportSql[2] set each head row's count from the scratch table · 0 ms · 0
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `reachable` stayed at 0 rows
+
+    **before**
+
+    `reachable` is **empty**
+
+    **after**
+
+    `reachable` is **empty**
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
@@ -543,6 +639,17 @@ s6: "supportSql[3] stage retractions into the delta · 0 ms · 0.0%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__delta_reachable` stayed at 0 rows
+
+    **before**
+
+    `__delta_reachable` is **empty**
+
+    **after**
+
+    `__delta_reachable` is **empty**
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
@@ -566,7 +673,7 @@ s7: "supportSql[0] clear the scratch table · 0 ms · 0.0%" {
     ### measured
     | | |
     |---|---|
-    | wall | **0.1 ms** · flat |
+    | wall | **0.0 ms** · flat |
     | share of tick | **0.0%** |
     | executions | 1 |
     | rows returned | 0 |
@@ -577,6 +684,17 @@ s7: "supportSql[0] clear the scratch table · 0 ms · 0.0%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__support_next_reachable` stayed at 0 rows
+
+    **before**
+
+    `__support_next_reachable` is **empty**
+
+    **after**
+
+    `__support_next_reachable` is **empty**
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
@@ -612,6 +730,17 @@ s8: "supportSql[4] delete what fell to zero · 0 ms · 0.0%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `reachable` stayed at 0 rows
+
+    **before**
+
+    `reachable` is **empty**
+
+    **after**
+
+    `reachable` is **empty**
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386
@@ -646,6 +775,17 @@ s9: "supportSql[5] clear the new-row set · 0 ms · 0.0%" {
 
     ### written by
     [`v6/prolog/lower.pl:2386`](vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386)
+
+    ### the toy graph, this statement's table
+    `__new_reachable` stayed at 0 rows
+
+    **before**
+
+    `__new_reachable` is **empty**
+
+    **after**
+
+    `__new_reachable` is **empty**
   ~|
   runtime.class: plan
   runtime.link: vscode://file/Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/lower.pl:2386

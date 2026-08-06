@@ -252,6 +252,97 @@ function emittedStatements() {
   return named;
 }
 
+
+// A diamond: 1 reaches 4 through 2 AND through 3, so reachable(1,4) has TWO
+// derivations. That is the whole reason a refCount exists.
+const TOY_EDGES = [[1, 2], [2, 4], [1, 3], [3, 4]];
+
+function toyDb() {
+  const fresh = new Database(":memory:");
+  fresh.exec("PRAGMA temp_store=MEMORY;");
+  for (const ddl of program.ddl) fresh.exec(ddl);
+  const insertEdge = fresh.prepare(`INSERT OR IGNORE INTO "edge" ("source","target") VALUES (?,?)`);
+  const stageEdge = fresh.prepare(`INSERT INTO "__frontier_edge" ("_phase","_sequence","source","target") VALUES (2,?,?,?)`);
+  const deltaEdge = fresh.prepare(`INSERT INTO "__delta_edge" ("_sign","_sequence","source","target") VALUES (1,?,?,?)`);
+  TOY_EDGES.forEach(([source, target], index) => {
+    insertEdge.run(source, target);
+    stageEdge.run(index, source, target);
+    deltaEdge.run(index, source, target);
+  });
+  return fresh;
+}
+
+/** The table a statement WRITES, so the snapshot is of the thing that moved. */
+function writtenTable(sql) {
+  const match = /^\s*(?:INSERT(?:\s+OR\s+IGNORE)?\s+INTO|DELETE\s+FROM|UPDATE)\s+"([^"]+)"/i.exec(sql);
+  return match?.[1] ?? null;
+}
+
+function snapshot(handle, table) {
+  try {
+    const rows = handle.prepare(`SELECT * FROM "${table}" LIMIT 12`).all();
+    const total = handle.prepare(`SELECT count(*) AS n FROM "${table}"`).get().n;
+    return { rows, total };
+  } catch {
+    return { rows: [], total: 0 };
+  }
+}
+
+function renderRows(shot, table) {
+  if (shot.total === 0) return `\`${table}\` is **empty**`;
+  const columns = Object.keys(shot.rows[0]);
+  const header = `| ${columns.join(" | ")} |`;
+  const rule = `|${columns.map(() => "---").join("|")}|`;
+  const body = shot.rows
+    .map((row) => `| ${columns.map((column) => String(row[column])).join(" | ")} |`)
+    .join("\n    ");
+  const more = shot.total > shot.rows.length ? `\n    _...${shot.total - shot.rows.length} more_` : "";
+  return `${header}\n    ${rule}\n    ${body}${more}`;
+}
+
+/** Runs the emitted sequence on the toy graph, snapshotting the written table
+ *  either side of every statement. */
+function toyTrace() {
+  const handle = toyDb();
+  const trace = new Map();
+  const statement = incrementalPlan.levels.find((one) => one.supportSql !== null);
+  (statement.supportSql ?? []).forEach((sql, index) => {
+    const table = writtenTable(sql);
+    const before = table ? snapshot(handle, table) : null;
+    const bound = /\?/.test(sql) ? [2] : [];
+    try {
+      handle.prepare(sql).run(...bound);
+    } catch (error) {
+      trace.set(sql, { table, before, after: null, error: String(error.message).slice(0, 80) });
+      return;
+    }
+    const after = table ? snapshot(handle, table) : null;
+    trace.set(sql, { table, before, after, error: null });
+  });
+  const closure = snapshot(handle, "reachable");
+  handle.close();
+  return { trace, closure };
+}
+
+const toy = toyTrace();
+
+function toySection(sql) {
+  const step = toy.trace.get(sql);
+  if (step === undefined || step.table === null) return "";
+  if (step.error !== null) return `\n\n    ### toy run\n    refused: \`${step.error}\``;
+  const changed = step.before.total !== step.after.total;
+  return `\n\n    ### the toy graph, this statement's table
+    \`${step.table}\` ${changed ? `**${step.before.total} rows -> ${step.after.total} rows**` : `stayed at ${step.after.total} rows`}
+
+    **before**
+
+    ${renderRows(step.before, step.table)}
+
+    **after**
+
+    ${renderRows(step.after, step.table)}`;
+}
+
 const first = facts.cases[0];
 const statements = emittedStatements();
 const withCost = statements
@@ -436,7 +527,7 @@ withCost.forEach((one, index) => {
     ${queryPlan(one.sql).map((step) => `- \`${step.replaceAll("|", "\\|")}\``).join("\n    ")}
 
     ### written by
-    [\`${one.origin.path}:${one.origin.line}\`](${one.origin.href})
+    [\`${one.origin.path}:${one.origin.line}\`](${one.origin.href})${toySection(one.sql)}
   ~|
   runtime.class: plan
   runtime.link: ${one.origin.href}
