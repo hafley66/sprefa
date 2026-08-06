@@ -1,0 +1,9 @@
+rel files_resp(body: json).
+rel pr_file(path: text, adds: int, dels: int).
+rel in_dir(path: text, dir: text).
+rel dir_file(dir: text, path: text, adds: int, dels: int).
+rel dir_size(dir: text, adds: int, dels: int, files: int).
+
+pr_file(Path, Adds, Dels) <- files_resp(Body), decode(Body, [... {filename: Path: text, additions: Adds: int, deletions: Dels: int}]).
+dir_file(Dir, Path, Adds, Dels) <- pr_file(Path, Adds, Dels), in_dir(Path, Dir).
+dir_size(Dir, sum(Adds), sum(Dels), count(Path)) <- dir_file(Dir, Path, Adds, Dels).

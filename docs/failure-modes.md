@@ -1626,6 +1626,50 @@ sites but not against new code. **missing** = nothing.
   does not fire at all: that one costs a whole program rather than a term, and it
   needs a `not(agg(...))` base clause instead of a default.
 
+## 41. A recursive rule stops after one round when its arrivals land in one batch
+
+- WHAT IT LOOKS LIKE: a transitive-closure program returns the one-hop rows and
+  silently omits every multi-hop row. No error, no refusal, no tick-log
+  disagreement; the tick reports `carryPending: false` and the loop exits
+  believing it converged. Feed the same edges one per tick and the answer is
+  correct, which is why every recursive fixture in the suite passes.
+- HOW IT BIT US (2026-08-05, exec_shootout dl6 lane): the lane could not produce
+  a benchmark row for the shipping engine because the pinned 3-node chain
+  checksum did not match. Reproduced outside the lane through the bench-cli
+  adapters, oracle against compiled engine, same program and same schedule:
+
+  | schedule | swipl oracle | tsv2 compiled |
+  |---|---|---|
+  | `[[edge(1,2), edge(2,3)]]` | `reachable: (1,2) (1,3) (2,3)` | `reachable: (1,2) (2,3)` |
+  | `[[edge(1,2)], [edge(2,3)]]` | same 3 rows | same 3 rows |
+
+  The flagship program `flagship_flow_reach_over_resolved_edges.dl6` loses
+  `flow_reach(app, entry, sink, persist)` under the batched schedule, so the
+  defect reaches the alpha flagship and is not an int-column artifact.
+- THE DEFECT CHAIN, in firing order:
+  1. `applyLevelsBeforeEdges` (1_incremental.ts:783) stages level results through
+     `levelFrontierCopies(false)` (1_incremental.ts:335), which writes the
+     frontier table at phase 2 and never the next-frontier table.
+  2. `promoteFrontiers` (1_incremental.ts:1070) reads carry from
+     `EXISTS (SELECT 1 FROM __next_frontier_<rel>)`, which is therefore always
+     empty, so `carryPending` is false and `TickFold` (tickLoop.ts:47) exits.
+  3. The same promote then runs `DELETE FROM __frontier_<rel>` followed by an
+     insert from the empty next-frontier table, so the rows a second round would
+     have joined are destroyed at tick end.
+  4. `recomputeLevelsAfterEdges`, the one path that does write next-frontier
+     (`levelFrontierCopies(true)`), is gated on retractions and on
+     `reconcileEveryTick`, both false for a positive recursive program.
+- WHY NO TEST SAW IT: every recursive fixture feeds one hop per tick
+  (conformance/fixtures/4_flagship_flow.pl:34-35 is two arrival ticks), and the
+  emitted third join arm reads the FULL head table, so one round per tick is
+  sufficient there. The suite has no case where a single arrival batch needs two
+  rounds.
+- FAIL-PRE-FIX TEST OWED: a fixture whose schedule is one batch containing a
+  two-hop chain, graded against the oracle's three rows.
+- RAIL OWED: the drain budget work (plans/2026-08-05-fixpoint-budget.md) replaces
+  the tick-count cap with a work budget over the same durable worklist tables;
+  the carry write is its enabling step, so the rail rides that arc.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1667,6 +1711,7 @@ sites but not against new code. **missing** = nothing.
 | 39 | nested `cap_self` re-groups out from under the outer kill (orphaned server squats its port) | missing | (a) label-independent group marker so `cap_self` declines to re-exec inside an existing cap (v6/tools/run-capped.sh:78-92), fail-pre-fix receipt = an outer `run_capped` 124 leaves no backgrounded child; (b) `TSV2_PORT=0` plus reading the bound port back off the server's own `tsv2 serving on <port>` line (v6/tsv2/serve/main.ts:18,24) across the 13 fixed-port shell rails in v6/tsv2/scripts/ — the mechanical port of the TS-side fix already shipped as `startServed(port = 0)` (v6/tsv2/tests/serveHelpers.ts:135-148); today two of those rails even share 17571 (extraction-live.sh:68, memory-soak.sh:26) |
 | 40 | aggregate emits no row for an empty group (the `coalesce` empty-group idiom) | missing | fixture `coalesce_fills_an_empty_aggregate_group` in v6/prolog/conformance/fixtures/7_coalesce.pl (all eight existing sources are EDB rels or level views, none aggregate-headed), plus one sentence each on the coalesce paragraph and the aggregate rows of v6/prolog/compile/SYNTAX.md (:86-101, :138-148); the honest rail beyond both is a check that an aggregate feeding an arithmetic expression over a group rel has a filled source (plans/2026-07-31-auto-factorization-verdict.md:1054-1057), unowned |
 
+| 41 | a malformed host response kills the dl server process instead of landing as a diag | missing | `encodeSurfaceRowByColumns` throws `commit: non-numeric value in rel '<r>' column '<c>'` at v6/dl/src/3_runtime.ts:186, unhandled through applyEdbTxn (:605) and the tick loop (:896), so the listener dies and every later request gets ECONNREFUSED; the load response had already answered `{"loaded":true}`, so the program looks accepted. Triggered by an sh host whose declared output column names do not match its stdout keys: parseHostOutput (v6/dl/src/1_hosts.ts:94-190) falls out of the JSON-lines branch into whitespace-column splitting and shreds every value. Fail-pre-fix receipt = an sh decl whose template emits JSON-lines under one key set while declaring another, asserting the server still answers GET /idb/:rel afterward. Rail = coerce-or-refuse at the encode site (the class-36 encode-site guard precedent, same file) plus a bridge-time check that a JSON-lines host's keys cover its output-only columns, unowned |
 ## How a new rail gets born here
 
 The observed standard, in order — no step is optional:

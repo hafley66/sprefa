@@ -1,10 +1,10 @@
-rel end_a_signal(outer_id: text) log keep(all).
-rel end_b_signal(outer_id: text) log keep(all).
-rel end_c_signal(inner_id: text) log keep(all).
+rel end_a_signal(outer_id) log keep(all).
+rel end_b_signal(outer_id) log keep(all).
+rel end_c_signal(inner_id) log keep(all).
 rel closed_outer(outer_id) log keep(all).
 rel closed_inner(outer_id, inner_id) log keep(all).
-rel open_outer(outer_id: text) key(1).
-rel open_inner(outer_id: text, inner_id: text) key(1, 2).
+rel open_outer(outer_id) key(1).
+rel open_inner(outer_id, inner_id) key(1, 2).
 
 closed_outer(OuterId) <+ end_a_signal(OuterId), end_b_signal(OuterId), open_outer(OuterId).
 live_outer(OuterId) <- open_outer(OuterId), not(closed_outer(OuterId)).

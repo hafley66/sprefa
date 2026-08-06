@@ -1,0 +1,11 @@
+REPORT.md
+labs/hs-idioms/CONTRACT.md
+labs/hs-idioms/IDIOMS.md
+labs/hs-idioms/probes/.gitignore
+labs/hs-idioms/probes/logprobe/Main.hs
+labs/hs-idioms/probes/memprobe/Main.hs
+labs/hs-idioms/probes/probes.cabal
+labs/hs-idioms/starter/.gitignore
+labs/hs-idioms/starter/config.txt
+labs/hs-idioms/starter/src/Main.hs
+labs/hs-idioms/starter/starter.cabal

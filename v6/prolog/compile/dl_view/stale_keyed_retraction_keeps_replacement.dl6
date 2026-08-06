@@ -1,1 +1,1 @@
-rel current_value(col1: text, col2: text) key(1).
+rel current_value(col1, col2) key(1).

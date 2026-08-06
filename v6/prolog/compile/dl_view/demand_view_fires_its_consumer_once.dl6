@@ -1,4 +1,4 @@
-rel stale(endpoint: text) log keep(all).
+rel stale(endpoint) log keep(all).
 rel fetch_call(endpoint) log keep(all).
 
 fetch_demand(Endpoint) <- stale(Endpoint).

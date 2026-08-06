@@ -1,4 +1,4 @@
-rel set_value(key: text, value: text) log keep(all).
+rel set_value(key, value) log keep(all).
 rel latest(key, value) key(1).
 
 latest(Key, Value) <+ set_value(Key, Value), pre(latest(Key, _PreviousValue)).

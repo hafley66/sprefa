@@ -1,5 +1,5 @@
-rel stream_item(args: text, col2: int, col3: text) log keep(all).
-rel stream_end(args: text, col2: text) log keep(all).
+rel stream_item(args, col2, col3) log keep(all).
+rel stream_end(args, col2) log keep(all).
 
 stream_status(Args, 'running') <- stream_item(Args, _, _), not(stream_end(Args, _)).
 stream_status(Args, 'done') <- stream_end(Args, _).

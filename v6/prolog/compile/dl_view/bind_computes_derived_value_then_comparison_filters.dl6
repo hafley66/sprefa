@@ -1,4 +1,1 @@
-rel bump(name: text, extra: int).
-rel seen(name: text, base: int, col3: text).
-
 over_budget(Name, Sum) <- seen(Name, Base, _), bump(Name, Extra), Sum := Base + Extra, Sum > 10.

@@ -1,0 +1,4 @@
+PLAN.md
+PROMPT.md
+plan-kimi-stderr.log
+plan-kimi-stdout.log

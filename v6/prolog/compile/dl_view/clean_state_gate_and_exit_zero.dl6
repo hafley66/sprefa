@@ -1,13 +1,3 @@
-rel changed_file(path: text).
-rel diag_stage(code: text, stage: text).
-rel eprintln_baseline(path: text, allowed: int).
-rel eprintln_hit(path: text, line_no: int).
-rel gate_threshold(stage: text, min_rank: int).
-rel program(name: text).
-rel severity_rank(severity: text, rank: int).
-rel unwrap_hit(path: text, line_no: int, col: int, end_col: int).
-rel waiver_trailing_comment(path: text, waiver_line: int).
-
 eprintln_waiver_line(Path, WaiverLine) <- waiver_block_comment(Path, WaiverLine).
 eprintln_waiver_line(Path, WaiverLine) <- waiver_trailing_comment(Path, WaiverLine).
 eprintln_waived(Path, LineNo) <- eprintln_waiver_line(Path, WaiverLine), eprintln_hit(Path, LineNo), WaiverLine >= LineNo - 1, WaiverLine =< LineNo.

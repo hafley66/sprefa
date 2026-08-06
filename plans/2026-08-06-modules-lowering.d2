@@ -1,0 +1,213 @@
+...@_house
+direction: down
+
+source: 1. two files you write {
+  class: stage
+
+  fileA: file A declares the module {
+    class: src
+    label: |`prolog
+      rel orchard.tree(tree_id: int, species: text)
+      rel orchard.fruit(tree_id: int, picked: int)
+
+      orchard.fruit(TreeId, Picked) <-
+          orchard.tree(TreeId, _), harvest(TreeId, Picked).
+    `|
+  }
+
+  fileB: file B adds rules to it {
+    class: src
+    label: |`prolog
+      import orchard
+
+      ripe(TreeId) <-
+          orchard.fruit(TreeId, Picked), Picked > 10.
+    `|
+  }
+}
+
+doors: 2. the import lands one of two ways {
+  class: stage
+
+  sync: SYNC import, same compile {
+    class: designed
+    label: |md
+      both files enter ONE compile
+      names resolve at compile time
+      **one DDL array, one catalog seed**
+    |
+    shape: rectangle
+  }
+
+  async: ASYNC import, later boot {
+    class: danger
+    label: |md
+      file B compiles alone, arrives later
+      the server boots it into the SAME db
+      **two catalog seeds, ids collide**
+    |
+    shape: rectangle
+  }
+}
+
+lowering: 3. lowering flattens the tree {
+  class: stage
+
+  mangle: every dotted name becomes one flat name {
+    class: designed
+    label: |`prolog
+      orchard.tree/2   ->  orchard__tree__f9fc8ea9
+      orchard.fruit/2  ->  orchard__fruit__3b1c07de
+      ripe/1           ->  ripe
+    `|
+  }
+
+  why: the digest carries path AND arity {
+    class: designed
+    label: |md
+      `orchard.tree/2` and `orchard.tree/3`
+      get DIFFERENT names, which repairs
+      the shipped collision where arity is dropped
+    |
+    shape: rectangle
+  }
+}
+
+tables: 4. what SQLite actually holds {
+  class: stage
+
+  t1: "orchard__tree__f9fc8ea9" {
+    shape: sql_table
+    tree_id: "INTEGER NOT NULL" {constraint: primary_key}
+    species: "TEXT NOT NULL"
+  }
+  t2: "orchard__fruit__3b1c07de" {
+    shape: sql_table
+    tree_id: "INTEGER NOT NULL" {constraint: primary_key}
+    picked: "INTEGER NOT NULL"
+  }
+  t3: ripe {
+    shape: sql_table
+    tree_id: "INTEGER NOT NULL" {constraint: primary_key}
+  }
+  note: the module itself has NO table {
+    class: designed
+    label: |md
+      `orchard` is a name and a parent edge
+      Tables exist only for rels that hold rows
+    |
+    shape: rectangle
+  }
+}
+
+catalog: 5. the catalog, where rels point at each other {
+  class: stage
+
+  rows: __catalog_rel {
+    shape: sql_table
+    rel_id: "int PK" {constraint: primary_key}
+    parent_id: "int, who contains me" {constraint: foreign_key}
+    ordinal: "int, my argument position"
+    local_name: "text, my last segment"
+    kind: "primitive | rel | column"
+    type_id: "int, what I am" {constraint: foreign_key}
+  }
+
+  walk: two pointers, two questions {
+    class: shipped
+    label: |md
+      **parent_id** answers "what contains me"
+      module -> rel -> column, one chain
+
+      **type_id** answers "what am I"
+      column -> primitive, or column -> another rel
+    |
+    shape: rectangle
+  }
+}
+
+reuse: 6. why a nested rule is reusable {
+  class: stage
+
+  before: written once, inside the module {
+    class: src
+    label: |`prolog
+      rel orchard(region) {
+          fruit(TreeId, Picked) <- harvest(TreeId, Picked).
+      }
+    `|
+  }
+
+  after: the captured arg is pushed into every child {
+    class: designed
+    label: |`prolog
+      orchard__fruit__3b1c07de(Region, TreeId, Picked) <-
+          harvest(TreeId, Picked).
+    `|
+  }
+
+  point: one body, many instantiations {
+    class: designed
+    label: |md
+      The rule body is written ONCE.
+      `Region` becomes a leading key column,
+      so every instantiation shares the body
+      and keeps its own rows.
+    |
+    shape: rectangle
+  }
+}
+
+legend: what is real today {
+  class: stage
+
+  green: shipped and tested {
+    class: shipped
+    label: |md
+      the catalog table, its parent_id
+      and type_id columns, the child index
+    |
+    shape: rectangle
+  }
+  blue: designed, unbuilt {
+    class: designed
+    label: |md
+      dotted names, imports, mangling,
+      nesting, captured arguments
+    |
+    shape: rectangle
+  }
+  red: measured hazard {
+    class: danger
+    label: |md
+      one server, one database, ids
+      assigned per compile, so two
+      programs overwrite each other
+    |
+    shape: rectangle
+  }
+}
+
+source.fileA -> doors.sync: compiled together
+source.fileB -> doors.sync: compiled together
+source.fileB -> doors.async: compiled alone
+
+doors.sync -> lowering.mangle: one name table
+doors.async -> lowering.mangle: two name tables
+lowering.mangle -> lowering.why
+
+lowering.mangle -> tables.t1
+lowering.mangle -> tables.t2
+lowering.mangle -> tables.t3
+lowering.mangle -> tables.note: modules skipped
+
+tables.t1 -> catalog.rows: one rel row\nplus one row per column
+tables.t2 -> catalog.rows
+tables.t3 -> catalog.rows
+catalog.rows -> catalog.walk
+
+doors.async -> legend.red: this is where\nit bites
+
+reuse.before -> reuse.after: lowering
+reuse.after -> reuse.point
+catalog.walk -> reuse.point: the parent edge is\nwhat makes it findable

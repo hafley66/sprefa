@@ -1,4 +1,4 @@
-rel source_ev(item: text) log keep(all).
+rel source_ev(item) log keep(all).
 rel stage_one(item) log keep(all).
 rel stage_two(item) log keep(all).
 

@@ -1,4 +1,4 @@
-rel head_move(repo_id: int, rev_id: int) log keep(all).
+rel head_move(repo_id, rev_id) log keep(all).
 rel head(repo_id, rev_id) key(1).
 
 head(RepoId, RevId) <+ head_move(RepoId, RevId).

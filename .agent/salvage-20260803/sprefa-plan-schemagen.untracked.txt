@@ -1,0 +1,5 @@
+PLAN.md
+PROMPT.md
+RESEARCH.md
+lane-kimi-stderr.log
+lane-kimi-stdout.log

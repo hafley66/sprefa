@@ -1,4 +1,4 @@
-rel kick(col1: text) log keep(all).
+rel kick(col1) log keep(all).
 rel pulse(next) log keep(all).
 
 pulse(1) <+ kick(_).

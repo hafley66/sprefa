@@ -1,3 +1,1 @@
-rel rel_catalog(relation_name: text, group_name: text, _column_text: text, _documentation_text: text).
-
 group_rels_json(GroupName, json_group_array(RelationName)) <- rel_catalog(RelationName, GroupName, _ColumnText, _DocumentationText).

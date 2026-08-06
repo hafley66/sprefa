@@ -1,1 +1,1 @@
-rel event(col1: text) log keep(all).
+rel event(col1) log keep(all).

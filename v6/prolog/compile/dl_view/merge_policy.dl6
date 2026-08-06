@@ -1,8 +1,7 @@
-rel open_request(session_id: text, tab_id: text) log keep(all).
-rel close_request(session_id: text, tab_id: text) log keep(all).
+rel open_request(session_id, tab_id) log keep(all).
+rel close_request(session_id, tab_id) log keep(all).
 rel closed(session_id, tab_id) log keep(all).
 rel open_tab(session_id, tab_id) key(1, 2).
-rel tab_row(tab_id: text, body: text).
 
 open_tab(SessionId, TabId) <+ open_request(SessionId, TabId).
 closed(SessionId, TabId) <+ close_request(SessionId, TabId).

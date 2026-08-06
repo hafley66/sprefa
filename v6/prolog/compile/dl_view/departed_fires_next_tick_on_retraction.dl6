@@ -1,5 +1,4 @@
 rel closed_at(item, tick) log keep(all).
-rel source_row(item: text).
 
 mirror(Item) <- source_row(Item).
 closed_at(Item, Tick) <+ finalize(mirror(Item)), now(Tick).

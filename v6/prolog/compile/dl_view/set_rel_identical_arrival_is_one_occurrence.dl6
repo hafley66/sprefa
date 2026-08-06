@@ -1,4 +1,3 @@
 rel fired(name) log keep(all).
-rel ev(name: text).
 
 fired(Name) <+ ev(Name).

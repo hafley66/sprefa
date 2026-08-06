@@ -1,0 +1,12 @@
+REPORT.md
+brief.md
+lane-opencode.log
+v6/prolog/labs/alloy_semantics/0_facts.pl
+v6/prolog/labs/alloy_semantics/1_collect.pl
+v6/prolog/labs/alloy_semantics/2_check.pl
+v6/prolog/labs/alloy_semantics/3_render.pl
+v6/prolog/labs/alloy_semantics/4_receipts.sh
+v6/prolog/labs/alloy_semantics/MAPPING.md
+v6/prolog/labs/alloy_semantics/run.pl
+v6/prolog/labs/alloy_semantics/ts_err.txt
+v6/prolog/labs/alloy_semantics/ts_out.txt

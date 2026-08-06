@@ -1059,15 +1059,22 @@ rule_stmt(Rule, Vars0, Vars, S0, S) :-
 
 % ═══ head atom : Name(HeadArg, ...) ══════════════════════════════════════════
 
+% A dotted name in FUNCTOR position is a module path, a different grammar slot
+% from the dotted name in value position that dot_chain/4 reads as member access.
 head_atom(Term, Vars0, Vars, S0, S) :-
-    ident(Name, S0, S1),
+    dotted_path(Segments, S0, S1),
     ws0(S1, S2),
     lit_dcg(`(`, S2, S3),
     head_args(Args, Vars0, Vars, S3, S4),
     ws0(S4, S5),
     lit_dcg(`)`, S5, S),
-    resolve_named_args(head, Name, Args, PositionalArgs),
-    Term =.. [Name | PositionalArgs].
+    last(Segments, LocalName),
+    resolve_named_args(head, LocalName, Args, PositionalArgs),
+    path_atom_term(Segments, LocalName, PositionalArgs, Term).
+
+% One segment is an ordinary atom; more is a module path the dot phase refuses.
+path_atom_term([_Single], LocalName, Args, Term) :- !, Term =.. [LocalName | Args].
+path_atom_term(Segments, _LocalName, Args, rel_path(Segments, Args)).
 
 head_args([], Vars, Vars, S0, S) :- ws0(S0, S1), peek(0'), S1, S), !.
 head_args([Arg | Rest], Vars0, Vars, S0, S) :-
@@ -1536,7 +1543,7 @@ partition_host_input_values_([col(Name, _) | Columns], [Value | Values],
                                  IdentityRest, SaltRest).
 
 relatom_item(Item, Vars0, Vars, S0, S) :-
-    ident(Name, S0, S1), ws0(S1, S2),
+    dotted_path(Segments, S0, S1), last(Segments, Name), ws0(S1, S2),
     ( peek(0'!, S2, S2)
     -> lit_dcg(`!`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
        head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
@@ -1546,7 +1553,10 @@ relatom_item(Item, Vars0, Vars, S0, S) :-
       head_args(Args, Vars0, Vars1, S3, S4), ws0(S4, S5),
       lit_dcg(`)`, S5, S6),
       resolve_named_args(body, Name, Args, Positional),
-      host_or_relation_item(Name, Positional, Item, Vars1, Vars, S6, S)
+      ( Segments = [_Single]
+      -> host_or_relation_item(Name, Positional, Item, Vars1, Vars, S6, S)
+      ;  Item = rel_path(Segments, Positional), Vars = Vars1, S = S6
+      )
     ).
 
 host_or_relation_item(Name, Values, Item, Vars0, Vars, S0, S) :-
@@ -1686,6 +1696,15 @@ compound_or_var(E, Vars0, Vars, S0, S) :-
 % route, and a float literal never arrives here (factor tries float_lit first,
 % and the dot of `1.5` needs a digit after it). The chain builds a nested
 % dot_get/2 term, desugared by the dot expansion phase in 1_expansion.
+% Segments are KEPT, never joined: a joined atom would be a table name, and no
+% module id exists to make that name collision-safe yet.
+dotted_path([Segment | Rest], S0, S) :-
+    ident(Segment, S0, S1),
+    (   dot_then_ident(S1, S2)
+    ->  dotted_path(Rest, S2, S)
+    ;   Rest = [], S = S1
+    ).
+
 dot_chain(Receiver, S0, S, Final) :-
     ( dot_then_ident(S0, S1)
     -> ident(Field, S1, S2),

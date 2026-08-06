@@ -8,6 +8,11 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 ## Where state lives (this file = laws + open items ONLY)
 - Landed-arc detail: `v6/prolog/ARCH.pl` (task/5 + fork/5, the priced record;
   gate = `swipl -g go -t halt ARCH.pl` from v6/prolog).
+- **What the language accepts**: `v6/prolog/compile/parse_dl.pl` is the real
+  surface (text door) and `v6/prolog/compile/out/manifest.json` is the verdict
+  per fixture. `v6/dl/grammar/dl.langium` is a NARROW MVP SLICE of the same
+  language, not the language; a construct absent there is usually present in the
+  real one. Regenerate the manifest with `cd v6/tsv2 && bash scripts/sweep.sh`.
 - Narrative history: `.agent/memories/sprefa-task-ledger.md` (read on demand,
   never auto-loaded; the pre-2026-08-02 ledger is archived verbatim at its tail),
   `chat_log/` session logs, `plans/` docs, git history.
@@ -21,6 +26,14 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 - **Doubt yourself before asserting** (2026-07-23): you are a compression
   algorithm, not an oracle. Hedge, verify against the code, never tell Chris what
   to do as if settled. If you lack the info, SAY SO and go read the code.
+- **Comments are not the language** (2026-08-06): "does X compile" is answered by
+  `v6/prolog/compile/out/manifest.json` (513 fixtures, `bucket` +
+  `reason` each), never by a header. Grep the manifest FIRST. Measured that day:
+  `v6/dl/fixtures/ghcacher.dl6`'s header was wrong four times about its own
+  grammar (`->`, `bind`, bare host calls, and "array-explode INEXPRESSIBLE"),
+  and `v6/dl/grammar/dl.langium:5` calls JSON5 terms "deliberately absent" while
+  `spread`, `$name` key holes, `**` descent and typed captures all compile green.
+  An agent that reads a comment and reports a language limit has not checked.
 - **Build-vs-buy**: never assert "write our own" for a common-shaped problem
   without library research + written candidate analysis first. No one-line
   dismissals.
@@ -112,7 +125,12 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 (left-of-arrow = demand key); extraction ambiguities A4 fence-escape + A14
 comment_span; Key(Type) vs `->` (plans/2026-07-27-lab-consolidation.md); smaller:
 operators.pl forkJoin fixture, scope_done magic-rel decl, repeat same-tick salt,
-until(F) formula presentation.
+until(F) formula presentation; **string split/substr primitive** (only concat +
+regexp exist, so path-prefix work has no in-language spelling — blocks deriving
+ancestor directories, see conformance/fixtures/9_pr_size.pl where in_dir/2 is
+supplied as facts); **scan-into-json** (pre/1 + `:=` a document is refused by
+json_value_expression; decide whether to lift it or keep json write-only through
+json_group_array).
 **Awaiting user word (v5):** rm 3 orphan roots (~1.86GB, `dl daemon health`
 prints the line); drop rel_port_of_reach + VACUUM (15.5MB); lazy-rel-tier
 (plans/2026-07-19-lazy-rel-tier.md); filesize rail ruling (29 files >500 lines);

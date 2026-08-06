@@ -1,0 +1,8 @@
+[
+  {"side": "assistant", "sentence": "xrxgraph's trait-object indirection is genuine rather than faked."},
+  {"side": "assistant", "sentence": "The proposed design is solid."},
+  {"side": "assistant", "sentence": "We should prefer the explicit route not merely the convenient one."},
+  {"side": "user", "sentence": "The fix is good in 12 lines."},
+  {"side": "user", "sentence": "The server boots and listens on a port."},
+  {"side": "user", "sentence": "The overall approach seems sensible if we keep it minimal."}
+]

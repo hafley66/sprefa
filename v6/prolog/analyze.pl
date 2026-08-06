@@ -16,7 +16,7 @@
             conjunction_goals/2, check_edge_head_column_types/2,
             aggregate_head_template/2, rule_is_aggregate/1,
             body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
-            program_uses_tick/2,
+            program_uses_tick/2, program_uses_catalog/2,
             program_column_types/7,
             literal_witness/1,
             level_body_latest_ref/2, level_body_pre_ref/2,
@@ -186,6 +186,27 @@ program_uses_tick(prog(_, Rules), UsesTick) :-
     ->  UsesTick = true
     ;   UsesTick = false
     ).
+
+% True when some rule in this program names the catalog rel; every other program keeps a byte-identical emitted module, the way program_uses_tick/2 keeps now/1 free.
+program_uses_catalog(prog(_Decls, Rules), UsesCatalog) :-
+    (   member(Rule, Rules),
+        catalog_mentions_rule(Rule)
+    ->  UsesCatalog = true
+    ;   UsesCatalog = false
+    ).
+
+catalog_mentions_rule(Rule) :-
+    (   ( rule_head(Rule, Head), catalog_mentions_atom(Head) )
+    ;   ( rule_body(Rule, Body),
+          conjunction_goals(Body, Goals),
+          member(Goal, Goals),
+          catalog_mentions_atom(Goal) )
+    ).
+
+% Arity 11 is the length of lower.pl's catalog_ddl_contract/2 column list, pinned
+% by catalog_gate_is_arity_exact; a mention at any other arity is an ordinary rel.
+catalog_mentions_atom(Atom) :-
+    functor(Atom, '__rel', 11).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any

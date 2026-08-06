@@ -1,4 +1,4 @@
-rel worktree_edit(path: text, digest: text, kind: text) log keep(all).
+rel worktree_edit(path, digest, kind) log keep(all).
 rel worktree_file(path, digest, kind) key(1).
 
 worktree_file(Path, Digest, Kind) <+ worktree_edit(Path, Digest, Kind).

@@ -1,0 +1,4 @@
+rel source(text: text).
+rel pattern(pattern: text).
+
+matched(Text) <- source(Text), pattern(Pattern), regexp(Text, Pattern).

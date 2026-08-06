@@ -1,0 +1,23 @@
+export interface StringsRow {
+  string_id: number;
+  content: string;
+}
+
+import type { StringsRow } from "./core";
+
+export interface NodeRow {
+  node_id: number;
+  family: number;
+  file_id: number;
+  byte_start: number;
+  byte_len: number;
+  kind: number;
+  name_id: number | null;
+}
+
+export interface EdgeRow {
+  family: number;
+  src_id: number;
+  dst_id: number;
+  kind: number;
+}

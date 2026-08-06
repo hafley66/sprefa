@@ -1,0 +1,1015 @@
+[0m
+> build · deepseek/deepseek-v4-flash-0731
+[0m
+[0m$ [0mgit merge --ff-only 2eceb836 && echo "MERGE_OK"
+Already up to date.
+MERGE_OK
+[0m
+[0m$ [0mgit status && git branch --show-current && git log --oneline -3
+On branch lane/bridge-research
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	brief.md
+	lane-opencode.log
+
+nothing added to commit but untracked files present (use "git add" to track)
+lane/bridge-research
+2eceb836 chat_log 20260802.2: session saved through the merge, the red gate, and the two-model investigation
+a7a58f95 labs/hs-prolog/interp: carry the cabal.project the lane left uncommitted
+21e4659d merge cleanup: lane REPORT.md files moved beside their work, root kept clean
+[0m
+[0m$ [0mgit merge-base --is-ancestor 2eceb836 HEAD && echo "BASE_IS_ANCESTOR"; git rev-parse HEAD 2eceb836
+BASE_IS_ANCESTOR
+2eceb8361029c140d2698ac25ce6e89336a215c8
+2eceb8361029c140d2698ac25ce6e89336a215c8
+[0m
+[0m→ [0mRead /Users/chrishafley/projects/sprefa/.agent/salvage-20260803/haiku-comms-research.md
+Merge is already up to date (branch already contains base 2eceb836). Let me record the receipt and read the ground truth files.
+[0m→ [0mRead /Users/chrishafley/projects/sprefa/chat_log/20260802.2.cst-rulings-duels-schemagen-alloy.md
+Now the second ground-truth file and local cass checks.
+[0m
+[0m$ [0mcass --version 2>&1; echo "---"; cass capabilities 2>&1; echo "---ROBOT_DOCS---"; cass robot-docs 2>&1 | head -100
+cass 0.6.22
+---
+CASS Capabilities
+=================
+
+Version: 0.6.22 (api v1, contract v1)
+
+Features:
+  - json_output
+  - jsonl_output
+  - robot_meta
+  - time_filters
+  - field_selection
+  - content_truncation
+  - aggregations
+  - wildcard_fallback
+  - timeout
+  - cursor_pagination
+  - request_id
+  - answer_pack_command
+  - dry_run
+  - query_explain
+  - view_command
+  - status_command
+  - state_command
+  - doctor_v2_robot_contract
+  - doctor_v2_response_schemas
+  - doctor_v2_redacted_examples
+  - doctor_v2_fingerprint_repairs
+  - doctor_archive_first_safety
+  - api_version_command
+  - introspect_command
+  - triage_command
+  - export_command
+  - expand_command
+  - timeline_command
+  - highlight_matches
+  - self_describing_capabilities
+
+Connectors:
+  - codex
+  - claude_code
+  - gemini
+  - clawdbot
+  - vibe
+  - opencode
+  - amp
+  - cline
+  - aider
+  - cursor
+  - chatgpt
+  - pi_agent
+  - factory
+  - openclaw
+  - antigravity
+  - kimi
+  - openhands
+  - copilot
+  - copilot_cli
+  - qwen
+  - crush
+  - hermes
+
+Commands: 44
+Global flags: 9
+Workflow recipes: 7
+Mistake recoveries: 47
+
+Exit Codes:
+  0: success (retryable: no)
+  1: health check failed (retryable: yes)
+  2: usage or parsing error (retryable: no)
+  3: index or database missing (retryable: yes)
+  4: network error (retryable: yes)
+  5: data corruption (retryable: depends)
+  6: incompatible version (retryable: no)
+  7: lock or busy (retryable: yes)
+  8: partial result (retryable: yes)
+  9: unknown error (retryable: maybe)
+  10: config or timeout (retryable: depends)
+  11: config validation (retryable: no)
+  12: source or SSH problem (retryable: maybe)
+  13: mapping or not-found (retryable: depends)
+  14: I/O or mapping (retryable: maybe)
+  15: semantic or embedder unavailable (retryable: yes)
+  20-21: model acquisition failure (retryable: maybe)
+  22: I/O during model handling (retryable: maybe)
+  23: download failure (retryable: yes)
+  24: I/O during model verify/install (retryable: maybe)
+
+Environment Variables:
+  CODING_AGENT_SEARCH_NO_UPDATE_PROMPT (default: 0)
+  TUI_HEADLESS (default: 0)
+  CASS_DATA_DIR
+  CASS_DB_PATH
+  CASS_OUTPUT_FORMAT
+  CASS_SEARCH_TIMEOUT_MS
+  CASS_SEARCH_LIMIT
+  CASS_SEARCH_MODE
+  TOON_DEFAULT_FORMAT
+  TOON_INDENT
+  TOON_KEY_FOLDING (default: safe)
+  CASS_NO_COLOR
+  CASS_RESPECT_NO_COLOR (default: 0)
+  NO_COLOR
+  CASS_TRACE_FILE
+  CASS_INDEX_NO_PROGRESS_EVENTS (default: 0)
+  CASS_SEMANTIC_EMBEDDER
+  CASS_SEMANTIC_BATCH_SIZE (default: 128)
+  CASS_SEMANTIC_EMBED_BATCH_WARN_AFTER_MS (default: 30000)
+  CASS_SEMANTIC_EMBED_BATCH_FAIL_AFTER_MS (default: 300000)
+  CASS_SEMANTIC_MAX_MESSAGES_PER_CHECKPOINT (default: 10000)
+  CASS_SEMANTIC_MAX_BYTES_PER_CHECKPOINT (default: 8388608)
+  CASS_RESPONSIVENESS_DISABLE (default: 0)
+  CASS_RESPONSIVENESS_CALIBRATION (default: conformal)
+  CASS_STREAMING_CONSUMER_COMMIT_SECS (default: 5)
+  CASS_STREAMING_CONSUMER_COMBINE (default: 1)
+  CASS_AIDER_DATA_ROOT
+  PI_CODING_AGENT_DIR
+  CODEX_HOME
+  GEMINI_HOME
+  OPENCODE_STORAGE_ROOT
+  CHATGPT_ENCRYPTION_KEY
+  CASS_DAEMON_SOCKET
+
+Limits:
+  max_limit: 0
+  max_content_length: 0 (0 = unlimited)
+  max_fields: 50
+  max_agg_buckets: 10
+---ROBOT_DOCS---
+guide:
+  Robot-mode handbook: docs/ROBOT_MODE.md (automation quickstart)
+  Output: --robot/--json; formats via --robot-format json|jsonl|compact|toon (--format/--output aliases accepted)
+  Logging: INFO auto-suppressed in robot mode; add -v to re-enable
+  Search contract: SQLite is source of truth; lexical is the required self-healing fast path; semantic is opportunistic enrichment.
+  Pack contract: `cass pack "query" --robot` returns extractive, cited handoff evidence selected from search results; it does not call an external model or mutate source logs.
+  Pack vs search: use search to explore/paginate/aggregate candidates; use pack once you need a bounded handoff artifact.
+  Pack vs export-html: export-html creates a complete browsable session archive; pack creates a token-budgeted evidence bundle.
+  Pack vs doctor/status: status/health report readiness before a handoff; doctor diagnoses or repairs derived assets and is not a summarizer.
+  Pack warnings: inspect health, freshness, privacy, and warnings for semantic_fallback_lexical, privacy_redactions_applied, and no_evidence_found before copying output; stale evidence is structural via freshness.stale_evidence_count.
+  Pack budgets: tune --max-tokens, --max-evidence, --max-sessions, --max-excerpt-chars, and --fields summary/minimal to fit the recipient context.
+  Default search: hybrid-preferred. With --robot-meta, inspect requested_search_mode, search_mode, semantic_refinement, fallback_tier, and fallback_reason.
+  Readiness: start with `cass triage --json`; follow next_command/recommended_commands before search. cass health/status JSON remains the narrower readiness truth surface.
+  Doctor outcomes: branch on doctor.operation_outcome.kind (kebab-case) before prose; exit_code_kind says whether the outcome is success, health-failure, usage-error, lock-busy, or repair-failure.
+  Doctor v2 schemas: use introspect.response_schemas doctor-* keys. First branch on err.kind/status/operation_outcome.kind/outcome_kind/asset_class/risk_level/fallback_mode; never scrape diagnostic prose.
+  Doctor repairs: start with `cass doctor check --json`; use repair dry-run fingerprints for apply; support bundles and failure contexts report artifact_manifest_path/event_log_path instead of putting logs in stdout.
+  Doctor validation: use `scripts/e2e/doctor_v2.sh list|describe|run --json`; `--artifact-dir` creates a fresh run child, and run-summary.json lists scenario ids, labels, mutation class, log paths, failure_context path, and rerun command.
+  Doctor failure reports: attach the redacted failure_context.json plus manifest/commands/events artifacts; do not attach raw session logs, exact source paths, or live archive copies by default.
+  Swarm status: `cass swarm status --json` is read-only. It composes Beads, Agent Mail metadata, git, build pressure, cass health/status, and proof refs without claiming work or releasing reservations.
+  Swarm stale review: stale_candidate_count is advisory. Coordinate through Beads and Agent Mail before reopening, force-releasing, or taking over another agent's work.
+  Swarm packets: `cass swarm work-packet --json --bead ID` suggests reservations, proof commands, and closeout copy; agents must still create reservations, update Beads, run rch proofs, and summarize artifacts.
+  Swarm evidence handoff: use `cass pack "query" --robot` when status points at prior sessions or proof refs; pack is a bounded cited handoff, not a replacement for Beads or Agent Mail.
+  Dependency drift: `cass swarm dependency-drift --json` checks manifest pins against optional sibling checkout state and reports strict validation commands without fetching or mutating.
+  Args: accepts --robot-docs=topic and misplaced globals; detailed errors with examples on parse failure
+  Source control: use `cass robot-docs sources` for remote sync/setup plus persistent agent-harness exclusions
+  TUI drill-in contract: Enter on selected hit opens detail modal (Messages tab); Enter with no selected hit falls back to query submit behavior
+  Detail modal shortcuts: / opens find, n/N cycles matches, Esc exits find then closes modal, F8 opens selected hit in $EDITOR
+  Safety: prefer --color=never in non-TTY; use --trace-file for spans; reset TUI via `cass tui --reset-state`
+  Quick refs: cass triage --json | cass capabilities --json | cass --robot-help | cass robot-docs commands | cass robot-docs examples | cass robot-docs sources
+[0m
+[0m$ [0mcass robot-docs sources 2>&1 | head -60
+sources:
+
+# Persisted agent indexing exclusions
+Use this when you want cass to ignore a connector entirely even if
+the backing session files still exist on disk.
+
+  cass sources agents list
+  cass sources agents list --json
+  cass sources agents exclude openclaw
+  cass sources agents exclude openclaw --keep-indexed-data
+  cass sources agents include openclaw
+
+Configuration is persisted in ~/.config/cass/sources.toml as:
+  disabled_agents = ["openclaw"]
+By default, `exclude` also purges already archived local data for that agent
+and rebuilds lexical search from the remaining archive. Use
+`--keep-indexed-data` if you only want to block future indexing.
+Exclusions apply to future local scans, remote mirror scans, and watch mode.
+
+# cass sources setup - Interactive Remote Sources Wizard
+
+## Overview
+The setup wizard automates configuring cass to search across multiple machines.
+It discovers SSH hosts from ~/.ssh/config, checks their status, and handles
+installation, indexing, and configuration automatically.
+
+## Quick Start
+  cass sources setup                    # Interactive (recommended)
+  cass sources setup --hosts css,csd    # Configure specific hosts
+  cass sources setup --dry-run          # Preview without changes
+  cass sources setup --resume           # Resume interrupted setup
+
+## Workflow Phases
+  1. Discovery  - Parses ~/.ssh/config to find configured hosts
+  2. Probing    - Connects via SSH to check cass status and agent data
+  3. Selection  - Interactive selection of which hosts to configure
+  4. Install    - Installs cass on hosts without it (optional)
+  5. Indexing   - Runs `cass index` on remotes (optional)
+  6. Config     - Generates sources.toml entries
+  7. Sync       - Downloads session data to local machine (optional)
+
+## Flags Reference
+  --hosts <names>      Only configure these hosts (comma-separated SSH aliases)
+  --dry-run            Preview without making changes
+  --resume             Resume from ~/.cache/cass/setup_state.json
+  --non-interactive    Skip prompts, use auto-detected defaults
+  --skip-install       Don't install cass on remotes
+  --skip-index         Don't run remote indexing
+  --skip-sync          Don't sync after setup
+  --json               Output progress as JSON for scripting
+  --timeout <secs>     SSH connection timeout (default: 10)
+  --verbose            Show detailed progress
+
+## Non-Interactive Usage (Scripting)
+  cass sources setup --non-interactive --hosts css,csd
+  cass sources setup --non-interactive --hosts css --skip-install --skip-index
+  cass sources setup --json --hosts css  # JSON output for parsing
+
+## State and Resume
+State saved to ~/.cache/cass/setup_state.json on interruption.
+[0m
+Local facts gathered. Let me check whether cass can index the mailboxes (open question) and run a couple read-only checks.
+[0m$ [0mcass swarm status --json 2>&1 | head -40; echo "===MAIL==="; which agent-mail agentmail beads 2>&1; echo "===SWARM_DOCS==="; cass --robot-help 2>&1 | grep -i flock; cass --robot-help 2>&1 | grep -i 'swarm\|bead\|mail' | head
+{
+  "schema_version": "cass.swarm.status.v1",
+  "status": "partial",
+  "_meta": {
+    "request_id": "live",
+    "generated_at_ms": 0,
+    "elapsed_ms": 1,
+    "repo": "[LIVE_REPO]",
+    "project_key": "[LIVE_REPO]",
+    "hostname": "live-host",
+    "partial": true,
+    "warnings": [
+      "live provider agent_mail is not wired yet; fixture-backed status is available",
+      "live provider beads is not wired yet; fixture-backed status is available",
+      "live provider cass_health is not wired yet; fixture-backed status is available",
+      "live provider cass_status is not wired yet; fixture-backed status is available",
+      "live provider evidence is not wired yet; fixture-backed status is available",
+      "live provider git is not wired yet; fixture-backed status is available",
+      "live provider process is not wired yet; fixture-backed status is available"
+    ]
+  },
+  "providers": [
+    {
+      "name": "beads",
+      "source": "live:beads",
+      "status": "unavailable",
+      "freshness_ms": null,
+      "elapsed_ms": 0,
+      "error_kind": "live-provider-unimplemented",
+      "warning": "live provider beads is not wired yet; fixture-backed status is available"
+    },
+    {
+      "name": "agent_mail",
+      "source": "live:agent_mail",
+      "status": "unavailable",
+      "freshness_ms": null,
+      "elapsed_ms": 0,
+      "error_kind": "live-provider-unimplemented",
+      "warning": "live provider agent_mail is not wired yet; fixture-backed status is available"
+    },
+===MAIL===
+===SWARM_DOCS===
+  cass swarm status --json            # Read-only Beads/Agent Mail/git/rch swarm snapshot
+  cass swarm work-packet --json       # Advisory claim packet; does not claim or reserve
+  cass swarm dependency-drift --json  # Read-only sibling pin/drift sentinel
+  4. cass swarm status --json  # Inspect shared-work safety before claiming repo work
+Core subcommands: search | pack | sessions | stats | view | index | health | swarm | capabilities | introspect | robot-docs <topic>
+[0m
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=%22agent%20mail%22%20MCP
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=agent%20to%20agent%20protocol%20A2A
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=claude%20code%20subagent%20other%20model
+cass confirms `agent_mail` live provider is unwired (not installed), and cass indexes only known session connectors, not arbitrary `.agent/mail/*.ndjson`. Now the internet sweep — first batch.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=multi-agent%20orchestration%20tmux
+The "agent mail" query returned the key candidate (MCP Agent Mail). Three other queries truncated to files. Let me extract their key fields.
+[0m
+[0m$ [0mfor f in tool_fc5595979001a1TglXyI4c0oge tool_fc5595aa5001pWIKct8y2XjCq6 tool_fc5595c61001deok2Yz3YfiE0q; do echo "##### $f #####"; grep -oE '"title":"[^"]*"|"story_title":"[^"]*"|"objectID":"[^"]*"|"created_at":"[^"]*"|"points":[0-9]*' "/Users/chrishafley/.local/share/opencode/tool-output/$f" | head -60; echo; done
+##### tool_fc5595979001a1TglXyI4c0oge #####
+"created_at":"2025-04-10T01:51:51Z"
+"objectID":"43639875"
+"points":14
+"title":"A2A Protocol \u2013 Agent-to-Agent Communication"
+"created_at":"2025-12-13T05:45:09Z"
+"objectID":"46252336"
+"points":2
+"title":"Show HN: ADK-Rust: a Rust Implementation of Google Agent Dev Kit"
+"created_at":"2026-06-18T20:51:09Z"
+"objectID":"48591379"
+"story_title":"Ask HN: Is anyone using the A2A protocol?"
+"created_at":"2026-02-19T19:47:38Z"
+"objectID":"47078228"
+"story_title":"Show HN: Cogitator \u2013 Self-hosted AI agent runtime with native A2A Protocol"
+"created_at":"2025-12-09T19:36:14Z"
+"objectID":"46209498"
+"story_title":"Cisco AI's A2A Scanner \u2013 New OSS Tool to Detect Threats in A2A Eco-System"
+"created_at":"2025-10-30T22:57:30Z"
+"objectID":"45766385"
+"story_title":"OpenAI rejects 1,200-line community PR for Google's A2A agent protocol"
+"created_at":"2026-04-27T16:07:58Z"
+"objectID":"47923422"
+"points":2
+"title":"Google's A2A Protocol: How AI Agents Will Talk to Each Other"
+"created_at":"2025-09-14T21:17:56Z"
+"objectID":"45243320"
+"points":46
+"title":"Show HN: AI-powered web service combining FastAPI, Pydantic-AI, and MCP servers"
+"created_at":"2025-10-10T13:08:36Z"
+"objectID":"45538584"
+"story_title":"Show HN: TrustMesh \u2013 Open-source reputation layer for AI agents"
+"created_at":"2026-06-18T08:52:45Z"
+"objectID":"48582679"
+"points":96
+"title":"Ask HN: Is anyone using the A2A protocol?"
+"created_at":"2026-02-13T12:18:09Z"
+"objectID":"47001873"
+"points":1
+"title":"Show HN: Ziran, security testing for AI agents"
+"created_at":"2026-02-08T08:03:53Z"
+"objectID":"46932327"
+"points":4
+"title":"Show HN: A2A Protocol \u2013 Infrastructure for an Agent-to-Agent Economy"
+"created_at":"2025-10-06T16:58:46Z"
+"objectID":"45493411"
+"points":3
+"title":"Show HN: Hector \u2013 Pure A2A-Native Declarative AI Agent Platform (Go)"
+"created_at":"2026-03-04T02:40:41Z"
+"objectID":"47242324"
+"points":1
+"title":"Oscar Six Radar \u2013 vulnerability scanner with native A2A (agent-to-agent) support"
+"created_at":"2025-06-19T22:20:28Z"
+"objectID":"44323061"
+"story_title":"Online A2A Client for Google Agent to Agent Protocol"
+"created_at":"2025-05-11T18:31:10Z"
+"objectID":"43955858"
+"story_title":"[dead]"
+"created_at":"2025-04-14T01:04:39Z"
+"objectID":"43677131"
+"story_title":"Ask HN: Can someone ELI5 how Google's A2A is different from MCP?"
+
+##### tool_fc5595aa5001pWIKct8y2XjCq6 #####
+"created_at":"2026-06-08T17:32:42Z"
+"objectID":"48448372"
+"points":11
+"title":"Show HN: Rayline routes Claude Code subagents to on-device and cheaper models"
+"created_at":"2026-01-07T08:55:01Z"
+"objectID":"46524125"
+"story_title":"The creator of Claude Code's Claude setup"
+"created_at":"2025-08-02T15:00:33Z"
+"objectID":"44768159"
+"points":13
+"title":"Show HN: Predict GPT-5 skills with a community AI benchmark"
+"created_at":"2026-04-21T06:48:44Z"
+"objectID":"47845390"
+"story_title":"Anthropic says OpenClaw-style Claude CLI usage is allowed again"
+"created_at":"2025-10-17T06:23:58Z"
+"objectID":"45613823"
+"points":2
+"title":"Ask HN: How can I use other LLMs as tools, not slaves but collaborators?"
+"created_at":"2026-03-06T18:43:00Z"
+"objectID":"47279224"
+"points":2
+"title":"300 Founders, 3M LOC, 0 engineers. Here's our workflow"
+"created_at":"2026-04-23T11:23:37Z"
+"objectID":"47874411"
+"points":6
+"title":"Show HN: LazyAgent \u2013 All in one observerbility TUI app for coding agents"
+"created_at":"2026-04-17T13:52:08Z"
+"objectID":"47805963"
+"points":1
+"title":"Show HN: Lazyagent \u2013 Preserve what your AI agents doing and analyze usage"
+"created_at":"2026-07-09T22:59:14Z"
+"objectID":"48853527"
+"story_title":"GPT-5.6"
+"created_at":"2026-07-06T06:32:49Z"
+"objectID":"48801316"
+"story_title":"GPT-5.6 Sol Ultra will be in Codex"
+"created_at":"2026-05-04T19:30:33Z"
+"objectID":"48013784"
+"story_title":"DeepClaude \u2013 Claude Code agent loop with DeepSeek V4 Pro"
+"created_at":"2026-03-01T21:07:29Z"
+"objectID":"47210652"
+"story_title":"Why XML tags are so fundamental to Claude"
+"created_at":"2025-12-22T06:49:07Z"
+"objectID":"46351925"
+"story_title":"A guide to local coding models"
+"created_at":"2025-11-16T23:26:33Z"
+"objectID":"45949405"
+"story_title":"What if you don't need MCP at all?"
+"created_at":"2025-10-17T12:42:34Z"
+"objectID":"45616089"
+"story_title":"Ask HN: How can I use other LLMs as tools, not slaves but collaborators?"
+"created_at":"2025-09-26T18:11:59Z"
+"objectID":"45389355"
+"points":3
+"title":"Running Multiple AI Agents for Planning and Reviews: What's Your Approach?"
+"created_at":"2026-07-03T17:50:59Z"
+"objectID":"48777790"
+"points":7
+"title":"Show HN: Pull Claude Code transcripts into your Codex session, and vice versa"
+"created_at":"2025-10-29T17:47:05Z"
+
+##### tool_fc5595c61001deok2Yz3YfiE0q #####
+"created_at":"2026-04-05T01:12:52Z"
+"objectID":"47645203"
+"story_title":"Tell HN: Anthropic no longer allowing Claude Code subscriptions to use OpenClaw"
+"created_at":"2026-07-08T07:19:52Z"
+"objectID":"48828658"
+"story_title":"Herdr: One terminal to rule them all"
+"created_at":"2026-06-17T17:27:58Z"
+"objectID":"48573655"
+"points":9
+"title":"Show HN: Relaymux, a tmux-based meta-harness for local coding agents"
+"created_at":"2026-03-19T15:41:24Z"
+"objectID":"47441323"
+"points":2
+"title":"Show HN: Orc \u2013 Release the horde. Multi-agent orchestration in pure bash"
+"created_at":"2026-02-26T04:09:16Z"
+"objectID":"47161721"
+"points":2
+"title":"Show HN: Oh-My-OpenClaw \u2013 agent orchestration for coding, from Discord/Telegram"
+"created_at":"2026-05-21T20:22:57Z"
+"objectID":"48228399"
+"story_title":"Show HN: Rmux \u2013 A programmable terminal multiplexer with a Playwright-style SDK"
+"created_at":"2026-03-18T20:45:19Z"
+"objectID":"47431224"
+"story_title":"Show HN: Tmux-IDE, OSS agent-first terminal IDE"
+"created_at":"2026-03-18T20:40:15Z"
+"objectID":"47431165"
+"story_title":"Show HN: Tmux-IDE, OSS agent-first terminal IDE"
+"created_at":"2026-02-11T13:53:22Z"
+"objectID":"46974971"
+"story_title":"Show HN: AgentWire \u2013 Talk to your AI coding agents by voice, across machines"
+"created_at":"2026-02-10T23:48:07Z"
+"objectID":"46968742"
+"story_title":"Show HN: One UI to voice-control local and remote AI coding agents via tmux"
+"created_at":"2026-03-03T14:21:48Z"
+"objectID":"47232758"
+"points":2
+"title":"Show HN: Seshions \u2013 Orchestrate multi-agent coding agents from one terminal"
+"created_at":"2025-07-01T17:13:01Z"
+"objectID":"44436028"
+"points":4
+"title":"Show HN: Claude Code Agent Farm"
+"created_at":"2026-06-04T17:25:34Z"
+"objectID":"48401773"
+"story_title":"Show HN: Boxes.dev: ditch localhost; run Claude Code and Codex in the cloud"
+"created_at":"2026-07-22T16:47:17Z"
+"objectID":"49009663"
+"points":2
+"title":"Building an AI-orchestrated publishing workflow for a long-form writing project"
+"created_at":"2025-12-28T17:00:00Z"
+"objectID":"46412449"
+"points":1
+"title":"Agent Conductor \u2013 CLI orchestrator for multi-agent tmux sessions"
+"created_at":"2026-02-24T17:35:57Z"
+"objectID":"47139978"
+"points":2
+"title":"I built a governance layer for multi-agent AI coding \u2013 lessons after 6 months"
+"created_at":"2026-03-19T05:21:52Z"
+"objectID":"47435275"
+"points":6
+"title":"TTal \u2013 CLI that turns Claude Code into a multi-agent software factory"
+[0m
+[0m$ [0mfor f in tool_fc5595979001a1TglXyI4c0oge tool_fc5595aa5001pWIKct8y2XjCq6 tool_fc5595c61001deok2Yz3YfiE0q; do echo "##### $f #####"; grep -oE '"url":"[^"]*"' "/Users/chrishafley/.local/share/opencode/tool-output/$f"; echo; done
+##### tool_fc5595979001a1TglXyI4c0oge #####
+"url":"https://a2aprotocol.ai/"
+"url":"https://adk-rust.com"
+"url":"https://www.ismatsamadov.com/blog/a2a-protocol-agent-to-agent-google"
+"url":"https://github.com/Aherontas/Pycon_Greece_2025_Presentation_Agents"
+"url":"https://github.com/taoq-ai/ziran"
+"url":"https://github.com/kadirpekel/hector"
+
+##### tool_fc5595aa5001pWIKct8y2XjCq6 #####
+"url":"https://rayline.ai/"
+"url":"https://github.com/chojs23/lazyagent"
+"url":"https://github.com/chojs23/lazyagent"
+"url":"https://contextify.sh/"
+"url":"https://engram-fold.dev"
+
+##### tool_fc5595c61001deok2Yz3YfiE0q #####
+"url":"https://github.com/mupt-ai/relaymux"
+"url":"https://github.com/spencermarx/orc"
+"url":"https://github.com/happycastle114/oh-my-openclaw"
+"url":"https://github.com/Dicklesworthstone/claude_code_agent_farm"
+"url":"https://github.com/gaurav-yadav/agent-conductor"
+[0m
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=beads%20issue%20tracker%20agents%20yegge
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=vibe-kanban
+Good yield. Now the remaining keyword searches in batches.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=openai%20swarm%20handoff
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=agent%20message%20queue%20filesystem
+[0m
+[0m$ [0mf=tool_fc559a2ce001lYBRPHIcCA2ALz; grep -oE '"title":"[^"]*"|"story_title":"[^"]*"|"objectID":"[^"]*"|"points":[0-9]*|"url":"[^"]*"' "/Users/chrishafley/.local/share/opencode/tool-output/$f" | head -80
+"objectID":"43689994"
+"points":2
+"title":"Show HN: MatrixSwarm \u2013 Agent OS using only the filesystem"
+"url":"https://github.com/matrixswarm/matrixswarm"
+"objectID":"43893148"
+"story_title":"[dead]"
+"objectID":"47364116"
+"points":109
+"title":"Launch HN: Spine Swarm (YC S23) \u2013 AI agents that collaborate on a visual canvas"
+"url":"https://www.getspine.ai/"
+"objectID":"44916547"
+"story_title":"Launch HN: Embedder (YC S25) \u2013 Claude code for embedded software"
+"objectID":"34102258"
+"story_title":"Docker on MacOS is slow and how to fix it"
+"objectID":"4722088"
+"story_title":"Haskell in Production: The good, the bad, and the ugly"
+"objectID":"4470015"
+"story_title":"Lessons Learned While Building Reddit to 270 Million Page Views a\u00a0Month"
+"objectID":"21616761"
+"story_title":"The only build system that might someday replace make (2010)"
+"objectID":"17036039"
+"story_title":"Mara: A lightweight ETL framework, halfway between plain scripts and Airflow"
+"objectID":"46663753"
+"story_title":"Xous Operating System"
+"objectID":"15219319"
+"story_title":"Ask HN: What's a reasonable microkernel-based OS for desktop usage?"
+"objectID":"1448265"
+"story_title":"Ask HN: I really don't understand node.js, could someone explain it to me?"
+[0m
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=maildir%20agent%20communication
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=langgraph%20multi-agent
+Excellent yield. Let me grep the truncated filesystem-queue result and run more keywords.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=autogen%20group%20chat
+[0m
+[0m$ [0mfor f in tool_fc559ba7b001BzmTVxlxtTSMjs tool_fc559c3a2001v8Riz8LGCpZDML; do echo "##### $f #####"; grep -oE '"title":"[^"]*"|"story_title":"[^"]*"|"objectID":"[^"]*"|"points":[0-9]*|"url":"[^"]*"' "/Users/chrishafley/.local/share/opencode/tool-output/$f" | head -50; echo; done
+##### tool_fc559ba7b001BzmTVxlxtTSMjs #####
+"objectID":"43186117"
+"points":3
+"title":"LangGraph Multi-Agent Swarm"
+"url":"https://github.com/langchain-ai/langgraph-swarm-py"
+"objectID":"42995623"
+"points":1
+"title":"LangGraph Multi-Agent Supervisor"
+"url":"https://github.com/langchain-ai/langgraph-supervisor"
+"objectID":"46673378"
+"points":1
+"title":"Show HN: Remote AI Computer Use \u2013 Securely Control Your Mac from Anywhere"
+"url":"https://donely.ai/"
+"objectID":"48514222"
+"story_title":"Ask HN: Who wants to be hired? (June 2026)"
+"objectID":"47759666"
+"story_title":"Ask HN: Who is hiring? (April 2026)"
+"objectID":"47350625"
+"story_title":"[dead]"
+"objectID":"47318793"
+"story_title":"Ask HN: Who is hiring? (March 2026)"
+"objectID":"47212136"
+"story_title":"Show HN: SwarmClaw \u2013 Orchestration dashboard for OpenClaw and AI agents"
+"objectID":"47345038"
+"points":4
+"title":"Show HN: SwarmClaw \u2013 Manage a swarm of OpenClaw agents from one self-hosted UI"
+"url":"https://github.com/swarmclawai/swarmclaw"
+"objectID":"47976925"
+"story_title":"Ask HN: Who wants to be hired? (May 2026)"
+"objectID":"47592212"
+"story_title":"The Claude Code Source Leak: fake tools, frustration regexes, undercover mode"
+"objectID":"47263262"
+"story_title":"Show HN: L88 \u2013 A Local RAG System on 8GB VRAM (Need Architecture Feedback)"
+"objectID":"47691287"
+"story_title":"Ask HN: Who wants to be hired? (April 2026)"
+"objectID":"47679881"
+"story_title":"Ask HN: Who is hiring? (April 2026)"
+"objectID":"47319261"
+"story_title":"Ask HN: What Are You Working On? (March 2026)"
+"objectID":"47314715"
+"story_title":"Ask HN: What Are You Working On? (March 2026)"
+"objectID":"42399015"
+"points":2
+"title":"Command: A new tool for building multi-agent architectures in LangGraph"
+"url":"https://blog.langchain.dev/command-a-new-tool-for-multi-agent-architectures-in-langgraph/"
+"objectID":"44434570"
+"points":3
+"title":"Show HN: Framework for LLM Iterative Refinement Until Mathematical Convergence"
+"url":"https://github.com/hankbesser/recursive-companion"
+"objectID":"48763966"
+"story_title":"Ask HN: Who wants to be hired? (July 2026)"
+
+##### tool_fc559c3a2001v8Riz8LGCpZDML #####
+"objectID":"43836276"
+"story_title":"I made my AI think harder by making it argue with itself. It works stupidly well"
+"objectID":"47120981"
+"points":1
+"title":"Show HN: Air Blackbox \u2013 Open-source audit trail and kill switch for AI agents"
+"url":"https://airblackbox.github.io/air-platform/hosted-demo.html"
+"objectID":"33338371"
+"story_title":"Ask HN: Why use Vercel?"
+"objectID":"29323862"
+"story_title":"Java and Scala\u2019s type systems are unsound (2016)"
+"objectID":"7032106"
+"points":
+"story_title":"Teen Reported to Police After Finding Security Hole in Website"
+"objectID":"45693627"
+"story_title":"Trump pardons convicted Binance founder"
+"objectID":"38001603"
+"story_title":"It's time for authorization standards: AuthZEN WG at OpenID Foundation"
+"objectID":"9948658"
+"points":
+"story_title":"Infosec's inability to quantify risk"
+"objectID":"7631786"
+"points":
+"story_title":"Did removing lead from petrol spark a decline in crime?"
+"objectID":"3796177"
+"points":
+"story_title":"Ubuntu's HUD: Light-years beyond any menu system"
+"objectID":"2195730"
+"points":
+"story_title":"Microsoft finally says adios to Autorun"
+"objectID":"21128449"
+"story_title":"Ask HN: Who is hiring? (October 2019)"
+"objectID":"18302887"
+"story_title":"Do the Rich Capture All the Gains from Economic Growth?"
+"objectID":"16352682"
+"story_title":"Why does drug resistance easily evolve but vaccine resistance does not?"
+"objectID":"14546907"
+"story_title":"Apple Mac computers targeted by ransomware and spyware"
+"objectID":"10726365"
+"points":
+"story_title":"The Secrets of an Abandoned Microwave Tower in Kansas"
+[0m
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=claude-squad
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=agent%20client%20protocol%20ACP%20zed
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=gastown%20multi-agent%20yegge
+[0m
+[0m$ [0mf=tool_fc559d52800157EJa091iJUC0c; grep -oE '"title":"[^"]*"|"story_title":"[^"]*"|"objectID":"[^"]*"|"points":[0-9]*|"url":"[^"]*"' "/Users/chrishafley/.local/share/opencode/tool-output/$f" | head -50
+"objectID":"46290449"
+"points":2
+"title":"Show HN: Forge \u2013 Universal CLI for coding agents, powered by ACP"
+"url":"https://github.com/forge-agents/forge"
+"objectID":"45123632"
+"story_title":"Claude Code: Now in Beta in Zed"
+"objectID":"45083144"
+"points":2
+"title":"Zed/ACP: Unsaved file synchronisation?"
+"url":"https://github.com/zed-industries/agent-client-protocol/discussions/50"
+"objectID":"48651885"
+"story_title":"Elevated error rate across multiple models"
+"objectID":"45817353"
+"story_title":"Codemaps: Understand Code, Before You Vibe It"
+"objectID":"45729417"
+"story_title":"Ask HN: What are you doing this week?"
+"objectID":"45645861"
+"story_title":"Show HN: VT Code \u2013 Research preview semantic coding agent"
+"objectID":"45645544"
+"story_title":"Ask HN: What are some impressive vibe coding projects?"
+"objectID":"45565389"
+"story_title":"Ask HN: What are you working on? (October 2025)"
+"objectID":"48165682"
+"story_title":"Zerostack \u2013 A Unix-inspired coding agent written in pure Rust"
+"objectID":"47822445"
+"story_title":"[dead]"
+"objectID":"47615784"
+"story_title":"[dead]"
+"objectID":"46779951"
+"story_title":"Kimi Released Kimi K2.5, Open-Source Visual SOTA-Agentic Model"
+"objectID":"45601701"
+"story_title":"Closer to production quality Python notebooks with `marimo check`"
+"objectID":"45041173"
+"story_title":"Bring Your Own Agent to Zed \u2013 Featuring Gemini CLI"
+"objectID":"45567134"
+"story_title":"Ask HN: What are you working on? (October 2025)"
+"objectID":"45083419"
+"points":2
+"title":"Ollama Feature Parity for ACP"
+"url":"https://github.com/zed-industries/agent-client-protocol/discussions/51"
+"objectID":"48758476"
+"story_title":"Kimi K2.7 Code is generally available in GitHub Copilot"
+"objectID":"45118619"
+"story_title":"Claude Code: Now in Beta in Zed"
+"objectID":"49144009"
+"story_title":"A big win for Android interoperability"
+[0m
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=MCP%20server%20message%20bus%20agents
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=agent%20interoperability%20protocol%202026
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=dagger%20container-use%20agents
+I have enough internet corpus. Let me verify maturity (stars/dates) on the key candidates via GitHub API.
+[0m
+[0m$ [0mfor r in Dicklesworthstone/mcp_agent_mail Dicklesworthstone/mcp_agent_mail_rust steveyegge/beads battysh/batty cheapsteak/agent-channels matrixswarm/matrixswarm BloopAI/vibe-kanban smtg-ai/claude-squad dagger/container-use langchain-ai/langgraph-supervisor openai/swarm microsoft/autogen; do echo "== $r =="; curl -s "https://api.github.com/repos/$r" | grep -E '"(stargazers_count|pushed_at|created_at|description)":' | head -6; done
+== Dicklesworthstone/mcp_agent_mail ==
+  "description": "Asynchronous coordination layer for AI coding agents: identities, inboxes, searchable threads, and advisory file leases over FastMCP + Git + SQLite",
+  "created_at": "2025-10-23T03:42:36Z",
+  "pushed_at": "2026-07-20T03:07:44Z",
+  "stargazers_count": 2062,
+== Dicklesworthstone/mcp_agent_mail_rust ==
+  "description": "Rust MCP server for multi-agent coordination: 34 tools, Git-backed archive, SQLite indexing, advisory file locks, and an interactive TUI console",
+  "created_at": "2026-02-05T05:33:42Z",
+  "pushed_at": "2026-08-02T22:59:22Z",
+  "stargazers_count": 116,
+== steveyegge/beads ==
+== battysh/batty ==
+  "description": "Supervised agent execution for software teams. Kanban-driven, tmux-native, test-gated.",
+  "created_at": "2026-02-21T21:57:12Z",
+  "pushed_at": "2026-04-25T18:36:48Z",
+  "stargazers_count": 47,
+== cheapsteak/agent-channels ==
+  "description": "Slack-style channels for cross-session AI agent messaging",
+  "created_at": "2026-05-11T19:59:17Z",
+  "pushed_at": "2026-06-06T14:43:12Z",
+  "stargazers_count": 0,
+== matrixswarm/matrixswarm ==
+  "description": "Distributed, file-driven agent operating system. Spawn agents. Control swarms. ",
+  "created_at": "2025-04-15T04:52:29Z",
+  "pushed_at": "2026-02-03T01:43:15Z",
+  "stargazers_count": 0,
+== BloopAI/vibe-kanban ==
+  "description": "Get 10X more out of Claude Code, Codex or any coding agent",
+  "created_at": "2025-06-14T19:10:21Z",
+  "pushed_at": "2026-04-24T09:17:34Z",
+  "stargazers_count": 27630,
+== smtg-ai/claude-squad ==
+  "description": "Manage multiple AI terminal agents like Claude Code, Codex, OpenCode, and Amp.",
+  "created_at": "2025-03-09T20:00:41Z",
+  "pushed_at": "2026-07-30T16:45:40Z",
+  "stargazers_count": 8223,
+== dagger/container-use ==
+  "description": "Development environments for coding agents. Enable multiple agents to work safely and independently with your preferred stack.",
+  "created_at": "2025-05-23T23:18:43Z",
+  "pushed_at": "2026-06-12T21:35:51Z",
+  "stargazers_count": 3924,
+== langchain-ai/langgraph-supervisor ==
+== openai/swarm ==
+  "description": "Educational framework exploring ergonomic, lightweight multi-agent orchestration. Managed by OpenAI Solution team.",
+  "created_at": "2024-02-22T20:53:54Z",
+  "pushed_at": "2026-04-15T17:10:28Z",
+  "stargazers_count": 21870,
+== microsoft/autogen ==
+  "description": "A programming framework for agentic AI",
+  "created_at": "2023-08-18T11:43:45Z",
+  "pushed_at": "2026-04-15T11:59:09Z",
+  "stargazers_count": 60172,
+[0m
+[0m$ [0mfor r in steveyegge/beads langchain-ai/langgraph-supervisor; do echo "== $r =="; curl -s "https://api.github.com/repos/$r" | grep -E '"(stargazers_count|created_at|description|fork)":'; done
+== steveyegge/beads ==
+== langchain-ai/langgraph-supervisor ==
+[0m
+[0m% [0mWebFetch https://schipper.ai/posts/parallel-coding-agents/
+[0m
+[0m$ [0mls -la /Users/chrishafley/projects/sprefa-lane-bridge/; echo "---"; test -f /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md && echo "REPORT EXISTS" || echo "REPORT absent"
+total 828
+drwxr-xr-x  67 chrishafley staff   2144 Aug  2 21:59 .
+drwxr-xr-x  83 chrishafley staff   2656 Aug  2 21:58 ..
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 .agent
+drwxr-xr-x   5 chrishafley staff    160 Aug  2 21:58 .agents
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 21:58 .codex
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 .config
+drwxr-xr-x  36 chrishafley staff   1152 Aug  2 21:58 .dl
+-rw-r--r--   1 chrishafley staff     77 Aug  2 21:58 .git
+-rw-r--r--   1 chrishafley staff     50 Aug  2 21:58 .gitattributes
+-rw-r--r--   1 chrishafley staff     77 Aug  2 21:58 .gitbook.yaml
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 .githooks
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 .github
+-rw-r--r--   1 chrishafley staff   2347 Aug  2 21:58 .gitignore
+-rw-r--r--   1 chrishafley staff    641 Aug  2 21:58 .gitmodules
+-rw-r--r--   1 chrishafley staff     23 Aug  2 21:58 .mcp.json
+-rw-r--r--   1 chrishafley staff    341 Aug  2 21:58 .sprefa.toml
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 .vscode
+-rw-r--r--   1 chrishafley staff   1808 Aug  2 21:58 AGENTS.md
+-rw-r--r--   1 chrishafley staff 107496 Aug  2 21:58 CHANGELOG.md
+-rw-r--r--   1 chrishafley staff   4722 Aug  2 21:58 CHECKPOINT.md
+-rw-r--r--   1 chrishafley staff   7356 Aug  2 21:58 CLAUDE.md
+-rw-r--r--   1 chrishafley staff   7625 Aug  2 21:58 CLAUDE.md.disabled
+-rw-r--r--   1 chrishafley staff 151055 Aug  2 21:58 Cargo.lock
+-rw-r--r--   1 chrishafley staff  11844 Aug  2 21:58 Cargo.toml
+-rw-r--r--   1 chrishafley staff   2995 Aug  2 21:58 DEBUG_BRIEF.txt
+-rw-r--r--   1 chrishafley staff 130367 Aug  2 21:58 DEVLOG.md
+-rw-r--r--   1 chrishafley staff  50370 Aug  2 21:58 PLANS.md
+-rw-r--r--   1 chrishafley staff 119967 Aug  2 21:58 README.md
+drwxr-xr-x  14 chrishafley staff    448 Aug  2 21:58 anim
+-rw-r--r--   1 chrishafley staff  18291 Aug  2 21:58 arch-codebase-claude.d2
+-rw-r--r--   1 chrishafley staff  26119 Aug  2 21:58 arch-codebase-codex-dark.d2
+-rw-r--r--   1 chrishafley staff  25497 Aug  2 21:58 arch-codebase-codex.d2
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 21:58 archive
+drwxr-xr-x  10 chrishafley staff    320 Aug  2 21:58 assets
+drwxr-xr-x  20 chrishafley staff    640 Aug  2 21:58 bench
+drwxr-xr-x  22 chrishafley staff    704 Aug  2 21:58 book
+drwxr-xr-x   4 chrishafley staff    128 Aug  2 21:58 books
+-rw-r--r--   1 chrishafley staff   5632 Aug  2 21:59 brief.md
+-rw-r--r--   1 chrishafley staff   5829 Aug  2 21:58 build.rs
+drwxr-xr-x 279 chrishafley staff   8928 Aug  2 21:58 chat_log
+drwxr-xr-x   6 chrishafley staff    192 Aug  2 21:58 deck
+-rw-r--r--   1 chrishafley staff    716 Aug  2 21:58 dist-workspace.toml
+drwxr-xr-x  40 chrishafley staff   1280 Aug  2 21:58 docs
+drwxr-xr-x   6 chrishafley staff    192 Aug  2 21:58 editors
+drwxr-xr-x 148 chrishafley staff   4736 Aug  2 21:58 examples
+-rw-r--r--   1 chrishafley staff  14010 Aug  2 21:58 experiment-sqry-vs-dl.md
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 feedback
+-rwxr-xr-x   1 chrishafley staff   5885 Aug  2 21:58 install-dl.sh
+-rw-r--r--   1 chrishafley staff   1319 Aug  2 21:58 install.sh
+-rw-r--r--   1 chrishafley staff   9057 Aug  2 21:58 justfile
+-rw-r--r--   1 chrishafley staff  17571 Aug  2 21:58 kotlin-import-hazards-research.md
+drwxr-xr-x   5 chrishafley staff    160 Aug  2 21:58 labs
+-rw-r--r--   1 chrishafley staff  36099 Aug  2 22:01 lane-opencode.log
+-rw-r--r--   1 chrishafley staff    123 Aug  2 21:58 mg.dl
+-rw-r--r--   1 chrishafley staff    422 Aug  2 21:58 opencode.json
+drwxr-xr-x 292 chrishafley staff   9344 Aug  2 21:58 plans
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 proofs
+drwxr-xr-x   8 chrishafley staff    256 Aug  2 21:58 refactor-suggestions-archive
+drwxr-xr-x  13 chrishafley staff    416 Aug  2 21:58 research
+drwxr-xr-x  11 chrishafley staff    352 Aug  2 21:58 scripts
+drwxr-xr-x  70 chrishafley staff   2240 Aug  2 21:58 src
+drwxr-xr-x  11 chrishafley staff    352 Aug  2 21:58 std
+drwxr-xr-x   7 chrishafley staff    224 Aug  2 21:58 tests
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 tools
+drwxr-xr-x  10 chrishafley staff    320 Aug  2 21:58 tree-sitter-dl
+drwxr-xr-x  28 chrishafley staff    896 Aug  2 21:58 v6
+drwxr-xr-x   3 chrishafley staff     96 Aug  2 21:58 vendor
+---
+REPORT absent
+[0m
+I have the full corpus. Let me confirm the worktree root and write the report.
+[0m$ [0mls -la /Users/chrishafley/projects/sprefa-lane-bridge/.agent/ 2>&1
+total 0
+drwxr-xr-x  3 chrishafley staff   96 Aug  2 21:58 .
+drwxr-xr-x 67 chrishafley staff 2144 Aug  2 21:59 ..
+drwxr-xr-x  3 chrishafley staff   96 Aug  2 21:58 memories
+[0m
+[0m← [0mWrite REPORT.md
+Wrote file successfully.
+[0m
+Now writing REPORT.md.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=claude%20code%20loop%20deepseek%20transcripts
+Let me verify the two DeepClaude/transcript receipts so the report's URLs are accurate.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/items/48777790
+The transcript-interop item is Contextify (contextify.sh), not DeepClaude. Let me get the real DeepClaude URL and then fix the report.
+[0m% [0mWebFetch https://hn.algolia.com/api/v1/search?query=DeepClaude%20Claude%20Code%20DeepSeek
+[0m
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -48,9 +48,10 @@
+ | Agent Conductor | CLI orchestrator for multi-agent tmux sessions | tmux | small | https://github.com/gaurav-yadav/agent-conductor | steal-pattern: per-session tmux orchestration |
+ | Agents Council | MCP server as a shared message bus, summons agents into a debate | MCP stdio, local state JSON | 3 pts on HN | https://github.com/MrLesk/agents-council | steal-pattern: cross-harness bus over MCP; small |
+ | Claude Code Agent Farm | parallel raw Claude Code instances from one terminal | tmux/server | small | https://github.com/Dicklesworthstone/claude_code_agent_farm | steal-pattern: session density |
+ | Rayline | routes Claude Code subagents to on-device/cheaper models | gateway/proxy on subagent model | 11 pts on HN | https://rayline.ai/ | relevant evidence for workaround verdict (see section 4) |
+-| DeepClaude | Claude Code agent loop with DeepSeek; pull CC transcripts into codex session and vice versa | proxy + transcript interop | HN story | https://github.com/potpie-ai? (see receipts) | evidence for workaround verdict |
++| DeepClaude | Claude Code agent loop with DeepSeek V4 Pro | gateway/proxy under Anthropic-style harness | 678 pts, 2026-05 | https://github.com/aattaran/deepclaude | evidence for workaround verdict |
++| Contextify | indexes every Claude Code and Codex session into one SQLite FTS corpus, cross-harness search, MCP server | filesystem watch + SQLite FTS + MCP | 7 pts HN | https://contextify.sh/ | steal-pattern: transcript corpus as a shared read plane (parallels cass/S4) |
+ | schipper.ai "Parallel coding agents with tmux and Markdown specs" | human-routed parallel spec-driven agents, 4-8 at a time | tmux windows + Markdown FD specs + slash commands | article 2026-02-26 | https://schipper.ai/posts/parallel-coding-agents/ | steal-pattern: role-named tmux windows + file-spec handoff; note human is the router there |
+ 
+ ### Per-candidate paragraphs (non-ignored)
+ 
+
+[0m
+DeepClaude is `github.com/aattaran/deepclaude`; the transcript-interop item is Contextify. Let me fix those receipts and add Contextify as a candidate.
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -327,9 +327,10 @@
+ - ACP joining A2A under Linux Foundation: https://lfaidata.foundation/communityblog/2025/08/29/acp-joins-forces-with-a2a-under-the-linux-foundations-lf-ai-data/
+ - schipper.ai parallel agents with tmux and Markdown specs, 2026-02-26: https://schipper.ai/posts/parallel-coding-agents/ and HN https://news.ycombinator.com/item?id=47218318
+ - Agents Council (MCP message bus): https://github.com/MrLesk/agents-council
+ - Rayline (Claude Code subagents to cheaper models): https://rayline.ai/
+-- DeepClaude (Claude Code loop with DeepSeek) and transcript interop, HN: https://news.ycombinator.com/item?id=48013784 (DeepClaude); transcript cross-harness, HN: https://news.ycombinator.com/item?id=48777790 (URL not resolvable to a repo on this run, treat as HN reference)
++- DeepClaude (Claude Code agent loop with DeepSeek V4 Pro): https://github.com/aattaran/deepclaude (HN: https://news.ycombinator.com/item?id=48002136)
++- Contextify (transcript corpus, cross-harness search, MCP server, parallels cass): https://contextify.sh/ (HN: https://news.ycombinator.com/item?id=48777790)
+ - Relaymux: https://github.com/mupt-ai/relaymux
+ - Orc: https://github.com/spencermarx/orc
+ - Claude Code Agent Farm: https://github.com/Dicklesworthstone/claude_code_agent_farm
+ - Agent Conductor: https://github.com/gaurav-yadav/agent-conductor
+
+[0m
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -89,10 +89,9 @@
+ role-named-window conventions so that a worker has an isolated checkout, but we do not
+ bring in a fifth controller surface. The bus stays orthogonal: it moves messages
+ between the harnesses we already run.
+ 
+-**schipper.ai.** Not a tool, a workflow, and highly convergent with our ground truth: a
+-planner writes a Markdown spec, a worker implements from it, a PM grooms, all in
++**schipper.ai.** Not a tool, a workflow, and highly convergent with our ground truth: a a worker implements from it, a PM grooms, all in
+ role-named tmux windows, with git-tracked spec files as the handoff and slash commands
+ as the glue. This is exactly the S1/S5 pattern minus the automation: there the human is
+ the router who moves the FD from planner to worker. Our delivery daemon (S3) is the
+ piece that removes the human from that router seat. We take the role-named window
+
+[0m
+[0m→ [0mRead REPORT.md[90m [offset=110, limit=30][0m
+[0m→ [0mRead REPORT.md[90m [limit=45, offset=92][0m
+[0m
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -89,9 +89,10 @@
+ role-named-window conventions so that a worker has an isolated checkout, but we do not
+ bring in a fifth controller surface. The bus stays orthogonal: it moves messages
+ between the harnesses we already run.
+ 
+-**schipper.ai.** Not a tool, a workflow, and highly convergent with our ground truth: a a worker implements from it, a PM grooms, all in
++**schipper.ai.** Not a tool, a workflow, and highly convergent with our ground truth: a
++planner writes a Markdown spec, a worker implements from it, a PM grooms, all in
+ role-named tmux windows, with git-tracked spec files as the handoff and slash commands
+ as the glue. This is exactly the S1/S5 pattern minus the automation: there the human is
+ the router who moves the FD from planner to worker. Our delivery daemon (S3) is the
+ piece that removes the human from that router seat. We take the role-named window
+
+[0m
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -89,8 +89,16 @@
+ role-named-window conventions so that a worker has an isolated checkout, but we do not
+ bring in a fifth controller surface. The bus stays orthogonal: it moves messages
+ between the harnesses we already run.
+ 
++**Contextify.** Watches `~/.claude/projects/` and `~/.codex/sessions/`, parses each
++transcript format, and ingests every turn into SQLite with full-text search, exposed
++through a CLI and an MCP server. It is a one-machine instantiation of exactly the shared
++read plane that cass already gives us at larger scope (cass covers four harnesses,
++haiku:154). We take its confirmation that transcript-corpus-as-handoff is a working,
++demanded pattern, and treat it as a fallback/variant of S4 rather than something to
++build: cass already ships this role.
++
+ **schipper.ai.** Not a tool, a workflow, and highly convergent with our ground truth: a
+ planner writes a Markdown spec, a worker implements from it, a PM grooms, all in
+ role-named tmux windows, with git-tracked spec files as the handoff and slash commands
+ as the glue. This is exactly the S1/S5 pattern minus the automation: there the human is
+
+[0m
+Let me check for banned words and em dashes across the report.
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lane-bridge; echo "banned:"; grep -niE 'provenance|substrate|load-bearing|regime' REPORT.md || echo "none"; echo "em-dash:"; grep -nE '—|–' REPORT.md || echo "none"; echo "wc:"; wc -l REPORT.md
+banned:
+79:established, credible pattern, which is the load-bearing assumption of the S1 mailbox.
+em-dash:
+none
+wc:
+348 REPORT.md
+[0m
+[0m← [0mEdit REPORT.md
+Index: /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
++++ /Users/chrishafley/projects/sprefa-lane-bridge/REPORT.md
+@@ -75,9 +75,9 @@
+ slower; our Claude leg uses Monitor (<50ms) so this is a per-harness trade, not a
+ design fork.
+ 
+ **agent-channels / MatrixSwarm.** Both confirm "plain files as the message plane" is an
+-established, credible pattern, which is the load-bearing assumption of the S1 mailbox.
++established, credible pattern, which is the central assumption of the S1 mailbox.
+ Both are tiny (0 stars) so we borrow the concept, not the code. MatrixSwarm's framing
+ (spawn agents, control swarms, all over the filesystem) is the closest existing
+ expression of our intent.
+ 
+
+[0m
+Let me do a final read of the report to verify structure and correctness.
+[0m→ [0mRead REPORT.md[90m [limit=90][0m
+[0m→ [0mRead REPORT.md[90m [offset=140][0m
+The report is complete and correct. Final verification of git state (nothing committed):
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lane-bridge; git status --short; echo "---log---"; git log --oneline -1
+?? REPORT.md
+?? brief.md
+?? lane-opencode.log
+---log---
+2eceb836 chat_log 20260802.2: session saved through the merge, the red gate, and the two-model investigation
+[0m
+Done. `REPORT.md` written at the worktree root; nothing committed.
+
+Highlights:
+- **Base**: `git merge --ff-only 2eceb836` returned "Already up to date" (branch already contained base); recorded the receipts in section 1.
+- **Prior art**: seeded from HN Algolia + GitHub API. Strongest precedent is MCP Agent Mail (2062 stars) — the exact "Agent Mail" cass's `swarm` surface name-drops as an unwired provider. Also mined Batty (Maildir + JSONL + 5s poll), the file-plane projects (agent-channels, MatrixSwarm), tmux/worktree multiplexers (vibe-kanban, claude-squad), protocol framing (A2A/ACP, JSON-RPC), and workaround evidence (Rayline, DeepClaude).
+- **Local facts**: cass 0.6.22 does not index `.agent/mail/*.ndjson` (connectors are fixed session dirs), and its `agent_mail` swarm provider is `live-provider-unimplemented`; `agent-mail`/`beads` not on PATH.
+- **Design**: adopt S1+S3, fold in S4/S5 — one ~30-line delivery daemon, per-recipient NDJSON mailbox, envelope `{id,from,to,ts,kind,reply_to,body,ref}`, Claude on Monitor tail -f, opencode/kimi injected by CLI; at-least-once with offset-based dedup and a `result` envelope as the ack; explicit failure story.
+- **Verdict on the three workarounds**: none required by the bus; MCP wrapper is the ecosystem-default fallback, babysitter/gateway kept only for the in-UI visibility problem.
+- **6 open questions** settled here vs left open, each with the evidence that would settle it.

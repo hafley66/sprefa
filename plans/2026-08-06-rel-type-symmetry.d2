@@ -1,0 +1,327 @@
+...@_house
+
+# One diagram, six tiers, topological top to bottom.
+# Tier 1 and tier 6 are grids (no edges inside a grid container, by design).
+direction: down
+
+t1: "TIER 1 -- the one idea" {
+  class: stage
+  direction: right
+
+  idea: |md
+    # Both halves of the system are ALREADY the same machine
+    A **type** interns VALUES by a column tuple.
+    A **rel** interns NAMES by a (parent, local_name, arity) tuple.
+    In both, SQLite's `UNIQUE` constraint IS the hash-cons,
+    and the `INTEGER PRIMARY KEY` rowid IS the interned id.
+  | {
+    class: chosen
+    shape: rectangle
+  }
+
+  math: |latex
+    \text{intern} : \text{key tuple} \longrightarrow \text{rowid}
+  | {
+    class: chosen
+    shape: rectangle
+  }
+
+  idea -> math: "same function, two key shapes" {
+    style.stroke: "#b06000"
+    style.stroke-width: 2
+  }
+}
+
+t2: "TIER 2 -- the symmetry, row by row" {
+  class: stage
+  # BOTH dimensions, or d2 fills the grid COLUMN-major and scrambles the rows.
+  grid-rows: 10
+  grid-columns: 3
+  grid-gap: 10
+
+  h0: "the question" { class: muted; style.bold: true }
+  h1: "TYPE system (values, RHS) -- SHIPPED" { class: shipped; style.bold: true }
+  h2: "REL system (names, LHS) -- BUILDING" { class: designed; style.bold: true }
+
+  # One LINE per cell: a grid row has a fixed height and CLIPS a second line.
+  q1: "what is the container?" { class: muted }
+  a1: |md
+    a declared **type**, e.g. `rel file(repo: text, at: fpath)`
+  | { class: shipped; shape: rectangle }
+  b1: |md
+    a **module**, e.g. `rel orchard { ... }`, a rel with children
+  | { class: designed; shape: rectangle }
+
+  q2: "what is a member?" { class: muted }
+  a2: "a COLUMN of the type" { class: shipped }
+  b2: "a CHILD REL under the parent" { class: designed }
+
+  q3: "how is containment stored?" { class: muted }
+  a3: |md
+    positionally in the CREATE TABLE; column order = ordinal
+  | { class: shipped; shape: rectangle }
+  b3: |md
+    `__rel.parent_id -> __rel.rel_id`; one row per level, chain = depth
+  | { class: designed; shape: rectangle }
+
+  q4: "what is an instance?" { class: muted }
+  a4: |md
+    a ROW in the dictionary table, keyed `__id INTEGER PRIMARY KEY`
+  | { class: shipped; shape: rectangle }
+  b4: |md
+    a ROW in `__rel`, keyed `rel_id INTEGER PRIMARY KEY`
+  | { class: designed; shape: rectangle }
+
+  q5: "what makes two instances the same?" { class: muted }
+  a5: |md
+    `UNIQUE (cols)` -- SQLite refuses the duplicate
+  | { class: shipped; shape: rectangle }
+  b5: |md
+    `UNIQUE (parent_id, local_name, arity)` -- same refusal
+  | { class: designed; shape: rectangle }
+
+  q6: "who keeps it alive?" { class: muted }
+  a6: |md
+    `__refcount` hits 0, the row is deleted
+  | { class: shipped; shape: rectangle }
+  b6: |md
+    `refcount` (how many rules name it) hits 0, the table is dropped
+  | { class: designed; shape: rectangle }
+
+  q7: "what tells the variants apart?" { class: muted }
+  a7: |md
+    `body_tag(Id, page)` -- one tag rel per enum
+  | { class: shipped; shape: rectangle }
+  b7: |md
+    `kind` -- primitive / rel / column / module / instance
+  | { class: designed; shape: rectangle }
+
+  q8: "how does the nested name flatten?" { class: muted }
+  a8: |md
+    `body` + `page` -> `body_page`, joined with one separator
+  | { class: shipped; shape: rectangle }
+  b8: |md
+    `orchard` + `tree` -> `orchard__tree`, same join, two underscores
+  | { class: designed; shape: rectangle }
+
+  q9: "what happens on a name collision?" { class: muted }
+  a9: |md
+    **THROW** `enum_variant_rel_collision`
+  | { class: shipped; shape: rectangle }
+  b9: |md
+    **THROW** `rel_name_collision` -- does not exist yet
+  | { class: danger; shape: rectangle }
+}
+
+t3: "TIER 3 -- the FOUR hashes, and what each one is allowed to break" {
+  class: stage
+  direction: right
+
+  law: |latex
+    \begin{aligned}
+    h_{id}     &= H(\text{module},\, \text{local\_name},\, \text{arity}) &&\Rightarrow \text{the NAME. never changes on an edit.}\\
+    h_{schema} &= H(\text{cols},\, \text{types},\, \text{key}) &&\Rightarrow \text{changes} \Rightarrow \texttt{DROP} + \texttt{CREATE}\\
+    h_{rule}   &= H(\text{rule bodies for this head}) &&\Rightarrow \text{changes} \Rightarrow \text{keep table, recompute rows}\\
+    h_{rows}   &= H(\text{the rows themselves}) &&\Rightarrow \text{changes} \Rightarrow \text{wake the consumers}
+    \end{aligned}
+  | {
+    class: chosen
+    shape: rectangle
+  }
+
+  wrong: |md
+    # the trap you asked about
+    Putting `h_schema` INSIDE the table name
+    makes every column edit a RENAME.
+    A rename in SQLite is a NEW EMPTY TABLE,
+    so the rows are orphaned and unreachable.
+
+    Rust hashes the **crate**, never the item body,
+    for exactly this reason.
+  | { class: danger; shape: rectangle }
+
+  rel_table: "__rel (renamed from __catalog_rel)" {
+    tbl: "__rel" {
+      shape: sql_table
+      rel_id: "INTEGER PRIMARY KEY -- fast local id" { constraint: PK }
+      parent_id: "INT -- who contains me" { constraint: FK }
+      ordinal: "INT -- my position under my parent"
+      local_name: "TEXT -- my last segment only"
+      arity: "INT -- NEW: fixes the dropped arity"
+      kind: "TEXT -- primitive|rel|column|module|instance"
+      type_id: "INT -- what I am" { constraint: FK }
+      module_id: "INT -- NEW: which file I came from" { constraint: FK }
+      h_id: "BLOB -- NEW: stable across recompiles" { constraint: UNQ }
+      h_schema: "BLOB -- NEW: drives DROP"
+      h_rule: "BLOB -- NEW: drives recompute"
+      h_rows: "BLOB -- NEW: drives propagation"
+      refcount: "INT -- NEW: how many rules name me"
+    }
+  }
+
+  law -> wrong: "why the hash is a COLUMN" { style.stroke: "#c5221f" }
+  wrong -> rel_table: "so it lives here instead" { style.stroke: "#1967d2" }
+}
+
+t4: "TIER 4 -- hot reload: one file lands, five verdicts" {
+  class: stage
+  direction: down
+
+  arrive: |md
+    file B changes on disk
+    recompile file B ALONE
+    -> a list of rels, each with its four hashes
+  | { class: src; shape: rectangle }
+
+  lookup: "look each rel up by h_id in __rel" { class: chosen; shape: hexagon }
+
+  v_new: |md
+    ## NEW
+    h_id not present
+    `CREATE TABLE`
+    seed rows
+    consumers: RED
+  | { class: designed; shape: rectangle }
+
+  v_reshape: |md
+    ## RESHAPED
+    h_schema differs
+    `DROP TABLE` + `CREATE`
+    **rows are lost, on purpose**
+    consumers: RED
+  | { class: danger; shape: rectangle }
+
+  v_rebody: |md
+    ## REBODIED
+    h_schema same, h_rule differs
+    keep the table
+    `DELETE FROM` + recompute
+    consumers: check h_rows
+  | { class: chosen; shape: rectangle }
+
+  v_green: |md
+    ## GREEN
+    all four hashes equal
+    touch NOTHING
+    no DDL, no rows, no wake
+  | { class: shipped; shape: rectangle }
+
+  v_gone: |md
+    ## GONE
+    was in __rel, absent now
+    refcount -> 0
+    `DROP TABLE`
+    consumers: RED
+  | { class: danger; shape: rectangle }
+
+  arrive -> lookup
+  lookup -> v_new: "miss"
+  lookup -> v_reshape: "h_schema differs"
+  lookup -> v_rebody: "h_rule differs"
+  lookup -> v_green: "all equal"
+  lookup -> v_gone: "orphan sweep"
+}
+
+t5: "TIER 5 -- the hops: how far does RED travel?" {
+  class: stage
+  direction: right
+
+  graph: "the rel graph after file B is reshaped" {
+    direction: right
+    b: "orchard__tree\nRESHAPED" { class: danger }
+    c: "orchard__fruit\nreads tree" { class: danger }
+    d: "ripe\nreads fruit" { class: chosen }
+    e: "report\nreads ripe" { class: shipped }
+    b -> c: "hop 1: RED, must recompute" { style.stroke: "#c5221f"; style.stroke-width: 2 }
+    c -> d: "hop 2: RED, must recompute" { style.stroke: "#c5221f"; style.stroke-width: 2 }
+    d -> e: "hop 3: STOPS HERE" { style.stroke: "#137333"; style.stroke-width: 3 }
+  }
+
+  stop: |md
+    # the stop rule (this is the whole optimization)
+    `ripe` recomputed, and its NEW `h_rows`
+    came out EQUAL to its old `h_rows`.
+
+    So `report` never runs. Red stops travelling
+    the moment recomputation produces identical rows.
+
+    This is red/green marking, and the repo
+    already has the law that demands the digest.
+  | { class: shipped; shape: rectangle }
+
+  cyc: |md
+    # cycles
+    A red rel on a CYCLE of the level graph
+    makes the WHOLE cycle red at once.
+    Half an SCC cannot be green.
+  | { class: note; shape: rectangle }
+
+  graph -> stop: "compare h_rows AFTER recompute" { style.stroke: "#137333" }
+  stop -> cyc: "one exception" { style.stroke: "#5f6368"; style.stroke-dash: 3 }
+}
+
+t6: "TIER 6 -- the build order" {
+  class: stage
+  grid-rows: 7
+  grid-columns: 4
+  grid-gap: 10
+
+  g0: "step" { class: muted; style.bold: true }
+  g1: "what lands" { class: muted; style.bold: true }
+  g2: "why it is next" { class: muted; style.bold: true }
+  g3: "how you know it worked" { class: muted; style.bold: true }
+
+  s1: "h1" { class: chosen }
+  w1: |md
+    rename `__catalog_rel` -> `__rel`
+    (+ its index)
+  | { class: shipped; shape: rectangle }
+  y1: "it is the self-describing rel table, not a side car" { class: muted }
+  z1: "conformance byte-identical except the name" { class: note }
+
+  s2: "h2" { class: chosen }
+  w2: |md
+    add `arity` to `__rel`
+    and to `table_name/2`
+  | { class: designed; shape: rectangle }
+  y2: "the arity drop is a live latent bug: edge/2 + edge/3 emit two CREATE TABLE" { class: danger }
+  z2: "a fixture with edge/2 AND edge/3 in one program compiles and runs" { class: note }
+
+  s3: "h3" { class: chosen }
+  w3: |md
+    dotted name through the parser
+    `a.b(X) <- c(X).`
+  | { class: designed; shape: rectangle }
+  y3: "the mangler has NO INPUT until this exists" { class: muted }
+  z3: "text door parses it; term door stops making a rel called dot_get" { class: note }
+
+  s4: "h4" { class: chosen }
+  w4: |md
+    `module_id` + `h_id`
+    one hash per FILE
+  | { class: designed; shape: rectangle }
+  y4: "two files stop colliding; this is Rust's StableCrateId, nothing more" { class: muted }
+  z4: "two programs in one db, same rel name, both queryable" { class: note }
+
+  s5: "h5" { class: chosen }
+  w5: |md
+    `h_schema` + `h_rule` columns
+    and the five-verdict swap
+  | { class: designed; shape: rectangle }
+  y5: "today the swap path swallows 'already exists', so a reshape is INVISIBLE" { class: danger }
+  z5: "reshape a rel under a running server; the table shape actually changes" { class: note }
+
+  s6: "h6" { class: chosen }
+  w6: |md
+    `h_rows` + red/green
+    propagation over the level graph
+  | { class: designed; shape: rectangle }
+  y6: "without the stop rule every reload recomputes the whole graph" { class: muted }
+  z6: "COUNT test: a no-op edit runs 0 downstream statements" { class: note }
+}
+
+t1 -> t2: "the claim, checked row by row" { style.stroke: "#b06000"; style.stroke-width: 2 }
+t2 -> t3: "the ONE thing the type system never needed: a per-file disambiguator" { style.stroke: "#1967d2"; style.stroke-width: 2 }
+t3 -> t4: "four hashes, used" { style.stroke: "#1967d2"; style.stroke-width: 2 }
+t4 -> t5: "RED has to travel somewhere" { style.stroke: "#c5221f"; style.stroke-width: 2 }
+t5 -> t6: "so build it in this order" { style.stroke: "#137333"; style.stroke-width: 3 }

@@ -1,4 +1,4 @@
-import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
+import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } from "rxjs";
 
 import type {
   IAggregateLevelPlan,
@@ -405,7 +405,7 @@ function applyLevelStatement(
   relationByName: ReadonlyMap<string, IIncrementalRelationPlan>,
   afterEdges: boolean,
   nextSequence: () => number,
-): Observable<void> {
+): Observable<number> {
   const relation = relationByName.get(statement.headRel);
   if (relation === undefined) {
     throw new Error(`incremental level head relation missing: ${statement.headRel}`);
@@ -418,7 +418,7 @@ function applyLevelStatement(
       relation,
       afterEdges,
       nextSequence,
-    );
+    ).pipe(map(() => 0));
   }
   if (statement.insertSql === null) {
     throw new Error(`incremental level statement has neither insertSql nor aggregateSql: ${statement.headRel}`);
@@ -428,11 +428,13 @@ function applyLevelStatement(
     concatMap((result) => {
       const rows = resultRows(result, statement.headColumns);
       RuntimeTrace.rule(statement.ruleId, rows.length, performance.now() - startedAt);
-      if (rows.length === 0) return of(undefined);
+      if (rows.length === 0) return of(0);
       const events = rows.map(
         (row, sequence): DeltaEvent => ({ rel: statement.headRel, sign: 1, sequence, row }),
       );
-      return stageEvents(seam, [relation], events, levelFrontierCopies(afterEdges));
+      return stageEvents(seam, [relation], events, levelFrontierCopies(afterEdges)).pipe(
+        map(() => rows.length),
+      );
     }),
   );
 }
@@ -479,6 +481,35 @@ function recomputeLevelStatement(
       )
     ),
   );
+}
+
+/** Heads that sit on a cycle of the level graph: deriving one can feed a rule
+ *  that derives it again. A DAG of levels closes in one dependency-ordered pass. */
+function recursiveHeads(
+  statements: readonly IIncrementalLevelStatement[],
+  relations: readonly IIncrementalRelationPlan[],
+): ReadonlySet<string> {
+  const readsFrontierOf = new Map<string, readonly string[]>();
+  for (const statement of statements) {
+    const sources = relations
+      .filter((relation) => statement.insertSql?.includes(quoteIdentifier(relation.frontierTableName)) === true)
+      .map((relation) => relation.rel);
+    readsFrontierOf.set(statement.headRel, [...(readsFrontierOf.get(statement.headRel) ?? []), ...sources]);
+  }
+  const reaches = (from: string, target: string, seen: Set<string>): boolean => {
+    if (seen.has(from)) return false;
+    seen.add(from);
+    for (const source of readsFrontierOf.get(from) ?? []) {
+      if (source === target) return true;
+      if (reaches(source, target, seen)) return true;
+    }
+    return false;
+  };
+  const heads = new Set<string>();
+  for (const headRel of readsFrontierOf.keys()) {
+    if (reaches(headRel, headRel, new Set())) heads.add(headRel);
+  }
+  return heads;
 }
 
 function sequenceWork<Item>(
@@ -792,9 +823,27 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       sequence += 1;
       return current;
     };
-    return sequenceWork(
-      statements,
-      (statement) => applyLevelStatement(seam, statement, relationByName, false, nextSequence),
+    // engine.pl's MidLevel is a level_CLOSURE; one pass under-derives a recursive
+    // head. Rounds stay on the frontier: nextFrontier reads back as carry.
+    const feedsAnotherRound = recursiveHeads(statements, relations);
+    const runRound = (): Observable<ReadonlySet<string>> =>
+      statements.reduce(
+        (work, statement) =>
+          work.pipe(
+            concatMap((written) =>
+              applyLevelStatement(seam, statement, relationByName, false, nextSequence).pipe(
+                map((rows) => (rows === 0 ? written : new Set([...written, statement.headRel]))),
+              ),
+            ),
+          ),
+        of(new Set<string>() as ReadonlySet<string>),
+      );
+    return runRound().pipe(
+      expand((written) =>
+        [...written].some((rel) => feedsAnotherRound.has(rel)) ? runRound() : EMPTY,
+      ),
+      last(),
+      map(() => undefined),
     );
   },
 
@@ -892,7 +941,10 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     };
     return sequenceWork(
       statements,
-      (statement) => applyLevelStatement(seam, statement, relationByName, true, nextSequence),
+      (statement) =>
+        applyLevelStatement(seam, statement, relationByName, true, nextSequence).pipe(
+          map(() => undefined),
+        ),
     );
   },
 

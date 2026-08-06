@@ -1,0 +1,83 @@
+# pr-size.dl6 — per-file and per-folder diff size for a pull request.
+# GitHub's tree lists names with no weight, so PR mass is invisible before reading.
+
+# clockBind activates by declaring these two EDB rels; no `bind` surface exists
+# for a program to declare its own (1_binds.ts:148-151).
+rel clock_period(period_secs: int).
+clock_period(2).
+rel clock_bucket(period: int, bucket: int).
+
+rel watch(repo: text, num: text).
+watch("hafley66/instant", "8").
+
+# `{bucket}` must appear in the template or the bridge reads it as an OUTPUT
+# column (0_ast_bridge.ts:449-451); `:` consumes it so it only salts the digest.
+sh pr_files(repo: text, num: text, bucket: int, fpath: text, dir: text, adds: int, dels: int) =
+  `: '{bucket}'; gh api "repos/{repo}/pulls/{num}/files?per_page=100" --jq '.[] | . as $f | ($f.filename | split("/")) as $seg | [range(0; ($seg|length)-1) | $seg[0:(.+1)] | join("/")] | if length == 0 then [""] else . end | .[] | {fpath: $f.filename, dir: ., adds: $f.additions, dels: $f.deletions}'`.
+
+# One subprocess answers every (file, ancestor) pair. jq walks the fpath prefixes
+# because dl6 has no split or replace_re, so directories cannot be derived here.
+rel file_dir(fpath: text, dir: text, adds: int, dels: int).
+file_dir(fpath, dir, adds, dels) <-
+    watch(repo, num), clock_bucket(2, bucket),
+    pr_files?(repo, num, bucket, fpath, dir, adds, dels).
+
+# Set semantics fold the per-ancestor repeats back to one row per file.
+rel pr_file(fpath: text, adds: int, dels: int).
+pr_file(fpath, adds, dels) <- file_dir(fpath, _, adds, dels).
+
+# Head aggregates (grammar:80) lower into SQL GROUP BY, never a TS array.
+rel dir_add(dir: text, adds: int).
+dir_add(dir, sum(a)) <- file_dir(_, dir, a, _).
+
+rel dir_rem(dir: text, dels: int).
+dir_rem(dir, sum(r)) <- file_dir(_, dir, _, r).
+
+rel dir_files(dir: text, n: int).
+dir_files(dir, count(fpath)) <- file_dir(fpath, dir, _, _).
+
+rel dir_size(dir: text, adds: int, dels: int, files: int).
+dir_size(dir, a, r, n) <-
+    dir_add(dir, a), dir_rem(dir, r), dir_files(dir, n).
+
+? pr_file(fpath, adds, dels).
+? dir_size(dir, adds, dels, files).
+
+# ── APPENDIX: what this file is, and is not ─────────────────────────────────
+#
+# This targets the LANGIUM MVP slice (v6/dl/grammar/dl.langium), which is a
+# narrow subset. The real surface is v6/prolog/compile/parse_dl.pl and the
+# 513-fixture corpus; read v6/prolog/compile/out/manifest.json for what
+# actually compiles, never a comment header.
+#
+# The same program in the real surface is three rules with no shell and no jq:
+#
+#   (pr_file(Path, Adds, Dels) <-
+#      files_resp(Body),
+#      decode(Body, spread({filename: Path: text, additions: Adds: int,
+#                           deletions: Dels: int}))),
+#   (dir_file(Dir, Path, Adds, Dels) <- pr_file(Path, Adds, Dels),
+#                                       in_dir(Path, Dir)),
+#   (dir_size(Dir, sum(Adds), sum(Dels), count(Path)) <-
+#      dir_file(Dir, Path, Adds, Dels))
+#
+# Green as conformance/fixtures/9_pr_size.pl, both emitter modes.
+#
+# Slice limits hit here, all Langium-only:
+#   1. `sh f(a) -> (b)` does not parse; ShDecl is one flat column list.
+#   2. No `bind` keyword. Declare EDB rels clock_period + clock_bucket instead.
+#   3. A host in a body is a probe, `f?(args)`.
+#   4. A column named `add` breaks the load; generated SQL does not quote
+#      identifiers, so SQLite keywords as column names are unusable.
+#   5. Input columns are those the template mentions as `{name}`. A cadence
+#      salt that is not textually referenced silently becomes an OUTPUT.
+#   6. rxjs interval first fires at t=period, so a 300s period reads empty for
+#      five minutes and looks like a broken program.
+#
+# Real defect, not a slice limit: a malformed host response throws at
+# 3_runtime.ts:186 and takes the whole server process down, rather than
+# surfacing as a diag on the load response.
+#
+# Genuine language gap, independent of slice: no split or substr exists, only
+# concat and regexp, so the ancestor-directory walk has no in-language
+# spelling. That is why in_dir/2 is supplied as facts in the fixture.
