@@ -563,14 +563,14 @@ test(set_delete_arrival_is_one_json_batch_statement) :-
 
 :- begin_tests(catalog_g1).
 
-% A program that never names the catalog rel must not emit any __catalog_rel
+% A program that never names the catalog rel must not emit any __rel
 % text: the gate keeps every module byte-identical to before g1 landed.
 test(catalog_absent_by_default) :-
     Prog = prog([], [ (mirror(X) <- source_row(X)) ]),
     Term = fixture(catalog_absent, Prog, [ source_row(a) ], [], []),
     once(( program_plan(Term-[], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)) )),
-    forall(member(Atom, Ddl), \+ sub_atom(Atom, _, _, _, '__catalog_rel')).
+    forall(member(Atom, Ddl), \+ sub_atom(Atom, _, _, _, '__rel')).
 
 % ONE CREATE TABLE, built by the ordinary rel_ddl/6 path off compile.pl's
 % injected col_type decls, plus the child-walk index minted by catalog_table_ddl/1.
@@ -578,26 +578,26 @@ test(catalog_table_shape) :-
     catalog_lowered(catalog_shape, Ddl),
     findall(Create,
             ( member(Create, Ddl),
-              sub_atom(Create, 0, _, _, 'CREATE TABLE "__catalog_rel"') ),
+              sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__catalog_rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id")) WITHOUT ROWID',
-    memberchk('CREATE INDEX IF NOT EXISTS "__catalog_rel_parent" ON "__catalog_rel" ("parent_id", "local_name")', Ddl).
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id")) WITHOUT ROWID',
+    memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % The catalog is seeded by DDL, so the serve door must never accept a write
 % into it; a leftover arrival target is that door standing open.
 test(catalog_is_never_an_arrival_target) :-
     catalog_program(Term),
     once(program_plan(Term-[], plan(_, _, _, ArrivalTargets, _, _, _))),
-    \+ memberchk('__catalog_rel'/_, ArrivalTargets).
+    \+ memberchk('__rel'/_, ArrivalTargets).
 
 % The gate keys on the contract's arity: a rel spelled the same at another
 % arity is an ordinary user rel and mints no catalog.
 test(catalog_gate_is_arity_exact) :-
-    NarrowProg = prog([], [ (source_row(A, B) <- '__catalog_rel'(A, B)) ]),
+    NarrowProg = prog([], [ (source_row(A, B) <- '__rel'(A, B)) ]),
     once(( program_plan(fixture(catalog_narrow, NarrowProg, [], [], [])-[], NarrowPlan),
            lower_program(NarrowPlan, lowered(_, NarrowDdl, _, _, _, _, _, _)) )),
     forall(member(Atom, NarrowDdl),
-           \+ sub_atom(Atom, 0, _, _, 'INSERT OR IGNORE INTO "__catalog_rel"')).
+           \+ sub_atom(Atom, 0, _, _, 'INSERT OR IGNORE INTO "__rel"')).
 
 % The seed is exactly ONE INSERT OR IGNORE atom carrying every row, the
 % corpus's N+1 law for a catalog that grows by position, never by statement.
@@ -605,7 +605,7 @@ test(catalog_rows_are_one_statement) :-
     catalog_lowered(catalog_rows, Ddl),
     findall(Seed,
             ( member(Seed, Ddl),
-              sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__catalog_rel"') ),
+              sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [_OneSeed]).
 
 % Ids are positional and self-description terminates in ONE pass: the catalog
@@ -614,7 +614,7 @@ test(catalog_ids_are_positional) :-
     catalog_lowered(catalog_ids, Ddl),
     findall(Seed,
             ( member(Seed, Ddl),
-              sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__catalog_rel"') ),
+              sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [CatalogSeed]),
     forall(member(Expected, [
         "(1,0,0,'text','primitive',0)",
@@ -622,7 +622,7 @@ test(catalog_ids_are_positional) :-
         "(3,0,0,'float','primitive',0)",
         "(4,0,0,'bool','primitive',0)",
         "(5,0,0,'json','primitive',0)",
-        "(6,0,0,'__catalog_rel','rel',0)",
+        "(6,0,0,'__rel','rel',0)",
         "(7,6,1,'rel_id','column',2)",
         "(8,6,2,'parent_id','column',2)",
         "(9,6,3,'ordinal','column',2)",
@@ -637,7 +637,7 @@ test(catalog_ids_are_positional) :-
 % which is the read the g1 increment exists to make possible.
 catalog_program(fixture(catalog_reader, Prog, [], [], [])) :-
     Prog = prog([], [ (rel_named(LocalName) <-
-                         '__catalog_rel'(_Id, _Parent, _Ordinal, LocalName, rel, _TypeId)) ]).
+                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel, _TypeId)) ]).
 
 catalog_lowered(_Name, Ddl) :-
     catalog_program(Term),

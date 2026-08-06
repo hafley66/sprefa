@@ -632,14 +632,14 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
 
 % ═══ step g1 SCAFFOLD: the program catalog (rulings.pl:613 catalog_universe) ═
 % Rows describing this program's OWN rel decls, through the door tick_table_ddl/1 uses. A column is a CHILD ROW of its rel, so it carries a type and an annotation exactly the way a rel does: kind in {primitive, rel, column}, ordinal 0 on a rel and the 1-based argument position on a column, parent_id 0 until module nesting lands, type_id another rel_id or 0.
-catalog_ddl_contract('__catalog_rel',
+catalog_ddl_contract('__rel',
                      [ rel_id-int, parent_id-int, ordinal-int,
                        local_name-text, kind-text, type_id-int ]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
 catalog_table_ddl([
-    'CREATE INDEX IF NOT EXISTS "__catalog_rel_parent" ON "__catalog_rel" ("parent_id", "local_name")']).
+    'CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")']).
 
 % Ids are assigned by POSITION for a byte-stable recompile: the five
 % primitives take 1..5, then each rel, then its columns (one INSERT OR IGNORE).
@@ -651,7 +651,7 @@ catalog_row_ddl(_Decls, RelPlans, [Statement]) :-
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
-           'INSERT OR IGNORE INTO "__catalog_rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id") VALUES ~w',
+           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id") VALUES ~w',
            [ValuesText]).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
