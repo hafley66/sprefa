@@ -650,20 +650,23 @@ module_hash(ModuleName, HashText) :-
     crypto_data_hash(ModuleName, FullHash, [algorithm(sha256)]),
     sub_atom(FullHash, 0, 16, _, HashText).
 
-%! rel_h_id(+ModuleHash, +LocalName, +Arity, -HashText) is det.
-rel_h_id(ModuleHash, LocalName, Arity, HashText) :-
-    format(atom(Key), '~w/~w/~w', [ModuleHash, LocalName, Arity]),
+%! rel_h_id(+ParentHash, +LocalName, +Arity, -HashText) is det.
+%   Under the PARENT's hash: two rels in one module can share a column name.
+rel_h_id(ParentHash, LocalName, Arity, HashText) :-
+    format(atom(Key), '~w/~w/~w', [ParentHash, LocalName, Arity]),
     module_hash(Key, HashText).
 
 % Ids are assigned by POSITION for a byte-stable recompile: the five
 % primitives take 1..5, the module row takes 6, then each rel, then its
 % columns (one INSERT OR IGNORE).
 catalog_row_ddl(ModuleName, _Decls, RelPlans, [Statement]) :-
-    ModuleId = 6,
     module_hash(ModuleName, ModuleHash),
     catalog_primitive_rows(1, PrimitiveRows),
+    length(PrimitiveRows, PrimitiveCount),
+    ModuleId is PrimitiveCount + 1,
     ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash),
-    catalog_rel_rows(RelPlans, ModuleId, ModuleHash, 7, _FinalId, RelRows),
+    FirstRelId is ModuleId + 1,
+    catalog_rel_rows(RelPlans, ModuleId, ModuleHash, FirstRelId, _FinalId, RelRows),
     append([PrimitiveRows, [ModuleRow], RelRows], AllRows),
     foldl(catalog_row_part, AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
@@ -686,21 +689,21 @@ catalog_rel_rows([RelPlan | Rest], ModuleId, ModuleHash, Id0, FinalId, Rows) :-
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId),
     IdAfterRel is Id0 + 1,
-    catalog_column_rows(Columns, ColumnTypes, ModuleId, ModuleHash, Id0, 1,
+    catalog_column_rows(Columns, ColumnTypes, ModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
     catalog_rel_rows(Rest, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 
-catalog_column_rows([], _ColumnTypes, _ModuleId, _ModuleHash, _RelId, _Ordinal,
+catalog_column_rows([], _ColumnTypes, _ModuleId, _ParentHId, _RelId, _Ordinal,
                     Id, Id, []).
-catalog_column_rows([ColumnName | RestColumns], ColumnTypes, ModuleId, ModuleHash,
+catalog_column_rows([ColumnName | RestColumns], ColumnTypes, ModuleId, ParentHId,
                     RelId, Ordinal, Id0, IdFinal, [ColumnRow | MoreRows]) :-
     nth1(Ordinal, ColumnTypes, ColumnType),
     catalog_type_id(ColumnType, TypeId),
-    rel_h_id(ModuleHash, ColumnName, 0, ColumnHId),
+    rel_h_id(ParentHId, ColumnName, 0, ColumnHId),
     NextId is Id0 + 1,
     NextOrdinal is Ordinal + 1,
-    catalog_column_rows(RestColumns, ColumnTypes, ModuleId, ModuleHash, RelId,
+    catalog_column_rows(RestColumns, ColumnTypes, ModuleId, ParentHId, RelId,
                         NextOrdinal, NextId, IdFinal, MoreRows),
     ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId, ColumnHId).
 
