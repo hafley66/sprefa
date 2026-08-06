@@ -80,3 +80,5 @@ plans/*.gif
 plans/*.pptx
 v6/labs/exec_shootout/dl6/.bench/
 v6/labs/exec_shootout/dl6/.compiled/
+v6/labs/exec_shootout/dl6/FACTS.json
+v6/labs/exec_shootout/dl6/FACTS.baseline.json

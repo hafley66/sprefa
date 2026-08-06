@@ -2,7 +2,7 @@
 // trail that says WHERE they went, per SQL shape and per emitted rule.
 
 import diagnostics_channel from "node:diagnostics_channel";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { EMPTY, concatMap, expand, last, map, of, tap, toArray, type Observable } from "rxjs";
@@ -347,6 +347,14 @@ async function main(): Promise<void> {
     facts.push(await runCase(name!, inputPath!, modulePath));
   }
   process.stdout.write(report(facts));
+  const jsonPath = process.env.DL6_BENCH_JSON;
+  if (jsonPath !== undefined) {
+    writeFileSync(
+      jsonPath,
+      `${JSON.stringify({ node: process.version, platform: `${process.platform}/${process.arch}`, at: new Date().toISOString(), unbatched: UNBATCH, cases: facts }, null, 2)}\n`,
+    );
+    process.stderr.write(`dl6-bench: wrote ${jsonPath}\n`);
+  }
 }
 
 await main();

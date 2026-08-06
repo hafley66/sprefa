@@ -44,7 +44,7 @@ if [ "${DL6_BENCH_FULL:-0}" = "1" ]; then
   CASES+=("layered_10000=$WORK/layered_10000.in" "chain_10000=$WORK/chain_10000.in")
 fi
 
-node --experimental-transform-types "$HERE/bench.ts" "$MODULE" "${CASES[@]}" >"$FACTS"
+DL6_BENCH_JSON="$HERE/FACTS.json" node --experimental-transform-types "$HERE/bench.ts" "$MODULE" "${CASES[@]}" >"$FACTS"
 status=$?
 if [ "$status" -ne 0 ]; then
   echo "dl6-bench: run failed" >&2
@@ -52,4 +52,11 @@ if [ "$status" -ne 0 ]; then
 fi
 
 echo "dl6-bench: wrote $FACTS" >&2
+
+if [ "${DL6_BENCH_DOC:-0}" = "1" ]; then
+  PAGER="$HERE/../../../../plans/2026-08-06-dl6-live.d2"
+  node --experimental-transform-types "$HERE/doc.mjs" "$PAGER" || exit 1
+  d2 --layout=elk "$PAGER" "${PAGER%.d2}.svg" >/dev/null 2>&1 \
+    && echo "dl6-bench: rendered ${PAGER%.d2}.svg" >&2
+fi
 sed -n '/## Contract numbers/,/^$/p;/^| \`/p' "$FACTS" | head -20

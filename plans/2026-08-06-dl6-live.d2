@@ -1,0 +1,424 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 24
+  }
+}
+
+classes: {
+  hot: {style.fill: "#fee2e2"; style.stroke: "#b91c1c"; style.stroke-width: 3}
+  warm: {style.fill: "#ffedd5"; style.stroke: "#c2410c"; style.stroke-width: 2}
+  cool: {style.fill: "#fef9c3"; style.stroke: "#ca8a04"}
+  cold: {style.fill: "#f3f4f6"; style.stroke: "#9ca3af"}
+  code: {style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-size: 12}
+  head: {style.fill: "#eef2ff"; style.stroke: "#4338ca"; style.stroke-width: 2}
+  plan: {style.fill: "#f0f9ff"; style.stroke: "#0369a1"}
+}
+
+masthead: |~md
+  # dl6, documented by running it
+  Regenerate with `just dl6-doc`. Every number is produced by
+  `labs/exec_shootout/dl6/bench.sh`, read out of `FACTS.json`.
+
+  `grid_10000` · 3,960 edges · **1,069,200 derived rows** · checksum `9d7239568960d6a8`
+
+  | | |
+  |---|---|
+  | fixpoint | **2206 ms** (484,678 rows/sec) |
+  | load | 26 ms |
+  | peak RSS | 732 MB |
+  | statements per tick | 17 |
+  | measured on | v24.15.0 · darwin/arm64 |
+  | at | 2026-08-06T18:56:47.399Z |
+  | batches | **split**, so cost lands per statement |
+  | baseline | `FACTS.baseline.json` from 2026-08-06T18:55:29.322Z |
+~|
+
+legend: |~md
+  ### colour is share of the tick
+  | | |
+  |---|---|
+  | 🟥 hot | 40% or more |
+  | 🟧 warm | 10% to 40% |
+  | 🟨 cool | 1% to 10% |
+  | ⬜ cold | under 1% |
+~|
+legend.class: head
+masthead -> legend
+
+s0: "supportSql[1] seed scratch, the recursive CTE · 1396 ms · 64.2%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: hot
+
+  sql: |`sql
+    INSERT INTO "__support_next_reachable" ("source", "target",
+      "__refcount")
+    WITH RECURSIVE "reachable" ("source", "target") AS (
+    SELECT b0."source" AS "source", b0."target" AS "target"
+    FROM "edge" b0
+    UNION
+    SELECT b0."source" AS "source", b1."target" AS "target"
+    FROM "reachable" b0, "edge" b1
+    WHERE b1."source" = b0."target")
+    SELECT "source", "target", 1
+    FROM "reachable"
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **1395.7 ms** · flat |
+    | share of tick | **64.2%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `CO-ROUTINE reachable`
+    - `SETUP`
+    - `SCAN b0`
+    - `RECURSIVE STEP`
+    - `SCAN b0`
+    - `SEARCH b1 USING PRIMARY KEY (source=?)`
+    - `SCAN reachable`
+  ~|
+  runtime.class: plan
+}
+legend -> s0
+
+s1: "supportSql[7] stage additions to the delta · 299 ms · 13.7%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: warm
+
+  sql: |`sql
+    INSERT INTO "__delta_reachable" ("_sign", "_sequence",
+      "source", "target")
+    SELECT 1, "rowid" - 1, "source", "target"
+    FROM "__new_reachable"
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **298.8 ms** · flat |
+    | share of tick | **13.7%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SCAN __new_reachable`
+  ~|
+  runtime.class: plan
+}
+s0 -> s1
+
+s2: "supportSql[8] stage the frontier copy · 201 ms · 9.2%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cool
+
+  sql: |`sql
+    INSERT INTO "__frontier_reachable" ("_phase", "_sequence",
+      "source", "target")
+    SELECT ?, "rowid" - 1, "source", "target"
+    FROM "__new_reachable"
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **200.6 ms** · ▼ 17 ms vs baseline |
+    | share of tick | **9.2%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SCAN __new_reachable`
+  ~|
+  runtime.class: plan
+}
+s1 -> s2
+
+s3: "supportSql[10] fill the head · 139 ms · 6.4%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cool
+
+  sql: |`sql
+    INSERT OR IGNORE INTO "reachable" ("source", "target",
+      "__refcount")
+    SELECT n."source", n."target", n."__refcount"
+    FROM "__support_next_reachable" n
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **139.1 ms** · flat |
+    | share of tick | **6.4%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SCAN n`
+  ~|
+  runtime.class: plan
+}
+s2 -> s3
+
+s4: "supportSql[6] fill the new-row set, ONE antijoin · 139 ms · 6.4%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cool
+
+  sql: |`sql
+    INSERT INTO "__new_reachable" ("source", "target",
+      "__refcount")
+    SELECT n."source", n."target", n."__refcount"
+    FROM "__support_next_reachable" n
+    LEFT JOIN "reachable" h
+    ON n."source" = h."source" AND n."target" = h."target"
+    WHERE h."source" IS NULL
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **138.8 ms** · flat |
+    | share of tick | **6.4%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SCAN n`
+    - `SEARCH h USING PRIMARY KEY (source=? AND target=?) LEFT-JOIN`
+  ~|
+  runtime.class: plan
+}
+s3 -> s4
+
+s5: "supportSql[3] stage retractions · 1 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cold
+
+  sql: |`sql
+    INSERT INTO "__delta_reachable" ("_sign", "_sequence",
+      "source", "target")
+    SELECT -1, row_number() OVER () - 1, "source", "target"
+    FROM "reachable"
+    WHERE "__refcount" <= 0
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **1.0 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `CO-ROUTINE (subquery-2)`
+    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
+    - `SCAN (subquery-2)`
+  ~|
+  runtime.class: plan
+}
+s4 -> s5
+
+s6: "supportSql[2] subtract into the head's own count · 0 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cold
+
+  sql: |`sql
+    UPDATE "reachable" AS h SET "__refcount" = COALESCE((
+    SELECT n."__refcount"
+    FROM "__support_next_reachable" n
+    WHERE n."source" = h."source" AND n."target" = h."target"), 0)
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **0.2 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SCAN h`
+    - `CORRELATED SCALAR SUBQUERY 1`
+    - `SEARCH n USING PRIMARY KEY (source=? AND target=?)`
+  ~|
+  runtime.class: plan
+}
+s5 -> s6
+
+s7: "supportSql[0] clear scratch · 0 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cold
+
+  sql: |`sql
+    DELETE
+    FROM "__support_next_reachable"
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **0.0 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+
+  ~|
+  runtime.class: plan
+}
+s6 -> s7
+
+s8: "supportSql[5] clear the new-row set · 0 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cold
+
+  sql: |`sql
+    DELETE
+    FROM "__new_reachable"
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **0.0 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+
+  ~|
+  runtime.class: plan
+}
+s7 -> s8
+
+s9: "supportSql[4] delete what fell to zero · 0 ms · 0.0%" {
+  grid-columns: 2
+  grid-gap: 24
+  class: cold
+
+  sql: |`sql
+    DELETE
+    FROM "reachable"
+    WHERE "__refcount" <= 0
+  `|
+  sql.class: code
+
+  runtime: |~md
+    ### runtime
+    | | |
+    |---|---|
+    | wall | **0.0 ms** · flat |
+    | share of tick | **0.0%** |
+    | executions | 1 |
+    | rows returned | 0 |
+    | head rel | `reachable` |
+
+    ### query plan
+    - `SEARCH reachable USING COVERING INDEX reachable_zero (__refcount<?)`
+  ~|
+  runtime.class: plan
+}
+s8 -> s9
+
+unrun: |~md
+  ### emitted but never executed on this workload
+  - `supportSql[9] stage the next-frontier copy`
+  - `insertSql, the delta join`
+  - `boundarySql edge`
+  - `boundarySql reachable`
+
+  Every one is dead weight for `grid_10000` and live for some other program.
+~|
+unrun.class: cold
+s9 -> unrun
+
+schema: "the schema this tick writes into" {
+  grid-columns: 2
+  grid-gap: 24
+  class: head
+
+  tables: |`sql
+    CREATE TABLE "edge" ("source" INTEGER NOT NULL, "target"
+      INTEGER NOT NULL, PRIMARY KEY ("source", "target")) WITHOUT
+      ROWID
+    CREATE TABLE "reachable" ("source" INTEGER NOT NULL, "target"
+      INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1,
+      PRIMARY KEY ("source", "target")) WITHOUT ROWID
+    CREATE TEMP TABLE "__delta_edge" ("_sign" INTEGER NOT NULL,
+      "_sequence" INTEGER NOT NULL, "source" INTEGER NOT NULL,
+      "target" INTEGER NOT NULL)
+    CREATE INDEX "__delta_edge_sign"
+    ON "__delta_edge" ("_sign")
+    CREATE INDEX "__delta_edge_group"
+    ON "__delta_edge" ("source", "target")
+    CREATE TEMP TABLE "__frontier_edge" ("_phase" INTEGER NOT
+      NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
+      NULL, "target" INTEGER NOT NULL)
+    CREATE INDEX "__frontier_edge_phase"
+    ON "__frontier_edge" ("_phase")
+    CREATE TEMP TABLE "__next_frontier_edge" ("_phase" INTEGER NOT
+      NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT
+      NULL, "target" INTEGER NOT NULL)
+  `|
+  tables.class: code
+
+  cost: |~md
+    ### what every staged row pays
+    7 indexes on this program, so each staged row
+    costs its table write plus one btree write per index over that table.
+
+    - `__delta_edge_sign`
+    - `__delta_edge_group`
+    - `__frontier_edge_phase`
+    - `__delta_reachable_sign`
+    - `__delta_reachable_group`
+    - `__frontier_reachable_phase`
+    - `reachable_zero`
+  ~|
+  cost.class: plan
+}
+unrun -> schema
