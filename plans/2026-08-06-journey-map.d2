@@ -1,0 +1,416 @@
+...@_house
+
+# A grid container drops edges BETWEEN cells; every arrow here is intra-band.
+# A markdown TABLE starts its rows with |, so those blocks need the ||| fence.
+grid-rows: 2
+grid-columns: 3
+grid-gap: 50
+
+# ─── A ───────────────────────────────────────────────────────────────────────
+ab: "A. TODAY  ::  main = 544e33ff, 7 commits UNPUSHED, gate green" {
+  class: stage
+  grid-rows: 3
+  grid-columns: 2
+  grid-gap: 20
+
+  arc: |||md
+  ## how the arc got here
+  | session | the question asked | what came out |
+  |---|---|---|
+  | 20260805.2 | make the recursive tick close | left dirty, 9 red |
+  | 20260806.0 | is it working? then fix it | the red was extra TICKS, not stale goldens: `afterEdges=true` minted carry |
+  | 20260806.0 | just make a rel table and query it | catalog g1, end to end, with an EXPLAIN receipt |
+  | 20260806.0 | lab the dotted-head fork | 4 lanes, and they found a real emitter defect |
+  | now | how do Rust/Go/Python/SQLite do modules | this map |
+
+  Every step was a question about the NEXT thing, never a plan for six.
+  ||| { class: muted; shape: rectangle }
+
+  where: |||md
+  ## where state lives, so this map is not the only copy
+  | thing | lives in |
+  |---|---|
+  | the priced landed arc | `v6/prolog/ARCH.pl`, `task/5` + `fork/5` |
+  | narrative history | `.agent/memories/sprefa-task-ledger.md` |
+  | session logs | `chat_log/` |
+  | decisions | `v6/prolog/rulings.pl` |
+  | the gate | `just green-all` |
+
+  This file is a VIEW. If it disagrees with ARCH.pl, ARCH.pl wins.
+  ||| { class: muted; shape: rectangle }
+
+  log: |||md
+  | sha | what landed | kind |
+  |---|---|---|
+  | `e3997cec` | fixpoint: in-tick closure for recursive heads, + catalog g1 scaffold | engine |
+  | `31bf4af1` | catalog g1: one rel table, seeded by DDL, queryable by a rule | engine |
+  | `8c54fecb` | emit: quote a rel-name object key that is not a JS identifier | defect |
+  | `2bc6164b` | plans: module lowering diagram, files to tables to catalog | doc |
+  | `88785c5a` | plans: shared d2 stylesheet, imported instead of inlined | doc |
+  | `9b8e7234` | plans: rel/type symmetry, four hashes, hot-reload verdicts | doc |
+  | `544e33ff` | plans: d2 in markdown fences, plus a fence compile gate | doc |
+  | | **3 code, 4 map** | |
+  ||| { class: shipped; shape: rectangle }
+
+  next: |||md
+  ## the next two need no decision from you
+  | step | what | why now |
+  |---|---|---|
+  | **h1** | rename `__catalog_rel` -> `__rel` | it is a rel table, not a side car |
+  | **h2** | `arity` into `table_name/2` | closes a live double `CREATE TABLE` |
+
+  Everything after h2 waits on one parser change.
+  ||| { class: chosen; shape: rectangle }
+
+
+  battery: |||md
+  | rail | number | reads on |
+  |---|---|---|
+  | plunit | **351 / 351** | compiler units |
+  | conformance | **302 PASS / 0 FAIL** | oracle vs runtime |
+  | sweep, 420 fixtures | **wrong = 0, final_wrong = 0** | every tick of every fixture |
+  | TEXT_DOOR | **420 compiled / 420 byte-identical** | surface round-trip |
+  | tsv2 | **149 pass / 1 skip / 0 fail** | runtime + serve |
+  | prolog-lint | **findings 1 = baseline 1** | ratchet |
+  | emitted modules moved | **0**, across all 7 commits | the real signal |
+  ||| { class: shipped; shape: rectangle }
+
+  claim: |||md
+  ## the one number that is not a count
+  **0 modified emitted modules.** Seven commits, four of them touching
+  `lower.pl` / `compile.pl` / `emit_ts.pl`, and not one byte of any emitted
+  TypeScript module moved.
+
+  That is what makes the next six steps safe to attempt: the corpus is a
+  byte-level tripwire, not a pass/fail count.
+  ||| { class: chosen; shape: rectangle }
+
+}
+
+# ─── C ───────────────────────────────────────────────────────────────────────
+c: "C. THE COMPILER  ::  one .dl6 in, one TS module out" {
+  class: stage
+  direction: down
+
+  src: |`prolog
+  rel orchard.tree(tree_id: int, species: text).
+  orchard.fruit(TreeId, Picked) <- orchard.tree(TreeId, _), harvest(TreeId, Picked).
+  `| { shape: document; class: src }
+
+  text_door: "TEXT DOOR  ::  compile/parse_dl.pl:1062 head_atom\n\nno dot route. `a.b(X) <- c(X).` is dl_parse_error(statement, position(1,2))" {
+    shape: parallelogram
+    class: danger
+  }
+
+  term: "prog(Decls, Rules)  ::  the retained program term" {
+    shape: stored_data
+    class: shipped
+  }
+
+  expand: "1_expansion.pl  ::  the phase driver" {
+    direction: right
+    class: designed
+
+    enum: "0_enum_expand.pl\n\n:176 body + page -> body_page\n:107 + body_tag(Id, Variant)\n:89 THROWS on collision" {
+      shape: package
+      class: shipped
+    }
+    match: "0_match_expand.pl\n\nexhaustiveness needs enum_context/2,\nbecause expansion ERASED its own input" {
+      shape: package
+      class: shipped
+    }
+    dot: "0_dot_expand.pl:29\n\n'There is no module half in scope'.\nSilently mints a rel called dot_get." {
+      shape: package
+      class: danger
+    }
+    enum -> match: "hand it the context" { style.stroke: "#137333"; style.stroke-width: 2 }
+    match -> dot { style.stroke: "#5f6368" }
+  }
+
+  analyze: "analyze.pl  ::  level graph, recursiveHeads/2, program_uses_catalog at :190" {
+    shape: hexagon
+    class: shipped
+  }
+
+  compilepl: "compile.pl\n\n:131 materialize_catalog_rel/2 injects the contract's col_type decls\n:175 subtracts the catalog from ArrivalTargets" {
+    shape: package
+    class: shipped
+  }
+
+  lower: "lower.pl  ::  one table-building path, four exits" {
+    direction: right
+    class: designed
+
+    dd: "rel_ddl/6" { shape: package; class: shipped }
+    tn: ":162 table_name(Name/_Arity, Name)\n\nARITY DROPPED. edge/2 + edge/3\nemit CREATE TABLE \"edge\" TWICE.\nCorpus: 302 fixtures, 0 hits. Latent." {
+      shape: package
+      class: danger
+    }
+    dict: ":851 dictionary table\n__id INTEGER PRIMARY KEY,\nUNIQUE(cols), __refcount" { shape: package; class: shipped }
+    cat: ":634-658 catalog contract,\nchild-walk index, one INSERT OR IGNORE" { shape: package; class: shipped }
+
+    dd -> tn: "names it" { style.stroke: "#c5221f"; style.stroke-width: 2 }
+    dd -> dict: "a declared type" { style.stroke: "#137333" }
+    dd -> cat: "the catalog is an ORDINARY rel" { style.stroke: "#137333"; style.stroke-width: 3 }
+  }
+
+  emit: "emit_ts.pl:56 js_object_key/2\n\nbare identifier stays bare, anything else gets quoted. 7 call sites." {
+    shape: package
+    class: shipped
+  }
+
+  out: "module.ts  ::  relColumns, ddl[], boot[], levels[]" {
+    shape: document
+    class: src
+  }
+
+  src -> text_door -> term -> expand -> analyze -> compilepl -> lower -> emit -> out
+}
+
+# ─── E ───────────────────────────────────────────────────────────────────────
+e: "E. HOT RELOAD  ::  what the swap actually says, today and after h5" {
+  class: stage
+
+  convo: "" {
+    shape: sequence_diagram
+
+    you: "you" { shape: person; class: chosen }
+    watch: "watcher" { class: muted }
+    swipl: "swipl compiler" { class: designed }
+    serve: "tsv2 server\n4_http.ts:156, ONE connection for its life" { class: designed }
+    db: "SQLite" { shape: cylinder; class: muted }
+
+    you -> watch: "save orchard.dl6"
+    watch -> swipl: "compile THIS FILE"
+    swipl -> swipl: "enum, match, dot expansion"
+    swipl -> watch: "ddl[] + boot[]"
+
+    today: "TODAY  ::  3_engine.ts:224-246" {
+      watch -> serve: "swap(program)"
+      serve -> db: "re-run EVERY ddl statement"
+      db -> serve: "Error: table orchard__tree already exists"
+      serve -> serve: "isAlreadyExists() -> swallow"
+      serve -> you: "200 OK, and the OLD table shape survives" {
+        style.stroke: "#c5221f"
+        style.stroke-width: 3
+      }
+    }
+
+    after: "AFTER h5  ::  five verdicts" {
+      watch -> serve: "swap(rels + h_id, h_schema, h_rule)"
+      serve -> db: "SELECT * FROM __rel"
+      db -> serve: "before[]"
+      serve -> serve: "plan(before, after): new | reshaped | rebodied | green | gone"
+      serve -> db: "DROP then CREATE, reshaped only"
+      serve -> db: "DELETE + recompute, rebodied only"
+      db -> serve: "fresh h_rows"
+      serve -> serve: "h_rows equal? red STOPS. differs? next hop."
+      serve -> you: "200: 2 reshaped, 1 rebodied, 14 green, 0 woken" {
+        style.stroke: "#137333"
+        style.stroke-width: 3
+      }
+    }
+  }
+}
+
+# ─── D ───────────────────────────────────────────────────────────────────────
+d: "D. THE SYMMETRY  ::  two intern tables, one mechanism" {
+  class: stage
+  direction: right
+
+  typeside: "TYPE side, shipped" {
+    class: shipped
+    direction: down
+
+    dictbox: "a declared type lowers to this" {
+      tbl: "file" {
+        shape: sql_table
+        __id: "INTEGER PRIMARY KEY -- the interned id" { constraint: PK }
+        repo: "TEXT NOT NULL"
+        at: "INTEGER NOT NULL -- an fpath __id" { constraint: FK }
+        __refcount: "INTEGER NOT NULL DEFAULT 1"
+        u: "UNIQUE (repo, at) -- the hash-cons" { constraint: UNQ }
+      }
+    }
+    view: "__ref_file\n\nTEMP VIEW, dies with the connection.\nEvery join is parent.col = child.__id" {
+      shape: page
+      class: muted
+    }
+  }
+
+  relside: "REL side, building" {
+    class: designed
+    direction: down
+
+    relbox: "__rel, renamed from __catalog_rel at h1" {
+      tbl: "__rel" {
+        shape: sql_table
+        rel_id: "INTEGER PRIMARY KEY -- the interned id" { constraint: PK }
+        parent_id: "INT -- who contains me" { constraint: FK }
+        ordinal: "INT -- 0 on a rel, 1-based on a column"
+        local_name: "TEXT -- last segment only"
+        kind: "TEXT -- primitive|rel|column|module|instance"
+        type_id: "INT -- what I am" { constraint: FK }
+        arity: "INT -- h2, closes the table_name drop"
+        module_id: "INT -- h4, which file I came from" { constraint: FK }
+        h_id: "BLOB -- h4, stable across recompiles" { constraint: UNQ }
+        h_schema: "BLOB -- h5, drives DROP"
+        h_rule: "BLOB -- h5, drives recompute"
+        h_rows: "BLOB -- h6, drives propagation"
+        refcount: "INT -- how many rules name me"
+        u: "UNIQUE (parent_id, local_name, arity)" { constraint: UNQ }
+      }
+    }
+    receipt: |`sql
+    -- g1 receipt, already true:
+    EXPLAIN QUERY PLAN
+      SELECT rel_id, local_name FROM "__rel" WHERE parent_id = ?;
+    -- SEARCH __rel USING COVERING INDEX __rel_parent
+    `| { class: muted }
+  }
+
+  claim: |||md
+  ## the whole claim
+  A **type** interns VALUES keyed by a column tuple.
+  A **rel** interns NAMES keyed by `(parent_id, local_name, arity)`.
+
+  | | type side | rel side |
+  |---|---|---|
+  | hash-cons | `UNIQUE (cols)` | `UNIQUE (parent, name, arity)` |
+  | the id | `__id` rowid | `rel_id` rowid |
+  | liveness | `__refcount` -> 0, row dies | `refcount` -> 0, table dies |
+  | on collision | THROW, shipped | THROW, not built |
+
+  The rel side needs ONE thing the type side never did: a per-file
+  disambiguator. Two FILES can carry one rel name; two variants in one
+  file cannot.
+  ||| { class: chosen; shape: rectangle }
+
+  typeside -> claim: "same mechanism" { style.stroke: "#137333"; style.stroke-width: 3 }
+  relside -> claim: "same mechanism" { style.stroke: "#1967d2"; style.stroke-width: 3 }
+}
+
+# ─── F ───────────────────────────────────────────────────────────────────────
+f: "F. FOUR HASHES  ::  each breaks exactly one thing" {
+  class: stage
+  grid-rows: 2
+  grid-columns: 2
+  grid-gap: 20
+
+  ladder: |latex
+  \begin{aligned}
+  h_{id}     &= H(\text{module\_id},\ \text{local\_name},\ \text{arity}) \\
+  h_{schema} &= H(\text{columns},\ \text{types},\ \text{key}) \\
+  h_{rule}   &= H(\text{canonical rule bodies for this head}) \\
+  h_{rows}   &= H(\text{the rows})
+  \end{aligned}
+  | { class: chosen; shape: rectangle }
+
+  blast: "blast radius, strictly decreasing" {
+    direction: down
+    hid: "h_id differs\n\nA DIFFERENT REL.\nNothing is reused." { class: muted }
+    hs: "h_schema differs\n\nDROP + CREATE.\nRows lost, on purpose." { class: danger }
+    hr: "h_rule differs\n\nKeep the table.\nDELETE + recompute." { class: chosen }
+    hw: "h_rows differs\n\nWake the consumers.\nEQUAL: red stops here." { class: shipped }
+    hid -> hs -> hr -> hw: "less damage each rung" { style.stroke: "#5f6368" }
+  }
+
+  trap: |||md
+  ## the one way to get it wrong
+  Put `h_schema` in the NAME, and one added column renames the table:
+
+  `orchard__tree__f9fc8ea9` -> `orchard__tree__3b1c02aa`
+
+  A rename in SQLite is a **new empty table**. The old rows sit in a name
+  nothing will ever ask for again.
+
+  | level | Rust hashes it? |
+  |---|---|
+  | crate root | **yes**, `StableCrateId` = H(name, `-C metadata`) |
+  | module path segment | no, `7mycrate7example` |
+  | item body / columns | **never** |
+
+  So the hash is a COLUMN of `__rel`, and the name stays boring.
+  ||| { class: danger; shape: rectangle }
+
+  verdicts: |||md
+  ## the five verdicts, which are just those hashes read in order
+  | verdict | test | DDL | rows | consumers |
+  |---|---|---|---|---|
+  | **NEW** | `h_id` misses | `CREATE` | seeded | RED |
+  | **RESHAPED** | `h_schema` differs | `DROP` + `CREATE` | **LOST** | RED |
+  | **REBODIED** | `h_rule` differs | none | `DELETE` + recompute | check `h_rows` |
+  | **GREEN** | all four equal | none | untouched | **nobody wakes** |
+  | **GONE** | absent from the new compile | `DROP` | dropped | RED |
+
+  GREEN is the one that pays for the other four.
+  ||| { class: shipped; shape: rectangle }
+}
+
+# ─── G ───────────────────────────────────────────────────────────────────────
+gh: "G. PRIOR ART, AND WHAT IS STILL OPEN" {
+  class: stage
+  grid-rows: 3
+  grid-columns: 2
+  grid-gap: 20
+
+  table: |||md
+  | system | unit | id INSIDE | name at the EXIT | on collision |
+  |---|---|---|---|---|
+  | **Rust** | crate | `DefId = (CrateNum, DefIndex)` | `_RNvCs7qp2U7fqm6G_7mycrate7example` | crate-level hash IN the symbol, never the body |
+  | **Go** | package (a dir) | `Sym = (Pkg, Name)`, "a segmented namespace" | `import/path.Name`, bad bytes `%`-escaped | a compile error, no hash anywhere |
+  | **Python** | file or dir | `sys.modules["a.b.c"]` + attr on the parent | the dotted string itself | parent first, one lock per name |
+  | **SQLite** | attached db | `(schema, table)` | `other.t` | none needed, both live, `MAX_ATTACHED=10` |
+  | **dl v5** | none | none | the bare rel name | **last writer wins, silently** |
+
+  Two of the five refuse on collision. Zero of the five hash content into a name.
+  ||| { class: shipped; shape: rectangle }
+
+  quote: |||md
+  ## the sentence that settles it
+  From Go's own source, `cmd/compile/internal/types/sym.go:14`:
+
+  > Sym represents an object name in a **segmented** (pkg, name) namespace.
+
+  Segmented. Two parts. Joined only at the linker, and escaped rather than
+  hashed when joined. Your `__rel.parent_id` + `local_name` IS that pair;
+  `orchard__tree` is the linker step.
+  ||| { class: chosen; shape: rectangle }
+
+  grid-rows: 2
+  grid-columns: 2
+  grid-gap: 20
+
+  user: "needs your word" {
+    class: chosen
+    u1: "hash function:\nxxh3, or truncated SHA-256?" { shape: hexagon; class: chosen }
+    u2: "module separator: __\nso orchard__tree never reads\nlike the enum join body_page" { shape: hexagon; class: chosen }
+    u3: "a RESHAPE deletes rows under a\nrunning server. silently, or refuse\nand demand a flag?" { shape: hexagon; class: chosen }
+  }
+
+  ready: "dispatchable now" {
+    class: shipped
+    d1: "h1  rename __catalog_rel -> __rel" { shape: step; class: shipped }
+    d2: "h2  arity into table_name/2" { shape: step; class: shipped }
+  }
+
+  chain: "chained, and on what" {
+    class: designed
+    b1: "h3  dotted name through the parser\nblocked on NOTHING. this is the unblocker." { shape: step; class: designed }
+    b2: "h4  module_id + h_id" { shape: step; class: muted }
+    b3: "h5  the five-verdict swap" { shape: step; class: muted }
+    b4: "h6  h_rows red/green propagation" { shape: step; class: muted }
+    b1 -> b2 -> b3 -> b4: "strict order" { style.stroke: "#5f6368" }
+  }
+
+  carried: |||md
+  ## carried, older than today
+  | item | state |
+  |---|---|
+  | dotted-head fork, A or B | unfalsifiable until multi-file compile exists |
+  | primitives: reserved ids 1..5, or looked up at seed? | open since 2026-08-05 |
+  | does the HTTP door learn `__rel`? | open since 2026-08-05 |
+  | 35 worktrees | `git worktree remove` is classifier-blocked, you run it |
+  | **push** | 7 commits, no tag, gate green |
+  ||| { class: muted; shape: rectangle }
+}
