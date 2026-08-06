@@ -1,3 +1,1 @@
-rel star_row(repo: text, stars: int).
-
 stat(Repo, count(Stars), min(Stars), max(Stars)) <- star_row(Repo, Stars).

@@ -7,7 +7,28 @@
     "finalDetail": ""
   },
   {
+    "name": "enum_decl_variant_rows_round_trip_through_tag_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "enum_decl_two_variants_union_in_tag_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "enum_decl_two_variants_union_in_tag_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -28,7 +49,28 @@
     "finalDetail": ""
   },
   {
+    "name": "match_classify_response_desugared",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "match_edge_arm_keeps_edge_semantics",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "match_edge_arm_keeps_edge_semantics",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "keyed_edge_head_still_replaces",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -49,7 +91,28 @@
     "finalDetail": ""
   },
   {
+    "name": "extraction_fork_callgraph",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "extraction_fork_span_line",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "extraction_fork_span_line",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "native_ts_query_term",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -70,6 +133,20 @@
     "finalDetail": ""
   },
   {
+    "name": "callgraph_derivation_over_extraction",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "callgraph_unused_inverts_with_the_call_set",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "callgraph_unused_inverts_with_the_call_set",
     "bucket": "identical",
     "detail": "",
@@ -78,6 +155,34 @@
   },
   {
     "name": "flagship_flow_reach_over_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "flagship_flow_reach_over_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "flagship_flow_reach_over_batched_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "flagship_flow_reach_over_batched_resolved_edges",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_arrival_key_order_canonicalized",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -98,7 +203,28 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_column_renders_canonical_json",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_intern_order_a",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_intern_order_a",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_intern_order_b",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -119,7 +245,28 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_nested_value_renders_whole_tree",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_ghcacher_stars_normalization",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_ghcacher_stars_normalization",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_span_columns_are_int_after_decode",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -140,7 +287,28 @@
     "finalDetail": ""
   },
   {
+    "name": "struct_host_output_schedule_answer_interned",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "struct_shared_child_survives_one_release",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "struct_shared_child_survives_one_release",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_reference_target_and_parent_share_tick",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -161,7 +329,28 @@
     "finalDetail": ""
   },
   {
+    "name": "groupby_two_bare_integer_literals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "groupby_aggregate_two_bare_integer_literals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "groupby_aggregate_two_bare_integer_literals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "probe_output_comparison_guard",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -182,7 +371,28 @@
     "finalDetail": ""
   },
   {
+    "name": "backslash_in_string_literal_survives_both_doors",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "host_free_query_leaves_a_derived_rel_unsubscribed",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "host_free_query_leaves_a_derived_rel_unsubscribed",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "flow_arg_param_hop_is_positional_and_site_pinned",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -203,7 +413,28 @@
     "finalDetail": ""
   },
   {
+    "name": "flow_sig_owner_join_types_the_resolved_callee",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "bool_literals_round_trip",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bool_literals_round_trip",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bool_identity_comparison_filters",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -224,7 +455,28 @@
     "finalDetail": ""
   },
   {
+    "name": "bool_relation_negation_is_two_valued",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "float_arithmetic_is_binary64",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_arithmetic_is_binary64",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "int_float_arithmetic_keeps_real_result",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -245,7 +497,28 @@
     "finalDetail": ""
   },
   {
+    "name": "float_avg_is_grouped",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "float_exact_comparison_has_no_epsilon",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_exact_comparison_has_no_epsilon",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_exact_join_has_no_epsilon",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -266,7 +539,28 @@
     "finalDetail": ""
   },
   {
+    "name": "float_negative_zero_canonical_boundary",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "float_integral_value_keeps_real_storage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_integral_value_keeps_real_storage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_shortest_round_trip_wire",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -287,7 +581,28 @@
     "finalDetail": ""
   },
   {
+    "name": "float_avg_retracts_to_empty_group",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "int_accepts_integral_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "int_accepts_integral_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "float_widens_integer_ingress",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -308,7 +623,28 @@
     "finalDetail": ""
   },
   {
+    "name": "float_widens_wide_integer_ingress",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "head_column_int_widens_into_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_column_int_widens_into_float",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_column_list_and_json_share_storage",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -329,7 +665,28 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth2_construct_and_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_depth2_literal_leaf_selects_zero_and_one",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_literal_leaf_selects_zero_and_one",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_many_rows_share_one_leaf",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -350,7 +707,28 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth2_chained_decode",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_depth2_nested_decode_pattern",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_nested_decode_pattern",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth2_dot_read",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -371,7 +749,28 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth2_member_dot_pattern",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_depth3_construct_and_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth3_construct_and_read",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_depth3_chained_decode",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -392,7 +791,28 @@
     "finalDetail": ""
   },
   {
+    "name": "relation_depth3_many_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "relation_ref_column_fed_by_ref_variable_accepted",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "relation_ref_column_fed_by_ref_variable_accepted",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "coalesce_defaults_the_absent_row",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -413,7 +833,28 @@
     "finalDetail": ""
   },
   {
+    "name": "coalesce_default_returns_when_source_retracts",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "coalesce_over_derived_source",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "coalesce_over_derived_source",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "coalesce_in_edge_body_samples",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -434,7 +875,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_string_control_escapes_are_valid_json",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_control_escapes_inside_a_document",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_control_escapes_inside_a_document",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_non_ascii_keys_sort_by_code_point",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -455,7 +917,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_nfc_and_nfd_keys_stay_distinct",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_empty_string_key_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_empty_string_key_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_marker_shaped_keys_are_ordinary_data",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -476,7 +959,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_safe_integer_boundary_survives_both_doors",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_empty_containers_nest",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_empty_containers_nest",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_deep_exact_key_chain_binds",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -497,7 +1001,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_top_level_scalar_document_is_a_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_absent_key_yields_no_row_under_arrivals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_absent_key_yields_no_row_under_arrivals",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_spread_and_capture_and_descent_multiply",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -518,7 +1043,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_typed_capture_folds_into_a_keyed_int_total",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_typed_capture_filters_a_wrong_typed_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_typed_capture_filters_a_wrong_typed_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_untyped_capture_binds_without_a_type",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -539,7 +1085,28 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_json_group_array_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "ordered_json_group_array_integer_values",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_json_group_array_integer_values",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_json_group_array_ordinal",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -560,7 +1127,28 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_group_concat_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "ordered_group_concat_ordinal",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_group_concat_ordinal",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_aggregate_retraction_rebuild",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -581,7 +1169,28 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_json_group_array_nested_json",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "ordered_mermaid_line_assembly",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_mermaid_line_assembly",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_fragment_line_assembly",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -602,7 +1211,84 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_group_rels_v5_collect",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "ordered_group_rels_json_head",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "ordered_group_rels_json_head",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pr_size_decodes_files_and_rolls_up",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pr_size_decodes_files_and_rolls_up",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_positive_match",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_positive_match",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_non_match",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_non_match",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_retraction_flip",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "regexp_retraction_flip",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "arrival_affinity_rewrite_keeps_delta",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -623,7 +1309,28 @@
     "finalDetail": ""
   },
   {
+    "name": "arrival_dup_batch_partial_ignore",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "combine_level_is_the_conjunction_spelling",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "combine_level_is_the_conjunction_spelling",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "conjunction_level_control_for_combine",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -644,7 +1351,28 @@
     "finalDetail": ""
   },
   {
+    "name": "combine_edge_is_the_conjunction_spelling",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "conjunction_edge_control_for_combine",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "conjunction_edge_control_for_combine",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "next_level_is_the_bare_atom_spelling",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -665,7 +1393,28 @@
     "finalDetail": ""
   },
   {
+    "name": "next_edge_is_the_bare_atom_spelling",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "diag_scenario_seven_ticks_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "diag_scenario_seven_ticks_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clock_rel_join_storms",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -686,7 +1435,28 @@
     "finalDetail": ""
   },
   {
+    "name": "retention_count_prunes_oldest",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retention_prune_is_a_visible_minus",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "retention_prune_is_a_visible_minus",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "finalize_over_log_fires_on_retention_prune",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -707,6 +1477,20 @@
     "finalDetail": ""
   },
   {
+    "name": "created_at_pinned_updated_at_advances",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_retraction_rejected",
+    "bucket": "rejection",
+    "detail": "retract from log rel 'event'",
+    "finalBucket": "no_oracle_final",
+    "finalDetail": "oracle threw on this schedule too; no final state to diff"
+  },
+  {
     "name": "log_retraction_rejected",
     "bucket": "rejection",
     "detail": "retract from log rel 'event'",
@@ -715,6 +1499,20 @@
   },
   {
     "name": "world_fed_keyed_arrival_replaces",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "world_fed_keyed_arrival_replaces",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "retention_single_arm_still_prunes",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -735,7 +1533,28 @@
     "finalDetail": ""
   },
   {
+    "name": "now_reads_the_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "edge_chain_hops_tick_per_stage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "edge_chain_hops_tick_per_stage",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "marker_stops_backlog_replay",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -756,7 +1575,28 @@
     "finalDetail": ""
   },
   {
+    "name": "unmarked_edge_replays_backlog",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "retraction_only_tick_retracts_level_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "retraction_only_tick_retracts_level_view",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "departed_fires_next_tick_on_retraction",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -777,7 +1617,28 @@
     "finalDetail": ""
   },
   {
+    "name": "keyed_replace_departs_the_old_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "pairwise_reads_state_at_the_departure_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pairwise_reads_state_at_the_departure_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pairwise_pairs_adjacent_values_when_the_source_idles",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -798,7 +1659,28 @@
     "finalDetail": ""
   },
   {
+    "name": "set_dedups_log_stacks",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "head_expression_evaluates_derived_column",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_expression_evaluates_derived_column",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "comparison_filters_rows",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -819,7 +1701,28 @@
     "finalDetail": ""
   },
   {
+    "name": "range_join_over_arithmetic",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "bind_computes_derived_value_then_comparison_filters",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "bind_computes_derived_value_then_comparison_filters",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "interpolation_desugars_to_concat",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -840,7 +1743,28 @@
     "finalDetail": ""
   },
   {
+    "name": "division_truncates_toward_zero_mod_follows_divisor_sign",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "typed_int_without_literal_witness",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "typed_int_without_literal_witness",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -861,7 +1785,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_array_spread_skips_non_matching_elements",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_key_capture_binds_key_and_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_key_capture_binds_key_and_value",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_key_capture_nests_and_fans_out",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -882,7 +1827,28 @@
     "finalDetail": ""
   },
   {
+    "name": "json_descent_matches_at_any_depth",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "json_descent_into_scalars_is_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_descent_into_scalars_is_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "json_empty_object_pattern_matches_any_object",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -903,7 +1869,28 @@
     "finalDetail": ""
   },
   {
+    "name": "list_column_fans_out_through_spread",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "count_is_bag_of_derivations",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "count_is_bag_of_derivations",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "sum_min_max_group_by_plain_columns",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -924,7 +1911,28 @@
     "finalDetail": ""
   },
   {
+    "name": "aggregate_count_min_max_track_arrivals_and_retraction",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "aggregate_min_recomputes_when_the_minimum_is_retracted",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "aggregate_min_recomputes_when_the_minimum_is_retracted",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "aggregate_sum_tracks_a_growing_and_shrinking_group",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -945,7 +1953,28 @@
     "finalDetail": ""
   },
   {
+    "name": "merge_batches_per_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "merge_never_retracts",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "merge_never_retracts",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "key_last_write_wins",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -966,7 +1995,28 @@
     "finalDetail": ""
   },
   {
+    "name": "key_identical_write_is_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "key_same_tick_ordered_not_conflict",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "key_same_tick_ordered_not_conflict",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "counter_fold_matches_hand_computation",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -987,7 +2037,28 @@
     "finalDetail": ""
   },
   {
+    "name": "batched_increments_both_count",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "increment_decrement_same_tick_nets_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "increment_decrement_same_tick_nets_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_driver_fold_needs_no_id_column",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1008,7 +2079,28 @@
     "finalDetail": ""
   },
   {
+    "name": "identical_increments_stack_as_log_deltas",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "lww_fold_follows_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "lww_fold_follows_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "concat_fold_follows_arrival_order",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1029,7 +2121,28 @@
     "finalDetail": ""
   },
   {
+    "name": "concat_fold_reversed_arrival_reverses_result",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "log_deltas_follow_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_deltas_follow_arrival_order",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "shuffled_arrival_reorders_log_deltas",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1050,7 +2163,28 @@
     "finalDetail": ""
   },
   {
+    "name": "level_view_reads_set_projection_not_occurrences",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "demand_view_fires_its_consumer_once",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "demand_view_fires_its_consumer_once",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_stacks_within_tick_and_across_ticks",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1071,7 +2205,28 @@
     "finalDetail": ""
   },
   {
+    "name": "set_rel_identical_arrival_is_one_occurrence",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "log_rel_identical_arrival_is_two_occurrences",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "log_rel_identical_arrival_is_two_occurrences",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "any_two_tagged_arms_land_on_one_tick",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1092,7 +2247,28 @@
     "finalDetail": ""
   },
   {
+    "name": "one_attempt_keyed_head_loses_the_first_arm_silently",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "one_attempt_guard_by_negation_lands_one_unnamed_winner",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "one_attempt_guard_by_negation_lands_one_unnamed_winner",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1113,7 +2289,28 @@
     "finalDetail": ""
   },
   {
+    "name": "filter_map_is_a_level_rule",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "repeat_is_a_self_carry_chain",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "repeat_is_a_self_carry_chain",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "fork_join_is_a_conjunctive_body",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1134,7 +2331,28 @@
     "finalDetail": ""
   },
   {
+    "name": "ordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "unordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unordered_program_level_fold_reaches_three_links",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "switch_as_keyed_replace",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1155,7 +2373,28 @@
     "finalDetail": ""
   },
   {
+    "name": "stale_keyed_retraction_keeps_replacement",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "merge_policy",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "merge_policy",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "exhaust_policy",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1176,7 +2415,28 @@
     "finalDetail": ""
   },
   {
+    "name": "concat_program_queue",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "completion_propagation_lattice_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "completion_propagation_lattice_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "take_until_keyed_replace_negated_done",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1197,7 +2457,28 @@
     "finalDetail": ""
   },
   {
+    "name": "state_flap_nets_to_zero_scope_churn",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "fill_as_cache_update_swr",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "fill_as_cache_update_swr",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "demand_laziness_effect_rows",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1218,7 +2499,28 @@
     "finalDetail": ""
   },
   {
+    "name": "shared_demand_refcount",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "zombie_scope_negative_case_a2b",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "zombie_scope_negative_case_a2b",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "seq_wire_surface",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1239,7 +2541,28 @@
     "finalDetail": ""
   },
   {
+    "name": "seq_wire_hand",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "identical_demand_dedups",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "identical_demand_dedups",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_salt_refires_fresh_stream",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1260,7 +2583,28 @@
     "finalDetail": ""
   },
   {
+    "name": "terminal_is_terminal",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "live_nonzero_exit_keeps_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "live_nonzero_exit_keeps_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "worktree_edit_replaces_digest_and_flips_kind_view",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1281,7 +2625,28 @@
     "finalDetail": ""
   },
   {
+    "name": "worktree_edit_identical_resave_is_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "dirty_derives_from_digest_mismatch",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "dirty_derives_from_digest_mismatch",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "dirty_retracts_on_matching_commit",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1302,7 +2667,28 @@
     "finalDetail": ""
   },
   {
+    "name": "head_move_replaces_key",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "head_move_flips_current_tree_in_one_tick",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "pin_to_unknown_repo_derives_repo_candidate",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1323,7 +2709,28 @@
     "finalDetail": ""
   },
   {
+    "name": "xref_rev_is_pin_data_not_live_head",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "changed_since_spans_two_turns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_spans_two_turns",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "changed_since_ignores_events_before_turn",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1344,7 +2751,28 @@
     "finalDetail": ""
   },
   {
+    "name": "two_pins_dedup_to_one_demand_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "rev_fill_not_behind_keeps_stale_pin_empty",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "rev_fill_not_behind_keeps_stale_pin_empty",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "clean_state_no_diags",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1365,7 +2793,28 @@
     "finalDetail": ""
   },
   {
+    "name": "clean_state_gate_and_exit_zero",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "waiver_range_join_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "waiver_range_join_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_diag_exact_rows",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1386,7 +2835,28 @@
     "finalDetail": ""
   },
   {
+    "name": "over_baseline_count_row",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "over_baseline_gate_blocks_commit_only",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "over_baseline_gate_blocks_commit_only",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "fix_by_waiver_returns_to_clean",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1407,7 +2877,28 @@
     "finalDetail": ""
   },
   {
+    "name": "new_file_diag_at_hit_line_exact_rows",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "new_file_no_exceeded_diag",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "new_file_no_exceeded_diag",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_aggregate_and_interpolation",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",
@@ -1428,7 +2919,28 @@
     "finalDetail": ""
   },
   {
+    "name": "unwrap_unchanged_file_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
     "name": "unwrap_below_budget_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "unwrap_below_budget_silent",
+    "bucket": "identical",
+    "detail": "",
+    "finalBucket": "final_identical",
+    "finalDetail": ""
+  },
+  {
+    "name": "tightened_baseline_catches_regrowth",
     "bucket": "identical",
     "detail": "",
     "finalBucket": "final_identical",

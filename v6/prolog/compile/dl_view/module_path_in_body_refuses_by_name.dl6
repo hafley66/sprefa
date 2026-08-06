@@ -1,0 +1,3 @@
+rel ripe(tree_id: int).
+
+ripe(TreeId) <- orchard.fruit(TreeId, _Picked).

@@ -1,4 +1,2 @@
-rel raw_doc(body: text).
-
 repo_name(Name) <- raw_doc(Body), decode(Body, {name: Name}).
 repo_owner(Login) <- raw_doc(Body), decode(Body, {owner: {login: Login}}).

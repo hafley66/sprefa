@@ -1,0 +1,4 @@
+rel dispatch_first(dispatch_id, col2) log keep(count(1)).
+
+dispatch_first(DispatchId, 'acked') <+ dispatch_ack(DispatchId).
+dispatch_first(SealedId, 'sealed') <+ dispatch_seal(SealedId).

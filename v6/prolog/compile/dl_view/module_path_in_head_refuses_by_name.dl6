@@ -1,0 +1,3 @@
+rel harvest(tree_id: int, picked: int).
+
+orchard.tree(TreeId, Picked) <- harvest(TreeId, Picked).

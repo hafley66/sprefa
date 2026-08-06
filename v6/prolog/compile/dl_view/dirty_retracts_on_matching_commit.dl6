@@ -1,8 +1,8 @@
-rel worktree_edit(path: text, digest: text) log keep(all).
+rel worktree_edit(path, digest) log keep(all).
 rel worktree_file(path, digest) key(1).
-rel commit_arrival(rev_id: int, path: text, digest: text) log keep(all).
+rel commit_arrival(rev_id, path, digest) log keep(all).
 rel tree_file(rev_id, path, digest) key(1, 2).
-rel head_move(repo_id: int, rev_id: int) log keep(all).
+rel head_move(repo_id, rev_id) log keep(all).
 rel head(repo_id, rev_id) key(1).
 
 worktree_file(Path, Digest) <+ worktree_edit(Path, Digest).

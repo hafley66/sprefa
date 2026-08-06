@@ -1,13 +1,13 @@
-rel stream_event(target: text, col2: text) log keep(all).
-rel result_x(scope_id: text) log keep(all).
-rel result_y(scope_id: text) log keep(all).
-rel close_signal(scope_id: text) log keep(all).
+rel stream_event(target, col2) log keep(all).
+rel result_x(scope_id) log keep(all).
+rel result_y(scope_id) log keep(all).
+rel close_signal(scope_id) log keep(all).
 rel closed_a(scope_id) log keep(all).
 rel closed_b(scope_id) log keep(all).
 rel closed_c(scope_id) log keep(all).
-rel open_scope_a(scope_id: text, target: text) key(1).
-rel open_scope_b(scope_id: text) key(1).
-rel open_scope_c(scope_id: text) key(1).
+rel open_scope_a(scope_id, target) key(1).
+rel open_scope_b(scope_id) key(1).
+rel open_scope_c(scope_id) key(1).
 
 closed_a(ScopeId) <+ stream_event(Target, 'done'), latest(open_scope_a(ScopeId, Target)).
 live_scope_a(ScopeId, Target) <- open_scope_a(ScopeId, Target), not(closed_a(ScopeId)).

@@ -1,7 +1,6 @@
-rel heard(item: text) log keep(all).
+rel heard(item) log keep(all).
 rel seen_count(item) log keep(all).
 rel heard_count(item) log keep(all).
-rel seen(item: text).
 
 seen_count(Item) <+ seen(Item).
 heard_count(Item) <+ heard(Item).

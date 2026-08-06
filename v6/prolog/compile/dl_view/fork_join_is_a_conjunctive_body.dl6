@@ -1,4 +1,1 @@
-rel result_a(value_a: text).
-rel result_b(value_b: text).
-
 combined(ValueA, ValueB) <- result_a(ValueA), result_b(ValueB).

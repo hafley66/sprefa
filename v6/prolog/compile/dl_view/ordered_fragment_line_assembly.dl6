@@ -1,3 +1,1 @@
-rel fragment_line(fragment_name: text, line_ordinal: int, line_text: text).
-
 fragment_text(FragmentName, group_concat(LineText, "\n", LineOrdinal)) <- fragment_line(FragmentName, LineOrdinal, LineText).

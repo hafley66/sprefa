@@ -1,4 +1,4 @@
-rel from_poll(key: text, value: text) log keep(all).
+rel from_poll(key, value) log keep(all).
 rel latest(key, value) key(1).
 rel replaced_value(key, old_value) log keep(all).
 

@@ -1,4 +1,1 @@
-rel source_a(left: int).
-rel source_b(right: int).
-
 pair(Left, Right) <- source_a(Left), source_b(Right).

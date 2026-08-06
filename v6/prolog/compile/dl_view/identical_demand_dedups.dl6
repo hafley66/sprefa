@@ -1,5 +1,5 @@
-rel watch_request(col1: text, args: text, salt: text) log keep(all).
-rel fill(args: text, salt: text, payload: text) log keep(all).
+rel watch_request(col1, args, salt) log keep(all).
+rel fill(args, salt, payload) log keep(all).
 rel response(args, salt, payload) log keep(all).
 rel demand(args, salt) key(1, 2).
 
