@@ -492,6 +492,11 @@ print_term(Term, Bindings, ParentPrec, Side, Text) :-
        format(atom(Text), "[... ~w]", [ElementText])
     ; Term = dot_get(_, _), dot_chain_fields(Term, Fields), maplist(identifier_atom, Fields)
     -> print_dot_chain(Term, Bindings, Text)
+    ; Term = rel_path(Segments, Args), is_list(Segments), is_list(Args)
+    -> atomic_list_concat(Segments, '.', PathText),
+       maplist(print_arg(Bindings), Args, PathArgTexts),
+       atomic_list_concat(PathArgTexts, ', ', PathArgsText),
+       format(atom(Text), "~w(~w)", [PathText, PathArgsText])
     ; compound(Term), Term =.. [Op, Left, Right], arith_op(Op, MyPrec)
     -> print_term(Left, Bindings, MyPrec, left, LeftText),
        print_term(Right, Bindings, MyPrec, right, RightText),

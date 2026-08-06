@@ -1059,6 +1059,18 @@ rule_stmt(Rule, Vars0, Vars, S0, S) :-
 
 % ═══ head atom : Name(HeadArg, ...) ══════════════════════════════════════════
 
+% A dotted name in FUNCTOR position is a module path, a different grammar slot
+% from the dotted name in value position that dot_chain/4 reads as member access.
+head_atom(rel_path(Segments, PositionalArgs), Vars0, Vars, S0, S) :-
+    dotted_path(Segments, S0, S1),
+    Segments = [_, _ | _],
+    ws0(S1, S2),
+    lit_dcg(`(`, S2, S3),
+    head_args(Args, Vars0, Vars, S3, S4),
+    ws0(S4, S5),
+    lit_dcg(`)`, S5, S),
+    last(Segments, LocalName),
+    resolve_named_args(head, LocalName, Args, PositionalArgs).
 head_atom(Term, Vars0, Vars, S0, S) :-
     ident(Name, S0, S1),
     ws0(S1, S2),
@@ -1535,6 +1547,16 @@ partition_host_input_values_([col(Name, _) | Columns], [Value | Values],
     partition_host_input_values_(Columns, Values, Roles,
                                  IdentityRest, SaltRest).
 
+relatom_item(rel_path(Segments, PositionalArgs), Vars0, Vars, S0, S) :-
+    dotted_path(Segments, S0, S1),
+    Segments = [_, _ | _],
+    ws0(S1, S2),
+    lit_dcg(`(`, S2, S3),
+    head_args(Args, Vars0, Vars, S3, S4),
+    ws0(S4, S5),
+    lit_dcg(`)`, S5, S),
+    last(Segments, LocalName),
+    resolve_named_args(body, LocalName, Args, PositionalArgs).
 relatom_item(Item, Vars0, Vars, S0, S) :-
     ident(Name, S0, S1), ws0(S1, S2),
     ( peek(0'!, S2, S2)
@@ -1686,6 +1708,15 @@ compound_or_var(E, Vars0, Vars, S0, S) :-
 % route, and a float literal never arrives here (factor tries float_lit first,
 % and the dot of `1.5` needs a digit after it). The chain builds a nested
 % dot_get/2 term, desugared by the dot expansion phase in 1_expansion.
+% Segments are KEPT, never joined: a joined atom would be a table name, and no
+% module id exists to make that name collision-safe yet.
+dotted_path([Segment | Rest], S0, S) :-
+    ident(Segment, S0, S1),
+    (   dot_then_ident(S1, S2)
+    ->  dotted_path(Rest, S2, S)
+    ;   Rest = [], S = S1
+    ).
+
 dot_chain(Receiver, S0, S, Final) :-
     ( dot_then_ident(S0, S1)
     -> ident(Field, S1, S2),

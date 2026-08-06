@@ -59,7 +59,36 @@
 :- op(700,  xfx, :=).
 
 expand_dot_in_context(_, prog(Decls, Rules0), prog(Decls, Rules)) :-
+    maplist(refuse_rel_path_rule, Rules0),
     maplist(expand_dot_rule, Rules0, Rules).
+
+% Either door: the text door parses rel_path/2, and SWI reads `a.b(X)` as
+% '.'(a, b(X)), which would otherwise become a rel literally named '.'.
+refuse_rel_path_rule(Rule) :-
+    (   sub_term(Sub, Rule),
+        nonvar(Sub),
+        rel_path_segments(Sub, Segments)
+    ->  throw(unsupported_construct(module_path_unresolved(Segments)))
+    ;   true
+    ).
+
+rel_path_segments(rel_path(Segments, _Args), Segments) :- is_list(Segments).
+% A literal '.'(A, B) in a clause head would itself be dict-expanded by SWI,
+% which is the trap this predicate exists to catch, so the shape is inspected.
+rel_path_segments(Term, [Receiver | Rest]) :-
+    compound(Term),
+    functor(Term, '.', 2),
+    arg(1, Term, Receiver),
+    atom(Receiver),
+    arg(2, Term, Applied),
+    nonvar(Applied),
+    (   rel_path_segments(Applied, Rest)
+    ->  true
+    ;   compound(Applied),
+        functor(Applied, LocalName, Arity),
+        Arity > 0,
+        Rest = [LocalName]
+    ).
 
 expand_dot_rule(Rule0, Rule) :-
     ( contains_dot_get(Rule0)
