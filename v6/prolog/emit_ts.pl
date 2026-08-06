@@ -53,6 +53,22 @@ js_template_codes([0'$, 0'{ | Rest], [0'\\, 0'$, 0'{ | More]) :-
 js_template_codes([Code | Rest], [Code | More]) :-
     js_template_codes(Rest, More).
 
+% A plain JS identifier stays bare so existing modules are byte-identical;
+% anything else is quoted rather than emitted as a syntax error.
+js_object_key(Name, Key) :-
+    atom_codes(Name, [First | Rest]),
+    (   js_identifier_start(First),
+        forall(member(Code, Rest), js_identifier_part(Code))
+    ->  Key = Name
+    ;   js_string(Name, Key)
+    ).
+
+js_identifier_start(Code) :-
+    ( Code >= 0'a, Code =< 0'z ; Code >= 0'A, Code =< 0'Z ; Code =:= 0'_ ; Code =:= 0'$ ), !.
+
+js_identifier_part(Code) :-
+    ( js_identifier_start(Code) ; Code >= 0'0, Code =< 0'9 ), !.
+
 js_string(Value, JsLiteral) :-
     ( atom(Value) -> atom_codes(Value, Codes) ; string_codes(Value, Codes) ),
     js_string_codes(Codes, Escaped),
@@ -251,10 +267,11 @@ struct_ref_column_entries(RelPlans, Lines) :-
     findall(Line,
             ( member(relplan(Ref, _, _, _, ColumnTypes), RelPlans),
               memberchk(ref(_), ColumnTypes),
-              ref_name(Ref, Name), js_string(Name, NameText),
+              ref_name(Ref, Name),
               maplist(column_type_ref_entry, ColumnTypes, RefTexts),
               atomic_list_concat(RefTexts, ', ', RefsText),
-              format(atom(Line), '  ~w: [~w],', [NameText, RefsText]) ),
+              js_string(Name, NameKey),
+              format(atom(Line), '  ~w: [~w],', [NameKey, RefsText]) ),
             Lines).
 
 column_type_ref_entry(ref(TypeName), Text) :- !, js_string(TypeName, Text).
@@ -660,7 +677,8 @@ rel_columns_lines(RelPlans, Lines) :-
 rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key, _ColumnTypes), Line) :-
     ref_name(Ref, Name),
     quoted_string_array_text(Columns, ColumnsSql),
-    format(atom(Line), '  ~w: ~w,', [Name, ColumnsSql]).
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: ~w,', [NameKey, ColumnsSql]).
 
 rel_column_types_lines(RelPlans, Lines) :-
     maplist(rel_column_types_entry_line, RelPlans, EntryLines),
@@ -671,7 +689,8 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
     ref_name(Ref, Name),
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
     quoted_string_array_text(BoundaryTypes, TypesText),
-    format(atom(Line), '  ~w: ~w,', [Name, TypesText]).
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
 
 % ═══ the DECLARED column types (ruling type_gate_widening) ═════════════════
 % What the program WROTE DOWN, as opposed to what analyze.pl inferred. The
@@ -806,7 +825,8 @@ final_select_lines(DeltaStatements, Lines) :-
 final_select_entry_line(deltastmt(Ref, SelectSql, _DeltaTable, _BoundarySql), Line) :-
     ref_name(Ref, Name),
     js_template(SelectSql, Template),
-    format(atom(Line), '  ~w: ~w,', [Name, Template]).
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: ~w,', [NameKey, Template]).
 
 % ═══ arrivals ════════════════════════════════════════════════════════════════
 
@@ -821,12 +841,14 @@ arrival_statements_lines(ArrivalStatements, Lines) :-
 arrival_statement_entry_line(arrivalstmt(Ref, log, AddSql, none, _, _), Line) :- !,
     ref_name(Ref, Name),
     js_template(AddSql, AddTemplate),
-    format(atom(Line), '  ~w: { kind: "log", addSql: ~w, delSql: null },', [Name, AddTemplate]).
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: { kind: "log", addSql: ~w, delSql: null },', [NameKey, AddTemplate]).
 arrival_statement_entry_line(arrivalstmt(Ref, set, AddSql, DelSql, _, _), Line) :-
     ref_name(Ref, Name),
     js_template(AddSql, AddTemplate),
     js_template(DelSql, DelTemplate),
-    format(atom(Line), '  ~w: { kind: "set", addSql: ~w, delSql: ~w },', [Name, AddTemplate, DelTemplate]).
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: { kind: "set", addSql: ~w, delSql: ~w },', [NameKey, AddTemplate, DelTemplate]).
 
 arrival_statement_fn_lines(Name, Lines) :-
     format(atom(UndeclaredError), '    throw new Error(`~w: tick received an arrival for undeclared rel \'${arrival.rel}\'`);', [Name]),
