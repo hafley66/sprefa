@@ -40,6 +40,7 @@
 | [hs-prolog/idioms/REPORT.md](hs-prolog/idioms/REPORT.md) | 188 | L4 hs idioms: REPORT |
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
 | [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 70 | exec_shootout STANDINGS |
+| [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
 | [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
@@ -552,6 +553,16 @@
 25:## grid
 43:## layered
 61:## Engine builds
+```
+
+### labs/exec_shootout/dl6/FACTS.dredland.md
+```
+1:# In-place recursive-head maintenance: banked numbers
+10:## TOC
+16:## 1. Incremental ticks — `incbench.ts`, grid 45x45, head 1,069,200 rows
+35:## 2. The single build tick — `bench.sh`, min of 2 runs each
+61:## 3. Deleting 100 scattered edges at once
+77:## 4. Regenerate
 ```
 
 ### labs/exec_shootout/dl6/FACTS.md

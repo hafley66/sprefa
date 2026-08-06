@@ -562,8 +562,51 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     once(sub_atom(HopAB, _, _, _, 'NOT EXISTS (SELECT 1 FROM "__support_next_path"')),
     once(sub_atom(HopBA, _, _, _, 'FROM "__expand_b_path")')),
     once(sub_atom(AbsorbA, _, _, _, 'SELECT "node", 1 FROM "__expand_a_path"')),
+    % The in-place plan rides beside both: its hops read the wavefront table
+    % directly instead of shadowing the head name, and both delta seeds carry
+    % the liveness probe that keeps a same-tick add+retract pair out.
+    DredPlan = dredplan(_, _, _, [_, AssertSeed], AssertHopAB, _, CommitA, _,
+                        ArrivalA, _, [_, DredSeed], DredHopAB, _, _, _,
+                        ConeTrim, HeadDelete, [_, RederiveSeed], ReviveHopAB, _,
+                        _, _, StageRetract, HeadCount),
+    once(sub_atom(AssertSeed, _, _, _,
+                  'd."_sign" = 1 AND EXISTS (SELECT 1 FROM "edge" t')),
+    once(sub_atom(DredSeed, _, _, _,
+                  'd."_sign" = -1 AND NOT EXISTS (SELECT 1 FROM "edge" t')),
+    once(sub_atom(AssertHopAB, _, _, _, 'FROM "__ping_path" b0')),
+    once(sub_atom(AssertHopAB, _, _, _,
+                  'NOT EXISTS (SELECT 1 FROM "path" p WHERE')),
+    once(sub_atom(DredHopAB, _, _, _,
+                  'NOT EXISTS (SELECT 1 FROM "__cone_path" p WHERE')),
+    once(sub_atom(ReviveHopAB, _, _, _,
+                  'EXISTS (SELECT 1 FROM "__cone_path" p WHERE')),
+    once(sub_atom(RederiveSeed, _, _, _, 'FROM "__cone_path" c, ')),
+    CommitA == 'INSERT OR IGNORE INTO "path" ("node") SELECT "node" FROM "__ping_path"',
+    ArrivalA == 'INSERT INTO "__new_path" ("node", "__refcount") SELECT "node", 1 FROM "__ping_path"',
+    ConeTrim == 'DELETE FROM "__cone_path" WHERE NOT EXISTS (SELECT 1 FROM "path" h WHERE h."node" = "__cone_path"."node")',
+    HeadDelete == 'DELETE FROM "path" WHERE ("node") IN (SELECT "node" FROM "__cone_path")',
+    once(sub_atom(StageRetract, _, _, _, 'SELECT -1, row_number() OVER () - 1, "node" FROM "__cone_path"')),
+    HeadCount == 'SELECT count(*) AS "n" FROM "path"',
     Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], []),
     retraction_guard(Plan, 'recursive-cte-reseed').
+
+% A NEGATED body atom retracts a head row on an ARRIVAL, which stages no -1
+% for a DRed seed to read, so the head keeps the refCount recompute instead.
+test(negated_body_refuses_the_in_place_plan) :-
+    RelPlans = [
+        relplan(root/1, set, [node], none, [int]),
+        relplan(edge/2, set, [parent, child], none, [int, int]),
+        relplan(blocked/1, set, [node], none, [int]),
+        relplan(path/1, set, [node], none, [int])
+    ],
+    Rules = [
+        (path(Node) <- root(Node)),
+        (path(Child) <- path(Parent), edge(Parent, Child), not(blocked(Child)))
+    ],
+    level_ref_count_sql(
+        RelPlans, path/1, Rules,
+        refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none)),
+    ExpandPlan = expandplan(_, _, _, _, _, _, _).
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
     lowered_for(shared_demand_refcount, Lowered),

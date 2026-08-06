@@ -11,16 +11,27 @@
  * frontier between rounds.
  *
  * The receipt is statements per tick against closure DEPTH, pinned EXACTLY.
- * The expand fill (rx expand over the wavefront pair) pays 3 statements per
- * round -- clear idle wave, hop, absorb -- and every one touches only wavefront
- * rows, so the pinned shape is affine: STATEMENTS_FLAT + 3 * (depth + 1).
- * The defect class this rail exists for pays per round AND re-reads the whole
- * frontier each round; any change to the per-round shape moves these exact
- * numbers and fails the pin.
+ * The in-place assert walk (IDredPlan) pays 4 statements per round -- clear
+ * idle wave, hop, commit the wave into the head, append it to __new_<rel> --
+ * and every one touches only wavefront rows, so the pinned shape is affine:
+ * STATEMENTS_FLAT + 4 * (depth + 1). The defect class this rail exists for
+ * pays per round AND re-reads the whole frontier each round; any change to the
+ * per-round shape moves these exact numbers and fails the pin.
  *
  * FAIL-PRE-FIX RECEIPT (naive loop, restored from e3997cec's parent and rerun):
  * [39, 59, 91], slope 4 per round with each round re-reading everything. The
- * one-pass CTE era pinned [36, 36, 36]; the expand fill pins [48, 63, 87].
+ * one-pass CTE era pinned [36, 36, 36]; the expand fill into __support_next
+ * pinned [48, 63, 87]; in-place head maintenance pins [48, 68, 100] (four
+ * statements per round, and a flat term four smaller because the tail no
+ * longer updates, diffs and re-inserts the whole head).
+ *
+ * The SECOND test is the retraction slope, and it is the reason DRed exists:
+ * rows touched on a delete tick must follow the CONE, never |head|. Bulk chain
+ * depth 8/16/32 puts 42/142/534 rows in the head while the cone stays 3.
+ * FAIL-PRE-FIX RECEIPT (the shipped full-recompute path at 14c03007, this file
+ * checked out over it and rerun 2026-08-06): [105, 153, 249] -- the reseed
+ * walks the WHOLE closure, so its round count is the bulk chain's depth. In
+ * place it is [111, 111, 111].
  *
  * The chain is fed as ONE arrival batch of consecutive same-rel rows, which the
  * arrival plane batches into one insert, so the count this file measures is the
@@ -54,10 +65,34 @@ function chainArrivals(depth: number): readonly IArrivalRow[] {
 
 /** Pinned rather than only compared: an equality assertion alone would still
  *  hold if every depth grew together. Measured at depths 3, 8 and 16. */
-const STATEMENTS_FLAT = 36;
-const STATEMENTS_PER_ROUND = 3;
+const STATEMENTS_FLAT = 32;
+const STATEMENTS_PER_ROUND = 4;
 const statementsAtDepth = (depth: number): number =>
   STATEMENTS_FLAT + STATEMENTS_PER_ROUND * (depth + 1);
+
+/** Two DISJOINT chains: `small_*` is the one a delete tick cuts, `bulk_*` is
+ *  everything the cone must not touch. */
+function twoChainArrivals(bulkDepth: number): readonly IArrivalRow[] {
+  const rows: IArrivalRow[] = [];
+  for (let index = 0; index < CONE_CHAIN_DEPTH; index += 1) {
+    rows.push({
+      rel: "resolved_call_edge",
+      sign: "add",
+      row: [`small_${index}`, "fn", `small_${index + 1}`, "fn"],
+    });
+  }
+  for (let index = 0; index < bulkDepth; index += 1) {
+    rows.push({
+      rel: "resolved_call_edge",
+      sign: "add",
+      row: [`bulk_${index}`, "fn", `bulk_${index + 1}`, "fn"],
+    });
+  }
+  return rows;
+}
+
+const CONE_CHAIN_DEPTH = 3;
+const STATEMENTS_PER_DELETE_TICK = 111;
 
 async function runOneTick(depth: number) {
   const seam = ScratchStore.open(":memory:");
@@ -88,5 +123,58 @@ test("in-tick closure statements are flat in the recursion depth", async () => {
     [shallow.reachRows, middle.reachRows, deep.reachRows],
     [6, 36, 136],
     "every depth must reach full closure inside the one tick",
+  );
+});
+
+async function runDeleteTick(bulkDepth: number) {
+  const seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(seam, program.ddl));
+  await firstValueFrom(program.tick(seam, twoChainArrivals(bulkDepth)));
+  const before = await firstValueFrom(
+    seam.runner.execute(seam.db, program.finalSelect.flow_reach!),
+  );
+  stmt_counter.reset();
+  await firstValueFrom(
+    program.tick(seam, [
+      { rel: "resolved_call_edge", sign: "del", row: ["small_0", "fn", "small_1", "fn"] },
+    ]),
+  );
+  const statementCount = stmt_counter.get();
+  const after = await firstValueFrom(
+    seam.runner.execute(seam.db, program.finalSelect.flow_reach!),
+  );
+  seam.db.close();
+  return { statementCount, headBefore: before.rows.length, headAfter: after.rows.length };
+}
+
+test("a delete tick pays the cone, not the head", async () => {
+  const small = await runDeleteTick(8);
+  const middle = await runDeleteTick(16);
+  const large = await runDeleteTick(32);
+
+  assert.deepEqual(
+    [small.statementCount, middle.statementCount, large.statementCount],
+    [
+      STATEMENTS_PER_DELETE_TICK,
+      STATEMENTS_PER_DELETE_TICK,
+      STATEMENTS_PER_DELETE_TICK,
+    ],
+    `the cone is ${CONE_CHAIN_DEPTH} rows at every head size: bulk 8 ran ${small.statementCount} statements, bulk 16 ran ${middle.statementCount}, bulk 32 ran ${large.statementCount}`,
+  );
+  // Non-vacuity on both axes: the head really does grow, and the delete really
+  // does retract exactly the cut node's reach.
+  assert.deepEqual(
+    [small.headBefore, middle.headBefore, large.headBefore],
+    [42, 142, 534],
+    "the bulk chain must actually make the head grow",
+  );
+  assert.deepEqual(
+    [
+      small.headBefore - small.headAfter,
+      middle.headBefore - middle.headAfter,
+      large.headBefore - large.headAfter,
+    ],
+    [CONE_CHAIN_DEPTH, CONE_CHAIN_DEPTH, CONE_CHAIN_DEPTH],
+    "cutting the small chain's first edge retracts exactly its reach",
   );
 });
