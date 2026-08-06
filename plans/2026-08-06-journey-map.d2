@@ -2,6 +2,11 @@
 
 # A grid container drops edges BETWEEN cells; every arrow here is intra-band.
 # A markdown TABLE starts its rows with |, so those blocks need the ||| fence.
+# Only a SCHEMED url becomes an <a href>; d2 drops a bare path with no warning.
+vars: {
+  src: "file:///Users/chrishafley/projects/sprefa"
+}
+
 grid-rows: 2
 grid-columns: 3
 grid-gap: 50
@@ -100,6 +105,7 @@ c: "C. THE COMPILER  ::  one .dl6 in, one TS module out" {
   text_door: "TEXT DOOR  ::  compile/parse_dl.pl:1062 head_atom\n\nno dot route. `a.b(X) <- c(X).` is dl_parse_error(statement, position(1,2))" {
     shape: parallelogram
     class: danger
+    link: "${src}/v6/prolog/compile/parse_dl.pl#1062"
   }
 
   term: "prog(Decls, Rules)  ::  the retained program term" {
@@ -107,56 +113,77 @@ c: "C. THE COMPILER  ::  one .dl6 in, one TS module out" {
     class: shipped
   }
 
-  expand: "1_expansion.pl  ::  the phase driver" {
-    direction: right
+  expand: "1_expansion.pl  ::  the phase driver, expansion_phase/3" {
+    grid-rows: 1
+    grid-columns: 2
+    grid-gap: 16
     class: designed
 
-    enum: "0_enum_expand.pl\n\n:176 body + page -> body_page\n:107 + body_tag(Id, Variant)\n:89 THROWS on collision" {
-      shape: package
-      class: shipped
-    }
-    match: "0_match_expand.pl\n\nexhaustiveness needs enum_context/2,\nbecause expansion ERASED its own input" {
-      shape: package
-      class: shipped
-    }
-    dot: "0_dot_expand.pl:29\n\n'There is no module half in scope'.\nSilently mints a rel called dot_get." {
-      shape: package
-      class: danger
-    }
-    enum -> match: "hand it the context" { style.stroke: "#137333"; style.stroke-width: 2 }
-    match -> dot { style.stroke: "#5f6368" }
+    phases: |||md
+    | order | phase | expander |
+    |---|---|---|
+    | 10 | `enum` | `enum_expand:expand_enum_in_context` |
+    | 20 | `decl_spread` | **unwired** |
+    | 30 | `row_spread` | **unwired** |
+    | 40 | `match` | `match_expand:...` |
+    | 42 | `seq` | `seq_expand:...` |
+    | 44 | `dot` | `dot_expand:...` |
+    | 45 | `coalesce` | `coalesce_expand:...` |
+    | 46 | `ast` | `ast_expand:...` |
+    | 50 | `relation_edge` | `relation_edge_expand:...` |
+
+    Order is the number, so no arrow is needed. Two slots are declared and
+    unwired, which is why the table beats a chain of boxes.
+    ||| { class: shipped; shape: rectangle }
+
+    notes: |||md
+    ## the two that matter to the module arc
+    **10 enum** is the shipped answer to nesting on the right-hand side:
+    `:176` joins the name, `:107` mints `body_tag`, `:89-98` THROWS on a clash,
+    and `:12-16` keeps `enum_context/2` because expansion erases its own input.
+
+    **44 dot** is where the module half is missing. `0_dot_expand.pl:29` says
+    "There is no module half in scope", and a dotted head silently becomes a rel
+    named `dot_get`.
+
+    Phase 10 already does, for values, what phase 44 must learn to do for names.
+    ||| { class: danger; shape: rectangle }
   }
 
   analyze: "analyze.pl  ::  level graph, recursiveHeads/2, program_uses_catalog at :190" {
     shape: hexagon
     class: shipped
+    link: "${src}/v6/prolog/analyze.pl#191"
   }
 
   compilepl: "compile.pl\n\n:131 materialize_catalog_rel/2 injects the contract's col_type decls\n:175 subtracts the catalog from ArrivalTargets" {
     shape: package
     class: shipped
+    link: "${src}/v6/prolog/compile.pl#132"
   }
 
-  lower: "lower.pl  ::  one table-building path, four exits" {
+  lower: "lower.pl  ::  one table-building path, and what it calls" {
     direction: right
     class: designed
 
-    dd: "rel_ddl/6" { shape: package; class: shipped }
+    dd: "rel_ddl/6" { shape: package; class: shipped; link: "${src}/v6/prolog/lower.pl#821" }
     tn: ":162 table_name(Name/_Arity, Name)\n\nARITY DROPPED. edge/2 + edge/3\nemit CREATE TABLE \"edge\" TWICE.\nCorpus: 302 fixtures, 0 hits. Latent." {
       shape: package
       class: danger
+      link: "${src}/v6/prolog/lower.pl#162"
     }
-    dict: ":851 dictionary table\n__id INTEGER PRIMARY KEY,\nUNIQUE(cols), __refcount" { shape: package; class: shipped }
-    cat: ":634-658 catalog contract,\nchild-walk index, one INSERT OR IGNORE" { shape: package; class: shipped }
+    dict: ":851 dictionary table\n__id INTEGER PRIMARY KEY,\nUNIQUE(cols), __refcount" { shape: package; class: shipped; link: "${src}/v6/prolog/lower.pl#851" }
+    cat: ":635-658 catalog contract,\nchild-walk index, one INSERT OR IGNORE" { shape: package; class: shipped; link: "${src}/v6/prolog/lower.pl#635" }
 
     dd -> tn: "names it" { style.stroke: "#c5221f"; style.stroke-width: 2 }
     dd -> dict: "a declared type" { style.stroke: "#137333" }
     dd -> cat: "the catalog is an ORDINARY rel" { style.stroke: "#137333"; style.stroke-width: 3 }
   }
 
-  emit: "emit_ts.pl:56 js_object_key/2\n\nbare identifier stays bare, anything else gets quoted. 7 call sites." {
+  emit: "emit_ts.pl:58 js_object_key/2\n\nbare identifier stays bare, anything else gets quoted. 7 call sites." {
     shape: package
     class: shipped
+    link: "${src}/v6/prolog/emit_ts.pl#58"
   }
 
   out: "module.ts  ::  relColumns, ddl[], boot[], levels[]" {
@@ -216,7 +243,9 @@ e: "E. HOT RELOAD  ::  what the swap actually says, today and after h5" {
 # ─── D ───────────────────────────────────────────────────────────────────────
 d: "D. THE SYMMETRY  ::  two intern tables, one mechanism" {
   class: stage
-  direction: right
+  grid-rows: 2
+  grid-columns: 2
+  grid-gap: 20
 
   typeside: "TYPE side, shipped" {
     class: shipped
@@ -285,9 +314,6 @@ d: "D. THE SYMMETRY  ::  two intern tables, one mechanism" {
   disambiguator. Two FILES can carry one rel name; two variants in one
   file cannot.
   ||| { class: chosen; shape: rectangle }
-
-  typeside -> claim: "same mechanism" { style.stroke: "#137333"; style.stroke-width: 3 }
-  relside -> claim: "same mechanism" { style.stroke: "#1967d2"; style.stroke-width: 3 }
 }
 
 # ─── F ───────────────────────────────────────────────────────────────────────

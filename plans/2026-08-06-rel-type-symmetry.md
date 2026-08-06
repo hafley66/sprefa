@@ -47,15 +47,15 @@ variants in one file cannot.
 | collision refusal, generated vs plain names | `v6/prolog/0_enum_expand.pl:89-98` `validate_generated_names/2` | shipped |
 | metadata kept because expansion erases its input | `v6/prolog/0_enum_expand.pl:12-16` `enum_context/2` | shipped |
 | dictionary table = interned instances | `v6/prolog/lower.pl:851` `CREATE TABLE ... ("__id" INTEGER PRIMARY KEY, ..., UNIQUE (...))` | shipped |
-| refcount column, level-headed refs only | `v6/prolog/lower.pl:843-846` | shipped |
+| refcount column, level-headed refs only | `v6/prolog/lower.pl:844-846` | shipped |
 | refcount decrement, zero-collect, delete | `v6/prolog/lower.pl:2470-2476` | shipped |
 | `__ref_<Type>` TEMP view | `v6/prolog/lower.pl:857`, `:906-910` | shipped |
-| catalog contract, 6 columns | `v6/prolog/lower.pl:634-637` `catalog_ddl_contract/2` | shipped (g1) |
-| child-walk covering index | `v6/prolog/lower.pl:641-643` | shipped (g1) |
+| catalog contract, 6 columns | `v6/prolog/lower.pl:635-638` `catalog_ddl_contract/2` | shipped (g1) |
+| child-walk covering index | `v6/prolog/lower.pl:641-642` | shipped (g1) |
 | one `INSERT OR IGNORE` for every catalog row | `v6/prolog/lower.pl:647-658` `catalog_row_ddl/3` | shipped (g1) |
-| decl injection so the ordinary `rel_ddl/6` path builds the table | `v6/prolog/compile.pl:131` `materialize_catalog_rel/2` | shipped (g1) |
+| decl injection so the ordinary `rel_ddl/6` path builds the table | `v6/prolog/compile.pl:132` `materialize_catalog_rel/2` | shipped (g1) |
 | catalog subtracted from ArrivalTargets | `v6/prolog/compile.pl:175` | shipped (g1) |
-| arity gate on the catalog rel | `v6/prolog/analyze.pl:190` `program_uses_catalog` | shipped (g1) |
+| arity gate on the catalog rel | `v6/prolog/analyze.pl:191` `program_uses_catalog` | shipped (g1) |
 | swap re-runs DDL and swallows collisions | `v6/tsv2/serve/3_engine.ts:224-246` `isAlreadyExists`, `bootServedProgram` | shipped, and the reshape hole |
 | one connection for the server's life | `v6/tsv2/serve/4_http.ts:156` | shipped |
 | `table_name/2` DROPS arity | `v6/prolog/lower.pl:162` | shipped, latent defect |
