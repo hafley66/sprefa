@@ -203,10 +203,10 @@ catalog_mentions_rule(Rule) :-
           catalog_mentions_atom(Goal) )
     ).
 
-% Arity 6 is the length of lower.pl's catalog_ddl_contract/2 column list, pinned
+% Arity 7 is the length of lower.pl's catalog_ddl_contract/2 column list, pinned
 % by catalog_gate_is_arity_exact; a mention at any other arity is an ordinary rel.
 catalog_mentions_atom(Atom) :-
-    functor(Atom, '__rel', 6).
+    functor(Atom, '__rel', 7).
 
 % ═══ program-wide ref inventory ═════════════════════════════════════════════
 % declared_refs/2: every kind(Ref, _) declaration, regardless of whether any

@@ -171,6 +171,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     declared_refs(Decls, DeclaredRefs),
     seeded_refs(Initial, SeededRefs),
     append([RuleRefs, DeclaredRefs, SeededRefs], AllRefs0), sort(AllRefs0, AllRefs),
+    check_single_arity_per_name(AllRefs),
     derived_refs(Rules, DerivedRefs),
     % The catalog is seeded by DDL, so it is never an arrival target; leaving it
     % in would open the serve door to writes against a compiler-owned table.
@@ -223,6 +224,16 @@ check_world_shapes(prog(Decls, _), Initial, Schedule) :-
         ;  throw(unsupported_construct(
                     type_arrival_shape_mismatch(Ref, Column, TypeName, Reason)))
         )
+    ;   true
+    ).
+
+% table_name/2 drops the arity, so two arities of one name would emit
+% CREATE TABLE twice for one table.
+check_single_arity_per_name(Refs) :-
+    (   member(Name/LowArity, Refs),
+        member(Name/HighArity, Refs),
+        LowArity < HighArity
+    ->  throw_as_compiler_refusal(rel_arity_collision(Name, LowArity, HighArity))
     ;   true
     ).
 

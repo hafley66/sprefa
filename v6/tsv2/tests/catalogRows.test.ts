@@ -54,9 +54,9 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { ISqlSeam } from "../runtime/types.ts";
 
 const CATALOG_DDL: readonly string[] = [
-  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID`,
+  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity")) WITHOUT ROWID`,
   `CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")`,
-  `INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id") VALUES (1,0,0,'text','primitive',0),(2,0,0,'int','primitive',0),(3,0,0,'float','primitive',0),(4,0,0,'bool','primitive',0),(5,0,0,'json','primitive',0),(6,0,0,'flow_edge','rel',0),(7,6,1,'from_path','column',1),(8,6,2,'to_path','column',1),(9,0,0,'flow_reach','rel',0),(10,9,1,'from_path','column',1),(11,9,2,'to_path','column',1)`,
+  `INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity") VALUES (1,0,0,'text','primitive',0,0),(2,0,0,'int','primitive',0,0),(3,0,0,'float','primitive',0,0),(4,0,0,'bool','primitive',0,0),(5,0,0,'json','primitive',0,0),(6,0,0,'flow_edge','rel',0,2),(7,6,1,'from_path','column',1,0),(8,6,2,'to_path','column',1,0),(9,0,0,'flow_reach','rel',0,2),(10,9,1,'from_path','column',1,0),(11,9,2,'to_path','column',1,0)`,
 ];
 
 function run(seam: ISqlSeam, sql: string) {
