@@ -632,14 +632,14 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
 
 % ═══ step g1 SCAFFOLD: the program catalog (rulings.pl:613 catalog_universe) ═
 % Rows describing this program's OWN rel decls, through the door tick_table_ddl/1 uses. A column is a CHILD ROW of its rel, so it carries a type and an annotation exactly the way a rel does: kind in {primitive, rel, column}, ordinal 0 on a rel and the 1-based argument position on a column, parent_id 0 until module nesting lands, type_id another rel_id or 0.
-catalog_ddl_contract('__catalog_rel',
+catalog_ddl_contract('__rel',
                      [ rel_id-int, parent_id-int, ordinal-int,
-                       local_name-text, kind-text, type_id-int ]).
+                       local_name-text, kind-text, type_id-int, arity-int ]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
 catalog_table_ddl([
-    'CREATE INDEX IF NOT EXISTS "__catalog_rel_parent" ON "__catalog_rel" ("parent_id", "local_name")']).
+    'CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")']).
 
 % Ids are assigned by POSITION for a byte-stable recompile: the five
 % primitives take 1..5, then each rel, then its columns (one INSERT OR IGNORE).
@@ -651,7 +651,7 @@ catalog_row_ddl(_Decls, RelPlans, [Statement]) :-
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
-           'INSERT OR IGNORE INTO "__catalog_rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id") VALUES ~w',
+           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity") VALUES ~w',
            [ValuesText]).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
@@ -660,12 +660,12 @@ catalog_primitive_rows(StartId, PrimitiveRows) :-
 catalog_primitive_rows(_, [], Acc, Rows) :- reverse(Acc, Rows).
 catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
-    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0) | Acc], Rows).
+    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0) | Acc], Rows).
 
 catalog_rel_rows([], Id, Id, []).
 catalog_rel_rows([RelPlan | Rest], Id0, FinalId, Rows) :-
-    RelPlan = relplan(Name/_, _Kind, Columns, _Key, ColumnTypes),
-    RelRow = row(Id0, 0, 0, Name, rel, 0),
+    RelPlan = relplan(Name/RelArity, _Kind, Columns, _Key, ColumnTypes),
+    RelRow = row(Id0, 0, 0, Name, rel, 0, RelArity),
     IdAfterRel is Id0 + 1,
     catalog_column_rows(Columns, ColumnTypes, Id0, 1, IdAfterRel, IdAfterColumns, ColumnRows),
     catalog_rel_rows(Rest, IdAfterColumns, FinalId, RestRows),
@@ -678,7 +678,7 @@ catalog_column_rows([ColumnName | RestColumns], ColumnTypes, RelId, Ordinal, Id0
     NextId is Id0 + 1,
     NextOrdinal is Ordinal + 1,
     catalog_column_rows(RestColumns, ColumnTypes, RelId, NextOrdinal, NextId, IdFinal, MoreRows),
-    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId).
+    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0).
 
 % Primitive id for a column's boundary type: the five primitives take 1..5,
 % every other boundary (ref(_), a struct name, a list) is 0.
@@ -689,11 +689,11 @@ catalog_type_id(bool, 4) :- !.
 catalog_type_id(json, 5) :- !.
 catalog_type_id(_, 0).
 
-catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId), Acc, [Part | Acc]) :-
+catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity), Acc, [Part | Acc]) :-
     sql_text_literal(Name, NameLiteral),
     sql_text_literal(Kind, KindLiteral),
-    format(atom(Part), '(~d,~d,~d,~w,~w,~d)',
-           [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId]).
+    format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d)',
+           [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId, Arity]).
 
 % SQL string literal: single-quoted, embedded single quotes doubled.
 sql_text_literal(Text, Literal) :-
