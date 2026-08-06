@@ -1,0 +1,2742 @@
+[0m
+> build · deepseek/deepseek-v4-flash-0731
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && git status && echo "---BRANCH---" && git branch --show-current && echo "---LOG---" && git log --oneline -5
+On branch lab/nothing-prose
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	BRIEF.md
+	lane.log
+
+nothing added to commit but untracked files present (use "git add" to track)
+---BRANCH---
+lab/nothing-prose
+---LOG---
+70eea8d1 exec_shootout contract: 3-way rust execution shootout (IR interp / rx operator graph / monomorphized) + harness IO contract
+5236731b md_inline joins the dl6 program whitelist; extract_md_html_query ARCH row; mdquery report salvaged
+a120f5af mdquery: extract query gains md/md_inline/html langs (tree-sitter-md block+inline per v5 pin, tree-sitter-html unified with ast-grep transitive); program whitelist takes md+html
+57430529 blobdoor+archrows landed: ast_query_blob_door ARCH row, comment_prod deviation clause closed, lane reports salvaged; ARCH.pl joins the comment-rail exempt list (dl6 rail's prolog grammar graded the record file for the first time; clause added to feed + dl6 program + claude-research bin, parity kept)
+99aec99e merge lab/extract-blob-door: extract query --digest door (staged-blob reads for cst hosts), comment-prod deviation paragraph deleted
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && git merge --ff-only 70eea8d1; echo "EXIT: $?"
+Already up to date.
+EXIT: 0
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls -la && echo "---V6---" && ls v6/ && echo "---V6/labs---" && ls v6/labs/ 2>/dev/null || echo "no labs dir"
+total 816
+drwxr-xr-x  68 chrishafley staff   2176 Aug  5 10:45 .
+drwxr-xr-x   9 chrishafley staff    288 Aug  5 10:44 ..
+drwxr-xr-x   4 chrishafley staff    128 Aug  5 10:44 .agent
+drwxr-xr-x   5 chrishafley staff    160 Aug  5 10:44 .agents
+drwxr-xr-x   4 chrishafley staff    128 Aug  5 10:44 .codex
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 .config
+drwxr-xr-x  36 chrishafley staff   1152 Aug  5 10:44 .dl
+-rw-r--r--   1 chrishafley staff     71 Aug  5 10:44 .git
+-rw-r--r--   1 chrishafley staff     50 Aug  5 10:44 .gitattributes
+-rw-r--r--   1 chrishafley staff     77 Aug  5 10:44 .gitbook.yaml
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 .githooks
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 .github
+-rw-r--r--   1 chrishafley staff   2347 Aug  5 10:44 .gitignore
+-rw-r--r--   1 chrishafley staff    641 Aug  5 10:44 .gitmodules
+-rw-r--r--   1 chrishafley staff     23 Aug  5 10:44 .mcp.json
+-rw-r--r--   1 chrishafley staff    341 Aug  5 10:44 .sprefa.toml
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 .vscode
+-rw-r--r--   1 chrishafley staff   1808 Aug  5 10:44 AGENTS.md
+-rw-r--r--   1 chrishafley staff   3993 Aug  5 10:45 BRIEF.md
+-rw-r--r--   1 chrishafley staff 107496 Aug  5 10:44 CHANGELOG.md
+-rw-r--r--   1 chrishafley staff   4722 Aug  5 10:44 CHECKPOINT.md
+-rw-r--r--   1 chrishafley staff   7696 Aug  5 10:44 CLAUDE.md
+-rw-r--r--   1 chrishafley staff   7625 Aug  5 10:44 CLAUDE.md.disabled
+-rw-r--r--   1 chrishafley staff  20845 Aug  5 10:44 COMPOSE.md
+-rw-r--r--   1 chrishafley staff 151055 Aug  5 10:44 Cargo.lock
+-rw-r--r--   1 chrishafley staff  11844 Aug  5 10:44 Cargo.toml
+-rw-r--r--   1 chrishafley staff   2995 Aug  5 10:44 DEBUG_BRIEF.txt
+-rw-r--r--   1 chrishafley staff 130367 Aug  5 10:44 DEVLOG.md
+-rw-r--r--   1 chrishafley staff  50370 Aug  5 10:44 PLANS.md
+-rw-r--r--   1 chrishafley staff 119967 Aug  5 10:44 README.md
+drwxr-xr-x  14 chrishafley staff    448 Aug  5 10:44 anim
+-rw-r--r--   1 chrishafley staff  18291 Aug  5 10:44 arch-codebase-claude.d2
+-rw-r--r--   1 chrishafley staff  26119 Aug  5 10:44 arch-codebase-codex-dark.d2
+-rw-r--r--   1 chrishafley staff  25497 Aug  5 10:44 arch-codebase-codex.d2
+drwxr-xr-x   4 chrishafley staff    128 Aug  5 10:44 archive
+drwxr-xr-x  10 chrishafley staff    320 Aug  5 10:44 assets
+drwxr-xr-x  20 chrishafley staff    640 Aug  5 10:44 bench
+drwxr-xr-x  22 chrishafley staff    704 Aug  5 10:44 book
+drwxr-xr-x   4 chrishafley staff    128 Aug  5 10:44 books
+-rw-r--r--   1 chrishafley staff   5829 Aug  5 10:44 build.rs
+drwxr-xr-x 279 chrishafley staff   8928 Aug  5 10:44 chat_log
+drwxr-xr-x   6 chrishafley staff    192 Aug  5 10:44 deck
+-rw-r--r--   1 chrishafley staff    716 Aug  5 10:44 dist-workspace.toml
+drwxr-xr-x  40 chrishafley staff   1280 Aug  5 10:44 docs
+drwxr-xr-x   6 chrishafley staff    192 Aug  5 10:44 editors
+drwxr-xr-x 148 chrishafley staff   4736 Aug  5 10:44 examples
+-rw-r--r--   1 chrishafley staff  14010 Aug  5 10:44 experiment-sqry-vs-dl.md
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 feedback
+-rwxr-xr-x   1 chrishafley staff   5885 Aug  5 10:44 install-dl.sh
+-rw-r--r--   1 chrishafley staff   1319 Aug  5 10:44 install.sh
+-rw-r--r--   1 chrishafley staff   9057 Aug  5 10:44 justfile
+-rw-r--r--   1 chrishafley staff  17571 Aug  5 10:44 kotlin-import-hazards-research.md
+drwxr-xr-x   5 chrishafley staff    160 Aug  5 10:44 labs
+-rw-r--r--   1 chrishafley staff   1479 Aug  5 10:45 lane.log
+-rw-r--r--   1 chrishafley staff    123 Aug  5 10:44 mg.dl
+-rw-r--r--   1 chrishafley staff    422 Aug  5 10:44 opencode.json
+drwxr-xr-x 315 chrishafley staff  10080 Aug  5 10:44 plans
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 proofs
+drwxr-xr-x   8 chrishafley staff    256 Aug  5 10:44 refactor-suggestions-archive
+drwxr-xr-x  13 chrishafley staff    416 Aug  5 10:44 research
+drwxr-xr-x  11 chrishafley staff    352 Aug  5 10:44 scripts
+drwxr-xr-x  70 chrishafley staff   2240 Aug  5 10:44 src
+drwxr-xr-x  11 chrishafley staff    352 Aug  5 10:44 std
+drwxr-xr-x   7 chrishafley staff    224 Aug  5 10:44 tests
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 tools
+drwxr-xr-x  10 chrishafley staff    320 Aug  5 10:44 tree-sitter-dl
+drwxr-xr-x  29 chrishafley staff    928 Aug  5 10:44 v6
+drwxr-xr-x   3 chrishafley staff     96 Aug  5 10:44 vendor
+---V6---
+AGENTS.md
+ARCH-MAP.md
+ARCHITECTURE.md
+DECISIONS.md
+GETTING-STARTED.md
+INDEX.md
+MAP.md
+READINESS.md
+README.md
+architecture.html
+bench-cli
+dl
+findings
+hs-prolog
+justfile
+labs
+plans
+prolog
+salsa.html
+skills
+sprefa-extract
+sprefa-seed
+sprefa-store
+symmetries.html
+tools
+tsv2
+---V6/labs---
+exec_shootout
+[0m
+[0m→ [0mRead v6/dl/fixtures/comment-prod.dl6
+Merge succeeded (already on base). Let me explore the repo structure and precedent files.
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls -la v6/tsv2/ v6/tsv2/scripts/ 2>/dev/null && echo "---LABS---" && ls -la v6/labs/exec_shootout/
+v6/tsv2/:
+total 68
+drwxr-xr-x  21 chrishafley staff   672 Aug  5 10:44 .
+drwxr-xr-x  29 chrishafley staff   928 Aug  5 10:44 ..
+-rw-r--r--   1 chrishafley staff   726 Aug  5 10:44 .gitignore
+-rw-r--r--   1 chrishafley staff  8082 Aug  5 10:44 CRAWL-BENCH.md
+-rw-r--r--   1 chrishafley staff  4787 Aug  5 10:44 SCALE.md
+drwxr-xr-x   4 chrishafley staff   128 Aug  5 10:44 cli
+drwxr-xr-x   5 chrishafley staff   160 Aug  5 10:44 gen
+drwxr-xr-x 209 chrishafley staff  6688 Aug  5 10:44 gen_emitted
+drwxr-xr-x  12 chrishafley staff   384 Aug  5 10:44 goldens
+drwxr-xr-x   6 chrishafley staff   192 Aug  5 10:44 labs
+-rw-r--r--   1 chrishafley staff  6204 Aug  5 10:44 p1-receipts.jsonl
+-rw-r--r--   1 chrishafley staff  2162 Aug  5 10:44 p2-receipts.jsonl
+-rw-r--r--   1 chrishafley staff 11527 Aug  5 10:44 p3-receipts.jsonl
+-rw-r--r--   1 chrishafley staff  1354 Aug  5 10:44 package.json
+-rw-r--r--   1 chrishafley staff 13863 Aug  5 10:44 pnpm-lock.yaml
+drwxr-xr-x  16 chrishafley staff   512 Aug  5 10:44 runtime
+drwxr-xr-x   6 chrishafley staff   192 Aug  5 10:44 rxoracle
+drwxr-xr-x  51 chrishafley staff  1632 Aug  5 10:44 scripts
+drwxr-xr-x   9 chrishafley staff   288 Aug  5 10:44 serve
+drwxr-xr-x  52 chrishafley staff  1664 Aug  5 10:44 tests
+-rw-r--r--   1 chrishafley staff   602 Aug  5 10:44 tsconfig.json
+
+v6/tsv2/scripts/:
+total 480
+drwxr-xr-x 51 chrishafley staff  1632 Aug  5 10:44 .
+drwxr-xr-x 21 chrishafley staff   672 Aug  5 10:44 ..
+-rwxr-xr-x  1 chrishafley staff   893 Aug  5 10:44 1_extraction-clock-golden.sh
+-rw-r--r--  1 chrishafley staff 10900 Aug  5 10:44 1_p1-receipts.ts
+-rw-r--r--  1 chrishafley staff 14385 Aug  5 10:44 2_p3-retract-bench.ts
+-rwxr-xr-x  1 chrishafley staff  1496 Aug  5 10:44 3_p3-crash-recovery.sh
+-rw-r--r--  1 chrishafley staff  3067 Aug  5 10:44 4_ghcacher-tick-golden.ts
+-rw-r--r--  1 chrishafley staff 16969 Aug  5 10:44 5_file-watch-scale.ts
+-rwxr-xr-x  1 chrishafley staff   679 Aug  5 10:44 6_rtkq-extraction-golden.sh
+-rwxr-xr-x  1 chrishafley staff 14037 Aug  5 10:44 7_scale-floor.sh
+-rwxr-xr-x  1 chrishafley staff  3745 Aug  5 10:44 check-imports.sh
+-rwxr-xr-x  1 chrishafley staff  4258 Aug  5 10:44 comment-budget-feed.sh
+-rwxr-xr-x  1 chrishafley staff  4147 Aug  5 10:44 comment-budget-rail.sh
+-rw-r--r--  1 chrishafley staff  5278 Aug  5 10:44 comment-parity.sh
+-rw-r--r--  1 chrishafley staff  9896 Aug  5 10:44 comment-rails.sh
+-rw-r--r--  1 chrishafley staff   922 Aug  5 10:44 comment_arch_marker.py
+-rwxr-xr-x  1 chrishafley staff  1734 Aug  5 10:44 comment_budget_report.py
+-rw-r--r--  1 chrishafley staff  5203 Aug  5 10:44 comment_node.py
+-rw-r--r--  1 chrishafley staff  1966 Aug  5 10:44 comment_policy_markers.py
+-rw-r--r--  1 chrishafley staff  1264 Aug  5 10:44 crawl-bench-loop-baseline.tsv
+-rwxr-xr-x  1 chrishafley staff 20245 Aug  5 10:44 crawl-bench.sh
+-rwxr-xr-x  1 chrishafley staff  3863 Aug  5 10:44 devlog.sh
+-rwxr-xr-x  1 chrishafley staff  5282 Aug  5 10:44 endurance.sh
+-rwxr-xr-x  1 chrishafley staff 16582 Aug  5 10:44 extraction-live.sh
+-rwxr-xr-x  1 chrishafley staff 10479 Aug  5 10:44 files.sh
+-rwxr-xr-x  1 chrishafley staff 20182 Aug  5 10:44 flagship-callgraph.sh
+-rw-r--r--  1 chrishafley staff 10763 Aug  5 10:44 flagship-classify.py
+-rw-r--r--  1 chrishafley staff 10235 Aug  5 10:44 flagship-flow-classify.py
+-rwxr-xr-x  1 chrishafley staff  5211 Aug  5 10:44 flagship-flow.sh
+-rwxr-xr-x  1 chrishafley staff 11280 Aug  5 10:44 getting-started.sh
+-rwxr-xr-x  1 chrishafley staff  6932 Aug  5 10:44 ghcacher-live-smoke.sh
+-rwxr-xr-x  1 chrishafley staff  6201 Aug  5 10:44 golden-flex.sh
+-rw-r--r--  1 chrishafley staff  5127 Aug  5 10:44 golden-run.ts
+-rw-r--r--  1 chrishafley staff 11276 Aug  5 10:44 golden-schedules.ts
+-rwxr-xr-x  1 chrishafley staff  1116 Aug  5 10:44 leak-soak.sh
+-rwxr-xr-x  1 chrishafley staff 13286 Aug  5 10:44 lsp-diags.sh
+-rw-r--r--  1 chrishafley staff  8117 Aug  5 10:44 lsp_diag_driver.py
+-rw-r--r--  1 chrishafley staff 10301 Aug  5 10:44 manifest-reason-diff.ts
+-rwxr-xr-x  1 chrishafley staff  2843 Aug  5 10:44 memory-soak.sh
+-rw-r--r--  1 chrishafley staff 17172 Aug  5 10:44 memory-soak.ts
+-rwxr-xr-x  1 chrishafley staff  5541 Aug  5 10:44 parity-grep.py
+-rw-r--r--  1 chrishafley staff  3508 Aug  5 10:44 run-emitted.ts
+-rw-r--r--  1 chrishafley staff  2376 Aug  5 10:44 run-fixture.ts
+-rw-r--r--  1 chrishafley staff  5484 Aug  5 10:44 scale-bench.ts
+-rw-r--r--  1 chrishafley staff   634 Aug  5 10:44 scale-floor-reference.json
+-rwxr-xr-x  1 chrishafley staff 11092 Aug  5 10:44 scip-families.sh
+-rwxr-xr-x  1 chrishafley staff 11543 Aug  5 10:44 self-map.sh
+-rwxr-xr-x  1 chrishafley staff  5071 Aug  5 10:44 sweep.sh
+-rw-r--r--  1 chrishafley staff 15282 Aug  5 10:44 sweep.ts
+-rwxr-xr-x  1 chrishafley staff 13168 Aug  5 10:44 v5-git-diags.sh
+-rwxr-xr-x  1 chrishafley staff 14610 Aug  5 10:44 v5-parity.sh
+---LABS---
+total 8
+drwxr-xr-x 3 chrishafley staff   96 Aug  5 10:44 .
+drwxr-xr-x 3 chrishafley staff   96 Aug  5 10:44 ..
+-rw-r--r-- 1 chrishafley staff 5168 Aug  5 10:44 CONTRACT.md
+[0m
+[0m→ [0mRead v6/tsv2/scripts/comment-budget-rail.sh
+[0m→ [0mRead v6/tsv2/scripts/comment-budget-feed.sh
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls v6/tsv2/serve/ && echo "---" && wc -l v6/tsv2/serve/*.ts 2>/dev/null
+0_compile.ts
+0_trace.ts
+1_hosts.ts
+2_binds.ts
+3_engine.ts
+4_http.ts
+main.ts
+---
+  115 v6/tsv2/serve/0_compile.ts
+  117 v6/tsv2/serve/0_trace.ts
+  709 v6/tsv2/serve/1_hosts.ts
+  463 v6/tsv2/serve/2_binds.ts
+  242 v6/tsv2/serve/3_engine.ts
+  519 v6/tsv2/serve/4_http.ts
+   35 v6/tsv2/serve/main.ts
+ 2200 total
+[0m
+[0m→ [0mRead v6/tsv2/goldens/comment_rail_golden/0_comment_rail_golden.dl6
+[0m→ [0mRead v6/tsv2/serve/main.ts
+[0m→ [0mRead v6/tsv2/serve/3_engine.ts
+[0m→ [0mRead v6/tsv2/serve/4_http.ts
+[0m→ [0mRead v6/tsv2/serve/1_hosts.ts
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls v6/dl/ v6/dl/fixtures/ 2>/dev/null && echo "---GOLDENS---" && ls v6/tsv2/goldens/ 2>/dev/null
+v6/dl/:
+fixtures
+grammar
+langium-config.json
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+scripts
+src
+tasks.d.ts
+tests
+tsconfig.json
+
+v6/dl/fixtures/:
+0_extraction-clock-golden.dl6
+1_rtkq-extraction-golden.dl6
+clock-swr-demo.dl6
+comment-arch-rail.dl6
+comment-lang-junction-rail.dl6
+comment-lint-rail.dl6
+comment-prod.dl6
+comment-readme-rail.dl6
+comment-suppress-rail.dl6
+comment-zone-rail.dl6
+conformance.dl6
+corpus
+crawl_org.dl6
+dataflow-rail.dl6
+devlog.dl6
+diag-rail.dl6
+door-handwritten.dl6
+extraction-live.dl6
+files-hosts.dl6
+flagship-callgraph.dl6
+flagship-flow.dl6
+ghcacher-findings.md
+ghcacher.dl6
+ghcacher_live.dl6
+golden
+golden-flex.dl6
+norm-route.dl6
+scip-families.dl6
+self-map.dl6
+served-endurance.dl6
+served-host-clock.dl6
+served-json-projection.dl6
+served-watch-rail.dl6
+sg-rail.dl6
+v5-git-diags.dl6
+v5-parity.dl6
+---GOLDENS---
+comment_rail_golden
+flagship_callgraph
+ghcacher_304_golden
+ghcacher_checkout_golden
+ghcacher_config_golden
+ghcacher_env_golden
+ghcacher_tick_golden
+ghcacher_tier_golden
+multirepo_crawl
+trace-line.jsonl
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && grep -rl "sh " v6/tsv2/goldens/ 2>/dev/null | head; echo "---"; grep -rl "sh " v6/dl/ 2>/dev/null | head
+v6/tsv2/goldens//ghcacher_tick_golden/0_ghcacher_clock_golden.dl6
+v6/tsv2/goldens//ghcacher_tick_golden/README.md
+v6/tsv2/goldens//ghcacher_tier_golden/README.md
+v6/tsv2/goldens//ghcacher_tier_golden/0_ghcacher_tier_golden.dl6
+v6/tsv2/goldens//multirepo_crawl/1_corpus.sh
+v6/tsv2/goldens//multirepo_crawl/3_classify.py
+v6/tsv2/goldens//multirepo_crawl/2_gate.sh
+v6/tsv2/goldens//multirepo_crawl/README.md
+v6/tsv2/goldens//multirepo_crawl/v5_golden/MANIFEST.tsv
+v6/tsv2/goldens//multirepo_crawl/0_multirepo_crawl.dl6
+---
+v6/dl//grammar/dl.langium
+v6/dl//tests/1_helpers_db.ts
+v6/dl//tests/2_helpers_hosts.ts
+v6/dl//tests/0_trace.test.ts
+v6/dl//tests/0_ast_bridge.test.ts
+v6/dl//tests/7_churn_stress.test.ts
+v6/dl//tests/golden/curl-session.sh
+v6/dl//tests/3_runtime.test.ts
+v6/dl//tests/4_hosts.test.ts
+v6/dl//tests/4_ingest.test.ts
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls v6/tsv2/gen/ v6/tsv2/gen_emitted/ 2>/dev/null | head -30; echo "---TESTS host---"; ls v6/dl/tests/
+v6/tsv2/gen/:
+demand_laziness_effect_rows.ts
+scale_generated.ts
+switch_as_keyed_replace.ts
+
+v6/tsv2/gen_emitted/:
+aggregate_count_min_max_track_arrivals_and_retraction.ts
+aggregate_min_recomputes_when_the_minimum_is_retracted.ts
+aggregate_sum_tracks_a_growing_and_shrinking_group.ts
+any_two_tagged_arms_land_on_one_tick.ts
+arrival_affinity_rewrite_keeps_delta.ts
+arrival_dup_batch_partial_ignore.ts
+backslash_in_string_literal_survives_both_doors.ts
+batched_increments_both_count.ts
+bind_computes_derived_value_then_comparison_filters.ts
+bool_identity_comparison_filters.ts
+bool_literals_round_trip.ts
+bool_relation_negation_is_two_valued.ts
+callgraph_derivation_over_extraction.ts
+callgraph_unused_inverts_with_the_call_set.ts
+changed_since_ignores_events_before_turn.ts
+changed_since_spans_two_turns.ts
+clean_state_gate_and_exit_zero.ts
+clean_state_no_diags.ts
+clock_rel_join_storms.ts
+coalesce_default_returns_when_source_retracts.ts
+coalesce_defaults_the_absent_row.ts
+coalesce_in_edge_body_samples.ts
+coalesce_over_derived_source.ts
+combine_edge_is_the_conjunction_spelling.ts
+---TESTS host---
+0_ast_bridge.test.ts
+0_helpers.ts
+0_scaffold.test.ts
+0_trace.test.ts
+1_helpers_db.ts
+2_helpers_binds.ts
+2_helpers_hosts.ts
+3_runtime.test.ts
+4_binds.test.ts
+4_hosts.test.ts
+4_ingest.test.ts
+5_diag.test.ts
+6_binds_http.test.ts
+6_http.test.ts
+7_churn_stress.test.ts
+8_leak_soak.test.ts
+conformance.test.ts
+golden
+[0m
+[0m→ [0mRead v6/tsv2/goldens/ghcacher_tick_golden/0_ghcacher_clock_golden.dl6
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls v6/dl/src/ && echo "---" && grep -rln "witness_digest\|demand" v6/dl/src/ | head
+0_ast_bridge.ts
+0_digest.ts
+0_generated
+0_row.ts
+0_trace.ts
+0_types.ts
+1_binds.ts
+1_hosts.ts
+2_schema.ts
+3_runtime.ts
+4_ingest.ts
+5_diag.ts
+6_http.ts
+main.ts
+---
+v6/dl/src//0_ast_bridge.ts
+v6/dl/src//1_binds.ts
+v6/dl/src//1_hosts.ts
+v6/dl/src//0_types.ts
+v6/dl/src//0_trace.ts
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && grep -n "witness_digest\|demand\|_salts_\|input_name\|host_demand" v6/dl/src/1_hosts.ts | head -60
+3: * and HostRunner (the `?` probe machinery: demand rows -> digest-cached effect ->
+10: * extraction machinery as a demand-driven host, not a second ingest path). `HostRunner`
+341:// builtinExtract: task 4.4, exposure of the extraction machinery as a demand-driven
+397:   *  BOOT REPLAY (endurance law, goal-endurance.sh phase 1): demand rows are durable
+436:   *  demand row. One rows() read per host rel (per-REL, never per-row: N+1 law).
+472:    // commit, so they carry no response tick to tag -- the demand tick (pending.tick)
+482:      // rows -- this demand was already answered by the run that minted the row.
+[0m
+[0m→ [0mRead v6/tsv2/serve/0_compile.ts
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && ls v6/prolog/ && echo "---" && grep -rln "host_demand\|witness_digest\|demand" v6/prolog/ | head
+0_ast_expand.pl
+0_body_walk.pl
+0_coalesce_expand.pl
+0_cst_query.pl
+0_dot_expand.pl
+0_enum_expand.pl
+0_graph.pl
+0_match_expand.pl
+0_program_check.pl
+0_refusal_messages.pl
+0_relation_edge_expand.pl
+0_relation_pattern.pl
+0_seq_expand.pl
+0_type_plane.pl
+1_expansion.pl
+1_host_expand.pl
+2_subscribe.pl
+3_clock_check.pl
+6_profile.pl
+ARCH.pl
+LANG.md
+analyze.pl
+compile
+compile.pl
+conformance
+diag.pl
+emit_ts.pl
+examples
+labs
+lower.pl
+print_dl.pl
+src
+strat.pl
+sweep.pl
+tools
+---
+v6/prolog//2_subscribe.pl
+v6/prolog//1_host_expand.pl
+v6/prolog//labs/scc_extract/REPORT.md
+v6/prolog//labs/json_interop/0_receipts.pl
+v6/prolog//labs/rel_definition_hash/0_receipts.pl
+v6/prolog//tools/self_map_facts.pl
+v6/prolog//0_ast_expand.pl
+v6/prolog//emit_ts.pl
+v6/prolog//ARCH.pl
+v6/prolog//lower.pl
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && grep -n "demand\|witness\|salts\|host\b\|input" v6/prolog/1_host_expand.pl | head -50
+1:% Selected host, bind, probe, and query term forms.
+5:%   __host_demand_Name(Identity, Witness, Inputs..., Salts...)
+8:% The demand relation is derived by a level rule. The response relation is
+10:% schedule or, when served, from the host runner.
+13:% witness coexist and late answers replace rows positionally.
+16:% witnesses prevent this under the declared schedule contract.
+34:                host_input_roles/3
+81:% __host_demand_look and __host_response_look; the second declaration's `repo`
+93:% 2026-07-31 a host that no rule probed produced a host PLAN naming
+94:% __host_demand_<name> and __host_response_<name> and no DECLARATION of either.
+101:%   Error: unknown rel '__host_demand_gh_repos' in program '44a6494405...'
+104:% and the served process DIED. The load answered success, the boot demand scan
+109:% The fix is the reading that matches `rel`: an undemanded declaration is an
+111:% about an unheaded relation atom). So a host with no probe gets its demand and
+112:% response relations at their base arity -- no salts, because a salt only exists
+117:% salts widen the demand relation, so emitting a base-arity twin beside a
+118:% probed host would declare a SECOND relation under the same name at a
+123:                               demand_ref(DemandName), response_ref(ResponseName), _),
+185:              demand_ref(DemandRef), response_ref(ResponseRef),
+186:              input_roles(Roles))) :-
+189:    validate_columns(Inputs, input),
+194:    no_reserved_columns(Name, input, InputNames),
+197:    host_input_roles(Name, Inputs, Roles),
+216:    % STRUCT-AS-ROWS: a host column type may name a DECLARED struct type as
+219:    % col_type/3 in the program, host-produced entries included -- so the test
+236:    -> throw(column_mismatch(input_output_overlap(Name)))
+240:% A host column that collides with one the RUNTIME puts on the same relation.
+248:%   col __host_response_look/4 . witness_digest : text
+255:%   col __host_response_plain/4 . witness_digest, ordinal, path, line
+265:%   if (column === "witness_digest") return witnessDigest;
+267:%   const input = demand.inputs.get(column); ...
+269:% so a host output called `ordinal` can never receive its own value -- it gets
+270:% the answer's row index -- and an input called `witness_digest` gets the
+283:% demand relation, and it needs no separate check because a salt is not a new
+284:% name -- salts_match_columns/2 requires each salt to name a declared INPUT
+288:reserved_host_column(witness_digest).
+301:    -> throw(template_mismatch(unreferenced_input(Name)))
+303:    -> throw(template_mismatch(output_used_as_input(Name)))
+360:    atom_concat('__host_demand_', Name, DemandName),
+372:%      `repos` host answers on a clock -- and a bind's configuration column is
+387:%      a fresh witness. A live seam with no consumer is a widened seam with no
+472:                           demand_ref(DemandName),
+474:                           input_roles(Roles)),
+481:      salts_match_columns(FreshnessInputs, Salts)
+486:    digest_expr(witness, Name, Inputs, InputValues, Salts, Witness),
+501:    input_digest_parts(Inputs, InputValues, InputParts),
+505:input_digest_parts([], [], []).
+506:input_digest_parts([col(Name, Type) | Cols], [Value | Values],
+508:    input_digest_parts(Cols, Values, Parts).
+522:salts_match_columns(Columns, Salts) :-
+[0m
+[0m→ [0mRead v6/dl/fixtures/served-host-clock.dl6
+[0m→ [0mRead v6/dl/fixtures/files-hosts.dl6
+[0m
+[0m# [0mTodos
+[✓] Explore repo conventions, tsv2 server API, dl6 patterns
+[•] Create v6/labs/prose_nothing/ dir and feed-sentences.sh + node feed script
+[ ] Write prose-nothing.dl6 program
+[ ] Write run.sh (copy comment-budget-rail.sh server spin-up)
+[ ] Set up deps (pnpm install offline) if needed
+[ ] Validate 6-sentence fixture through run.sh
+[ ] Run full corpus, capture counts
+[ ] Write REPORT-NOTHINGPROSE.md at worktree root
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && cat v6/tsv2/package.json && echo "---node_modules?---" && ls v6/tsv2/node_modules 2>/dev/null | head -3; echo "exit: $?"; echo "---sprefa-store/js---"; ls v6/sprefa-store/js/ 2>/dev/null | head; echo "---node---"; node --version; which node pnpm
+{
+  "name": "sprefa-tsv2",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "tsv2 compile-target arc, phase A (plans/2026-07-27-tsv2-compile-target-header.md): the hand-carved static runtime + two by-hand generated program files a future prolog emitter must reproduce byte-for-byte. Grading loop: v6/prolog/conformance/ticklog.pl prints the oracle tick log; scripts/run-fixture.ts prints the tsv2 tick log; DONE = diff is empty.",
+  "packageManager": "pnpm@11.10.0",
+  "bin": {
+    "bop": "./cli/bop.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo --noEmit",
+    "test": "node --test --experimental-transform-types --test-concurrency=6",
+    "check-imports": "bash scripts/check-imports.sh",
+    "run-fixture": "node --experimental-transform-types scripts/run-fixture.ts",
+    "serve": "node --experimental-transform-types serve/main.ts",
+    "bop": "node --experimental-transform-types cli/bop.ts",
+    "leak-soak": "bash scripts/leak-soak.sh",
+    "endurance": "bash scripts/endurance.sh"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.17.4",
+    "@noble/hashes": "2.0.1",
+    "commander": "^15.0.0",
+    "pino": "10.3.1",
+    "rxjs": "^7.8.2",
+    "sprefa-store-engine": "link:../sprefa-store/js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2"
+  }
+}
+---node_modules?---
+exit: 0
+---sprefa-store/js---
+package.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+src
+tasks.d.ts
+tests
+tsconfig.json
+---node---
+v24.15.0
+/Users/chrishafley/.nvm/versions/node/v24.15.0/bin/node
+/Users/chrishafley/.nvm/versions/node/v24.15.0/bin/pnpm
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose/v6/sprefa-store/js && pnpm install --offline --frozen-lockfile 2>&1 | tail -30
+✓ Lockfile passes supply-chain policies (verified 12d ago)
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +21
++++++++++++++++++++++
+Progress: resolved 21, reused 21, downloaded 0, added 21, done
+
+dependencies:
++ @libsql/client 0.17.4
++ better-sqlite3 13.0.1
++ rxjs 7.8.2
+
+devDependencies:
++ @types/better-sqlite3 7.6.13
++ @typescript/native-preview 7.0.0-dev.20260707.2
+
+Done in 1.1s using pnpm v11.10.0
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose/v6/tsv2 && pnpm install --offline --frozen-lockfile 2>&1 | tail -30
+✓ Lockfile passes supply-chain policies (verified 7d ago)
+Lockfile is up to date, resolution step is skipped
+Progress: resolved 1, reused 0, downloaded 0, added 0
+Packages: +34
+++++++++++++++++++++++++++++++++++
+Progress: resolved 34, reused 34, downloaded 0, added 34, done
+
+dependencies:
++ @libsql/client 0.17.4
++ @noble/hashes 2.0.1
++ commander 15.0.0
++ pino 10.3.1
++ rxjs 7.8.2
++ sprefa-store-engine 0.0.0 <- ../sprefa-store/js
+
+devDependencies:
++ @types/node 24.13.3
++ @typescript/native-preview 7.0.0-dev.20260707.2
+
+Done in 752ms using pnpm v11.10.0
+[0m
+[0m$ [0mls -d ~/.claude/projects/*/ 2>/dev/null | head; echo "---"; ls ~/.claude/projects/*/*.jsonl 2>/dev/null | head; echo "count:"; ls ~/.claude/projects/*/*.jsonl 2>/dev/null | wc -l
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-ascii-renderer/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-cc-hud/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-books/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-ghcacher/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-hafley-prolog/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-hafley-rxjs-packages-devtool-plugin/
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-hafley-rxjs-packages-vite-plugin-react/
+---
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/c56f4f6a-5add-4543-9a78-a59d07fbc8b5.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/44e793dd-2739-4dbf-b4fe-db2d2265b9f9.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/47662421-4636-497b-a35b-d5026d471cfd.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/6ba8cf7e-cca1-47a9-ae95-a30617f2b0f8.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/83a900b5-73d3-46e9-9654-79e41d712ee2.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/bc4c7bd3-408a-4682-96dc-80b6f735ecd2.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/c6fe4ead-4ff9-467d-bed5-48e2011ba8ac.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/df781ea3-39e9-4ed1-85d2-820dc5db8a8a.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/ff585f77-6fbf-442b-ba4f-0b061706b350.jsonl
+count:
+216
+[0m
+[0m$ [0mhead -c 1500 ~/.claude/projects/-Users-chrishafley-projects-games-smash/283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl
+{"type":"mode","mode":"normal","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955"}
+{"type":"ai-title","aiTitle":"Design character and item system architecture","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955"}
+{"type":"agent-name","agentName":"Design character and item system architecture","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955"}
+{"type":"ai-title","aiTitle":"Design character and item system architecture","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955"}
+{"type":"agent-name","agentName":"Design character and item system architecture","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955"}
+{"type":"file-history-snapshot","messageId":"0e9a62a2-59e3-4641-b563-86c0f2986e86","snapshot":{"messageId":"0e9a62a2-59e3-4641-b563-86c0f2986e86","trackedFileBackups":{},"timestamp":"2026-07-07T00:19:02.556Z"},"isSnapshotUpdate":false}
+{"parentUuid":null,"isSidechain":false,"promptId":"05306db2-291e-4fa7-a87c-72eb8bd85f51","type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat: The messages below were generated by the user while running local commands. DO NOT respond to these messages or otherwise consider them in your response unless the user explicitly asks you to.</local-command-caveat>"},"isMeta":true,"uuid":"af0bbdd3-daf1-4d5c-ab70-bcaf1388ea6a","timestamp":"2026-07-07T00:19:02.555Z","sessionKind":"bg","userType":"external","entrypoint":"cli","cwd":"/Users/chrishafley/projects/games/smash","sessionId":"283b17a1-5749-4844-b7a3-92e45ccf4955","version":"2
+[0m
+[0m$ [0mcd ~/.claude/projects/-Users-chrishafley-projects-games-smash && python3 -c '
+import json
+for line in open("283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl"):
+    try: o=json.loads(line)
+    except: continue
+    t=o.get("type")
+    if t in ("user","assistant"):
+        m=o.get("message",{})
+        c=m.get("content")
+        print("TYPE",t,"MKIND",m.get("msgType"),"role",m.get("role"),"ctype",type(c).__name__)
+        if isinstance(c,list):
+            for item in c:
+                if isinstance(item,dict):
+                    print("   item:",item.get("type"), "|", (item.get("text") or "")[:80].replace("\n"," ") if "text" in item else "")
+                elif isinstance(item,str):
+                    print("   str:",item[:60])
+        elif isinstance(c,str):
+            print("   strcontent:",c[:80])
+        break
+'
+TYPE user MKIND None role user ctype str
+   strcontent: <local-command-caveat>Caveat: The messages below were generated by the user whil
+[0m
+[0m$ [0mcd ~/.claude/projects/-Users-chrishafley-projects-games-smash && python3 -c '
+import json
+def text_of(o):
+    t=o.get("type")
+    if t not in ("user","assistant"): return None
+    m=o.get("message",{})
+    c=m.get("content")
+    return (t,c)
+n=0
+for line in open("283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl"):
+    try: o=json.loads(line)
+    except: continue
+    t,o=text_of(o)
+    if t is None: continue
+    n+=1
+    if n>8: break
+    print("="*20,t)
+    c=o
+    if isinstance(c,str): print("STR:",repr(c[:150]))
+    elif isinstance(c,list):
+        for item in c:
+            if isinstance(item,dict):
+                print("   item type:",item.get("type"))
+                if "text" in item: print("      text:",repr(item["text"][:150]))
+            elif isinstance(item,str): print("   str:",repr(item[:150]))
+'
+Traceback (most recent call last):
+  File "<string>", line 13, in <module>
+    t,o=text_of(o)
+    ^^^
+TypeError: cannot unpack non-iterable NoneType object
+[0m
+[0m$ [0mcd ~/.claude/projects/-Users-chrishafley-projects-games-smash && python3 -c '
+import json
+n=0
+for line in open("283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl"):
+    try: o=json.loads(line)
+    except: continue
+    t=o.get("type")
+    if t not in ("user","assistant"): continue
+    n+=1
+    if n<6: continue
+    if n>12: break
+    m=o.get("message",{})
+    c=m.get("content")
+    print("="*20,t,"msgType",m.get("msgType"),"role",m.get("role"))
+    if isinstance(c,str): print("STR:",repr(c[:200]))
+    elif isinstance(c,list):
+        for item in c:
+            if isinstance(item,dict):
+                tt=item.get("type")
+                txt=item.get("text")
+                if txt is not None and isinstance(txt,str):
+                    print("   item",tt,":",repr(txt[:200]))
+                else:
+                    print("   item",tt,"keys:",list(item.keys()))
+            elif isinstance(item,str): print("   str:",repr(item[:200]))
+'
+==================== assistant msgType None role assistant
+   item tool_use keys: ['type', 'id', 'name', 'input', 'caller']
+==================== user msgType None role user
+   item tool_result keys: ['tool_use_id', 'type', 'content']
+==================== assistant msgType None role assistant
+   item thinking keys: ['type', 'thinking', 'signature']
+==================== assistant msgType None role assistant
+   item tool_use keys: ['type', 'id', 'name', 'input', 'caller']
+==================== user msgType None role user
+   item tool_result keys: ['tool_use_id', 'type', 'content']
+==================== assistant msgType None role assistant
+   item thinking keys: ['type', 'thinking', 'signature']
+==================== assistant msgType None role assistant
+   item text : 'Loaded. Three post-deploy bugs open, plus a rejected doc fold. Your live message points at bug #1.\n\nLet me pull the actual current values before recommending anything.'
+[0m
+[0m$ [0mcd ~/projects/sprefa-lanes/nothingprose && grep -rn "regexp" v6/prolog/*.pl | head -30
+v6/prolog/0_ast_expand.pl:49:         cst_regexp_pattern_not_literal, cst_regexp_pattern_outside_subset,
+v6/prolog/0_ast_expand.pl:50:         cst_regexp_pattern_invalid],
+v6/prolog/0_ast_expand.pl:59:cst_refusal_term(cst_regexp_pattern_not_literal, Payload, Payload).
+v6/prolog/0_ast_expand.pl:60:cst_refusal_term(cst_regexp_pattern_outside_subset, Payload, Payload).
+v6/prolog/0_ast_expand.pl:61:cst_refusal_term(cst_regexp_pattern_invalid, Payload, Payload).
+v6/prolog/0_program_check.pl:150:program_violation(regexp_pattern_not_literal, prog(_, Rules),
+v6/prolog/0_program_check.pl:151:                  regexp_pattern_not_literal) :-
+v6/prolog/0_program_check.pl:153:    rule_body_goal(Rule, regexp(_, Pattern)),
+v6/prolog/0_program_check.pl:157:program_violation(regexp_pattern_outside_subset, prog(_, Rules),
+v6/prolog/0_program_check.pl:158:                  regexp_pattern_outside_subset(Pattern)) :-
+v6/prolog/0_program_check.pl:160:    rule_body_goal(Rule, regexp(_, Pattern)),
+v6/prolog/0_program_check.pl:162:    regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:165:program_violation(regexp_pattern_invalid, prog(_, Rules),
+v6/prolog/0_program_check.pl:166:                  regexp_pattern_invalid(Pattern, Message)) :-
+v6/prolog/0_program_check.pl:168:    rule_body_goal(Rule, regexp(_, Pattern)),
+v6/prolog/0_program_check.pl:170:    \+ regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:171:    regexp_pattern_pcre_error(Pattern, Message),
+v6/prolog/0_program_check.pl:191:program_violation(cst_regexp_pattern_not_literal, prog(_, Rules),
+v6/prolog/0_program_check.pl:192:                  regexp_pattern_not_literal) :-
+v6/prolog/0_program_check.pl:195:    cst_regexp_pattern(Query, Pattern),
+v6/prolog/0_program_check.pl:199:program_violation(cst_regexp_pattern_outside_subset, prog(_, Rules),
+v6/prolog/0_program_check.pl:200:                  regexp_pattern_outside_subset(Pattern)) :-
+v6/prolog/0_program_check.pl:203:    cst_regexp_pattern(Query, Pattern),
+v6/prolog/0_program_check.pl:205:    regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:208:program_violation(cst_regexp_pattern_invalid, prog(_, Rules),
+v6/prolog/0_program_check.pl:209:                  regexp_pattern_invalid(Pattern, Message)) :-
+v6/prolog/0_program_check.pl:212:    cst_regexp_pattern(Query, Pattern),
+v6/prolog/0_program_check.pl:214:    \+ regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:215:    regexp_pattern_pcre_error(Pattern, Message),
+v6/prolog/0_program_check.pl:218:cst_regexp_pattern(Query, Pattern) :-
+[0m
+[91m[1mError: [0mKey limit exceeded (total limit). Manage it using https://openrouter.ai/workspaces/default/keys/958821f1c25df7b6bb50691e9d295fc78ede1f142d2b03b2e3d8c1ab5b2025a7
+[0m
+> build · deepseek/deepseek-v4-flash-0731
+[0m
+[0m$ [0mgit status && git branch --show-current && git log --oneline -5
+On branch lab/nothing-prose
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	BRIEF.md
+	lane.log
+
+nothing added to commit but untracked files present (use "git add" to track)
+lab/nothing-prose
+70eea8d1 exec_shootout contract: 3-way rust execution shootout (IR interp / rx operator graph / monomorphized) + harness IO contract
+5236731b md_inline joins the dl6 program whitelist; extract_md_html_query ARCH row; mdquery report salvaged
+a120f5af mdquery: extract query gains md/md_inline/html langs (tree-sitter-md block+inline per v5 pin, tree-sitter-html unified with ast-grep transitive); program whitelist takes md+html
+57430529 blobdoor+archrows landed: ast_query_blob_door ARCH row, comment_prod deviation clause closed, lane reports salvaged; ARCH.pl joins the comment-rail exempt list (dl6 rail's prolog grammar graded the record file for the first time; clause added to feed + dl6 program + claude-research bin, parity kept)
+99aec99e merge lab/extract-blob-door: extract query --digest door (staged-blob reads for cst hosts), comment-prod deviation paragraph deleted
+[0m
+[0m$ [0mgit merge --ff-only 70eea8d1 2>&1; echo "EXIT: $?"
+Already up to date.
+EXIT: 0
+[0m
+[0m→ [0mRead v6/dl/fixtures/comment-prod.dl6
+[0m→ [0mRead v6/tsv2/scripts/comment-budget-rail.sh
+[0m
+[0m$ [0mls -la v6/tsv2/ v6/tsv2/scripts/ v6/tsv2/serve/ 2>&1; echo "---"; ls v6/labs/ 2>&1
+v6/tsv2/:
+total 68
+drwxr-xr-x  22 chrishafley staff   704 Aug  5 10:50 .
+drwxr-xr-x  29 chrishafley staff   928 Aug  5 10:44 ..
+-rw-r--r--   1 chrishafley staff   726 Aug  5 10:44 .gitignore
+-rw-r--r--   1 chrishafley staff  8082 Aug  5 10:44 CRAWL-BENCH.md
+-rw-r--r--   1 chrishafley staff  4787 Aug  5 10:44 SCALE.md
+drwxr-xr-x   4 chrishafley staff   128 Aug  5 10:44 cli
+drwxr-xr-x   5 chrishafley staff   160 Aug  5 10:44 gen
+drwxr-xr-x 209 chrishafley staff  6688 Aug  5 10:44 gen_emitted
+drwxr-xr-x  12 chrishafley staff   384 Aug  5 10:44 goldens
+drwxr-xr-x   6 chrishafley staff   192 Aug  5 10:44 labs
+drwxr-xr-x  15 chrishafley staff   480 Aug  5 10:50 node_modules
+-rw-r--r--   1 chrishafley staff  6204 Aug  5 10:44 p1-receipts.jsonl
+-rw-r--r--   1 chrishafley staff  2162 Aug  5 10:44 p2-receipts.jsonl
+-rw-r--r--   1 chrishafley staff 11527 Aug  5 10:44 p3-receipts.jsonl
+-rw-r--r--   1 chrishafley staff  1354 Aug  5 10:44 package.json
+-rw-r--r--   1 chrishafley staff 13863 Aug  5 10:44 pnpm-lock.yaml
+drwxr-xr-x  16 chrishafley staff   512 Aug  5 10:44 runtime
+drwxr-xr-x   6 chrishafley staff   192 Aug  5 10:44 rxoracle
+drwxr-xr-x  51 chrishafley staff  1632 Aug  5 10:44 scripts
+drwxr-xr-x   9 chrishafley staff   288 Aug  5 10:44 serve
+drwxr-xr-x  52 chrishafley staff  1664 Aug  5 10:44 tests
+-rw-r--r--   1 chrishafley staff   602 Aug  5 10:44 tsconfig.json
+
+v6/tsv2/scripts/:
+total 480
+drwxr-xr-x 51 chrishafley staff  1632 Aug  5 10:44 .
+drwxr-xr-x 22 chrishafley staff   704 Aug  5 10:50 ..
+-rwxr-xr-x  1 chrishafley staff   893 Aug  5 10:44 1_extraction-clock-golden.sh
+-rw-r--r--  1 chrishafley staff 10900 Aug  5 10:44 1_p1-receipts.ts
+-rw-r--r--  1 chrishafley staff 14385 Aug  5 10:44 2_p3-retract-bench.ts
+-rwxr-xr-x  1 chrishafley staff  1496 Aug  5 10:44 3_p3-crash-recovery.sh
+-rw-r--r--  1 chrishafley staff  3067 Aug  5 10:44 4_ghcacher-tick-golden.ts
+-rw-r--r--  1 chrishafley staff 16969 Aug  5 10:44 5_file-watch-scale.ts
+-rwxr-xr-x  1 chrishafley staff   679 Aug  5 10:44 6_rtkq-extraction-golden.sh
+-rwxr-xr-x  1 chrishafley staff 14037 Aug  5 10:44 7_scale-floor.sh
+-rwxr-xr-x  1 chrishafley staff  3745 Aug  5 10:44 check-imports.sh
+-rwxr-xr-x  1 chrishafley staff  4258 Aug  5 10:44 comment-budget-feed.sh
+-rwxr-xr-x  1 chrishafley staff  4147 Aug  5 10:44 comment-budget-rail.sh
+-rw-r--r--  1 chrishafley staff  5278 Aug  5 10:44 comment-parity.sh
+-rw-r--r--  1 chrishafley staff  9896 Aug  5 10:44 comment-rails.sh
+-rw-r--r--  1 chrishafley staff   922 Aug  5 10:44 comment_arch_marker.py
+-rwxr-xr-x  1 chrishafley staff  1734 Aug  5 10:44 comment_budget_report.py
+-rw-r--r--  1 chrishafley staff  5203 Aug  5 10:44 comment_node.py
+-rw-r--r--  1 chrishafley staff  1966 Aug  5 10:44 comment_policy_markers.py
+-rw-r--r--  1 chrishafley staff  1264 Aug  5 10:44 crawl-bench-loop-baseline.tsv
+-rwxr-xr-x  1 chrishafley staff 20245 Aug  5 10:44 crawl-bench.sh
+-rwxr-xr-x  1 chrishafley staff  3863 Aug  5 10:44 devlog.sh
+-rwxr-xr-x  1 chrishafley staff  5282 Aug  5 10:44 endurance.sh
+-rwxr-xr-x  1 chrishafley staff 16582 Aug  5 10:44 extraction-live.sh
+-rwxr-xr-x  1 chrishafley staff 10479 Aug  5 10:44 files.sh
+-rwxr-xr-x  1 chrishafley staff 20182 Aug  5 10:44 flagship-callgraph.sh
+-rw-r--r--  1 chrishafley staff 10763 Aug  5 10:44 flagship-classify.py
+-rw-r--r--  1 chrishafley staff 10235 Aug  5 10:44 flagship-flow-classify.py
+-rwxr-xr-x  1 chrishafley staff  5211 Aug  5 10:44 flagship-flow.sh
+-rwxr-xr-x  1 chrishafley staff 11280 Aug  5 10:44 getting-started.sh
+-rwxr-xr-x  1 chrishafley staff  6932 Aug  5 10:44 ghcacher-live-smoke.sh
+-rwxr-xr-x  1 chrishafley staff  6201 Aug  5 10:44 golden-flex.sh
+-rw-r--r--  1 chrishafley staff  5127 Aug  5 10:44 golden-run.ts
+-rw-r--r--  1 chrishafley staff 11276 Aug  5 10:44 golden-schedules.ts
+-rwxr-xr-x  1 chrishafley staff  1116 Aug  5 10:44 leak-soak.sh
+-rwxr-xr-x  1 chrishafley staff 13286 Aug  5 10:44 lsp-diags.sh
+-rw-r--r--  1 chrishafley staff  8117 Aug  5 10:44 lsp_diag_driver.py
+-rw-r--r--  1 chrishafley staff 10301 Aug  5 10:44 manifest-reason-diff.ts
+-rwxr-xr-x  1 chrishafley staff  2843 Aug  5 10:44 memory-soak.sh
+-rw-r--r--  1 chrishafley staff 17172 Aug  5 10:44 memory-soak.ts
+-rwxr-xr-x  1 chrishafley staff  5541 Aug  5 10:44 parity-grep.py
+-rw-r--r--  1 chrishafley staff  3508 Aug  5 10:44 run-emitted.ts
+-rw-r--r--  1 chrishafley staff  2376 Aug  5 10:44 run-fixture.ts
+-rw-r--r--  1 chrishafley staff  5484 Aug  5 10:44 scale-bench.ts
+-rw-r--r--  1 chrishafley staff   634 Aug  5 10:44 scale-floor-reference.json
+-rwxr-xr-x  1 chrishafley staff 11092 Aug  5 10:44 scip-families.sh
+-rwxr-xr-x  1 chrishafley staff 11543 Aug  5 10:44 self-map.sh
+-rwxr-xr-x  1 chrishafley staff  5071 Aug  5 10:44 sweep.sh
+-rw-r--r--  1 chrishafley staff 15282 Aug  5 10:44 sweep.ts
+-rwxr-xr-x  1 chrishafley staff 13168 Aug  5 10:44 v5-git-diags.sh
+-rwxr-xr-x  1 chrishafley staff 14610 Aug  5 10:44 v5-parity.sh
+
+v6/tsv2/serve/:
+total 108
+drwxr-xr-x  9 chrishafley staff   288 Aug  5 10:44 .
+drwxr-xr-x 22 chrishafley staff   704 Aug  5 10:50 ..
+-rw-r--r--  1 chrishafley staff  4326 Aug  5 10:44 0_compile.ts
+-rw-r--r--  1 chrishafley staff  4062 Aug  5 10:44 0_trace.ts
+-rw-r--r--  1 chrishafley staff 29694 Aug  5 10:44 1_hosts.ts
+-rw-r--r--  1 chrishafley staff 21056 Aug  5 10:44 2_binds.ts
+-rw-r--r--  1 chrishafley staff  9235 Aug  5 10:44 3_engine.ts
+-rw-r--r--  1 chrishafley staff 22847 Aug  5 10:44 4_http.ts
+-rw-r--r--  1 chrishafley staff  1613 Aug  5 10:44 main.ts
+---
+exec_shootout
+[0m
+[0m$ [0mls -la v6/labs/; echo "---exec_shootout---"; ls -la v6/labs/exec_shootout/ 2>&1; echo "---grep regexp/count in dl grammar---"; ls v6/tsv2/goldens/
+total 0
+drwxr-xr-x  3 chrishafley staff  96 Aug  5 10:44 .
+drwxr-xr-x 29 chrishafley staff 928 Aug  5 10:44 ..
+drwxr-xr-x  3 chrishafley staff  96 Aug  5 10:44 exec_shootout
+---exec_shootout---
+total 8
+drwxr-xr-x 3 chrishafley staff   96 Aug  5 10:44 .
+drwxr-xr-x 3 chrishafley staff   96 Aug  5 10:44 ..
+-rw-r--r-- 1 chrishafley staff 5168 Aug  5 10:44 CONTRACT.md
+---grep regexp/count in dl grammar---
+comment_rail_golden
+flagship_callgraph
+ghcacher_304_golden
+ghcacher_checkout_golden
+ghcacher_config_golden
+ghcacher_env_golden
+ghcacher_tick_golden
+ghcacher_tier_golden
+multirepo_crawl
+trace-line.jsonl
+[0m
+[0m$ [0mls -la v6/tsv2/goldens/comment_rail_golden/; echo "======"; cat v6/tsv2/goldens/comment_rail_golden/0_comment_rail_golden.dl6 2>/dev/null | head -60
+total 412
+drwxr-xr-x 14 chrishafley staff    448 Aug  5 10:44 .
+drwxr-xr-x 12 chrishafley staff    384 Aug  5 10:44 ..
+-rw-r--r--  1 chrishafley staff  15974 Aug  5 10:44 0_comment_rail_golden.dl6
+-rw-r--r--  1 chrishafley staff  35629 Aug  5 10:44 1_schedule.json
+-rw-r--r--  1 chrishafley staff  34150 Aug  5 10:44 2_expected.tick.jsonl
+-rw-r--r--  1 chrishafley staff  33347 Aug  5 10:44 3_expected.final.jsonl
+-rw-r--r--  1 chrishafley staff   1012 Aug  5 10:44 4_oracle.pl
+-rwxr-xr-x  1 chrishafley staff   5392 Aug  5 10:44 5_gen_schedules.py
+-rw-r--r--  1 chrishafley staff 241219 Aug  5 10:44 5_schedule.scale.json
+-rwxr-xr-x  1 chrishafley staff   2087 Aug  5 10:44 6_gate.sh
+-rwxr-xr-x  1 chrishafley staff   8749 Aug  5 10:44 7_assert.py
+-rwxr-xr-x  1 chrishafley staff   5893 Aug  5 10:44 8_parity.sh
+-rwxr-xr-x  1 chrishafley staff   2610 Aug  5 10:44 9_failfirst.sh
+-rw-r--r--  1 chrishafley staff  11494 Aug  5 10:44 README.md
+======
+# comment_rail_golden.dl6 -- the repo's comment-budget pre-commit check, ported
+# from bash (claude-research/bin/comment-prod) to dl6 rules.
+#
+# THE CHECK: a run of MORE THAN 2 consecutive comment lines that the staged
+# diff touches is a violation. `@comment-ok:` inside the run waives it. Exempt
+# paths (docs, locks, test/spec/fixture/golden, vendor trees) pass whole.
+#
+# ── THE GROUND THIS STANDS ON ──────────────────────────────────────────────
+# plans/2026-07-29-comment-node-verdict.md measured four text-acquisition
+# routes and ruled (b2)+(c): the CST-family host template pre-filters to
+# comment nodes host-side (5,939 rows crossing the boundary rather than
+# 230,096, 38.7x amplification avoided), and a cheap marker scanner is joined
+# to it IN-LANGUAGE. That verdict's own worked shape is
+#
+#     suppressed(path, line, code) <-
+#       directive_line(path, digest, line, code),        # route (c), grep
+#       comment_node(path, digest, line, kind, text).    # route (b2), grammar
+#
+# and `waived_run` below is that shape with `@comment-ok:` in the marker seat.
+# The grammar atom is what makes the marker safe: the same verdict measured 9
+# real false positives in 8,193 scanner-flagged lines of THIS repository, so a
+# `@comment-ok:` inside a string literal must waive nothing, and the fixture
+# that pins it is in this golden.
+#
+# plans/2026-08-02-cst-query-rulings.md rules that matching is BOUGHT and that
+# sprefa-extract is the matching executor (ast-grep-core / ast-grep-language
+# 0.38, Cargo.toml:18-19), with the external ast-grep CLI a compatibility door.
+# Nothing here spawns that CLI. It also rules extraction demand LAZY: only
+# `graded_file` raises a demand row, so an exempt path costs zero extractor
+# processes, which is the `cst_need` shape keyed by the staged paths.
+#
+# ── COMMENTS ARE AST NODES, NOT LINES THAT LOOK LIKE COMMENTS ──────────────
+# The bash tool grades a line by regex on its leading characters. This grades a
+# COMMENT NODE. Consequences the regex cannot reach, each pinned by a fixture:
+#
+#   - `const banner = "// not a comment";` is a string literal, so it is no row
+#   - a `/* ... */` block is ONE node already spanning its lines, so a 3-line
+#     block is a 3-line run before any coalescing happens
+#   - `code(); // why` is a comment node on that line, which a leading-character
+#     test cannot see
+#
+# LANGUAGE COVERAGE is the cst family's, not "every file": ARCH row
+# language_parsing has ts/tsx/js/rust/go live, and prolog rides ast-grep's
+# grammar registry. MARKDOWN IS A KNOWN HOLE (ARCH doc_format_extraction,
+# SLOT-EXTRACTOR-WAIVER in the comment-node verdict section 6): sprefa-extract
+# has no markdown grammar. It costs this rail nothing only because `*.md` is on
+# the exempt list already; a language with no grammar answers zero comment
+# nodes and therefore zero violations, which is a SILENT PASS, and 6_gate.sh
+# prints the covered-extension list rather than letting that go unstated.
+#
+# ── WHAT LIVES IN A HOST, AND WHY ──────────────────────────────────────────
+# Four `sh` declarations, all of them git or extraction:
+#
+#   staged_file_list  git diff --cached --name-only + the exempt-path test
+#   added_line_span   git diff --cached --unified=0, @@ headers reconstructed
+#   comment_fact      route (b2): sprefa-extract cst family + the byte-span
+#                     flattener (scripts/comment_node.py, the verdict's cn.py)
+#   waiver_marker     route (c): the cheap scanner, grammar-gated by the join
+#
+# The exempt-path test is a GLOB and the marker test is a SUBSTRING; the dl6
+[0m
+[0m→ [0mRead v6/tsv2/scripts/comment-budget-feed.sh
+[0m→ [0mRead v6/tsv2/serve/1_hosts.ts
+[0m
+[0m$ [0mls v6/tsv2/runtime/ v6/tsv2/gen/ 2>&1; echo "---goldens dl6 regexp usage---"; grep -rl "regexp(" v6/tsv2/goldens/ 2>/dev/null
+v6/tsv2/gen/:
+demand_laziness_effect_rows.ts
+scale_generated.ts
+switch_as_keyed_replace.ts
+
+v6/tsv2/runtime/:
+0_traceSchema.ts
+1_incremental.ts
+2_boot.ts
+3_subscribe.ts
+diff.ts
+rows.ts
+runtime
+scratchStore.ts
+serveStats.ts
+structPlane.ts
+tickLoop.ts
+ticklog.ts
+trace.ts
+types.ts
+---goldens dl6 regexp usage---
+[0m
+[0m$ [0mgrep -rl "regexp(" v6/ --include=*.dl6 2>/dev/null; echo "---count aggregate---"; grep -rl "count(" v6/ --include=*.dl6 2>/dev/null
+v6//dl/fixtures/comment-prod.dl6
+---count aggregate---
+v6//tsv2/goldens/ghcacher_tier_golden/0_ghcacher_tier_golden.dl6
+v6//tsv2/goldens/multirepo_crawl/0_multirepo_crawl.dl6
+v6//tsv2/goldens/comment_rail_golden/0_comment_rail_golden.dl6
+v6//prolog/labs/rel_as_stream/transient.dl6
+v6//prolog/labs/rel_as_stream/retention_event.dl6
+v6//prolog/labs/csp_idioms/rendezvous.dl6
+v6//prolog/labs/csp_idioms/workerpool.dl6
+v6//prolog/labs/csp_idioms/semaphore.dl6
+v6//prolog/labs/csp_idioms/fanout.dl6
+v6//prolog/labs/csp_idioms/semaphore_naive.dl6
+v6//prolog/labs/csp_idioms/buffered.dl6
+v6//prolog/labs/csp_idioms/done.dl6
+v6//prolog/compile/dl_view/clean_state_no_diags.dl6
+v6//prolog/compile/dl_view/set_dedups_log_stacks.dl6
+v6//prolog/compile/dl_view/head_expression_evaluates_derived_column.dl6
+v6//prolog/compile/dl_view/tightened_baseline_catches_regrowth.dl6
+v6//prolog/compile/dl_view/retention_prune_is_a_visible_minus.dl6
+v6//prolog/compile/dl_view/retention_single_arm_still_prunes.dl6
+v6//prolog/compile/dl_view/retention_head_conflict_risk_rejected.dl6
+v6//prolog/compile/dl_view/fix_by_waiver_returns_to_clean.dl6
+v6//prolog/compile/dl_view/clean_state_gate_and_exit_zero.dl6
+v6//prolog/compile/dl_view/aggregate_min_recomputes_when_the_minimum_is_retracted.dl6
+v6//prolog/compile/dl_view/finalize_over_log_fires_on_retention_prune.dl6
+v6//prolog/compile/dl_view/waiver_range_join_exact_rows.dl6
+v6//prolog/compile/dl_view/unwrap_below_budget_silent.dl6
+v6//prolog/compile/dl_view/unwrap_unchanged_file_silent.dl6
+v6//prolog/compile/dl_view/over_baseline_count_row.dl6
+v6//prolog/compile/dl_view/aggregate_in_edge_head_rejected.dl6
+v6//prolog/compile/dl_view/new_file_diag_at_hit_line_exact_rows.dl6
+v6//prolog/compile/dl_view/log_stacks_within_tick_and_across_ticks.dl6
+v6//prolog/compile/dl_view/groupby_aggregate_two_bare_integer_literals.dl6
+v6//prolog/compile/dl_view/diag_scenario_seven_ticks_end_to_end.dl6
+v6//prolog/compile/dl_view/comparison_filters_rows.dl6
+v6//prolog/compile/dl_view/over_baseline_gate_blocks_commit_only.dl6
+v6//prolog/compile/dl_view/new_file_no_exceeded_diag.dl6
+v6//prolog/compile/dl_view/aggregate_count_min_max_track_arrivals_and_retraction.dl6
+v6//prolog/compile/dl_view/count_is_bag_of_derivations.dl6
+v6//prolog/compile/dl_view/unwrap_aggregate_and_interpolation.dl6
+v6//prolog/compile/dl_view/over_baseline_diag_exact_rows.dl6
+v6//prolog/compile/dl_view/retention_count_prunes_oldest.dl6
+v6//dl/fixtures/comment-arch-rail.dl6
+v6//dl/fixtures/sg-rail.dl6
+v6//dl/fixtures/v5-git-diags.dl6
+v6//dl/fixtures/conformance.dl6
+v6//dl/fixtures/self-map.dl6
+v6//dl/fixtures/v5-parity.dl6
+v6//dl/fixtures/golden-flex.dl6
+v6//dl/fixtures/dataflow-rail.dl6
+v6//dl/fixtures/comment-prod.dl6
+[0m
+[0m→ [0mRead v6/tsv2/goldens/ghcacher_tier_golden/0_ghcacher_tier_golden.dl6
+[0m
+[0m$ [0mgrep -rn "regexp" v6/prolog/sexpr/dl6/ 2>/dev/null | head -40; echo "---dir---"; ls v6/prolog/sexpr/dl6/ 2>/dev/null; ls v6/prolog/compile/ 2>/dev/null
+---dir---
+1_emit_registry_docs.pl
+2_emit_cli_inventory.pl
+3_emit_trace_schema.pl
+PIPELINE.md
+SCOREBOARD.md
+SYNTAX.md
+TICK-MODEL.md
+dl_view
+oracle_dump.pl
+out
+parse_dl.pl
+registry.pl
+scripts
+test
+[0m
+[0m$ [0mgrep -rn "regexp" v6/prolog/compile/*.pl 2>/dev/null | head -40
+v6/prolog/compile/registry.pl:157:surface(regexp/2,        guard,     no_refs,                      wrapper(expr_pair, lower),             live).
+[0m
+[0m→ [0mRead v6/prolog/compile/registry.pl[90m [limit=260][0m
+[0m→ [0mRead v6/tsv2/serve/main.ts
+[0m→ [0mRead v6/tsv2/serve/4_http.ts
+[0m
+[0m$ [0mgrep -rn "regexp" v6/prolog/compile/lower.pl 2>/dev/null | head; echo "=== SQLite regexp impl ==="; grep -rn "REGEXP\|regexp" v6/tsv2/runtime/*.ts 2>/dev/null | head -20
+=== SQLite regexp impl ===
+[0m
+[0m$ [0mgrep -rln "regexp" v6/prolog/ 2>/dev/null; echo "=== emitted / gen ==="; grep -rln "regexp\|REGEXP\|GLOB " v6/tsv2/gen_emitted/ 2>/dev/null | head
+v6/prolog//0_ast_expand.pl
+v6/prolog//ARCH.pl
+v6/prolog//lower.pl
+v6/prolog//compile/test/plunit_tests.pl
+v6/prolog//compile/registry.pl
+v6/prolog//LANG.md
+v6/prolog//0_program_check.pl
+v6/prolog//analyze.pl
+v6/prolog//conformance/body.pl
+v6/prolog//conformance/engine.pl
+v6/prolog//conformance/fixtures/9_regexp.pl
+=== emitted / gen ===
+[0m
+[0m$ [0mgrep -n "regexp" v6/prolog/lower.pl | head; echo "=== analyze ==="; grep -n "regexp" v6/prolog/analyze.pl | head
+631:    ( regexp_goal(Goal)
+632:    -> compile_regexp_goal(Goal, Bound0, Text),
+656:regexp_goal(Goal) :-
+657:    body_surface_for_term(Goal, regexp/2, guard, no_refs,
+660:compile_regexp_goal(regexp(Operand, Pattern), Bound, Text) :-
+664:    ;  throw(unsupported_construct(regexp_operand_not_text(Operand, OperandType)))
+668:    ;  throw(unsupported_construct(regexp_pattern_not_literal))
+=== analyze ===
+144:    body_surface_for_term(Goal, regexp/2, guard, no_refs,
+1117:                              regexp_pattern_not_literal,
+1118:                              regexp_pattern_outside_subset,
+1119:                              regexp_pattern_invalid,
+1120:                              regexp_operand_not_text,
+1229:compiler_refusal(regexp_pattern_not_literal, Payload, Payload).
+1230:compiler_refusal(regexp_pattern_outside_subset, Payload, Payload).
+1231:compiler_refusal(regexp_pattern_invalid, Payload, Payload).
+1232:compiler_refusal(regexp_operand_not_text, Payload, Payload).
+[0m
+[0m→ [0mRead v6/prolog/lower.pl[90m [offset=625, limit=60][0m
+[0m
+[0m$ [0mgrep -rn "REGEXP\|regexp\|GLOB\|LIKE" v6/tsv2/runtime/*.ts v6/tsv2/serve/*.ts 2>/dev/null | head -30
+(no output)
+[0m
+[0m$ [0mgrep -rn "createFunction\|REGEXP\|register\|better_sqlite\|Database(" v6/tsv2/runtime/scratchStore.ts v6/tsv2/runtime/2_boot.ts 2>/dev/null | head -30; echo "=== which sqlite driver ==="; grep -rn "require(\|from \"" v6/tsv2/runtime/scratchStore.ts | head -20
+=== which sqlite driver ===
+v6/tsv2/runtime/scratchStore.ts:13:import type { Observable } from "rxjs";
+v6/tsv2/runtime/scratchStore.ts:14:import { open_db } from "sprefa-store-engine/src/engine/lib.ts";
+v6/tsv2/runtime/scratchStore.ts:15:import { SqlRunner } from "sprefa-store-engine/src/engine/sqlRunner.ts";
+v6/tsv2/runtime/scratchStore.ts:17:import type { IScratchStore, ISqlSeam } from "./types.ts";
+[0m
+[0m$ [0mgrep -rn "REGEXP\|regexp\|createFunction\|function(" v6/sprefa-store/js/src/engine/lib.ts 2>/dev/null | head -30; echo "=== search engine dir ==="; ls v6/sprefa-store/js/src/engine/ 2>/dev/null
+=== search engine dir ===
+algo.ts
+counter.ts
+engine.ts
+ingest.ts
+lib.ts
+measure.ts
+oracle.ts
+spine.ts
+sqlRunner.ts
+tasks.ts
+types.ts
+[0m
+[0m$ [0mgrep -rn "REGEXP\|regexp\|createFunction\|\.function(" v6/sprefa-store/js/src/engine/*.ts 2>/dev/null | head -30
+(no output)
+[0m
+[0m$ [0mgrep -rn "open_db\|REGEXP\|regexp\|function\|create_function\|better_sqlite3\|sqlite3" v6/sprefa-store/js/src/engine/lib.ts | head -40
+v6/sprefa-store/js/src/engine/lib.ts:54:export function open_db(url: string): SqliteDb {
+v6/sprefa-store/js/src/engine/lib.ts:61:function chunk_list<Item>(items: readonly Item[], size: number): Item[][] {
+v6/sprefa-store/js/src/engine/lib.ts:136:export function stamp(db: SqliteDb, ns: GraphNs): Observable<void> {
+v6/sprefa-store/js/src/engine/lib.ts:257:export type OpenDbHolds = AssertTrue<typeof open_db extends OpenDb ? true : false>;
+v6/sprefa-store/js/src/engine/lib.ts:535:function find_or_insert(db: SqliteDb, find: SqlStatement, insert: SqlStatement): Observable<number> {
+v6/sprefa-store/js/src/engine/lib.ts:546:function sql_str(s: string): string {
+v6/sprefa-store/js/src/engine/lib.ts:551:export function hashHex(hash: Uint8Array): string {
+[0m
+[0m→ [0mRead v6/sprefa-store/js/src/engine/lib.ts[90m [limit=60, offset=40][0m
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && ls v6/sprefa-extract/target/release/extract 2>&1; echo "---tsv2 node_modules---"; ls v6/tsv2/node_modules/.bin 2>/dev/null | head; echo "---sprefa-store js installed?---"; ls v6/sprefa-store/js/node_modules 2>/dev/null | head -5; echo "---libsql regexp---"; grep -rn "REGEXP" v6/tsv2/node_modules/@libsql 2>/dev/null | head
+ls: cannot access 'v6/sprefa-extract/target/release/extract': No such file or directory
+---tsv2 node_modules---
+pino
+tsgo
+---sprefa-store js installed?---
+@libsql
+@types
+@typescript
+better-sqlite3
+rxjs
+---libsql regexp---
+[0m
+[0m→ [0mRead v6/tsv2/serve/0_compile.ts
+[0m
+[0m$ [0mwhich swipl && swipl --version 2>&1 | head -1; echo "---noble hashes---"; ls v6/tsv2/node_modules/@noble 2>/dev/null
+/opt/homebrew/bin/swipl
+SWI-Prolog version 10.0.2 for arm64-darwin
+---noble hashes---
+hashes
+[0m
+[0m$ [0mmkdir -p /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test 2>&1; ls /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/
+exec_shootout
+prose_nothing
+[0m
+[0m← [0mWrite /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/mini.dl6
+Wrote file successfully.
+[0m
+[0m$ [0mW=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+cd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+echo "PORT=$PORT"
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/server.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s --max-time 60 -o "$W/load.json" -w 'LOAD:%{http_code}\n' -X POST --data-binary @"$W/mini.dl6" "http://127.0.0.1:$PORT/program"
+echo "load.json:"; cat "$W/load.json"; echo
+printf '{"batch":[{"rel":"word","sign":"add","row":[1,"this is genuine"]},{"rel":"word","sign":"add","row":[2,"that seems solid"]},{"rel":"word","sign":"add","row":[3,"no match here"]}]}\n' >"$W/arr.json"
+curl -s -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"; echo
+curl -s "http://127.0.0.1:$PORT/idb/count_hit"; echo
+curl -s "http://127.0.0.1:$PORT/idb/hit_eval"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== server.log ==="; cat "$W/server.log"
+PORT=58206
+LOAD:400
+load.json:
+{"error":"dl6 compile failed (swipl exit 2): {\"code\":\"dl_parse_error/2\",\"message\":\"parse error at line 14, column 1: statement\",\"range\": {\"end\": {\"character\":0,\"line\":13},\"start\": {\"character\":0,\"line\":13}},\"severity\":1,\"source\":\"dl6\",\"uri\":\"file:///Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/tsv2/gen_served/c7637400d0cfde5c47a71a76f44d47e3.dl6\"}\nERROR: [Thread main] -g compile_dl6('/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/tsv2/gen_served/c7637400d0cfde5c47a71a76f44d47e3.dl6', '/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/tsv2/gen_served/c7637400d0cfde5c47a71a76f44d47e3.ts'): parse error at line 14, column 1: statement"}
+{"error":"no program loaded"}
+{"error":"no program loaded"}
+{"error":"no program loaded"}
+=== server.log ===
+tsv2 serving on 58206 (db :memory:)
+[0m
+[0m$ [0mW=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+printf 'rel word(seq: int, w: text) key(1).\n\nrel hit_eval(seq: int).\nhit_eval(seq) <-\n  word(seq, w),\n  regexp(w, "(?i)is genuine").\n\n? hit_eval(Seq).\n' > "$W/mini2.dl6"
+cat -A "$W/mini2.dl6" | tail -3
+echo "==== compile test ====="
+cd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+swipl -q -l v6/prolog/compile.pl -g "compile_dl6('$W/mini2.dl6','$W/mini2.ts')" -g halt 2>&1 | head -20
+regexp(w, "(?i)is genuine").$
+$
+? hit_eval(Seq).$
+==== compile test =====
+{"code":"regexp_pattern_outside_subset/1","message":"rule-index unavailable: unsupported_construct: compiler refused rule 'regexp_pattern_outside_subset' (regexp_pattern_outside_subset)","range": {"end": {"character":0,"line":0},"start": {"character":0,"line":0}},"severity":1,"source":"dl6","uri":"file:///var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/mini2.dl6"}
+ERROR: [Thread main] -g compile_dl6('/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/mini2.dl6','/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/mini2.ts'): rule-index unavailable: unsupported_construct: compiler refused rule 'regexp_pattern_outside_subset' (regexp_pattern_outside_subset)
+[0m
+[0m→ [0mRead v6/prolog/analyze.pl[90m [limit=60, offset=1100][0m
+[0m
+[0m$ [0mgrep -rn "regexp_pattern_outside_subset\|regexp_subset\|allowed.*regexp\|regexp.*subset" v6/prolog/analyze.pl v6/prolog/conformance/body.pl 2>/dev/null | head
+v6/prolog/analyze.pl:1118:                              regexp_pattern_outside_subset,
+v6/prolog/analyze.pl:1230:compiler_refusal(regexp_pattern_outside_subset, Payload, Payload).
+[0m
+[0m$ [0mgrep -rn "regexp_pattern_outside_subset\|regexp_subset\|regexp_allowed\|regexp\b.*subset" v6/prolog/*.pl 2>/dev/null | head -20
+v6/prolog/0_ast_expand.pl:49:         cst_regexp_pattern_not_literal, cst_regexp_pattern_outside_subset,
+v6/prolog/0_ast_expand.pl:60:cst_refusal_term(cst_regexp_pattern_outside_subset, Payload, Payload).
+v6/prolog/0_program_check.pl:157:program_violation(regexp_pattern_outside_subset, prog(_, Rules),
+v6/prolog/0_program_check.pl:158:                  regexp_pattern_outside_subset(Pattern)) :-
+v6/prolog/0_program_check.pl:162:    regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:170:    \+ regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:199:program_violation(cst_regexp_pattern_outside_subset, prog(_, Rules),
+v6/prolog/0_program_check.pl:200:                  regexp_pattern_outside_subset(Pattern)) :-
+v6/prolog/0_program_check.pl:205:    regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:214:    \+ regexp_pattern_outside_subset(Pattern),
+v6/prolog/0_program_check.pl:299:regexp_pattern_outside_subset(Pattern) :-
+v6/prolog/0_program_check.pl:301:    \+ regexp_subset_codes(Codes).
+v6/prolog/0_program_check.pl:303:regexp_subset_codes([]).
+v6/prolog/0_program_check.pl:304:regexp_subset_codes([92, Escape | Rest]) :-
+v6/prolog/0_program_check.pl:308:    regexp_subset_codes(Rest).
+v6/prolog/0_program_check.pl:309:regexp_subset_codes([92 | _]) :- !, fail.
+v6/prolog/0_program_check.pl:310:regexp_subset_codes([40, 63 | _]) :- !, fail.
+v6/prolog/0_program_check.pl:311:regexp_subset_codes([Quantifier, 43 | _]) :-
+v6/prolog/0_program_check.pl:315:regexp_subset_codes([_ | Rest]) :-
+v6/prolog/0_program_check.pl:316:    regexp_subset_codes(Rest).
+[0m
+[0m→ [0mRead v6/prolog/0_program_check.pl[90m [limit=40, offset=296][0m
+[0m
+[0m$ [0mW=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+printf 'rel word(seq: int, w: text) key(1).\n\nrel hit_eval(seq: int).\nhit_eval(seq) <-\n  word(seq, w),\n  regexp(w, "\\\\bis genuine").\n\n? hit_eval(Seq).\n' > "$W/mini2.dl6"
+cat "$W/mini2.dl6"
+echo "==== compile ====="
+cd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/server.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s --max-time 60 -o "$W/load.json" -w 'LOAD:%{http_code}\n' -X POST --data-binary @"$W/mini2.dl6" "http://127.0.0.1:$PORT/program"
+echo "load:"; cat "$W/load.json"; echo
+printf '{"batch":[{"rel":"word","sign":"add","row":[1,"this IS genuine"]},{"rel":"word","sign":"add","row":[2,"that is genuine here"]},{"rel":"word","sign":"add","row":[3,"genuine no match"]}]}\n' >"$W/arr.json"
+curl -s -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"; echo
+curl -s "http://127.0.0.1:$PORT/idb/hit_eval"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== server.log ==="; cat "$W/server.log"
+rel word(seq: int, w: text) key(1).
+
+rel hit_eval(seq: int).
+hit_eval(seq) <-
+  word(seq, w),
+  regexp(w, "\\bis genuine").
+
+? hit_eval(Seq).
+==== compile =====
+LOAD:200
+load:
+{"loaded":true,"rels":["hit_eval","word"],"arrivalTargets":["word"],"hosts":[],"binds":[]}
+{"ticks":[{"tick":1,"line":"{\"tick\":1,\"deltas\":{\"hit_eval\":{\"add\":[[2]],\"del\":[]},\"word\":{\"add\":[[1,\"this IS genuine\"],[2,\"that is genuine here\"],[3,\"genuine no match\"]],\"del\":[]}}}"}]}
+{"rows":[[2]]}
+=== server.log ===
+tsv2 serving on 58232 (db :memory:)
+program loaded: 1ec7513a32e69e22e807dc9fa43739ff
+{"tick":1,"deltas":{"hit_eval":{"add":[[2]],"del":[]},"word":{"add":[[1,"this IS genuine"],[2,"that is genuine here"],[3,"genuine no match"]],"del":[]}}}
+[0m
+[0m$ [0mls ~/.claude/projects/ 2>/dev/null; echo "---count jsonl---"; ls ~/.claude/projects/*/*.jsonl 2>/dev/null | wc -l; echo "---sample---"; ls ~/.claude/projects/*/*.jsonl 2>/dev/null | head -3
+-Users-chrishafley
+-Users-chrishafley-projects
+-Users-chrishafley-projects-ascii-renderer
+-Users-chrishafley-projects-cc-hud
+-Users-chrishafley-projects-claude-books
+-Users-chrishafley-projects-claude-research
+-Users-chrishafley-projects-games
+-Users-chrishafley-projects-games-smash
+-Users-chrishafley-projects-ghcacher
+-Users-chrishafley-projects-hafley-prolog
+-Users-chrishafley-projects-hafley-rxjs
+-Users-chrishafley-projects-hafley-rxjs-packages-devtool-plugin
+-Users-chrishafley-projects-hafley-rxjs-packages-vite-plugin-react
+-Users-chrishafley-projects-hafley-tsp
+-Users-chrishafley-projects-instant
+-Users-chrishafley-projects-instant--claude-worktrees-bus-network-fixes
+-Users-chrishafley-projects-instant--claude-worktrees-session-sidebar
+-Users-chrishafley-projects-instant--claude-worktrees-transcript-user-roles
+-Users-chrishafley-projects-instant-handoff
+-Users-chrishafley-projects-instant-lab-livespawn--livespawn-cwd-20260803152133
+-Users-chrishafley-projects-le-blog
+-Users-chrishafley-projects-smashy
+-Users-chrishafley-projects-sprefa
+-Users-chrishafley-projects-sprefa--claude-worktrees-ext-wave3
+-Users-chrishafley-projects-sprefa--claude-worktrees-extract-golden-plan
+-Users-chrishafley-projects-sprefa-plan-rxprim-opus
+-Users-chrishafley-projects-unfuck-squigglies
+-Users-chrishafley-projects-word-linker
+-private-tmp
+-private-tmp-claude-501--Users-chrishafley-projects-instant-handoff-b10a087f-6884-4555-ba94-687b3d5bf5ce-scratchpad-proof-scratch-cwd
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-gatecwd
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd-20260803151341
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd-20260803153248
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd-20260803153600
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd-20260803154035
+-private-tmp-claude-501--Users-chrishafley-projects-sprefa-d66af3e3-e9b7-42e1-b35a-a03f08923b93-scratchpad-livespawn-cwd-20260803154245
+-private-tmp-cwd-probe-root
+-private-tmp-cwd-probe-root2
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-AKTeAu-worktrees-c2-duplicate-sym-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-AKTeAu-worktrees-c2-duplicate-sym-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-config-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-config-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-flag-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-flag-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-guard-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-guard-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-service-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-abstraction-service-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-full-inventory-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-full-inventory-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-neg-control-import-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-B7GOJm-worktrees-ctf-neg-control-import-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-config-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-config-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-flag-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-flag-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-guard-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-guard-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-service-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-abstraction-service-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-full-inventory-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-full-inventory-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-neg-control-import-haiku-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-MhzvMz-worktrees-ctf-neg-control-import-haiku-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-dUMj1u-worktrees-c2-duplicate-sym-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-iy15vg-worktrees-ctf-full-inventory-sonnet-dl-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-iy15vg-worktrees-ctf-full-inventory-sonnet-grep-rep1
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-duplicate-sym-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-duplicate-sym-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-duplicate-sym-02
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-export-orphan-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-export-orphan-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-export-orphan-02
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-import-break-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-import-break-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-off-by-one-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-vxL5of-worktrees-c2-off-by-one-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-xp4rUf-worktrees-c2-duplicate-sym-00
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-agent-eval-xp4rUf-worktrees-c2-duplicate-sym-01
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-proof-cwd-fAtQnI
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-proof-cwd-tgnAhx
+-private-var-folders-z2-cwfm40fn65n176q8m227wl0r0000gn-T-proof-cwd-vPUc34
+---count jsonl---
+216
+---sample---
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/c56f4f6a-5add-4543-9a78-a59d07fbc8b5.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/283b17a1-5749-4844-b7a3-92e45ccf4955.jsonl
+/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-games-smash/44e793dd-2739-4dbf-b4fe-db2d2265b9f9.jsonl
+[0m
+[0m$ [0mF=/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/c56f4f6a-5add-4543-9a78-a59d07fbc8b5.jsonl
+wc -l "$F"
+echo "=== line 1 (truncated) ==="
+python3 -c "
+import json,sys
+for i,line in enumerate(open('$F')):
+    if i>2: break
+    d=json.loads(line)
+    print('TYPE:', d.get('type'))
+    if d.get('type')=='user' or 'message' in d:
+        msg=d.get('message',{})
+        print('  role:',msg.get('role'))
+        c=msg.get('content')
+        print('  content type:', type(c).__name__)
+        if isinstance(c,list):
+            for item in c[:3]:
+                print('    item:', item.get('type'), str(item)[:180])
+        else:
+            print('    ', str(c)[:180])
+    print('----')
+"
+8 /Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/c56f4f6a-5add-4543-9a78-a59d07fbc8b5.jsonl
+=== line 1 (truncated) ===
+TYPE: mode
+----
+TYPE: permission-mode
+----
+TYPE: file-history-snapshot
+----
+[0m
+[0m$ [0mF=/Users/chrishafley/.claude/projects/-Users-chrishafley-projects-claude-research/c56f4f6a-5add-4543-9a78-a59d07fbc8b5.jsonl
+python3 -c "
+import json
+for i,line in enumerate(open('$F')):
+    d=json.loads(line)
+    t=d.get('type')
+    print(i+1, t)
+    if t in ('user','assistant'):
+        msg=d.get('message',{})
+        c=msg.get('content')
+        print('   role', msg.get('role'), 'content=', type(c).__name__)
+        if isinstance(c,list):
+            for item in c[:5]:
+                it=item.get('type')
+                print('     item type', it, str(item.get('text', item.get('tool','') if isinstance(item.get('tool'),str) else item))[:150])
+    if i>6: break
+"
+1 mode
+2 permission-mode
+3 file-history-snapshot
+4 user
+   role user content= str
+5 user
+   role user content= str
+6 user
+   role user content= str
+7 last-prompt
+8 file-history-snapshot
+[0m
+[0m$ [0mpython3 -c "
+import json,glob,collections
+types=collections.Counter()
+roles=collections.Counter()
+content_types=collections.Counter()
+item_types=collections.Counter()
+files=glob.glob('/Users/chrishafley/.claude/projects/*/*.jsonl')
+for f in files[::30]:
+    for line in open(f):
+        line=line.strip()
+        if not line: continue
+        try: d=json.loads(line)
+        except: continue
+        types[d.get('type')]+=1
+        m=d.get('message') or {}
+        roles[m.get('role')]+=1
+        c=m.get('content')
+        if isinstance(c,list):
+            content_types['list']+=1
+            for item in c:
+                item_types[item.get('type')]+=1
+        else:
+            content_types[type(c).__name__]+=1
+print('TYPES:', dict(types))
+print('ROLES:', dict(roles))
+print('CONTENT:', dict(content_types))
+print('ITEM TYPES:', dict(item_types))
+"
+TYPES: {'queue-operation': 693, 'user': 1946, 'ai-title': 448, 'assistant': 3270, 'last-prompt': 448, 'mode': 427, 'file-history-snapshot': 282, 'system': 259, 'attachment': 586, 'file-history-delta': 12, 'permission-mode': 388, 'agent-name': 189, 'frame-link': 2}
+ROLES: {None: 3734, 'user': 1946, 'assistant': 3270}
+CONTENT: {'NoneType': 3734, 'str': 338, 'list': 4878}
+ITEM TYPES: {'thinking': 1252, 'tool_use': 1564, 'tool_result': 1564, 'text': 498}
+[0m
+[0m$ [0mpython3 -c "
+import json,glob
+files=glob.glob('/Users/chrishafley/.claude/projects/*/*.jsonl')
+n=0
+for f in files[::17]:
+    for line in open(f):
+        line=line.strip()
+        if not line: continue
+        try: d=json.loads(line)
+        except: continue
+        t=d.get('type'); m=d.get('message') or {}
+        c=m.get('content')
+        if t=='user' and isinstance(c,list):
+            texts=[i for i in c if i.get('type')=='text']
+            if texts:
+                print('FILE',f.split('/')[-1])
+                for i in texts[:2]:
+                    print('  TEXT:', i.get('text')[:200].replace(chr(10),' | '))
+                n+=1
+        if n>=4: break
+    if n>=4: break
+# show assistant text sample
+print('=== ASSISTANT TEXT ===')
+n=0
+for f in files[::17]:
+    for line in open(f):
+        line=line.strip()
+        if not line: continue
+        try: d=json.loads(line)
+        except: continue
+        if d.get('type')=='assistant':
+            for i in (d.get('message') or {}).get('content') or []:
+                if i.get('type')=='text':
+                    print('FILE',f.split('/')[-1])
+                    print('  A:', i.get('text')[:250].replace(chr(10),' | '))
+                    n+=1
+        if n>=3: break
+    if n>=3: break
+"
+FILE 84053778-cbb4-473c-b8a7-81ecdf2f534f.jsonl
+  TEXT: # /load-session |  | Resume work from a saved session. |  | ## Instructions |  | 1. If `` is provided: |    - If it's a filename, read `chat_log/.md` directly |    - If it's a partial match, Glob `chat_log/**.md` to 
+FILE 84053778-cbb4-473c-b8a7-81ecdf2f534f.jsonl
+  TEXT: [Request interrupted by user]
+FILE 84053778-cbb4-473c-b8a7-81ecdf2f534f.jsonl
+  TEXT: # /epic-golden-plan |  | Plan a feature set after enough local and external reconnaissance to name the actual code paths, compiler boundaries, runtime boundaries, and test harnesses involved. |  | ## Procedur
+FILE a6e7ad3d-db54-4463-a7da-39ff82ca94fc.jsonl
+  TEXT: # /map |  | Spatial snapshot of what we're building or touching. The reader should walk away feeling oriented -- where things are, how they connect, what the shape is. |  | ## Arguments | - (none): scoped to th
+=== ASSISTANT TEXT ===
+FILE bfb76101-0861-4b94-846e-389c8c078f68.jsonl
+  A: All small files. Let me read all of them directly.
+FILE bfb76101-0861-4b94-846e-389c8c078f68.jsonl
+  A: This has all 4 enforcement call sites directly. Let's check import.rs, mod.rs, models.rs, and the TS side.
+FILE bfb76101-0861-4b94-846e-389c8c078f68.jsonl
+  A: Confirmed decoy, skip. Check mod.rs and models.rs for anything else.
+[0m
+[0m# [0mTodos
+[•] Write feed-sentences.sh + feed-sentences.mjs (corpus walk + fixture mode)
+[ ] Write prose-nothing.dl6 (sh host, probe, class rels, receipt, count aggregates)
+[ ] Write run.sh (server spin-up, fixture mode, corpus mode, idb reads)
+[ ] Validate 6-sentence fixture through run.sh
+[ ] Run full corpus, capture counts + top pure_nothing offenders
+[ ] Write REPORT-NOTHINGPROSE.md at worktree root
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/feed-sentences.mjs
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/feed-sentences.sh
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/prose-nothing.dl6
+Wrote file successfully.
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+P=v6/labs/prose_nothing/prose-nothing.dl6
+mkdir -p "$W/gen"
+swipl -q -l v6/prolog/compile.pl -g "compile_dl6('$P','$W/gen/pn.ts')" -g halt 2>&1 | head -30
+echo "EXIT: ${PIPESTATUS[0]}"
+wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/gen/pn.ts
+COMPILE-TRACE program=prose-nothing parse=16/98276 plan=8/97958 lower=3/20228 boot=0/543 emit=9/81077 write=2/92 total=38/298174
+EXIT: 0
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/run.sh
+Wrote file successfully.
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/prose-nothing.dl6
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+@@ -82,9 +82,14 @@
+ rel sentence_side_count(side: text, sentence_count: int).
+ sentence_side_count(side, count(seq)) <-
+   sentence_row(side, seq, _).
+ 
++rel pure_nothing_sentence(side: text, seq: int, sentence: text).
++pure_nothing_sentence(side, seq, sentence) <-
++  pure_nothing(side, seq),
++  sentence_row(side, seq, sentence).
++
+ ? evaluative_no_receipt_count(Side, SentenceCount).
+ ? strawman_contrast_count(Side, SentenceCount).
+ ? pure_nothing_count(Side, SentenceCount).
+ ? sentence_side_count(Side, SentenceCount).
+-? pure_nothing(Side, Seq).
++? pure_nothing_sentence(Side, Seq, Sentence).
+
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/run.sh
+Wrote file successfully.
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/fixture-sentences.json
+Wrote file successfully.
+[0m
+[0m$ [0mchmod +x /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh
+cd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+# test feed fixture directly
+PROSE_NOTHING_FIXTURE_FILE=v6/labs/prose_nothing/fixture-sentences.json PROSE_NOTHING_FEED=v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=fixture v6/labs/prose_nothing/feed-sentences.sh fixture
+{"side":"assistant","seq":0,"sentence":"xrxgraph's trait-object indirection is genuine rather than faked."}
+{"side":"assistant","seq":1,"sentence":"The proposed design is solid."}
+{"side":"assistant","seq":2,"sentence":"We should prefer the explicit route not merely the convenient one."}
+{"side":"user","seq":3,"sentence":"The fix is good in 12 lines."}
+{"side":"user","seq":4,"sentence":"The server boots and listens on a port."}
+{"side":"user","seq":5,"sentence":"The overall approach seems sensible if we keep it minimal."}
+[0m
+Feed works. Now the fixture run through run.sh:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && v6/labs/prose_nothing/run.sh fixture 2>&1
+== PROSE-NOTHING (mode=fixture) ==
+run time: 1531 ms
+sentence sides: {'assistant': 3, 'user': 3}
+
+CLASS evaluative_no_receipt:
+  assistant         2   rate 6666.67 per 10k
+  user              1   rate 3333.33 per 10k
+  TOTAL             3
+
+CLASS strawman_contrast:
+  assistant         2   rate 6666.67 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             2
+
+CLASS pure_nothing:
+  assistant         1   rate 3333.33 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             1
+[0m
+Fixture matches the overlapping-class expectations. Now the full corpus. Let me check feed scale first:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+PROSE_NOTHING_FEED=v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed v6/labs/prose_nothing/feed-sentences.sh feed > "$W/corpus-feed.jsonl" 2>"$W/feed.err"
+echo "EXIT $?"
+wc -l "$W/corpus-feed.jsonl"
+cat "$W/feed.err"
+echo "--- per side ---"
+python3 -c "
+import json,collections
+c=collections.Counter()
+words=0
+for line in open('$W/corpus-feed.jsonl'):
+    d=json.loads(line); c[d['side']]+=1; words+=len(d['sentence'].split())
+print('sides:',dict(c),'total words:',words)
+"
+EXIT 0
+84234 /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/corpus-feed.jsonl
+--- per side ---
+sides: {'user': 21127, 'assistant': 63107} total words: 1508044
+[0m
+84,234 sentences. Now the full corpus run:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && time v6/labs/prose_nothing/run.sh corpus 2>&1 | tee /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/corpus-run.out
+== PROSE-NOTHING (mode=corpus) ==
+run time: 1529 ms
+sentence sides: {}
+
+CLASS evaluative_no_receipt:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS strawman_contrast:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS pure_nothing:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+TOP 15 assistant pure_nothing offenders (seq):
+
+real	0m1.633s
+user	0m0.715s
+sys	0m0.266s
+[0m
+The corpus feed takes ~2s but quiescence fired at 700ms idle before the host answered. I need run.sh to wait for the feed to actually populate before quiescing. Let me fix:
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -85,13 +85,20 @@
+   cat "$WORK_DIR/arrivals.out" >&2
+   exit 1
+ fi
+ 
++# The corpus feed walks 200+ jsonl transcripts and can take seconds, so first
++# wait for the feed host to answer (sentence_row populated), then quiesce.
+ last_size=-1
+ idle_slept=0
+ step_ms=50
+ deadline=$((SECONDS + 600))
++populated=0
+ while [ "$SECONDS" -lt "$deadline" ]; do
++  probe_rows="$(curl -s "$BASE/idb/sentence_side_count" 2>/dev/null)"
++  case "$probe_rows" in
++    *'assistant'*|*'user'*) populated=1 ;;
++  esac
+   size="$(wc -c <"$WORK_DIR/ticks.sse" 2>/dev/null | tr -d ' ')"
+   if [ "$size" = "$last_size" ]; then
+     idle_slept=$((idle_slept + step_ms))
+     [ "$idle_slept" -ge "$IDLE_MS" ] && break
+@@ -100,8 +107,23 @@
+     last_size="$size"
+   fi
+   sleep 0.05
+ done
++# A host that delivered rows re-arms the idle window; settle its drain tick.
++if [ "$populated" = 1 ]; then
++  idle_slept=0
++  while [ "$SECONDS" -lt "$deadline" ]; do
++    size="$(wc -c <"$WORK_DIR/ticks.sse" 2>/dev/null | tr -d ' ')"
++    if [ "$size" = "$last_size" ]; then
++      idle_slept=$((idle_slept + step_ms))
++      [ "$idle_slept" -ge "$IDLE_MS" ] && break
++    else
++      idle_slept=0
++      last_size="$size"
++    fi
++    sleep 0.05
++  done
++fi
+ 
+ curl -s "$BASE/idb/evaluative_no_receipt_count" >"$WORK_DIR/eval.json"
+ curl -s "$BASE/idb/strawman_contrast_count" >"$WORK_DIR/straw.json"
+ curl -s "$BASE/idb/pure_nothing_count" >"$WORK_DIR/nothing.json"
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && time v6/labs/prose_nothing/run.sh corpus 2>&1 | tee /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/corpus-run2.out
+== PROSE-NOTHING (mode=corpus) ==
+run time: 1557 ms
+sentence sides: {}
+
+CLASS evaluative_no_receipt:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS strawman_contrast:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS pure_nothing:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+TOP 15 assistant pure_nothing offenders (seq):
+
+real	0m1.663s
+user	0m0.730s
+sys	0m0.285s
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+echo "PORT=$PORT"
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o "$W/load.json" -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+echo "--- load ---"; cat "$W/load.json"; echo
+# open ticks SSE
+(curl -sN "http://127.0.0.1:$PORT/ticks" > "$W/manual-ticks.sse" 2>&1 &)
+sleep 1
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"; echo
+echo "waiting 10s for host..."
+sleep 10
+echo "--- sentence_side_count ---"; curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count"; echo
+echo "--- pure_nothing_count ---"; curl -s "http://127.0.0.1:$PORT/idb/pure_nothing_count"; echo
+echo "--- sentence_row count via stats? try idb/sentence_row ---"; curl -s "http://127.0.0.1:$PORT/idb/sentence_row"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== server.log tail ==="; tail -20 "$W/manual-server.log"
+echo "=== ticks.sse tail ==="; tail -20 "$W/manual-ticks.sse"
+PORT=58433
+LOAD:200
+--- load ---
+{"loaded":true,"rels":["__host_demand_feed_sentences","__host_response_feed_sentences","evaluative","evaluative_no_receipt","evaluative_no_receipt_count","probe_row","pure_nothing","pure_nothing_count","pure_nothing_sentence","receipt_bearing","sentence_row","sentence_side_count","strawman","strawman_contrast","strawman_contrast_count"],"arrivalTargets":["__host_response_feed_sentences","probe_row"],"hosts":["feed_sentences"],"binds":[]}
+{"ticks":[{"tick":1,"line":"{\"tick\":1,\"deltas\":{\"__host_demand_feed_sentences\":{\"add\":[[\"identity|feed_sentences|start_token:text=tok\",\"witness|feed_sentences|start_token:text=tok\",\"tok\"]],\"del\":[]},\"probe_row\":{\"add\":[[\"tok\"]],\"del\":[]}}}"}]}
+waiting 10s for host...
+--- sentence_side_count ---
+{"rows":[]}
+--- pure_nothing_count ---
+{"rows":[]}
+--- sentence_row count via stats? try idb/sentence_row ---
+{"rows":[]}
+=== server.log tail ===
+tsv2 serving on 58433 (db :memory:)
+program loaded: cfd2e42789d119d75f0e1f66e7763bfb
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+=== ticks.sse tail ===
+data: {"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+time (PROSE_NOTHING_FEED=v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed v6/labs/prose_nothing/feed-sentences.sh feed | wc -c)
+12929659
+
+real	0m1.723s
+user	0m1.354s
+sys	0m0.409s
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server2.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+(curl -sN "http://127.0.0.1:$PORT/ticks" > "$W/manual2-ticks.sse" 2>&1 &)
+sleep 1
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+echo "waiting 30s..."
+sleep 30
+echo "--- sentence_row rows? ---"; curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count"; echo
+echo "--- host response rel ---"; curl -s "http://127.0.0.1:$PORT/idb/__host_response_feed_sentences"; echo; echo
+kill -9 $SPID 2>/dev/null
+echo "=== ticks lines count ==="; wc -l "$W/manual2-ticks.sse"
+echo "=== ticks tail ==="; tail -5 "$W/manual2-ticks.sse"
+echo "=== server.log ==="; cat "$W/manual-server2.log"
+LOAD:200
+waiting 30s...
+--- sentence_row rows? ---
+{"rows":[]}
+--- host response rel ---
+{"rows":[]}
+
+=== ticks lines count ===
+2 /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/manual2-ticks.sse
+=== ticks tail ===
+data: {"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+
+=== server.log ===
+tsv2 serving on 58451 (db :memory:)
+program loaded: cfd2e42789d119d75f0e1f66e7763bfb
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+export PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh
+export PROSE_NOTHING_MODE=feed
+echo "--- exact spawned command, draining to /dev/null ---"
+time ( sh -c ": 'tok'; \"\$PROSE_NOTHING_FEED\" \"\$PROSE_NOTHING_MODE\"" > /dev/null ); echo "EXIT $?"
+--- exact spawned command, draining to /dev/null ---
+
+real	0m1.722s
+user	0m1.335s
+sys	0m0.401s
+EXIT 0
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server3.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+for i in 2 5 10 20 30; do
+  sleep $(( i==2?3:5 ))
+  echo "[t+${i}s] count: $(curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count")"
+  ps aux | grep -c "[f]eed-sentences.mjs"
+done
+echo "--- stats ---"; curl -s "http://127.0.0.1:$PORT/stats"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== server.log ==="; cat "$W/manual-server3.log"
+LOAD:200
+[t+2s] count: {"rows":[]}
+0
+[t+5s] count: {"rows":[]}
+0
+[t+10s] count: {"rows":[]}
+0
+[t+20s] count: {"rows":[]}
+0
+[t+30s] count: {"rows":[]}
+0
+--- stats ---
+{"memory":{"rssBytes":402505728,"heapUsedBytes":20651064,"externalBytes":12491158},"sqlite":{"pageCount":17,"pageSize":4096,"freelistCount":0,"dbBytes":69632,"freelistBytes":0,"dbstatAvailable":true,"objectBytes":[]}}
+=== server.log ===
+tsv2 serving on 58495 (db :memory:)
+program loaded: cfd2e42789d119d75f0e1f66e7763bfb
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+cat > "$W/repro.mjs" <<'EOF'
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+const cmd = process.env.CMD;
+const cl = `: 'tok'; "${cmd}" "${process.env.PN_MODE}"`;
+console.error("RUNNING:", cl);
+const child = spawn(cl, [], { shell: true, env: { ...process.env } });
+let stdout = "", stderr = "", timed = false;
+const timer = setTimeout(() => { timed = true; child.kill("SIGKILL"); }, 120000);
+child.stdout?.on("data", (c) => { stdout += c; });
+child.stderr?.on("data", (c) => { stderr += c; });
+child.on("error", (e) => { console.error("ERROR:", e.message); process.exit(1); });
+child.on("close", (code) => {
+  clearTimeout(timer);
+  console.error("closed code=", code, "timedout=", timed, "stdout bytes=", stdout.length, "stderr=", stderr.slice(0,500));
+  process.exit(0);
+});
+EOF
+PN_MODE=feed CMD=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh node "$W/repro.mjs" 2>&1 | head -20
+RUNNING: : 'tok'; "/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh" "feed"
+closed code= 0 timedout= false stdout bytes= 12875350 stderr=
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+cat > "$W/debug-feed.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "DEBUG CMD: $0 $*" > "$DEBUG_LOG"
+echo "HOME=$HOME" >> "$DEBUG_LOG"
+echo "PWD=$PWD" >> "$DEBUG_LOG"
+echo "MODE=$PROSE_NOTHING_MODE FIXED=$PROSE_NOTHING_FIXTURE_FILE" >> "$DEBUG_LOG"
+node /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs feed > "$DEBUG_OUT" 2> "$DEBUG_ERR"
+echo "node exit=$? outbytes=$(wc -c < "$DEBUG_OUT") err:$(cat "$DEBUG_ERR")" >> "$DEBUG_LOG"
+cat "$DEBUG_OUT"
+EOF
+chmod +x "$W/debug-feed.sh"
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+PROSE_NOTHING_FEED="$W/debug-feed.sh" PROSE_NOTHING_MODE=feed DEBUG_LOG="$W/dbg.log" DEBUG_OUT="$W/dbg.out" DEBUG_ERR="$W/dbg.err" \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server4.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+sleep 25
+echo "--- count ---"; curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== dbg.log ==="; cat "$W/dbg.log" 2>/dev/null
+echo "=== dbg.err ==="; cat "$W/dbg.err" 2>/dev/null
+echo "=== server.log tail ==="; tail -8 "$W/manual-server4.log"
+LOAD:200
+--- count ---
+{"rows":[]}
+=== dbg.log ===
+DEBUG CMD: /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/debug-feed.sh feed
+HOME=/Users/chrishafley
+PWD=/Users/chrishafley/projects/sprefa-lanes/nothingprose
+MODE=feed FIXED=
+node exit=0 outbytes=12940606 err:
+=== dbg.err ===
+=== server.log tail ===
+tsv2 serving on 58549 (db :memory:)
+program loaded: cfd2e42789d119d75f0e1f66e7763bfb
+{"tick":1,"deltas":{"__host_demand_feed_sentences":{"add":[["identity|feed_sentences|start_token:text=tok","witness|feed_sentences|start_token:text=tok","tok"]],"del":[]},"probe_row":{"add":[["tok"]],"del":[]}}}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+cat > "$W/decode.mjs" <<'EOF'
+import fs from "node:fs";
+const text = fs.readFileSync(process.argv[2], "utf8");
+const touched = Date.now();
+function parseJsonItems(text){
+  try { const p = JSON.parse(text); if (Array.isArray(p)) return p; } catch {}
+  const lines = text.split("\n").filter(l => l.trim().length>0);
+  if (lines.length === 0) return null;
+  const items=[];
+  for (const line of lines){ try { items.push(JSON.parse(line)); } catch { return null; } }
+  return items;
+}
+const items = parseJsonItems(text);
+console.log("parse items:", items ? items.length : null, "elapsed ms:", Date.now()-touched);
+if (items){
+  const objs = items.filter((i)=> i!==null && typeof i==="object" && !Array.isArray(i));
+  console.log("objects:", objs.length);
+  const partial = objs.filter(i => "side" in i && "seq" in i && "sentence" in i && i.side!==null && i.seq!==null && i.sentence!==null);
+  console.log("full carriesEveryColumn rows:", partial.length);
+}
+console.log("total ms:", Date.now()-touched);
+EOF
+time node "$W/decode.mjs" "$W/dbg.out"
+parse items: 84318 elapsed ms: 49
+objects: 84318
+full carriesEveryColumn rows: 84318
+total ms: 57
+
+real	0m0.110s
+user	0m0.102s
+sys	0m0.023s
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+rm -f "$W/tsv2.sqlite"
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed \
+TSV2_DB="file:$W/tsv2.sqlite" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server5.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+sleep 25
+kill -9 $SPID 2>/dev/null
+sleep 1
+echo "=== witness table ==="
+sqlite3 "$W/tsv2.sqlite" "select host,witness_digest,state,response_rows from __host_witness;" 2>&1
+echo "=== sentence_row count ==="
+sqlite3 "$W/tsv2.sqlite" "select count(*) from cx_sentence_row;" 2>&1
+echo "=== tables ==="
+sqlite3 "$W/tsv2.sqlite" ".tables" 2>&1
+LOAD:200
+/opt/homebrew/bin/bash: line 15: 97212 Killed: 9                  PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed TSV2_DB="file:$W/tsv2.sqlite" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts > "$W/manual-server5.log" 2>&1
+=== witness table ===
+feed_sentences|witness|feed_sentences|start_token:text=tok|error|0
+=== sentence_row count ===
+Error: in prepare, no such table: cx_sentence_row
+=== tables ===
+__host_demand_feed_sentences    pure_nothing_count            
+__host_response_feed_sentences  pure_nothing_sentence         
+__host_witness                  receipt_bearing               
+evaluative                      sentence_row                  
+evaluative_no_receipt           sentence_side_count           
+evaluative_no_receipt_count     strawman                      
+probe_row                       strawman_contrast             
+pure_nothing                    strawman_contrast_count
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+# regenerate a fresh corpus output
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed v6/labs/prose_nothing/feed-sentences.sh feed > "$W/corpus-feed2.jsonl"
+cat > "$W/project.mjs" <<'EOF'
+import fs from "node:fs";
+const text = fs.readFileSync(process.argv[2], "utf8");
+const outputs = [{name:"side",type:"text"},{name:"seq",type:"int"},{name:"sentence",type:"text"}];
+function coerce(raw){
+  // replicate
+}
+function decodeOutput(stdout, outputs){
+  const trimmed = stdout.trim();
+  if (!trimmed) return [];
+  function parseJsonItems(text){
+    try { const p=JSON.parse(text); if(Array.isArray(p)) return p; } catch{}
+    const lines=text.split("\n").filter(l=>l.trim().length>0);
+    if(!lines.length) return null;
+    const items=[]; for(const l of lines){ try{items.push(JSON.parse(l));}catch{return null;} }
+    return items;
+  }
+  const items = parseJsonItems(trimmed);
+  if (items){
+    const objects = items.filter(i=> i!==null && typeof i==="object" && !Array.isArray(i));
+    if (objects.length===items.length){
+      // decodeObjectItems full path with coerce
+      const out=[];
+      for (const item of objects){
+        const row=[];
+        for (const col of outputs){
+          const raw = item[col.name];
+          if (col.type==="int"){
+            const v = typeof raw==="number" ? raw : Number(String(raw??"").trim());
+            if (!Number.isSafeInteger(v)) throw new Error(`int check failed for ${col.name}: ${JSON.stringify(raw)}`);
+            row.push(v);
+          } else {
+            row.push(typeof raw==="string"?raw:(raw===null||raw===undefined?"":String(raw)));
+          }
+        }
+        out.push(row);
+      }
+      return out;
+    }
+  }
+  return [];
+}
+try {
+  const t=Date.now();
+  const rows = decodeOutput(text, outputs);
+  console.log("rows:", rows.length, "elapsed:", Date.now()-t);
+  // sample
+  for (const r of rows.slice(0,3)) console.log("sample:", JSON.stringify(r));
+} catch(e){
+  console.error("THREW:", e.message);
+  console.error(e.stack);
+}
+EOF
+node "$W/project.mjs" "$W/corpus-feed2.jsonl"
+rows: 84362 elapsed: 64
+sample: ["user",0,"How can we get text-to-speech with local AI models?"]
+sample: ["user",1,"Because I'm already using handy and I think Whisper and Streaming Text to even write this message"]
+sample: ["assistant",2,"Local TTS on macOS, ranked by fit for a Handy-style setup (local, streaming, Rust/CLI-friendly): | Model | Params | Speed (M-series) | Voice clone | Runtime | License | |---|---|---|---|---|---| | **Kokoro-82M** | 82M | ~faster-than-realtime on CPU | no | ONNX / MLX | Apache-2.0 | | **Piper** | ~5-30M/voice | realtime on CPU | no | ONNX (C++/Rust bindable) | MIT | | **Chatterbox** (Resemble) | 0.5B | ~realtime on GPU/MLX | yes | PyTorch/MLX | MIT | | **F5-TTS** | ~0.3B | slower, GPU-leaning | yes (zero-shot) | PyTorch | CC-BY / MIT code | | **Dia-1.6B** (Nari) | 1.6B | needs GPU | yes | PyTorch | Apache-2.0 | | **Orpheus-TTS** | 3B (Llama) | GPU | yes | llama.cpp-able | Apache-2.0 | | **MeloTTS** | small | realtime CPU | no | PyTorch/ONNX | MIT | | macOS / AVSpeechSynthesizer | n/a | instant | no | native | system | Fastest paths for your stack: **Kokoro** — best quality/speed for streaming on Mac."]
+[0m
+[0m→ [0mRead v6/tsv2/serve/0_trace.ts
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+PROSE_NOTHING_FEED=/Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh PROSE_NOTHING_MODE=feed \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 DL_PERF_LOG="$W/perf.log" \
+node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server6.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+sleep 20
+kill -9 $SPID 2>/dev/null
+echo "=== perf.log (effect/error lines) ==="
+grep -o '"error":"[^"]*"' "$W/perf.log" 2>/dev/null | sort -u | head
+echo "--- raw perf tail ---"
+tail -5 "$W/perf.log" 2>/dev/null
+LOAD:200
+=== perf.log (effect/error lines) ===
+--- raw perf tail ---
+{"level":30,"tick":1,"rels":15,"rows":2,"statements":182,"wall_ms":6.5761249999995925,"rules":[{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:__host_demand_feed_sentences/3#1","rows":1,"wall_ms":0.10445799999979499},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:sentence_row/3#1","rows":0,"wall_ms":0.10616699999991397},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:evaluative/2#1","rows":0,"wall_ms":0.04250000000001819},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:receipt_bearing/2#1","rows":0,"wall_ms":0.04808299999967858},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:strawman/2#1","rows":0,"wall_ms":0.04737500000010186},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:evaluative_no_receipt/2#1","rows":0,"wall_ms":0.07104200000003402},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:pure_nothing/2#1","rows":0,"wall_ms":0.09454199999981938},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:pure_nothing_sentence/3#1","rows":0,"wall_ms":0.08216600000014296},{"rule":"cfd2e42789d119d75f0e1f66e7763bfb:strawman_contrast/2#1","rows":0,"wall_ms":0.040292000000135886}],"effects":[],"binds":[],"watches":[]}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+cat > "$W/debug-feed2.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "started $(date +%s.%N)" >> "$DEBUG_LOG"
+node /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs feed > "$DEBUG_OUT" 2> "$DEBUG_ERR"
+echo "node done $(date +%s.%N) exit=$? bytes=$(wc -c < "$DEBUG_OUT")" >> "$DEBUG_LOG"
+cat "$DEBUG_OUT"
+echo "CAT-DONE $(date +%s.%N)" >> "$DEBUG_LOG"
+EOF
+chmod +x "$W/debug-feed2.sh"
+PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+rm -f "$W/dbg2.log"
+PROSE_NOTHING_FEED="$W/debug-feed2.sh" PROSE_NOTHING_MODE=feed DEBUG_LOG="$W/dbg2.log" DEBUG_OUT="$W/dbg2.out" DEBUG_ERR="$W/dbg2.err" \
+TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 DL_PERF_LOG="$W/perf2.log" \
+node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/manual-server7.log" 2>&1 &
+SPID=$!
+sleep 2
+curl -s -o /dev/null -w 'LOAD:%{http_code}\n' -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+sleep 40
+echo "--- count ---"; curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count"; echo
+kill -9 $SPID 2>/dev/null
+echo "=== dbg2.log ==="; cat "$W/dbg2.log" 2>/dev/null
+echo "=== perf2 effects/errors ==="; grep -o '"error":"[^"]*"' "$W/perf2.log" | sort -u | head
+LOAD:200
+--- count ---
+{"rows":[]}
+=== dbg2.log ===
+started 1785944124.440502000
+node done 1785944126.213244000 exit=0 bytes=12956024
+CAT-DONE 1785944126.234658000
+=== perf2 effects/errors ===
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+# add MAX_ROWS truncation to feed for diagnosis
+cp v6/labs/prose_nothing/feed-sentences.mjs "$W/feed-max.mjs"
+python3 - "$W/feed-max.mjs" <<'EOF'
+import sys
+p=sys.argv[1]
+s=open(p).read()
+s=s.replace("process.stdout.write(rows.join(\"\\n\") + (rows.length ? \"\\n\" : \"\"));",
+  "if (process.env.MAX_ROWS) rows = rows.slice(0, Number(process.env.MAX_ROWS));\nprocess.stdout.write(rows.join(\"\\n\") + (rows.length ? \"\\n\" : \"\"));")
+open(p,"w").write(s)
+EOF
+cat > "$W/feed-max.sh" <<'EOF'
+#!/usr/bin/env bash
+exec node "$MAX_FEED" feed
+EOF
+chmod +x "$W/feed-max.sh"
+for N in 2000 20000; do
+  PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  PROSE_NOTHING_FEED="$W/feed-max.sh" PROSE_NOTHING_MODE=feed MAX_FEED="$W/feed-max.mjs" MAX_ROWS="$N" \
+  TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 \
+  node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/srv$N.log" 2>&1 &
+  SPID=$!
+  sleep 2
+  curl -s -o /dev/null -w "N=$N LOAD:%{http_code} " -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+  printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+  curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+  sleep 15
+  echo "count: $(curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count")  pure_count: $(curl -s "http://127.0.0.1:$PORT/idb/pure_nothing_count")"
+  kill -9 $SPID 2>/dev/null
+done
+N=2000 LOAD:200 count: {"rows":[["assistant",1605],["user",395]]}  pure_count: {"rows":[["assistant",1]]}
+N=20000 LOAD:200 /opt/homebrew/bin/bash: line 30: 36055 Killed: 9                  PROSE_NOTHING_FEED="$W/feed-max.sh" PROSE_NOTHING_MODE=feed MAX_FEED="$W/feed-max.mjs" MAX_ROWS="$N" TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts > "$W/srv$N.log" 2>&1
+count: {"rows":[]}  pure_count: {"rows":[]}
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+for N in 10000 6000; do
+  PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+  PROSE_NOTHING_FEED="$W/feed-max.sh" PROSE_NOTHING_MODE=feed MAX_FEED="$W/feed-max.mjs" MAX_ROWS="$N" \
+  TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 \
+  node --experimental-transform-types v6/tsv2/serve/main.ts >"$W/srv$N.log" 2>&1 &
+  SPID=$!
+  sleep 2
+  curl -s -o /dev/null -X POST --data-binary @v6/labs/prose_nothing/prose-nothing.dl6 "http://127.0.0.1:$PORT/program"
+  printf '{"batch":[{"rel":"probe_row","sign":"add","row":["tok"]}]}\n' >"$W/arr.json"
+  curl -s -o /dev/null -X POST --data-binary @"$W/arr.json" "http://127.0.0.1:$PORT/arrivals"
+  sleep 15
+  echo "N=$N count: $(curl -s "http://127.0.0.1:$PORT/idb/sentence_side_count")"
+  kill -0 $SPID 2>/dev/null && { echo "  (server alive)"; } || echo "  (server DIED)"
+  kill -9 $SPID 2>/dev/null
+done
+N=10000 count: {"rows":[["assistant",7839],["user",2161]]}
+  (server alive)
+/opt/homebrew/bin/bash: line 15: 82379 Killed: 9                  PROSE_NOTHING_FEED="$W/feed-max.sh" PROSE_NOTHING_MODE=feed MAX_FEED="$W/feed-max.mjs" MAX_ROWS="$N" TSV2_DB=":memory:" TSV2_PORT="$PORT" NODE_NO_WARNINGS=1 node --experimental-transform-types v6/tsv2/serve/main.ts > "$W/srv$N.log" 2>&1
+N=6000 count: {"rows":[["assistant",4727],["user",1273]]}
+  (server alive)
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/feed-sentences.mjs
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+@@ -34,8 +34,11 @@
+ 
+ let rows = [];
+ let seq = 0;
+ 
++const CHUNK_SIZE = Number(process.env.PROSE_NOTHING_CHUNK_SIZE || "5000");
++const chunkIndex = MODE === "feed" ? process.argv[3] : undefined;
++
+ if (MODE === "fixture") {
+   const file = process.argv[3];
+   if (!file || !fs.existsSync(file)) {
+     process.stderr.write(`feed-sentences.mjs: fixture file missing: ${file}\n`);
+
+[0m
+The served engine OOMs on a single large batch (works at 10k, dies at 20k). I'll chunk the feed by probe token. Let me update the feed and dl6:
+[0m← [0mEdit v6/labs/prose_nothing/feed-sentences.mjs
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+@@ -38,14 +38,14 @@
+ const CHUNK_SIZE = Number(process.env.PROSE_NOTHING_CHUNK_SIZE || "5000");
+ const chunkIndex = MODE === "feed" ? process.argv[3] : undefined;
+ 
+ if (MODE === "fixture") {
+-  const file = process.argv[3];
+-  if (!file || !fs.existsSync(file)) {
+-    process.stderr.write(`feed-sentences.mjs: fixture file missing: ${file}\n`);
++  const chunkIndex = process.argv[3];
++  if (!chunkIndex || !fs.existsSync(chunkIndex)) {
++    process.stderr.write(`feed-sentences.mjs: fixture file missing: ${chunkIndex}\n`);
+     process.exit(2);
+   }
+-  const fixture = JSON.parse(fs.readFileSync(file, "utf8"));
++  const fixture = JSON.parse(fs.readFileSync(chunkIndex, "utf8"));
+   for (const item of fixture) {
+     const side = item.side;
+     for (const sentence of splitSentences(stripCode(item.sentence))) {
+       rows.push(JSON.stringify({ side, seq: seq++, sentence }));
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/feed-sentences.mjs
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.mjs
+@@ -119,5 +119,11 @@
+     });
+   }
+ }
+ 
++if (MODE === "feed" && chunkIndex !== undefined && chunkIndex !== "all") {
++  const index = Number(chunkIndex);
++  const start = index * CHUNK_SIZE;
++  rows = rows.slice(start, start + CHUNK_SIZE);
++}
++
+ process.stdout.write(rows.join("\n") + (rows.length ? "\n" : ""));
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/feed-sentences.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/feed-sentences.sh
+@@ -6,9 +6,9 @@
+ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ 
+ case "${1:-}" in
+   feed)
+-    exec node "$SCRIPT_DIR/feed-sentences.mjs" feed
++    exec node "$SCRIPT_DIR/feed-sentences.mjs" feed "${2:-all}"
+     ;;
+   fixture)
+     if [ -z "${PROSE_NOTHING_FIXTURE_FILE:-}" ] || [ ! -f "$PROSE_NOTHING_FIXTURE_FILE" ]; then
+       printf 'feed-sentences.sh: fixture mode needs PROSE_NOTHING_FIXTURE_FILE\n' >&2
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/prose-nothing.dl6
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+@@ -17,9 +17,9 @@
+ # Hosts fetch raw facts only: the node feed walks the jsonl transcripts and
+ # splits sentences. All classification lives here as regexp/2 rules.
+ 
+ sh feed_sentences(start_token: text) -> (side: text, seq: int, sentence: text) =
+-  `: {start_token}; "$PROSE_NOTHING_FEED" "$PROSE_NOTHING_MODE"`.
++  `: {start_token}; "$PROSE_NOTHING_FEED" feed {start_token}`.
+ 
+ rel probe_row(start_token: text).
+ 
+ rel sentence_row(side: text, seq: int, sentence: text).
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/prose-nothing.dl6
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/prose-nothing.dl6
+@@ -17,9 +17,9 @@
+ # Hosts fetch raw facts only: the node feed walks the jsonl transcripts and
+ # splits sentences. All classification lives here as regexp/2 rules.
+ 
+ sh feed_sentences(start_token: text) -> (side: text, seq: int, sentence: text) =
+-  `: {start_token}; "$PROSE_NOTHING_FEED" feed {start_token}`.
++  `: {start_token}; "$PROSE_NOTHING_FEED" "$PROSE_NOTHING_MODE" {start_token}`.
+ 
+ rel probe_row(start_token: text).
+ 
+ rel sentence_row(side: text, seq: int, sentence: text).
+
+[0m
+[0m← [0mWrite v6/labs/prose_nothing/feed-sentences.sh
+Wrote file successfully.
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -77,9 +77,26 @@
+   exit 1
+ fi
+ 
+ TOKEN="$(git -C "$V6_DIR" rev-parse HEAD 2>/dev/null || printf 'prose-nothing')"
+-printf '{"batch":[{"rel":"probe_row","sign":"add","row":["%s"]}]}\n' "$TOKEN" >"$WORK_DIR/arrivals.json"
++if [ "$MODE" = "fixture" ]; then
++  CHUNKS="0"
++else
++  CHUNK_SIZE="${PROSE_NOTHING_CHUNK_SIZE:-5000}"
++  TOTAL_SENTENCES="$(PROSE_NOTHING_FEED="$LAB_DIR/feed-sentences.sh" PROSE_NOTHING_MODE=feed \
++    "$LAB_DIR/feed-sentences.sh" feed all | wc -l | tr -d ' ')"
++  CHUNKS=$(( (TOTAL_SENTENCES + CHUNK_SIZE - 1) / CHUNK_SIZE ))
++fi
++
++python3 - "$WORK_DIR" "$CHUNKS" "$TOKEN" <<'PY'
++import json, sys
++work, chunks, token = sys.argv[1], int(sys.argv[2]), sys.argv[3]
++rows = [{"rel":"probe_row","sign":"add","row":[str(i)]} for i in range(chunks)]
++with open(sys.argv[1] + "/arrivals.json", "w") as f:
++    json.dump({"batch": rows}, f)
++print(f"posting {chunks} probe tokens")
++PY
++
+ status="$(curl -s -o "$WORK_DIR/arrivals.out" -w '%{http_code}' -X POST --data-binary @"$WORK_DIR/arrivals.json" "$BASE/arrivals")"
+ if [ "$status" != 200 ]; then
+   printf 'run.sh: arrivals returned %s\n' >&2
+   cat "$WORK_DIR/arrivals.out" >&2
+
+[0m
+Now update run.sh to post chunked probe tokens:
+Chunking: each fresh node run rebuilds the same full corpus with global seq 0..N-1, so chunk i always holds the disjoint seq range `[i*C, (i+1)*C)` — cross-chunk identity collisions are impossible. Let me verify fixture still works, then run the full corpus:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && v6/labs/prose_nothing/run.sh fixture 2>&1
+posting 0 probe tokens
+== PROSE-NOTHING (mode=fixture) ==
+run time: 1586 ms
+sentence sides: {}
+
+CLASS evaluative_no_receipt:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS strawman_contrast:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS pure_nothing:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -78,9 +78,9 @@
+ fi
+ 
+ TOKEN="$(git -C "$V6_DIR" rev-parse HEAD 2>/dev/null || printf 'prose-nothing')"
+ if [ "$MODE" = "fixture" ]; then
+-  CHUNKS="0"
++  CHUNKS=1
+ else
+   CHUNK_SIZE="${PROSE_NOTHING_CHUNK_SIZE:-5000}"
+   TOTAL_SENTENCES="$(PROSE_NOTHING_FEED="$LAB_DIR/feed-sentences.sh" PROSE_NOTHING_MODE=feed \
+     "$LAB_DIR/feed-sentences.sh" feed all | wc -l | tr -d ' ')"
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && v6/labs/prose_nothing/run.sh fixture 2>&1
+posting 1 probe tokens
+== PROSE-NOTHING (mode=fixture) ==
+run time: 2258 ms
+sentence sides: {'assistant': 3, 'user': 3}
+
+CLASS evaluative_no_receipt:
+  assistant         2   rate 6666.67 per 10k
+  user              1   rate 3333.33 per 10k
+  TOTAL             3
+
+CLASS strawman_contrast:
+  assistant         2   rate 6666.67 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             2
+
+CLASS pure_nothing:
+  assistant         1   rate 3333.33 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             1
+[0m
+Fixture restored. Now the full corpus run with chunking:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && time v6/labs/prose_nothing/run.sh corpus 2>&1 | tee /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/corpus-run3.out
+posting 17 probe tokens
+== PROSE-NOTHING (mode=corpus) ==
+run time: 3091 ms
+sentence sides: {}
+
+CLASS evaluative_no_receipt:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS strawman_contrast:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+CLASS pure_nothing:
+  assistant         0   rate 0.00 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             0
+
+TOP 15 assistant pure_nothing offenders (seq):
+
+real	0m3.182s
+user	0m2.069s
+sys	0m0.653s
+[0m
+[0m→ [0mRead v6/labs/prose_nothing/run.sh
+The chunked feeds take ~2s each, so the idle-based quiescence fires mid-feed. I'll wait for the accumulated sentence total to reach the expected corpus size instead:
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -79,8 +79,9 @@
+ 
+ TOKEN="$(git -C "$V6_DIR" rev-parse HEAD 2>/dev/null || printf 'prose-nothing')"
+ if [ "$MODE" = "fixture" ]; then
+   CHUNKS=1
++  TOTAL_SENTENCES=6
+ else
+   CHUNK_SIZE="${PROSE_NOTHING_CHUNK_SIZE:-5000}"
+   TOTAL_SENTENCES="$(PROSE_NOTHING_FEED="$LAB_DIR/feed-sentences.sh" PROSE_NOTHING_MODE=feed \
+     "$LAB_DIR/feed-sentences.sh" feed all | wc -l | tr -d ' ')"
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -103,45 +103,38 @@
+   cat "$WORK_DIR/arrivals.out" >&2
+   exit 1
+ fi
+ 
+-# The corpus feed walks 200+ jsonl transcripts and can take seconds, so first
+-# wait for the feed host to answer (sentence_row populated), then quiesce.
++# The chunked feed hosts each walk the transcripts and can take seconds, so
++# idle-based quiescence fires too early. Wait until the accumulated sentence
++# count reaches the expected corpus total, then settle the last drain tick.
+ last_size=-1
+ idle_slept=0
+ step_ms=50
+-deadline=$((SECONDS + 600))
+-populated=0
++deadline=$((SECONDS + 900))
+ while [ "$SECONDS" -lt "$deadline" ]; do
+-  probe_rows="$(curl -s "$BASE/idb/sentence_side_count" 2>/dev/null)"
+-  case "$probe_rows" in
+-    *'assistant'*|*'user'*) populated=1 ;;
+-  esac
++  totals="$(curl -s "$BASE/idb/sentence_side_count" 2>/dev/null)"
++  loaded=$(python3 - "$WORK_DIR" "$totals" <<'PY'
++import json, sys
++try:
++    rows = json.loads(sys.argv[2]).get("rows", [])
++except Exception:
++    rows = []
++print(sum(int(x[1]) for x in rows if len(x) == 2))
++PY
++)
++  [ "$loaded" -ge "$TOTAL_SENTENCES" ] && break
+   size="$(wc -c <"$WORK_DIR/ticks.sse" 2>/dev/null | tr -d ' ')"
+   if [ "$size" = "$last_size" ]; then
+     idle_slept=$((idle_slept + step_ms))
+-    [ "$idle_slept" -ge "$IDLE_MS" ] && break
++    [ "$idle_slept" -ge "$IDLE_MS" ] && idle_slept=0
+   else
+     idle_slept=0
+     last_size="$size"
+   fi
+   sleep 0.05
+ done
+-# A host that delivered rows re-arms the idle window; settle its drain tick.
+-if [ "$populated" = 1 ]; then
+-  idle_slept=0
+-  while [ "$SECONDS" -lt "$deadline" ]; do
+-    size="$(wc -c <"$WORK_DIR/ticks.sse" 2>/dev/null | tr -d ' ')"
+-    if [ "$size" = "$last_size" ]; then
+-      idle_slept=$((idle_slept + step_ms))
+-      [ "$idle_slept" -ge "$IDLE_MS" ] && break
+-    else
+-      idle_slept=0
+-      last_size="$size"
+-    fi
+-    sleep 0.05
+-  done
+-fi
++[ "$loaded" -ge "$TOTAL_SENTENCES" ] || printf 'run.sh: warning: loaded %s of %s sentences in time\n' "$loaded" "$TOTAL_SENTENCES" >&2
+ 
+ curl -s "$BASE/idb/evaluative_no_receipt_count" >"$WORK_DIR/eval.json"
+ curl -s "$BASE/idb/strawman_contrast_count" >"$WORK_DIR/straw.json"
+ curl -s "$BASE/idb/pure_nothing_count" >"$WORK_DIR/nothing.json"
+
+[0m
+[0m← [0mEdit v6/labs/prose_nothing/run.sh
+Index: /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+===================================================================
+--- /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
++++ /Users/chrishafley/projects/sprefa-lanes/nothingprose/v6/labs/prose_nothing/run.sh
+@@ -133,8 +133,20 @@
+   fi
+   sleep 0.05
+ done
+ [ "$loaded" -ge "$TOTAL_SENTENCES" ] || printf 'run.sh: warning: loaded %s of %s sentences in time\n' "$loaded" "$TOTAL_SENTENCES" >&2
++# Settle any final drain tick from the last chunk arrival.
++idle_slept=0
++while [ "$idle_slept" -lt "$IDLE_MS" ]; do
++  size="$(wc -c <"$WORK_DIR/ticks.sse" 2>/dev/null | tr -d ' ')"
++  if [ "$size" = "$last_size" ]; then
++    idle_slept=$((idle_slept + step_ms))
++  else
++    idle_slept=0
++    last_size="$size"
++  fi
++  sleep 0.05
++done
+ 
+ curl -s "$BASE/idb/evaluative_no_receipt_count" >"$WORK_DIR/eval.json"
+ curl -s "$BASE/idb/strawman_contrast_count" >"$WORK_DIR/straw.json"
+ curl -s "$BASE/idb/pure_nothing_count" >"$WORK_DIR/nothing.json"
+
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose && time v6/labs/prose_nothing/run.sh corpus 2>&1 | tee /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test/corpus-run4.out
+posting 17 probe tokens
+== PROSE-NOTHING (mode=corpus) ==
+run time: 51553 ms
+sentence sides: {'assistant': 63222, 'user': 21223}
+
+CLASS evaluative_no_receipt:
+  assistant       421   rate 66.59 per 10k
+  user            146   rate 68.79 per 10k
+  TOTAL           567
+
+CLASS strawman_contrast:
+  assistant       517   rate 81.78 per 10k
+  user             50   rate 23.56 per 10k
+  TOTAL           567
+
+CLASS pure_nothing:
+  assistant         9   rate 1.42 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             9
+
+TOP 15 assistant pure_nothing offenders (seq):
+  seq   1118  The unifying trait should take the Lobby shape, with purity as a per-implementor contract rather than a trait requirement: Out-param over tuple-return is right for the hot loop (Vec reuse, zero alloc on no-effect events); is compatible with rollback because snapshots are whole-state assignments ( ), the same reason the ggrs handler works today.
+  seq   7996  And the tooling for spinning two fresh worktrees off a *branch* (rather than HEAD) is friction that buys little for background work — B ( ) and C ( ) are disjoint, but running them sequentially in the Spine worktree is correct and conflict-free.
+  seq   8613  So: the foundation is textbook-grade for a rollback platform fighter, the animation risk is real but has a known shape that fits your existing doctrine, and the design skill you're worried about is acquired through the playtest cadence you've already established rather than through more architecture.
+  seq   8616  Your model is right with one refinement: there is no diff step, so it's solid rather than react.
+  seq  23783  The agent reported it as observed rather than reconciling it to the expected number, which is right, but nobody has explained the growth.
+  seq  24684  RED/GREEN tests are real, not rigged — and crucially the GREEN test plants a key *inside* and asserts silence, proving the test-span exclusion does actual work rather than riding on absent delimiters.
+  seq  62534  Restating the two flagged findings without the banned stem: xrxgraph's trait-object indirection is genuine rather than faked (the dispatch really goes through ), and the three engine lanes' empty deviation sections held up under checking, with mdquery's STOP-instead-of-improvise remaining the standout behavior.
+  seq  65819  Notable: its uncommitted changes are in **src/** production files ( , , , , , , ) — those are real consumer off-ramps (LSP, SCIP, effect readers that pull interned columns and need decoding), not just test edits.
+  seq  71613  Your instinct was right that this should already exist, and the reason it didn't is a specific, fixable mistake rather than a missing feature.
+
+real	0m51.658s
+user	0m52.140s
+sys	0m11.252s
+[0m
+Full corpus run succeeds (51.6s). Let me capture clean verbatim outputs for the report:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+W=/var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/opencode/pn-test
+v6/labs/prose_nothing/run.sh fixture 2>&1 | tee "$W/fixture-final.out"
+echo "=====CORPUS====="
+cat "$W/corpus-run4.out"
+posting 1 probe tokens
+== PROSE-NOTHING (mode=fixture) ==
+run time: 1633 ms
+sentence sides: {'assistant': 3, 'user': 3}
+
+CLASS evaluative_no_receipt:
+  assistant         2   rate 6666.67 per 10k
+  user              1   rate 3333.33 per 10k
+  TOTAL             3
+
+CLASS strawman_contrast:
+  assistant         2   rate 6666.67 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             2
+
+CLASS pure_nothing:
+  assistant         1   rate 3333.33 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             1
+
+=====CORPUS=====
+posting 17 probe tokens
+== PROSE-NOTHING (mode=corpus) ==
+run time: 51553 ms
+sentence sides: {'assistant': 63222, 'user': 21223}
+
+CLASS evaluative_no_receipt:
+  assistant       421   rate 66.59 per 10k
+  user            146   rate 68.79 per 10k
+  TOTAL           567
+
+CLASS strawman_contrast:
+  assistant       517   rate 81.78 per 10k
+  user             50   rate 23.56 per 10k
+  TOTAL           567
+
+CLASS pure_nothing:
+  assistant         9   rate 1.42 per 10k
+  user              0   rate 0.00 per 10k
+  TOTAL             9
+
+TOP 15 assistant pure_nothing offenders (seq):
+  seq   1118  The unifying trait should take the Lobby shape, with purity as a per-implementor contract rather than a trait requirement: Out-param over tuple-return is right for the hot loop (Vec reuse, zero alloc on no-effect events); is compatible with rollback because snapshots are whole-state assignments ( ), the same reason the ggrs handler works today.
+  seq   7996  And the tooling for spinning two fresh worktrees off a *branch* (rather than HEAD) is friction that buys little for background work — B ( ) and C ( ) are disjoint, but running them sequentially in the Spine worktree is correct and conflict-free.
+  seq   8613  So: the foundation is textbook-grade for a rollback platform fighter, the animation risk is real but has a known shape that fits your existing doctrine, and the design skill you're worried about is acquired through the playtest cadence you've already established rather than through more architecture.
+  seq   8616  Your model is right with one refinement: there is no diff step, so it's solid rather than react.
+  seq  23783  The agent reported it as observed rather than reconciling it to the expected number, which is right, but nobody has explained the growth.
+  seq  24684  RED/GREEN tests are real, not rigged — and crucially the GREEN test plants a key *inside* and asserts silence, proving the test-span exclusion does actual work rather than riding on absent delimiters.
+  seq  62534  Restating the two flagged findings without the banned stem: xrxgraph's trait-object indirection is genuine rather than faked (the dispatch really goes through ), and the three engine lanes' empty deviation sections held up under checking, with mdquery's STOP-instead-of-improvise remaining the standout behavior.
+  seq  65819  Notable: its uncommitted changes are in **src/** production files ( , , , , , , ) — those are real consumer off-ramps (LSP, SCIP, effect readers that pull interned columns and need decoding), not just test edits.
+  seq  71613  Your instinct was right that this should already exist, and the reason it didn't is a specific, fixable mistake rather than a missing feature.
+[0m
+[0m← [0mWrite REPORT-NOTHINGPROSE.md
+Wrote file successfully.
+[0m
+All runs complete and reproducible. Now the report:
+Let me verify no prod code was touched and clean up:
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+git status --short
+echo "=== files in my lab dir ==="
+ls -la v6/labs/prose_nothing/
+echo "=== cargo fmt check (no prod edits, but confirm dl6 untouched elsewhere) ==="
+git diff --stat
+?? BRIEF.md
+?? REPORT-NOTHINGPROSE.md
+?? lane.log
+?? v6/labs/prose_nothing/
+=== files in my lab dir ===
+total 28
+drwxr-xr-x 7 chrishafley staff  224 Aug  5 11:17 .
+drwxr-xr-x 4 chrishafley staff  128 Aug  5 11:03 ..
+-rw-r--r-- 1 chrishafley staff 4099 Aug  5 11:39 feed-sentences.mjs
+-rwxr-xr-x 1 chrishafley staff  837 Aug  5 11:40 feed-sentences.sh
+-rw-r--r-- 1 chrishafley staff  519 Aug  5 11:17 fixture-sentences.json
+-rw-r--r-- 1 chrishafley staff 3844 Aug  5 11:39 prose-nothing.dl6
+-rwxr-xr-x 1 chrishafley staff 6634 Aug  5 11:42 run.sh
+=== cargo fmt check (no prod edits, but confirm dl6 untouched elsewhere) ===
+[0m
+[0m$ [0mcd /Users/chrishafley/projects/sprefa-lanes/nothingprose
+echo "=== banned words in my deliverables ==="
+grep -rniE "provenance|substrate|load-bearing|regime|ground" v6/labs/prose_nothing/ REPORT-NOTHINGPROSE.md 2>/dev/null || echo "none"
+echo "=== em dashes in my prose files ==="
+grep -n $'\u2014' v6/labs/prose_nothing/prose-nothing.dl6 v6/labs/prose_nothing/run.sh v6/labs/prose_nothing/feed-sentences.sh v6/labs/prose_nothing/feed-sentences.mjs 2>/dev/null || echo "none in code"
+echo "=== single-letter dl6 vars (prose-nothing.dl6) ==="
+grep -nE '[A-Z]', v6/labs/prose_nothing/prose-nothing.dl6 | head || true
+=== banned words in my deliverables ===
+REPORT-NOTHINGPROSE.md:226:seq   7996  And the tooling for spinning two fresh worktrees off a *branch* (rather than HEAD) is friction that buys little for background work - B ( ) and C ( ) are disjoint, but running them sequentially in the Spine worktree is correct and conflict-free.
+=== em dashes in my prose files ===
+none in code
+=== single-letter dl6 vars (prose-nothing.dl6) ===
+[0m
+[0m# [0mTodos
+[✓] Write feed-sentences.sh + feed-sentences.mjs (corpus walk + fixture mode)
+[✓] Write prose-nothing.dl6 (sh host, probe, class rels, receipt, count aggregates)
+[✓] Write run.sh (server spin-up, fixture mode, corpus mode, idb reads)
+[✓] Validate 6-sentence fixture through run.sh
+[✓] Run full corpus, capture counts + top pure_nothing offenders
+[✓] Write REPORT-NOTHINGPROSE.md at worktree root
+[0m
+Done. Merge `--ff-only 70eea8d1` was already at HEAD. All work is in `v6/labs/prose_nothing/`; `git diff --stat` is empty, no prod code touched.
+
+**What it is:** a dl6 program measuring the "nothing sentence" form (evaluative copula + strawman contrast, minus any receipt token) over `~/.claude/projects/*/*.jsonl`. Hosts only do raw fact extraction (walk transcripts, split sentences, chunk); every regexp, negation, and count is a dl6 rule.
+
+**Artifacts** (`v6/labs/prose_nothing/`): `feed-sentences.mjs` + `feed-sentences.sh` (the sh host), `prose-nothing.dl6` (host, `probe_row`, class rels, `receipt_bearing`, per-side count aggregates), `run.sh` (tsv2 server spin-up copied from `comment-budget-rail.sh`, fixture/corpus modes, idb reads), `fixture-sentences.json`. Report at worktree root: `REPORT-NOTHINGPROSE.md`.
+
+**Results:**
+
+| class | assistant | user | rate/10k (a / u) |
+|---|---|---|---|
+| sentences | 63,222 | 21,223 | - |
+| evaluative_no_receipt | 421 | 146 | 66.59 / 68.79 |
+| strawman_contrast | 517 | 50 | 81.78 / 23.56 |
+| pure_nothing | 9 | 0 | 1.42 / 0.00 |
+
+Validation: the 6-sentence fixture (one per class, one receipt-bearing evaluative that must not count, one plain sentence) matched its stated expected tallies exactly, verified before the corpus run.
+
+**Key deviations** (full in report §6): the served engine OOMs (macOS SIGKILL) on a single ~20k-row arrival batch, so `run.sh` chunks the corpus to 5,000 rows per probe token with globally disjoint seq ranges. The period/`!`/`?`-only splitter lets `;`/`:`/`and`-joined clauses pair "is right"/"are real" with a contrast phrase in the same extracted sentence, inflating `pure_nothing`; the genuine hits (e.g. the exact flagged sentence, seq 62534) are identifiable in the top-9 list.
+
+Run it: `./v6/labs/prose_nothing/run.sh fixture` and `./v6/labs/prose_nothing/run.sh corpus`.

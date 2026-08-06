@@ -1,0 +1,95 @@
+# prose-nothing.dl6 -- measure the "nothing sentence" form over the Claude
+# session transcript corpus.
+#
+# The form, mechanical, two halves plus an exemption:
+#   1. EVALUATIVE COPULA  `is/are/was/were/looks?/seems?/remains?` + evaluative
+#      adjective, word-bounded.
+#   2. STRAWMAN CONTRAST  `rather than / as opposed to / instead of being /
+#      not merely / not just`.
+#   3. RECEIPT EXEMPTION  any sentence carrying a receipt token (a digit, a hex
+#      run, a path fragment, a colon-number, a percent sign, or a quoted span)
+#      is NOT a nothing sentence even if 1 or 2 match.
+#
+# dl6 has no case-insensitive regexp flag (the `(?i)` spelling is refused as
+# regexp_pattern_outside_subset), so case coverage is spelled as a second
+# capitalized alternation in every pattern.
+#
+# Hosts fetch raw facts only: the node feed walks the jsonl transcripts and
+# splits sentences. All classification lives here as regexp/2 rules.
+
+sh feed_sentences(start_token: text) -> (side: text, seq: int, sentence: text) =
+  `: {start_token}; "$PROSE_NOTHING_FEED" "$PROSE_NOTHING_MODE" {start_token}`.
+
+rel probe_row(start_token: text).
+
+rel sentence_row(side: text, seq: int, sentence: text).
+sentence_row(side, seq, sentence) <-
+  probe_row(start_token),
+  feed_sentences(start_token, side, seq, sentence).
+
+# EXEMPTION 3. A sentence bearing any receipt token is not a nothing sentence.
+rel receipt_bearing(side: text, seq: int).
+receipt_bearing(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "[0-9]|[0-9a-fA-F]{8,}|\\.(pl|rs|ts|md)\\b|:[0-9]+|%|[\"”“‘’]").
+
+# HALF 1. The evaluative copula.
+rel evaluative(side: text, seq: int).
+evaluative(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b(is|are|was|were|looks?|seems?|remains?|Is|Are|Was|Were|Looks?|Seems?|Remains?)\\s+(genuine|real|solid|correct|clean|right|fine|good|proper|sound|legit|robust|reasonable|sensible|Genuine|Real|Solid|Correct|Clean|Right|Fine|Good|Proper|Sound|Legit|Robust|Reasonable|Sensible)\\b").
+
+# HALF 2. The strawman contrast.
+rel strawman(side: text, seq: int).
+strawman(side, seq) <-
+  sentence_row(side, seq, sentence),
+  regexp(sentence,
+    "\\b(rather than|as opposed to|instead of being|not merely|not just|Rather than|As opposed to|Instead of being|Not merely|Not just)\\b").
+
+# CLASS 1: half 1 without a receipt.
+rel evaluative_no_receipt(side: text, seq: int).
+evaluative_no_receipt(side, seq) <-
+  evaluative(side, seq),
+  not(receipt_bearing(side, seq)).
+
+# CLASS 2: half 2 without a receipt.
+rel strawman_contrast(side: text, seq: int).
+strawman_contrast(side, seq) <-
+  strawman(side, seq),
+  not(receipt_bearing(side, seq)).
+
+# CLASS 3: both halves, no receipt. The flagged shape.
+rel pure_nothing(side: text, seq: int).
+pure_nothing(side, seq) <-
+  evaluative(side, seq),
+  strawman(side, seq),
+  not(receipt_bearing(side, seq)).
+
+rel evaluative_no_receipt_count(side: text, sentence_count: int).
+evaluative_no_receipt_count(side, count(seq)) <-
+  evaluative_no_receipt(side, seq).
+
+rel strawman_contrast_count(side: text, sentence_count: int).
+strawman_contrast_count(side, count(seq)) <-
+  strawman_contrast(side, seq).
+
+rel pure_nothing_count(side: text, sentence_count: int).
+pure_nothing_count(side, count(seq)) <-
+  pure_nothing(side, seq).
+
+rel sentence_side_count(side: text, sentence_count: int).
+sentence_side_count(side, count(seq)) <-
+  sentence_row(side, seq, _).
+
+rel pure_nothing_sentence(side: text, seq: int, sentence: text).
+pure_nothing_sentence(side, seq, sentence) <-
+  pure_nothing(side, seq),
+  sentence_row(side, seq, sentence).
+
+? evaluative_no_receipt_count(Side, SentenceCount).
+? strawman_contrast_count(Side, SentenceCount).
+? pure_nothing_count(Side, SentenceCount).
+? sentence_side_count(Side, SentenceCount).
+? pure_nothing_sentence(Side, Seq, Sentence).
