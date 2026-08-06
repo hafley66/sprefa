@@ -1,0 +1,522 @@
+// Per-container `direction` is ignored by dagre and elk, so sections stack
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 30
+  }
+}
+direction: down
+
+classes: {
+  code: {
+    style.fill: "#f6f8fa"
+    style.stroke: "#d0d7de"
+    style.stroke-width: 1
+    style.font-size: 13
+  }
+  sqlite: {
+    style.fill: "#dbeafe"
+    style.stroke: "#1d4ed8"
+    style.stroke-width: 2
+  }
+  heap: {
+    style.fill: "#fee2e2"
+    style.stroke: "#b91c1c"
+    style.stroke-width: 2
+  }
+  dead: {
+    style.fill: "#f3f4f6"
+    style.stroke: "#9ca3af"
+    style.stroke-dash: 4
+    style.font-color: "#6b7280"
+  }
+  win: {
+    style.fill: "#dcfce7"
+    style.stroke: "#15803d"
+    style.stroke-width: 2
+  }
+  note: {
+    style.fill: "#fefce8"
+    style.stroke: "#ca8a04"
+  }
+}
+
+title: |~md
+  # dl6 seam physics
+  `grid_10000` · 3,960 edges · 1,069,200 derived rows · checksum `9d7239568960d6a8`
+  **106,692 ms / 1.98 GB  ->  2,776 ms / 738 MB**
+~|
+
+weight: "1 · what one row weighs" {
+  style.fill: "#ffffff"
+  style.stroke: "#374151"
+
+  row: |~md
+    ### the row
+    `reachable(1, 7)`
+  ~|
+  row.shape: rectangle
+  row.class: note
+
+  btree: |~md
+    ### in SQLite
+    packed into a btree cell
+
+    `[hdr][1][7]`
+
+    **~20 bytes**
+    ~200 siblings share one 4 KB page
+    invisible to any GC
+  ~|
+  btree.shape: cylinder
+  btree.class: sqlite
+
+  v8: |~md
+    ### in V8
+    | part | bytes |
+    |---|---|
+    | object header | 8 |
+    | hidden class ptr | 8 |
+    | properties backing | 32 |
+    | 2 boxed numbers | 32 |
+    | elements ptr + slack | 24 |
+    | array slot holding it | 8 |
+    | **total** | **~140** |
+
+    every one is GC-traceable
+  ~|
+  v8.shape: rectangle
+  v8.class: heap
+
+  row -> btree: "stored"
+  row -> v8: "rowFromSql()"
+
+  math: |~md
+    ### 1,069,200 rows
+    **21 MB** as pages
+    **150 MB** as objects
+    plus repeated mark-compact over 1M live objects
+  ~|
+  math.shape: rectangle
+  math.class: note
+
+  btree -> math
+  v8 -> math
+}
+
+measured: "1b · measured, phase by phase" {
+  style.fill: "#ffffff"
+  style.stroke: "#374151"
+
+  table: |~md
+    | phase | peak RSS | JS heap |
+    |---|---|---|
+    | schema created | 120 MB | 12 MB |
+    | edges loaded | 123 MB | 13 MB |
+    | closure computed (recursive CTE) | 136 MB | 13 MB |
+    | delta staged in SQL | 177 MB | 13 MB |
+    | **head + frontier written, all in SQLite** | **247 MB** | **13 MB** |
+    | + final select into JS | 369 MB | 98 MB |
+    | + boundary read into JS | 518 MB | 166 MB |
+
+    SQLite holds the whole closure across five tables in **247 MB**.
+    Everything above that line is rows becoming objects.
+  ~|
+  table.shape: rectangle
+  table.class: note
+}
+
+before: "2 · the old path, every derived row" {
+  style.fill: "#ffffff"
+  style.stroke: "#b91c1c"
+
+  src: |~md
+    ### SQLite
+    `reachable`
+  ~|
+  src.shape: cylinder
+  src.class: sqlite
+
+  ret: |`sql
+    DELETE FROM "reachable"
+     WHERE "__refcount" <= 0
+    RETURNING "source","target";
+    -- 1M rows leave the arena
+  `|
+  ret.class: code
+
+  obj: |`js
+    const rows = result.rows.map(...)
+    const events = rows.map(
+      (row, sequence) => ({
+        rel, sign: 1, sequence, row,
+      }),
+    );
+    // 2M objects now live
+  `|
+  obj.class: heap
+
+  json: |`js
+    JSON.stringify(encodedEvents)
+    // one ~30 MB string, built twice
+    // per round: delta + frontier
+  `|
+  json.class: heap
+
+  back: |`sql
+    INSERT INTO "__delta_reachable"
+      ("_sign","_sequence","source","target")
+    SELECT json_extract(value,'$[0]'),
+           json_extract(value,'$[1]'),
+           json_extract(value,'$[2]'),
+           json_extract(value,'$[3]')
+      FROM json_each(?);
+  `|
+  back.class: code
+
+  again: |`sql
+    SELECT "source","target","_sign",
+           count(*)
+      FROM "__delta_reachable"
+     WHERE "_sign" IN (-1, 1)
+     GROUP BY "source","target","_sign";
+    -- 1M rows leave AGAIN
+  `|
+  again.class: code
+
+  bin: |~md
+    ### discarded
+    the shootout driver reads the
+    final table and never looks
+    at a single delta row
+  ~|
+  bin.shape: rectangle
+  bin.class: dead
+
+  src -> ret: out
+  ret -> obj: "1M objs"
+  obj -> json: "stringify"
+  json -> back: "one text arg"
+  back -> again: "same rows"
+  again -> bin: "1M more objs"
+}
+
+after: "3 · the new path" {
+  style.fill: "#ffffff"
+  style.stroke: "#15803d"
+
+  head: |~md
+    ### SQLite
+    `reachable`
+  ~|
+  head.shape: cylinder
+  head.class: sqlite
+
+  stage: |`sql
+    -- retractions, before the DELETE
+    INSERT INTO "__delta_reachable"
+      ("_sign","_sequence","source","target")
+    SELECT -1, row_number() OVER () - 1,
+           "source", "target"
+      FROM "reachable"
+     WHERE "__refcount" <= 0;
+
+    -- additions, before the INSERT
+    INSERT INTO "__delta_reachable" (...)
+    SELECT 1, row_number() OVER () - 1,
+           n."source", n."target"
+      FROM "__support_next_reachable" n
+     WHERE NOT EXISTS (
+       SELECT 1 FROM "reachable" h
+        WHERE n."source" = h."source"
+          AND n."target" = h."target");
+  `|
+  stage.class: code
+
+  delta: |~md
+    ### `__delta_reachable`
+  ~|
+  delta.shape: cylinder
+  delta.class: sqlite
+
+  frontier: |~md
+    ### `__frontier_reachable`
+    same predicate, phase as the one bind
+
+    `SELECT ?, row_number() OVER () - 1, ...`
+  ~|
+  frontier.shape: cylinder
+  frontier.class: sqlite
+
+  js: |~md
+    ### JS heap
+    **13 MB**
+
+    holds zero rows
+  ~|
+  js.shape: rectangle
+  js.class: win
+
+  head -> stage: "same predicates the\nhead mutation reads"
+  stage -> delta
+  stage -> frontier
+  head -> js: "nothing crosses" {
+    style.stroke-dash: 5
+    style.stroke: "#9ca3af"
+  }
+}
+
+loop: "4 · the accumulating frontier" {
+  style.fill: "#ffffff"
+  style.stroke: "#b91c1c"
+
+  sql: |`sql
+    INSERT OR IGNORE INTO "reachable" ("source","target")
+    SELECT DISTINCT d0."source", d0."target"
+      FROM "__frontier_edge" d0
+     WHERE d0."_phase" >= 0        -- admits EVERY row
+    UNION ALL                      -- ever staged
+    SELECT DISTINCT d0."source", b0."target"
+      FROM "__frontier_reachable" d0, "edge" b0
+     WHERE d0."_phase" >= 0
+       AND b0."source" = d0."target"
+    RETURNING "source","target";
+  `|
+  sql.class: code
+
+  ladder: |~md
+    ### each pass re-reads all prior passes
+    | pass | new rows | frontier holds | ms |
+    |---|---|---|---|
+    | 1 | 924 | 0 | 1.1 |
+    | 2 | 1,321 | 924 | 2.5 |
+    | 10 | 3,069 | 19,206 | 30.1 |
+    | 19 | 2,460 | 46,161 | 68.4 |
+    | 43 | **0** | 63,525 | **87.6** |
+
+    ms tracks the frontier, never the delta.
+    Pass 43 charges 87 ms to derive nothing.
+  ~|
+  ladder.shape: rectangle
+  ladder.class: heap
+
+  fix: |`sql
+    -- already emitted, in supportSql,
+    -- gated behind "only on retraction"
+    INSERT INTO "__support_next_reachable"
+      ("source","target","__refcount")
+    WITH RECURSIVE "reachable" ("source","target") AS (
+      SELECT b0."source", b0."target" FROM "edge" b0
+      UNION
+      SELECT b0."source", b1."target"
+        FROM "reachable" b0, "edge" b1
+       WHERE b1."source" = b0."target")
+    SELECT "source","target", 1 FROM "reachable";
+    -- 1 pass, SQLite keeps its own working set
+  `|
+  fix.class: code
+
+  sql -> ladder: "43 passes"
+  ladder -> fix: "replaced by" {
+    style.stroke: "#15803d"
+    style.stroke-width: 2
+  }
+}
+
+rail: "5 · the rail that catches the class" {
+  style.fill: "#ffffff"
+  style.stroke: "#374151"
+
+  why: |~md
+    ### why the sweep missed it
+    420 fixtures grade **end state**.
+    A naive closure answers correctly
+    and grades IDENTICAL.
+
+    Depth needs a **count**, never a timing.
+  ~|
+  why.shape: rectangle
+  why.class: note
+
+  test: |`ts
+    // v6/tsv2/tests/recursiveClosureCounts.test.ts
+    const STATEMENTS_PER_TICK = 34;
+
+    assert.deepEqual(
+      [shallow.statementCount,
+       middle.statementCount,
+       deep.statementCount],
+      [34, 34, 34],
+      "closure must not pay per round",
+    );
+    // non-vacuity: 6 / 36 / 136 rows derived
+  `|
+  test.class: code
+
+  receipt: |~md
+    ### fail-pre-fix receipt
+    | runtime | d=3 | d=8 | d=16 |
+    |---|---|---|---|
+    | round loop | 39 | 59 | 91 |
+    | one pass | 34 | 34 | 34 |
+
+    4 statements per extra round.
+  ~|
+  receipt.shape: rectangle
+  receipt.class: win
+
+  why -> test
+  test -> receipt
+}
+
+ladder2: "6 · the four changes" {
+  style.fill: "#ffffff"
+  style.stroke: "#15803d"
+
+  s0: |~md
+    ### start
+    **106,692 ms**
+    1.98 GB
+  ~|
+  s0.shape: rectangle
+  s0.class: heap
+
+  s1: |~md
+    ### 1 · `ba9af659`
+    recursive head closes
+    through its own CTE
+
+    **9,271 ms** · 1.85 GB
+  ~|
+  s1.shape: rectangle
+  s1.class: note
+
+  s2: |~md
+    ### 2 · `798afa5c`
+    delta + frontier
+    staged in SQL
+
+    **6,148 ms** · 1.64 GB
+  ~|
+  s2.shape: rectangle
+  s2.class: note
+
+  s3: |~md
+    ### 3 · `20d5a37f`
+    a rel nobody reads
+    keeps its rows
+
+    **2,825 ms** · 978 MB
+  ~|
+  s3.shape: rectangle
+  s3.class: note
+
+  s4: |~md
+    ### 4 · `d46dc8a1`
+    checksum folded
+    by keyset page
+
+    **2,776 ms** · 738 MB
+  ~|
+  s4.shape: rectangle
+  s4.class: win
+
+  s0 -> s1: "43 passes -> 1"
+  s1 -> s2: "2M objs gone"
+  s2 -> s3: "1M objs gone"
+  s3 -> s4: "10M objs gone"
+}
+
+rust: "7 · what SQLite still buys" {
+  style.fill: "#ffffff"
+  style.stroke: "#374151"
+
+  mono: |`rust
+    // mono: rows never become anything
+    for &(x, y) in delta.iter() {
+        for &z in edge_index[y as usize].iter() {
+            if seen[x as usize].insert(z) {
+                out.push((x, z));
+            }
+        }
+    }
+    // 8 bytes/pair, no header, no GC,
+    // straight-line machine code
+  `|
+  mono.class: code
+
+  dl: |~md
+    ### dl6 per statement
+    - btree page write
+    - WAL frame append
+    - btree rebalance / split
+    - query planner pass
+    - transactional durability
+    - the rows stay **queryable**
+  ~|
+  dl.shape: rectangle
+  dl.class: sqlite
+
+  gap: |~md
+    ### chain_10000, 9,996,213 rows
+    | engine | rows/sec |
+    |---|---|
+    | mono | 68,467,212 |
+    | rxgraph | 23,529,153 |
+    | interp | 4,750,542 |
+    | **dl6** | **336,844** |
+
+    **203x** behind mono,
+    down from **6,832x** this morning.
+
+    What is left is what durability and
+    generality cost. Today removed work
+    that bought nothing.
+  ~|
+  gap.shape: rectangle
+  gap.class: note
+
+  mono -> gap
+  dl -> gap
+}
+
+gates: "8 · receipts" {
+  style.fill: "#ffffff"
+  style.stroke: "#15803d"
+
+  g: |~md
+    ### the three shootout gates
+    | gate | derived | checksum | ms | peak RSS |
+    |---|---|---|---|---|
+    | chain3 | 3 | `a6b23e50ed0dd5c5` | 2 | 140 MB |
+    | grid_10000 | 1,069,200 | `9d7239568960d6a8` | 2,776 | 738 MB |
+    | chain_10000 | 9,996,213 | `df09b2f409f8b9a8` | 29,676 | 2.26 GB |
+
+    `chain_10000`'s checksum matches mono's own banked run.
+
+    ### battery, after every change
+    | gate | result |
+    |---|---|
+    | tsv2 | 146 pass / 1 skip / 0 fail |
+    | conformance | 302 PASS / 0 FAIL |
+    | sweep | RUN 420, identical 418, wrong=0, emitted_crash=0 |
+
+    All 420 fixtures kept byte-identical tick logs throughout.
+  ~|
+  g.shape: rectangle
+  g.class: win
+}
+
+title -> weight
+weight -> measured
+measured -> before
+before -> after: "the fix" {
+  style.stroke: "#15803d"
+  style.stroke-width: 3
+}
+after -> loop
+loop -> rail
+rail -> ladder2
+ladder2 -> rust
+rust -> gates
