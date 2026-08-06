@@ -114,9 +114,34 @@ function emittedSupport(edges) {
   return report("emitted_support", db, performance.now() - startedAt, 1);
 }
 
+
+// V5: supportSql with delta and frontier staged in SQL, nothing crossing to JS.
+function sqlStaged(edges) {
+  const db = openSeeded(edges);
+  const [clearSql, seedSql, updateSql, , ] = level.supportSql;
+  const startedAt = performance.now();
+  db.prepare(clearSql).run();
+  db.prepare(seedSql).run();
+  db.prepare(updateSql).run();
+  db.prepare(`INSERT INTO "__delta_reachable" ("_sign","_sequence","source","target")
+    SELECT -1, row_number() OVER () - 1, "source", "target" FROM "reachable" WHERE "__refcount" <= 0`).run();
+  db.prepare(`DELETE FROM "reachable" WHERE "__refcount" <= 0`).run();
+  db.prepare(`INSERT INTO "__delta_reachable" ("_sign","_sequence","source","target")
+    SELECT 1, row_number() OVER () - 1, n."source", n."target" FROM "__support_next_reachable" n
+    WHERE NOT EXISTS (SELECT 1 FROM "reachable" h WHERE n."source" = h."source" AND n."target" = h."target")`).run();
+  db.prepare(`INSERT INTO "__frontier_reachable" ("_phase","_sequence","source","target")
+    SELECT 2, row_number() OVER () - 1, n."source", n."target" FROM "__support_next_reachable" n
+    WHERE NOT EXISTS (SELECT 1 FROM "reachable" h WHERE n."source" = h."source" AND n."target" = h."target")`).run();
+  db.prepare(`INSERT INTO "reachable" ("source","target","__refcount")
+    SELECT n."source", n."target", n."__refcount" FROM "__support_next_reachable" n
+    WHERE NOT EXISTS (SELECT 1 FROM "reachable" h WHERE n."source" = h."source" AND n."target" = h."target")`).run();
+  return report("sql_staged", db, performance.now() - startedAt, 1);
+}
+
 const edges = readEdges(process.argv[2]);
 console.log("variant\tderived\tchecksum\tms\trounds");
 accumulating(edges);
 retired(edges);
 recursiveCte(edges);
 emittedSupport(edges);
+sqlStaged(edges);

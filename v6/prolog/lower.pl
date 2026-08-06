@@ -2381,16 +2381,26 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
     NextPosition is Position + 1,
     avg_accumulator_key_columns(Rest, NextPosition, More).
 
+% The delta and both frontier copies are written by SQL that reads the same
+% predicates the head mutation reads, so no derived row crosses the JS seam.
 level_ref_count_sql(RelPlans, HeadRef, Rules,
-                  refcountsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
-                             InsertNewSql)) :-
+                  refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
+                             CollectZeroSql, StageAddSql, StageFrontierSql,
+                             StageNextFrontierSql, InsertNewSql)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
+    delta_table_name(HeadRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    frontier_table_name(HeadRef, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
+    next_frontier_table_name(HeadRef, NextFrontierTable),
+    quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    qualified_column_list(HeadColumns, n, NewColumnsSql),
     qualified_equalities(HeadColumns, n, h, EqualityParts),
     atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
     format(atom(ClearSql), 'DELETE FROM ~w', [QuotedRefCountTable]),
@@ -2404,13 +2414,35 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
     format(atom(UpdateSql),
            'UPDATE ~w AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0))',
            [QuotedHeadTable, QuotedRefCountTable, EqualitySql]),
+    format(atom(StageRetractSql),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT -1, row_number() OVER () - 1, ~w FROM ~w WHERE "__refcount" <= 0',
+           [QuotedDeltaTable, HeadColumnsSql, HeadColumnsSql, QuotedHeadTable]),
     format(atom(CollectZeroSql),
-           'DELETE FROM ~w WHERE "__refcount" <= 0 RETURNING ~w',
-           [QuotedHeadTable, HeadColumnsSql]),
+           'DELETE FROM ~w WHERE "__refcount" <= 0',
+           [QuotedHeadTable]),
+    format(atom(NewRowsSql),
+           'FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w)',
+           [QuotedRefCountTable, QuotedHeadTable, EqualitySql]),
+    format(atom(StageAddSql),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT 1, row_number() OVER () - 1, ~w ~w',
+           [QuotedDeltaTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
+    format(atom(StageFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, row_number() OVER () - 1, ~w ~w',
+           [QuotedFrontierTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
+    format(atom(StageNextFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, row_number() OVER () - 1, ~w ~w',
+           [QuotedNextFrontierTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
     format(atom(InsertNewSql),
-           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w) RETURNING ~w',
-           [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql,
-            QuotedRefCountTable, QuotedHeadTable, EqualitySql, HeadColumnsSql]).
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" ~w',
+           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]).
+
+qualified_column_list(Columns, Alias, Sql) :-
+    findall(Part,
+            ( member(Column, Columns),
+              quote_ident(Column, QuotedColumn),
+              format(atom(Part), '~w.~w', [Alias, QuotedColumn]) ),
+            Parts),
+    atomic_list_concat(Parts, ', ', Sql).
 
 counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
                          HeadColumnsSql, SeedSql) :-

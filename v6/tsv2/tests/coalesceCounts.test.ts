@@ -101,8 +101,13 @@ function arrivals(repoCount: number): readonly IArrivalRow[] {
 
 /** The exact per-tick statement count this program runs, pinned rather than
  *  only compared: an equality assertion alone would still hold if BOTH sides
- *  grew together. Measured at 5, 100 and 1,000 source rows. */
-const STATEMENTS_PER_TICK = 33;
+ *  grew together. Measured at 5, 100 and 1,000 source rows.
+ *
+ *  Moved 33 -> 35 when the refCount reconcile stopped shipping its rows through
+ *  JS: the delta and frontier copies became two SQL statements that always run,
+ *  where the JS staging issued none when a side had no rows. Two constant
+ *  statements bought zero derived rows crossing the seam. */
+const STATEMENTS_PER_TICK = 35;
 
 async function runOneTick(repoCount: number) {
   const seam = ScratchStore.open(":memory:");

@@ -149,17 +149,18 @@ test("count: a staged retraction reconciles exactly the plain level statements",
   );
   const { seam, statements } = countingSeam(base);
   await firstValueFrom(freeze(seam, ONE_ARRIVAL));
-  // 1 guard + the 5 supportSql statements the emitter writes per plain level
-  // statement (reseed scratch, refill it, subtract into the head's own count,
-  // delete what fell to zero, insert what is newly derivable).
+  // 1 guard + 8 of the 9 supportSql statements per plain level statement; the
+  // next-frontier copy is skipped because this pass asks for the frontier only.
   assert.equal(
     statements.length,
-    1 + 5 * plainLevels.length,
+    1 + 8 * plainLevels.length,
     `guard + one refCount reconcile per plain level statement: ${statements.length} statements`,
   );
   assert.equal(
     statements.slice(1).join("\n"),
-    plainLevels.flatMap((statement) => statement.supportSql ?? []).join("\n"),
+    plainLevels
+      .flatMap((statement) => (statement.supportSql ?? []).filter((_, index) => index !== 7))
+      .join("\n"),
     "the reconcile must run the emitter's own supportSql, byte for byte, not runtime-built SQL",
   );
 });

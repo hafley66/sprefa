@@ -541,29 +541,32 @@ function reconcileRefCountStatement(
     readonly tableName: (relation: IIncrementalRelationPlan) => string;
     readonly phase: number;
   }[],
-  nextSequence: () => number,
 ): Observable<void> {
   if (statement.supportSql === null) {
     throw new Error(
       `incremental level statement has neither supportSql nor aggregateSql: ${statement.headRel}`,
     );
   }
-  const sql = statement.supportSql.map((text): SqlStatement => ({ sql: text, args: [] }));
-  return seam.runner.batch(seam.db, sql).pipe(
-    concatMap((results) => {
-      const events: DeltaEvent[] = [];
-      const deletedRows = resultRows(results[3]!, statement.headColumns);
-      const insertedRows = resultRows(results[4]!, statement.headColumns);
-      for (const row of deletedRows) {
-        events.push({ rel: statement.headRel, sign: -1, sequence: nextSequence(), row });
-      }
-      for (const row of insertedRows) {
-        events.push({ rel: statement.headRel, sign: 1, sequence: nextSequence(), row });
-      }
-      if (events.length === 0) return of(undefined);
-      return stageEvents(seam, relations, events, frontierCopies);
-    }),
-  );
+  const relation = relations.find((candidate) => candidate.rel === statement.headRel);
+  if (relation === undefined) {
+    throw new Error(`incremental level head relation missing: ${statement.headRel}`);
+  }
+  const [clear, seed, update, stageRetract, collectZero, stageAdd, stageFrontier, stageNextFrontier, insertNew] =
+    statement.supportSql;
+  // Each copy names the table it wants and the emitted statement carries its
+  // phase as the one bind, so the two copies share one prepared shape.
+  const frontierStages = frontierCopies.map((copy): SqlStatement => ({
+    sql: copy.tableName(relation) === relation.nextFrontierTableName ? stageNextFrontier! : stageFrontier!,
+    args: [copy.phase],
+  }));
+  const sql: SqlStatement[] = [
+    ...[clear, seed, update, stageRetract, collectZero, stageAdd].map(
+      (text): SqlStatement => ({ sql: text!, args: [] }),
+    ),
+    ...frontierStages,
+    { sql: insertNew!, args: [] },
+  ];
+  return seam.runner.batch(seam.db, sql).pipe(map(() => undefined));
 }
 
 /** `1` when some delta table already holds a retraction this tick. The gate
@@ -835,7 +838,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             statement,
             relations,
             levelFrontierCopies(false),
-            nextSequence,
           )
         : applyLevelStatement(seam, statement, relationByName, false, nextSequence).pipe(
             map(() => undefined),
@@ -895,7 +897,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           statement,
           relations,
           [{ tableName: (plan) => plan.frontierTableName, phase: 2 }],
-          nextSequence,
         ),
       );
     };
@@ -1030,7 +1031,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           statement,
           relations,
           [],
-          nextSequence,
         );
       });
     };
