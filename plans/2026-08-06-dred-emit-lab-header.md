@@ -35,15 +35,25 @@ checksum-MATCHES the full-recompute oracle, including the dead cycle.
 | delete the 100 jumps (884,015 true retractions) | 7,153 | 2,218 | recompute wins 3.2x |
 | cut a cycle's only anchor (cycle must die) | 0, MATCH | 0 | correctness fixture |
 
-## 3. The policy the numbers force
-DRed wins when the cone is small (the common tick, 37-54x) and loses when the
-cone approaches the table (884k of 1.6M). So the emitted plan carries BOTH
-paths and a guard picks per tick:
+## 3. The policy the numbers force (PROFILED, dredprof.mjs + dredopt.mjs)
+Worst-case profile (delete 100 scattered edges, head 2.5M, cone 2.17M = 87%):
+hop_generate 2,411 ms / head delete 1,195 / rederive+revive 2,621 / cone copy
+690. Variants raced, all checksum-MATCH:
+| variant | ms | verdict |
+|---|---|---|
+| A shipped two-pass | 8,179 | baseline |
+| B drop head probe in hop (tautology: old head is a fixpoint) | 7,440 | TAKE |
+| D fused round-tagged cone, OR-IGNORE dedup | 36,209 | REJECT: PK-constraint rejection >> NOT EXISTS at this duplication |
+| BC defer head delete to the end | 36,663 | REJECT: rederive must probe the SHRUNKEN head; the up-front delete is what makes pass 2 cheap (= store's weight=0 mark) |
+| E = B + mid-walk bail at cone > head/4 | 3,190 | TAKE |
+| full rebuild | 2,190 | the floor when cone ~ table |
+Two-pass cost is algorithmic (store lab G2 said so; reproduced), so the guard
+is NOT a pre-guess on seed count (seeds were 2.2% of head and still exploded
+to 87%): the driver already holds the cone count for free (sum of changes)
+and BAILS MID-WALK to one full rebuild past threshold. Worst case is now
+rebuild + bounded walk (~1s at 25%); common case never pays anything.
 - additive-only delta -> assert path (always; never worse than recompute)
-- retraction delta -> run the SEED statements (cheap, 2 statements), read
-  `count(*)` of seeds; below threshold run DRed, above it fall back to the
-  existing `WITH RECURSIVE` full recompute. Threshold is a phase-1
-  measurement, first guess seeds > 1% of head rows.
+- retraction delta -> DRed with mid-walk bail at cone > head/4
 `retractionGuardSql` already discriminates the tick kinds; the guard extends
 it instead of adding a new mechanism.
 
