@@ -105,8 +105,18 @@ function recursiveCte(edges) {
   return report("recursive_cte", db, performance.now() - startedAt, 1);
 }
 
+
+// V4: the emitted supportSql sequence, exactly as lower.pl writes it today.
+function emittedSupport(edges) {
+  const db = openSeeded(edges);
+  const startedAt = performance.now();
+  for (const sql of level.supportSql) db.prepare(sql).all();
+  return report("emitted_support", db, performance.now() - startedAt, 1);
+}
+
 const edges = readEdges(process.argv[2]);
 console.log("variant\tderived\tchecksum\tms\trounds");
 accumulating(edges);
 retired(edges);
 recursiveCte(edges);
+emittedSupport(edges);

@@ -823,27 +823,23 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       sequence += 1;
       return current;
     };
-    // engine.pl's MidLevel is a level_CLOSURE; one pass under-derives a recursive
-    // head. Rounds stay on the frontier: nextFrontier reads back as carry.
+    // The frontier admits every round it ever staged, so looping the delta
+    // insert costs rounds x |head|; supportSql closes the cycle in one pass.
     const feedsAnotherRound = recursiveHeads(statements, relations);
-    const runRound = (): Observable<ReadonlySet<string>> =>
-      statements.reduce(
-        (work, statement) =>
-          work.pipe(
-            concatMap((written) =>
-              applyLevelStatement(seam, statement, relationByName, false, nextSequence).pipe(
-                map((rows) => (rows === 0 ? written : new Set([...written, statement.headRel]))),
-              ),
-            ),
+    const closesInOnePass = (statement: IIncrementalLevelStatement): boolean =>
+      feedsAnotherRound.has(statement.headRel) && statement.supportSql !== null;
+    return sequenceWork(statements, (statement) =>
+      closesInOnePass(statement)
+        ? reconcileRefCountStatement(
+            seam,
+            statement,
+            relations,
+            levelFrontierCopies(false),
+            nextSequence,
+          )
+        : applyLevelStatement(seam, statement, relationByName, false, nextSequence).pipe(
+            map(() => undefined),
           ),
-        of(new Set<string>() as ReadonlySet<string>),
-      );
-    return runRound().pipe(
-      expand((written) =>
-        [...written].some((rel) => feedsAnotherRound.has(rel)) ? runRound() : EMPTY,
-      ),
-      last(),
-      map(() => undefined),
     );
   },
 
