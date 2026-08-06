@@ -637,7 +637,7 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
 catalog_ddl_contract('__rel',
                      [ rel_id-int, parent_id-int, ordinal-int,
                        local_name-text, kind-text, type_id-int, arity-int,
-                       module_id-int, h_id-text ]).
+                       module_id-int, h_id-text, h_schema-text, h_rule-text ]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
@@ -656,23 +656,54 @@ rel_h_id(ParentHash, LocalName, Arity, HashText) :-
     format(atom(Key), '~w/~w/~w', [ParentHash, LocalName, Arity]),
     module_hash(Key, HashText).
 
-% Ids are assigned by POSITION for a byte-stable recompile: the five
-% primitives take 1..5, the module row takes 6, then each rel, then its
-% columns (one INSERT OR IGNORE).
-catalog_row_ddl(ModuleName, _Decls, RelPlans, [Statement]) :-
+%! schema_hash(+Columns, +ColumnTypes, +KeyOrNone, -HashText) is det.
+schema_hash(Columns, ColumnTypes, KeyOrNone, HashText) :-
+    canonical_hash_key(schema(Columns, ColumnTypes, KeyOrNone), Key),
+    module_hash(Key, HashText).
+
+%! rule_hash(+Rules, +Ref, -HashText) is det.
+%   The empty atom when no rule in this program derives Ref: a source rel has no
+%   derivation to fingerprint.
+rule_hash(Rules, Ref, HashText) :-
+    findall(Body,
+            ( member(Rule, Rules),
+              rule_head_ref(Rule, Ref),
+              rule_body_of(Rule, Body) ),
+            Bodies0),
+    (   Bodies0 == []
+    ->  HashText = ''
+    ;   msort(Bodies0, Bodies),
+        canonical_hash_key(rules(Bodies), Key),
+        module_hash(Key, HashText)
+    ).
+
+rule_body_of((_Head <- Body), Body).
+rule_body_of((_Head <+ Body), Body).
+
+%! canonical_hash_key(+Term, -KeyAtom) is det.
+%   numbervars on a COPY: variable identity becomes positional, so the same
+%   shape hashes the same across runs and processes.
+canonical_hash_key(Term, KeyAtom) :-
+    copy_term(Term, Copy),
+    numbervars(Copy, 0, _),
+    term_to_atom(Copy, KeyAtom).
+
+% Ids are assigned by POSITION for a byte-stable recompile: the primitives
+% first, then the module row, then each rel and its columns, one INSERT.
+catalog_row_ddl(ModuleName, Rules, RelPlans, [Statement]) :-
     module_hash(ModuleName, ModuleHash),
     catalog_primitive_rows(1, PrimitiveRows),
     length(PrimitiveRows, PrimitiveCount),
     ModuleId is PrimitiveCount + 1,
-    ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash),
+    ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
     FirstRelId is ModuleId + 1,
-    catalog_rel_rows(RelPlans, ModuleId, ModuleHash, FirstRelId, _FinalId, RelRows),
+    catalog_rel_rows(RelPlans, Rules, ModuleId, ModuleHash, FirstRelId, _FinalId, RelRows),
     append([PrimitiveRows, [ModuleRow], RelRows], AllRows),
     foldl(catalog_row_part, AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
-           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id") VALUES ~w',
+           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
@@ -681,17 +712,20 @@ catalog_primitive_rows(StartId, PrimitiveRows) :-
 catalog_primitive_rows(_, [], Acc, Rows) :- reverse(Acc, Rows).
 catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
-    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '') | Acc], Rows).
+    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '', '', '') | Acc], Rows).
 
-catalog_rel_rows([], _ModuleId, _ModuleHash, Id, Id, []).
-catalog_rel_rows([RelPlan | Rest], ModuleId, ModuleHash, Id0, FinalId, Rows) :-
-    RelPlan = relplan(Name/RelArity, _Kind, Columns, _Key, ColumnTypes),
+catalog_rel_rows([], _Rules, _ModuleId, _ModuleHash, Id, Id, []).
+catalog_rel_rows([RelPlan | Rest], Rules, ModuleId, ModuleHash, Id0, FinalId, Rows) :-
+    RelPlan = relplan(Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
-    RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId),
+    schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
+    rule_hash(Rules, Name/RelArity, HRule),
+    RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId,
+                 HSchema, HRule),
     IdAfterRel is Id0 + 1,
     catalog_column_rows(Columns, ColumnTypes, ModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
-    catalog_rel_rows(Rest, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
+    catalog_rel_rows(Rest, Rules, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 
 catalog_column_rows([], _ColumnTypes, _ModuleId, _ParentHId, _RelId, _Ordinal,
@@ -705,7 +739,8 @@ catalog_column_rows([ColumnName | RestColumns], ColumnTypes, ModuleId, ParentHId
     NextOrdinal is Ordinal + 1,
     catalog_column_rows(RestColumns, ColumnTypes, ModuleId, ParentHId, RelId,
                         NextOrdinal, NextId, IdFinal, MoreRows),
-    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId, ColumnHId).
+    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId,
+                    ColumnHId, '', '').
 
 % Primitive id for a column's boundary type: the five primitives take 1..5,
 % every other boundary (ref(_), a struct name, a list) is 0.
@@ -717,13 +752,15 @@ catalog_type_id(json, 5) :- !.
 catalog_type_id(_, 0).
 
 catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
-                     ModuleId, HId), Acc, [Part | Acc]) :-
+                     ModuleId, HId, HSchema, HRule), Acc, [Part | Acc]) :-
     sql_text_literal(Name, NameLiteral),
     sql_text_literal(Kind, KindLiteral),
     sql_text_literal(HId, HIdLiteral),
-    format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d,~d,~w)',
+    sql_text_literal(HSchema, HSchemaLiteral),
+    sql_text_literal(HRule, HRuleLiteral),
+    format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d,~d,~w,~w,~w)',
            [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId, Arity,
-            ModuleId, HIdLiteral]).
+            ModuleId, HIdLiteral, HSchemaLiteral, HRuleLiteral]).
 
 % SQL string literal: single-quoted, embedded single quotes doubled.
 sql_text_literal(Text, Literal) :-
@@ -3598,7 +3635,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
-       catalog_row_ddl(Name, Decls, RelPlans, CatalogRowDdl)
+       catalog_row_ddl(Name, Rules, RelPlans, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
