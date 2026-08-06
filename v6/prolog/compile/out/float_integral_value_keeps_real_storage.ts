@@ -202,7 +202,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "score", kind: "set", tableName: "score", deltaTableName: "__delta_score", frontierTableName: "__frontier_score", nextFrontierTableName: "__next_frontier_score", columns: ["value"], columnTypes: ["float"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_score" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
+  { rel: "score", kind: "set", tableName: "score", deltaTableName: "__delta_score", frontierTableName: "__frontier_score", nextFrontierTableName: "__next_frontier_score", columns: ["value"], columnTypes: ["float"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_score" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
