@@ -143,22 +143,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_left" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_left_phase" ON "__frontier_left" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_left" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__next_frontier_left_phase" ON "__next_frontier_left" ("_phase")`,
   `CREATE TEMP TABLE "__delta_matched" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_matched_sign" ON "__delta_matched" ("_sign")`,
   `CREATE INDEX "__delta_matched_group" ON "__delta_matched" ("name")`,
   `CREATE TEMP TABLE "__frontier_matched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_matched_phase" ON "__frontier_matched" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_matched" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_matched_phase" ON "__next_frontier_matched" ("_phase")`,
   `CREATE TEMP TABLE "__delta_right" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_right_sign" ON "__delta_right" ("_sign")`,
   `CREATE INDEX "__delta_right_group" ON "__delta_right" ("name", "value")`,
   `CREATE TEMP TABLE "__frontier_right" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_right_phase" ON "__frontier_right" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_right" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__next_frontier_right_phase" ON "__next_frontier_right" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_matched" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_matched" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "matched_zero" ON "matched" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -248,7 +247,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "matched", ruleId: "float_exact_join_has_no_epsilon:matched/1#1", headDeltaTableName: "__delta_matched", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "matched" ("name") SELECT DISTINCT d0."name" FROM "__frontier_left" d0, "right" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND b0."value" = d0."value" UNION ALL SELECT DISTINCT d0."name" FROM "__frontier_right" d0, "left" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" AND b0."value" = d0."value" RETURNING "name"`, selectSql: `SELECT "name" FROM "matched"`, recomputeSql: `DELETE FROM "matched";
-INSERT OR IGNORE INTO "matched" ("name") SELECT b0."name" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value"`, supportSql: [`DELETE FROM "__support_next_matched"`, `INSERT INTO "__support_next_matched" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value" GROUP BY b0."name") GROUP BY "name"`, `UPDATE "matched" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_matched" n WHERE n."name" = h."name"), 0))`, `DELETE FROM "matched" WHERE "__refcount" <= 0 RETURNING "name"`, `INSERT INTO "matched" ("name", "__refcount") SELECT "name", n."__refcount" FROM "__support_next_matched" n WHERE NOT EXISTS (SELECT 1 FROM "matched" h WHERE n."name" = h."name") RETURNING "name"`], aggregateSql: null },
+INSERT OR IGNORE INTO "matched" ("name") SELECT b0."name" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value"`, supportSql: [`DELETE FROM "__support_next_matched"`, `INSERT INTO "__support_next_matched" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "left" b0, "right" b1 WHERE b1."name" = b0."name" AND b1."value" = b0."value" GROUP BY b0."name") GROUP BY "name"`, `UPDATE "matched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_matched" n WHERE n."name" = h."name"), 0)`, `INSERT INTO "__delta_matched" ("_sign", "_sequence", "name") SELECT -1, row_number() OVER () - 1, "name" FROM "matched" WHERE "__refcount" <= 0`, `DELETE FROM "matched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_matched"`, `INSERT INTO "__new_matched" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_matched" n LEFT JOIN "matched" h ON n."name" = h."name" WHERE h."name" IS NULL`, `INSERT INTO "__delta_matched" ("_sign", "_sequence", "name") SELECT 1, "rowid" - 1, "name" FROM "__new_matched"`, `INSERT INTO "__frontier_matched" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_matched"`, `INSERT INTO "__next_frontier_matched" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_matched"`, `INSERT OR IGNORE INTO "matched" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_matched" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

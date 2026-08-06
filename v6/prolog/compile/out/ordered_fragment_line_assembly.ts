@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_fragment_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fragment_line_phase" ON "__frontier_fragment_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fragment_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_fragment_line_phase" ON "__next_frontier_fragment_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_fragment_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fragment_text_sign" ON "__delta_fragment_text" ("_sign")`,
   `CREATE INDEX "__delta_fragment_text_group" ON "__delta_fragment_text" ("fragment_name", "col2")`,
   `CREATE TEMP TABLE "__frontier_fragment_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fragment_text_phase" ON "__frontier_fragment_text" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fragment_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_fragment_text_phase" ON "__next_frontier_fragment_text" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_fragment_text" ("fragment_name" TEXT NOT NULL, PRIMARY KEY ("fragment_name")) WITHOUT ROWID`,
 ];
 
@@ -230,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "fragment_text", ruleId: "ordered_fragment_line_assembly:fragment_text/2#1", headDeltaTableName: "__delta_fragment_text", headColumns: ["fragment_name", "col2"], insertSql: null, selectSql: `SELECT "fragment_name", "col2" FROM "fragment_text"`, recomputeSql: `DELETE FROM "fragment_text";
 INSERT OR IGNORE INTO "fragment_text" ("fragment_name", "col2") SELECT b0."fragment_name", group_concat(b0."line_text", '
-' ORDER BY b0."line_ordinal") FROM "fragment_line" b0 GROUP BY b0."fragment_name" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_fragment_text"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_fragment_text" ("fragment_name") SELECT DISTINCT d0."fragment_name" FROM "__delta_fragment_line" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "fragment_text" WHERE ("fragment_name") IN (SELECT "fragment_name" FROM "__agg_scope_fragment_text") RETURNING "fragment_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "fragment_text" ("fragment_name", "col2") SELECT b0."fragment_name", group_concat(b0."line_text", '
+' ORDER BY b0."line_ordinal") FROM "fragment_line" b0 GROUP BY b0."fragment_name" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_fragment_text"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_fragment_text" ("fragment_name") SELECT DISTINCT d0."fragment_name" FROM "__delta_fragment_line" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "fragment_text" WHERE ("fragment_name") IN (SELECT "fragment_name" FROM "__agg_scope_fragment_text") RETURNING "fragment_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "fragment_text" ("fragment_name", "col2") SELECT b0."fragment_name", group_concat(b0."line_text", '
 ' ORDER BY b0."line_ordinal") FROM "fragment_line" b0 WHERE (b0."fragment_name") IN (SELECT "fragment_name" FROM "__agg_scope_fragment_text") GROUP BY b0."fragment_name" HAVING count(*) > 0 RETURNING "fragment_name", "col2"`], deltaMaintained: false } },
 ];
 

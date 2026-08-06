@@ -77,7 +77,9 @@ expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
     ExpansionContext = EnumContext.
 
 run_phase(_, _-_-unwired, Program, Program) :- !.
-run_phase(Context, _-ast-Expander, Program, Expanded) :-
+% ast takes the whole context, every other phase the enum half; without the cut
+% the clause below re-runs ast on the wrong argument as a second solution.
+run_phase(Context, _-ast-Expander, Program, Expanded) :- !,
     call(Expander, Context, Program, Expanded).
 run_phase(expansion_context(EnumContext, _), _-_-Expander,
           Program, Expanded) :-

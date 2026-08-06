@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_integer_sorted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_integer_sorted_phase" ON "__frontier_integer_sorted" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_integer_sorted" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE INDEX "__next_frontier_integer_sorted_phase" ON "__next_frontier_integer_sorted" ("_phase")`,
   `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_item_sign" ON "__delta_item" ("_sign")`,
   `CREATE INDEX "__delta_item_group" ON "__delta_item" ("group", "value")`,
   `CREATE TEMP TABLE "__frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_item_phase" ON "__frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_item_phase" ON "__next_frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_integer_sorted" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 
@@ -228,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "integer_sorted", ruleId: "ordered_json_group_array_integer_values:integer_sorted/2#1", headDeltaTableName: "__delta_integer_sorted", headColumns: ["group", "col2"], insertSql: null, selectSql: `SELECT "group", "col2" FROM "integer_sorted"`, recomputeSql: `DELETE FROM "integer_sorted";
-INSERT OR IGNORE INTO "integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_integer_sorted"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_integer_sorted" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "integer_sorted" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_integer_sorted") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_integer_sorted") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], deltaMaintained: false } },
+INSERT OR IGNORE INTO "integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_integer_sorted"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_integer_sorted" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "integer_sorted" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_integer_sorted") RETURNING "group", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "integer_sorted" ("group", "col2") SELECT b0."group", json_group_array(b0."value" ORDER BY b0."value") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_integer_sorted") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

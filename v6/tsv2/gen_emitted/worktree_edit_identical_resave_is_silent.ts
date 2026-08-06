@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_worktree_edit_phase" ON "__next_frontier_worktree_edit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_worktree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_worktree_file_sign" ON "__delta_worktree_file" ("_sign")`,
   `CREATE INDEX "__delta_worktree_file_group" ON "__delta_worktree_file" ("path", "digest", "kind")`,
   `CREATE TEMP TABLE "__frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_file_phase" ON "__frontier_worktree_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_worktree_file_phase" ON "__next_frontier_worktree_file" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

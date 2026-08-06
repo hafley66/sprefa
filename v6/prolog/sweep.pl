@@ -201,7 +201,12 @@ result_json(result(Name, File, Bucket, Reason), Json) :-
     format(atom(Json), '{"name":~w,"file":~w,"bucket":~w,"reason":~w}', [NameJson, FileJson, BucketJson, ReasonJson]).
 
 reason_text(none, '') :- !.
-reason_text(Term, Text) :- format(atom(Text), '~q', [Term]).
+% A refusal reason holds the program's variables, and `_12345` is the process's
+% counter, so the tracked manifest churns on every run unless they are numbered.
+reason_text(Term, Text) :-
+    copy_term(Term, Copy),
+    numbervars(Copy, 0, _),
+    format(atom(Text), '~q', [Copy]).
 
 summarize(Results) :-
     include(is_bucket(compiled), Results, Compiled),

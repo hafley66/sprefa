@@ -121,7 +121,7 @@
 :- module(lower,
           [ lower_program/2, boot_statements/5, relplan_kind/3,
             compile_expr/4, compile_comparison/3,
-            canonical_column_expr/2, level_ref_count_sql/4,
+            canonical_column_expr/2, level_ref_count_sql/4, level_dred_plan/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
@@ -2513,36 +2513,90 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
     NextPosition is Position + 1,
     avg_accumulator_key_columns(Rest, NextPosition, More).
 
+% The delta and both frontier copies are written by SQL that reads the same
+% predicates the head mutation reads, so no derived row crosses the JS seam.
 level_ref_count_sql(RelPlans, HeadRef, Rules,
-                  refcountsql(ClearSql, SeedSql, UpdateSql, CollectZeroSql,
-                             InsertNewSql)) :-
+                  refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
+                             CollectZeroSql, ClearNewSql, FillNewSql,
+                             StageAddSql, StageFrontierSql,
+                             StageNextFrontierSql, InsertNewSql, ExpandPlan,
+                             DredPlan)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
+    delta_table_name(HeadRef, DeltaTable),
+    quote_ident(DeltaTable, QuotedDeltaTable),
+    frontier_table_name(HeadRef, FrontierTable),
+    quote_ident(FrontierTable, QuotedFrontierTable),
+    next_frontier_table_name(HeadRef, NextFrontierTable),
+    quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    qualified_column_list(HeadColumns, n, NewColumnsSql),
     qualified_equalities(HeadColumns, n, h, EqualityParts),
     atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
     format(atom(ClearSql), 'DELETE FROM ~w', [QuotedRefCountTable]),
     ( rules_read_head_recursively(HeadRef, Rules)
     -> recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules,
                                   QuotedRefCountTable, HeadColumns,
-                                  HeadColumnsSql, SeedSql)
+                                  HeadColumnsSql, SeedSql),
+       level_expand_plan(RelPlans, HeadRef, Rules, ExpandPlan),
+       ( level_dred_plan(RelPlans, HeadRef, Rules, DredPlan0)
+       -> DredPlan = DredPlan0
+       ;  DredPlan = none
+       )
     ;  counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
-                                HeadColumnsSql, SeedSql)
+                                HeadColumnsSql, SeedSql),
+       ExpandPlan = none,
+       DredPlan = none
     ),
     format(atom(UpdateSql),
-           'UPDATE ~w AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0))',
+           'UPDATE ~w AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0)',
            [QuotedHeadTable, QuotedRefCountTable, EqualitySql]),
+    format(atom(StageRetractSql),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT -1, row_number() OVER () - 1, ~w FROM ~w WHERE "__refcount" <= 0',
+           [QuotedDeltaTable, HeadColumnsSql, HeadColumnsSql, QuotedHeadTable]),
     format(atom(CollectZeroSql),
-           'DELETE FROM ~w WHERE "__refcount" <= 0 RETURNING ~w',
-           [QuotedHeadTable, HeadColumnsSql]),
+           'DELETE FROM ~w WHERE "__refcount" <= 0',
+           [QuotedHeadTable]),
+    arrival_scratch_table_name(HeadRef, NewTable),
+    quote_ident(NewTable, QuotedNewTable),
+    format(atom(ClearNewSql), 'DELETE FROM ~w', [QuotedNewTable]),
+    % The antijoin runs ONCE into a rowid scratch table. Its rowid then serves
+    % as `_sequence`, which no set rel orders by, replacing three window sorts.
+    nth0(0, HeadColumns, FirstColumn),
+    quote_ident(FirstColumn, QuotedFirstColumn),
+    format(atom(FillNewSql),
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n LEFT JOIN ~w h ON ~w WHERE h.~w IS NULL',
+           [QuotedNewTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable,
+            QuotedHeadTable, EqualitySql, QuotedFirstColumn]),
+    format(atom(StageAddSql),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT 1, "rowid" - 1, ~w FROM ~w',
+           [QuotedDeltaTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    format(atom(StageFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    format(atom(StageNextFrontierSql),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedNextFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    % OR IGNORE lets the head's own primary key reject the rows already there,
+    % so the fill reads the support table straight through with no antijoin.
     format(atom(InsertNewSql),
-           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w) RETURNING ~w',
-           [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql,
-            QuotedRefCountTable, QuotedHeadTable, EqualitySql, HeadColumnsSql]).
+           'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n',
+           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable]).
+
+arrival_scratch_table_name(Name/_Arity, NewTable) :-
+    format(atom(NewTable), '__new_~w', [Name]).
+
+qualified_column_list(Columns, Alias, Sql) :-
+    findall(Part,
+            ( member(Column, Columns),
+              quote_ident(Column, QuotedColumn),
+              format(atom(Part), '~w.~w', [Alias, QuotedColumn]) ),
+            Parts),
+    atomic_list_concat(Parts, ', ', Sql).
 
 counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
                          HeadColumnsSql, SeedSql) :-
@@ -2573,6 +2627,329 @@ recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
            [QuotedRefCountTable, HeadColumnsSql, QuotedHeadTable,
             HeadColumnsSql, RecursiveUnionSql, HeadColumnsSql,
             QuotedHeadTable]).
+
+% rx `expand` spelling of the recursive seed: same fixpoint as the CTE, and
+% the refCount table's WITHOUT ROWID key keeps downstream scan order identical.
+level_expand_plan(RelPlans, HeadRef, Rules,
+                  expandplan(ClearASql, ClearBSql, SeedSqls,
+                             HopABSql, HopBASql, AbsorbASql, AbsorbBSql)) :-
+    partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
+    expand_table_name(HeadRef, a, TableA),
+    expand_table_name(HeadRef, b, TableB),
+    quote_ident(TableA, QuotedTableA),
+    quote_ident(TableB, QuotedTableB),
+    ref_count_table_name(HeadRef, RefCountTable),
+    quote_ident(RefCountTable, QuotedRefCountTable),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    format(atom(ClearASql), 'DELETE FROM ~w', [QuotedTableA]),
+    format(atom(ClearBSql), 'DELETE FROM ~w', [QuotedTableB]),
+    maplist(expand_seed_sql(RelPlans, QuotedTableA, HeadColumnsSql),
+            BaseRules, SeedSqls),
+    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableA,
+                   QuotedTableB, QuotedRefCountTable, HeadColumns,
+                   HeadColumnsSql, HopABSql),
+    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableB,
+                   QuotedTableA, QuotedRefCountTable, HeadColumns,
+                   HeadColumnsSql, HopBASql),
+    expand_absorb_sql(QuotedRefCountTable, QuotedTableA, HeadColumnsSql, AbsorbASql),
+    expand_absorb_sql(QuotedRefCountTable, QuotedTableB, HeadColumnsSql, AbsorbBSql).
+
+expand_table_name(Name/_Arity, a, TableName) :-
+    format(atom(TableName), '__expand_a_~w', [Name]).
+expand_table_name(Name/_Arity, b, TableName) :-
+    format(atom(TableName), '__expand_b_~w', [Name]).
+
+expand_seed_sql(RelPlans, QuotedWaveTable, HeadColumnsSql, Rule, SeedSql) :-
+    level_recursive_arm(RelPlans, Rule, BaseArm),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w)',
+           [QuotedWaveTable, HeadColumnsSql, HeadColumnsSql, BaseArm]).
+
+% The WITH clause shadows the head's table name with the source wavefront, so
+% the recursive arm text is reused verbatim; only frontier rows feed the hop.
+expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedFromTable,
+               QuotedIntoTable, QuotedRefCountTable, HeadColumns,
+               HeadColumnsSql, HopSql) :-
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
+    maplist(level_recursive_arm(RelPlans), RecursiveRules, RecursiveArms),
+    atomic_list_concat(RecursiveArms, ' UNION ALL ', ArmsSql),
+    qualified_equalities(HeadColumns, x, n, EqualityParts),
+    atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
+    format(atom(HopSql),
+           'WITH ~w (~w) AS (SELECT ~w FROM ~w) INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w) x WHERE NOT EXISTS (SELECT 1 FROM ~w n WHERE ~w)',
+           [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql, QuotedFromTable,
+            QuotedIntoTable, HeadColumnsSql, HeadColumnsSql, ArmsSql,
+            QuotedRefCountTable, EqualitySql]).
+
+expand_absorb_sql(QuotedRefCountTable, QuotedWaveTable, HeadColumnsSql, AbsorbSql) :-
+    format(atom(AbsorbSql),
+           'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, 1 FROM ~w',
+           [QuotedRefCountTable, HeadColumnsSql, HeadColumnsSql, QuotedWaveTable]).
+
+% ═══ in-place recursive-head maintenance (engine.rs:407, :454) ════════════
+% Rows left in __cone_<rel> once the rederive walk stops are the retractions.
+
+dred_ping_table_name(Name/_Arity, TableName) :-
+    format(atom(TableName), '__ping_~w', [Name]).
+
+dred_pong_table_name(Name/_Arity, TableName) :-
+    format(atom(TableName), '__pong_~w', [Name]).
+
+dred_cone_table_name(Name/_Arity, TableName) :-
+    format(atom(TableName), '__cone_~w', [Name]).
+
+% A negated atom retracts on an ARRIVAL, a `pre` atom reads a snapshot with no
+% delta, a `__ref_*` atom has neither: all three hide retractions from a seed.
+dred_plan_admissible(Rules) :-
+    forall(member((_ <- Body), Rules), dred_rule_admissible(Body)).
+
+dred_rule_admissible(Body) :-
+    body_ref_uses(Body, Uses),
+    \+ ( member(Use, Uses), is_negative_use(Use) ),
+    \+ ( member(use(_, _, pos, pre), Uses) ),
+    \+ ( member(Use, Uses), dictionary_use(Use) ),
+    include(is_positive_use, Uses, PosUses),
+    PosUses \== [].
+
+level_dred_plan(RelPlans, HeadRef, Rules,
+                dredplan(ClearPingSql, ClearPongSql, ClearConeSql,
+                         AssertSeedSqls, AssertHopABSql, AssertHopBASql,
+                         CommitASql, CommitBSql, ArrivalASql, ArrivalBSql,
+                         DredSeedSqls, DredHopABSql, DredHopBASql,
+                         ConeAbsorbASql, ConeAbsorbBSql,
+                         ConeTrimSql, HeadDeleteSql, RederiveSeedSqls,
+                         ReviveHopABSql, ReviveHopBASql,
+                         ConeDropASql, ConeDropBSql,
+                         StageRetractSql, HeadCountSql)) :-
+    partition(rule_reads_head(HeadRef), Rules, RecursiveRules, _BaseRules),
+    RecursiveRules \== [],
+    dred_plan_admissible(Rules),
+    table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
+    dred_ping_table_name(HeadRef, PingTable), quote_ident(PingTable, QuotedPing),
+    dred_pong_table_name(HeadRef, PongTable), quote_ident(PongTable, QuotedPong),
+    dred_cone_table_name(HeadRef, ConeTable), quote_ident(ConeTable, QuotedCone),
+    arrival_scratch_table_name(HeadRef, NewTable), quote_ident(NewTable, QuotedNew),
+    delta_table_name(HeadRef, DeltaTable), quote_ident(DeltaTable, QuotedDelta),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    maplist(quote_ident, HeadColumns, QuotedHeadColumns),
+    atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
+    format(atom(ClearPingSql), 'DELETE FROM ~w', [QuotedPing]),
+    format(atom(ClearPongSql), 'DELETE FROM ~w', [QuotedPong]),
+    format(atom(ClearConeSql), 'DELETE FROM ~w', [QuotedCone]),
+    dred_absent_probe(HeadColumns, QuotedHeadTable, HeadAbsentSql),
+    dred_present_probe(HeadColumns, QuotedHeadTable, HeadPresentSql),
+    dred_absent_probe(HeadColumns, QuotedCone, ConeAbsentSql),
+    dred_present_probe(HeadColumns, QuotedCone, ConePresentSql),
+    findall(SeedSql,
+            ( member(Rule, Rules),
+              dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql,
+                            HeadAbsentSql, 1, SeedSql) ),
+            AssertSeedSqls),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+                 HeadColumnsSql, HeadAbsentSql, AssertHopABSql),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+                 HeadColumnsSql, HeadAbsentSql, AssertHopBASql),
+    dred_commit_sql(QuotedHeadTable, QuotedPing, HeadColumnsSql, CommitASql),
+    dred_commit_sql(QuotedHeadTable, QuotedPong, HeadColumnsSql, CommitBSql),
+    dred_arrival_sql(QuotedNew, QuotedPing, HeadColumnsSql, ArrivalASql),
+    dred_arrival_sql(QuotedNew, QuotedPong, HeadColumnsSql, ArrivalBSql),
+    findall(RetractSeedSql,
+            ( member(Rule, Rules),
+              dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql,
+                            HeadPresentSql, -1, RetractSeedSql) ),
+            DredSeedSqls),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+                 HeadColumnsSql, ConeAbsentSql, DredHopABSql),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+                 HeadColumnsSql, ConeAbsentSql, DredHopBASql),
+    dred_commit_sql(QuotedCone, QuotedPing, HeadColumnsSql, ConeAbsorbASql),
+    dred_commit_sql(QuotedCone, QuotedPong, HeadColumnsSql, ConeAbsorbBSql),
+    qualified_equalities(HeadColumns, h, QuotedCone, TrimEqualityParts),
+    atomic_list_concat(TrimEqualityParts, ' AND ', TrimEqualitySql),
+    format(atom(ConeTrimSql),
+           'DELETE FROM ~w WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w)',
+           [QuotedCone, QuotedHeadTable, TrimEqualitySql]),
+    format(atom(HeadDeleteSql),
+           'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM ~w)',
+           [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql, QuotedCone]),
+    findall(RederiveSql,
+            ( member(Rule, Rules),
+              dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone,
+                                     HeadColumns, HeadColumnsSql, RederiveSql) ),
+            RederiveSeedSqls),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+                 HeadColumnsSql, ConePresentSql, ReviveHopABSql),
+    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+                 HeadColumnsSql, ConePresentSql, ReviveHopBASql),
+    dred_cone_drop_sql(QuotedCone, QuotedPing, HeadColumnsSql, ConeDropASql),
+    dred_cone_drop_sql(QuotedCone, QuotedPong, HeadColumnsSql, ConeDropBSql),
+    format(atom(StageRetractSql),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT -1, row_number() OVER () - 1, ~w FROM ~w',
+           [QuotedDelta, HeadColumnsSql, HeadColumnsSql, QuotedCone]),
+    format(atom(HeadCountSql), 'SELECT count(*) AS "n" FROM ~w',
+           [QuotedHeadTable]).
+
+dred_absent_probe(HeadColumns, QuotedTable, ProbeSql) :-
+    qualified_equalities(HeadColumns, x, p, EqualityParts),
+    atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
+    format(atom(ProbeSql), 'NOT EXISTS (SELECT 1 FROM ~w p WHERE ~w)',
+           [QuotedTable, EqualitySql]).
+
+dred_present_probe(HeadColumns, QuotedTable, ProbeSql) :-
+    qualified_equalities(HeadColumns, x, p, EqualityParts),
+    atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
+    format(atom(ProbeSql), 'EXISTS (SELECT 1 FROM ~w p WHERE ~w)',
+           [QuotedTable, EqualitySql]).
+
+dred_commit_sql(QuotedTarget, QuotedWaveTable, HeadColumnsSql, CommitSql) :-
+    format(atom(CommitSql), 'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM ~w',
+           [QuotedTarget, HeadColumnsSql, HeadColumnsSql, QuotedWaveTable]).
+
+% __new_<rel> keeps its rowid, so the walk appends in derivation order and the
+% shipped stageAdd/stageFrontier statements read it unchanged.
+dred_arrival_sql(QuotedNewTable, QuotedWaveTable, HeadColumnsSql, ArrivalSql) :-
+    format(atom(ArrivalSql),
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, 1 FROM ~w',
+           [QuotedNewTable, HeadColumnsSql, HeadColumnsSql, QuotedWaveTable]).
+
+dred_cone_drop_sql(QuotedCone, QuotedWaveTable, HeadColumnsSql, DropSql) :-
+    format(atom(DropSql), 'DELETE FROM ~w WHERE (~w) IN (SELECT ~w FROM ~w)',
+           [QuotedCone, HeadColumnsSql, HeadColumnsSql, QuotedWaveTable]).
+
+% One seed per (rule, changed atom position). At sign -1 the OTHER atoms read
+% live-or-retracted: a derivation using two retracted atoms hides otherwise.
+dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql, ProbeSql, Sign,
+              SeedSql) :-
+    level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts,
+                              JsonFromParts, WhereTexts, SelectSql, _RawExprs),
+    rule_head_ref(Rule, HeadRef),
+    nth0(Index, PosUses, use(Ref, _, pos, _)),
+    Ref \== HeadRef,
+    dred_seed_from_parts(RelPlans, HeadRef, PosUses, PosFromParts, Index, Sign,
+                         SeedFromParts),
+    append(SeedFromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
+    ( WhereTexts == []
+    -> format(atom(ArmSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
+    ;  atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+       format(atom(ArmSql), 'SELECT ~w FROM ~w WHERE ~w',
+              [SelectSql, FromSql, WhereSql])
+    ),
+    format(atom(SeedSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w) x WHERE ~w',
+           [QuotedPing, HeadColumnsSql, HeadColumnsSql, ArmSql, ProbeSql]).
+
+dred_seed_from_parts(RelPlans, HeadRef, PosUses, PosFromParts, Index, Sign,
+                     SeedFromParts) :-
+    findall(Part,
+            ( nth0(Position, PosFromParts, LiveFrom),
+              nth0(Position, PosUses, use(Ref, _, pos, _)),
+              format(atom(Alias), 'b~w', [Position]),
+              dred_seed_from_part(RelPlans, HeadRef, Ref, Alias, Position,
+                                  Index, Sign, LiveFrom, Part) ),
+            SeedFromParts).
+
+dred_seed_from_part(RelPlans, _HeadRef, Ref, Alias, Index, Index, Sign,
+                    _LiveFrom, Part) :- !,
+    dred_delta_select(RelPlans, Ref, Sign, DeltaSelectSql),
+    format(atom(Part), '(~w) ~w', [DeltaSelectSql, Alias]).
+% The recursive atom stays a plain head read: the head is still whole here,
+% and widening it would over-delete rows this tick never suspected.
+dred_seed_from_part(_, HeadRef, HeadRef, _Alias, _Position, _Index, _Sign,
+                    LiveFrom, LiveFrom) :- !.
+dred_seed_from_part(RelPlans, _HeadRef, Ref, Alias, _Position, _Index, -1,
+                    _LiveFrom, Part) :- !,
+    dred_column_list(RelPlans, Ref, ColumnsSql),
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    dred_delta_select(RelPlans, Ref, -1, DeltaSelectSql),
+    format(atom(Part), '(SELECT ~w FROM ~w UNION ALL ~w) ~w',
+           [ColumnsSql, QuotedTable, DeltaSelectSql, Alias]).
+dred_seed_from_part(_, _, _, _, _, _, _, LiveFrom, LiveFrom).
+
+% A delta table is CUMULATIVE over the tick, so a row added and retracted in
+% the same tick sits there under both signs; the liveness probe is what keeps
+% a +1 seed off a fact that is already gone and a -1 seed off one still there.
+dred_delta_select(RelPlans, Ref, Sign, SelectSql) :-
+    relplan_columns(RelPlans, Ref, Columns),
+    findall(Projection,
+            ( member(Column, Columns), quote_ident(Column, QuotedColumn),
+              format(atom(Projection), 'd.~w', [QuotedColumn]) ),
+            Projections),
+    atomic_list_concat(Projections, ', ', ProjectionsSql),
+    qualified_equalities(Columns, t, d, EqualityParts),
+    atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
+    delta_table_name(Ref, DeltaTable), quote_ident(DeltaTable, QuotedDelta),
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    ( Sign =:= 1 -> Liveness = 'EXISTS' ; Liveness = 'NOT EXISTS' ),
+    format(atom(SelectSql),
+           'SELECT ~w FROM ~w d WHERE d."_sign" = ~w AND ~w (SELECT 1 FROM ~w t WHERE ~w)',
+           [ProjectionsSql, QuotedDelta, Sign, Liveness, QuotedTable,
+            EqualitySql]).
+
+dred_column_list(RelPlans, Ref, ColumnsSql) :-
+    relplan_columns(RelPlans, Ref, Columns),
+    maplist(quote_ident, Columns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql).
+
+% ProbeSql is what stops the walk: head-absent for assert, cone-absent for
+% over-delete, cone-present for revive.
+dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedFrontier, QuotedInto,
+             HeadColumnsSql, ProbeSql, HopSql) :-
+    findall(ArmSql,
+            ( member(Rule, RecursiveRules),
+              dred_hop_arm(RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) ),
+            ArmSqls),
+    atomic_list_concat(ArmSqls, ' UNION ALL ', ArmsSql),
+    format(atom(HopSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w) x WHERE ~w',
+           [QuotedInto, HeadColumnsSql, HeadColumnsSql, ArmsSql, ProbeSql]).
+
+dred_hop_arm(RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) :-
+    level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts,
+                              JsonFromParts, WhereTexts, SelectSql, _RawExprs),
+    nth0(SelfIndex, PosUses, use(HeadRef, _, pos, _)),
+    !,
+    format(atom(SelfAlias), 'b~w', [SelfIndex]),
+    format(atom(SelfFrom), '~w ~w', [QuotedFrontier, SelfAlias]),
+    dred_replace_nth0(SelfIndex, PosFromParts, SelfFrom, HopFromParts),
+    append(HopFromParts, JsonFromParts, AllFromParts),
+    atomic_list_concat(AllFromParts, ', ', FromSql),
+    ( WhereTexts == []
+    -> format(atom(ArmSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
+    ;  atomic_list_concat(WhereTexts, ' AND ', WhereSql),
+       format(atom(ArmSql), 'SELECT ~w FROM ~w WHERE ~w',
+              [SelectSql, FromSql, WhereSql])
+    ).
+
+dred_replace_nth0(Index, List, Replacement, Replaced) :-
+    findall(Item,
+            ( nth0(Position, List, Original),
+              ( Position =:= Index -> Item = Replacement ; Item = Original ) ),
+            Replaced).
+
+% Cone-driven, and written as a flat join rather than a wrapped subquery so
+% sqlite can start from the cone instead of materializing the whole arm.
+dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
+                       HeadColumnsSql, RederiveSql) :-
+    level_recursive_arm_parts(RelPlans, Rule, _PosUses, PosFromParts,
+                              JsonFromParts, WhereTexts, SelectSql, RawExprs),
+    append(PosFromParts, JsonFromParts, ArmFromParts),
+    format(atom(ConeFrom), '~w c', [QuotedCone]),
+    atomic_list_concat([ConeFrom | ArmFromParts], ', ', FromSql),
+    findall(Equality,
+            ( nth1(Position, HeadColumns, Column),
+              nth1(Position, RawExprs, RawExpr),
+              quote_ident(Column, QuotedColumn),
+              format(atom(Equality), '~w = c.~w', [RawExpr, QuotedColumn]) ),
+            ConeEqualities),
+    append(WhereTexts, ConeEqualities, AllWhereTexts),
+    atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
+    format(atom(RederiveSql),
+           'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM ~w WHERE ~w',
+           [QuotedPing, HeadColumnsSql, SelectSql, FromSql, WhereSql]).
 
 rules_read_head_recursively(HeadRef, Rules) :-
     member(Rule, Rules),
@@ -2605,20 +2982,11 @@ null_column_expr(Column, Expr) :-
     format(atom(Expr), 'NULL AS ~w', [QuotedColumn]).
 
 level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
-    Rule = (Head <- Body),
-    rule_head_ref(Rule, HeadRef),
-    body_ref_uses(Body, Uses),
-    include(is_positive_use, Uses, PosUses),
-    include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
-    append(FromParts, JsonFromParts, AllFromParts),
+    level_recursive_arm_parts(RelPlans, Rule, _PosUses, PosFromParts,
+                              JsonFromParts, AllWhereTexts, SelectSql,
+                              _RawExprs),
+    append(PosFromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
-    relplan_columns(RelPlans, HeadRef, HeadColumns),
-    head_select_list(Head, Bound, HeadColumns, SelectExprs),
-    atomic_list_concat(SelectExprs, ', ', SelectSql),
     ( AllWhereTexts == []
     -> format(atom(RecursiveArm), 'SELECT ~w FROM ~w',
               [SelectSql, FromSql])
@@ -2626,6 +2994,25 @@ level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
        format(atom(RecursiveArm), 'SELECT ~w FROM ~w WHERE ~w',
               [SelectSql, FromSql, WhereSql])
     ).
+
+% PosFromParts stays index-aligned with PosUses: the plans below swap ONE entry
+% for a delta or wavefront read. RawExprs is the head value list, alias-free.
+level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts, JsonFromParts,
+                          AllWhereTexts, SelectSql, RawExprs) :-
+    Rule = (Head <- Body),
+    rule_head_ref(Rule, HeadRef),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    include(is_negative_use, Uses, NegUses),
+    compile_positive_uses(RelPlans, PosUses, [], Bound0, PosFromParts,
+                          PosWhereTexts),
+    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    head_select_list(Head, Bound, HeadColumns, SelectExprs),
+    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    head_select_list(Head, Bound, none, RawExprs).
 
 level_ref_count_arm(RelPlans, Rule, RefCountArm) :-
     Rule = (Head <- Body),
@@ -3317,7 +3704,7 @@ delta_ddl(DepartureRefs, RelPlan, Ddl) :-
     ;   Ddl = BaseDdl
     ).
 
-departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
+departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3325,11 +3712,7 @@ departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedDepartureTable, ColumnsSql]),
-    format(atom(IndexName), '~w_phase', [DepartureTable]),
-    quote_ident(IndexName, QuotedIndexName),
-    format(atom(IndexDdl), 'CREATE INDEX ~w ON ~w ("_phase")',
-           [QuotedIndexName, QuotedDepartureTable]).
+           [QuotedDepartureTable, ColumnsSql]).
 
 pre_ddl(RelPlans, Ref, Ddl) :-
     memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
@@ -3349,9 +3732,11 @@ pre_ddl(RelPlans, Ref, Ddl) :-
               [QuotedPreTable, ColumnsSql])
     ).
 
+% No _phase index on the next-frontier: nothing filters that table by phase
+% (0 of 747 emitted modules had a query plan choose one).
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
           [TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
-           NextFrontierDdl, NextFrontierIndexDdl]) :-
+           NextFrontierDdl]) :-
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3385,20 +3770,65 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     format(atom(NextFrontierDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedNextFrontierTable, ColumnsSql]),
-    format(atom(NextFrontierIndexName), '~w_phase', [NextFrontierTable]),
-    quote_ident(NextFrontierIndexName, QuotedNextFrontierIndexName),
-    format(atom(NextFrontierIndexDdl),
-           'CREATE INDEX ~w ON ~w ("_phase")',
-           [QuotedNextFrontierIndexName, QuotedNextFrontierTable]).
+           [QuotedNextFrontierTable, ColumnsSql]).
 
 % An aggregate head has no refCount table (aggsql/6 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
 ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
-ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
+ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
+    ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
+    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan),
+      ExpandPlan = expandplan(_, _, _, _, _, _, _)
+    -> expand_wave_ddl(RelPlans, HeadRef, WaveDdl),
+       dred_wave_ddl(RelPlans, HeadRef, DredPlan, DredDdl),
+       append([[Ddl, NewDdl, ZeroIndexDdl], WaveDdl, DredDdl], DdlList)
+    ;  DdlList = [Ddl, NewDdl, ZeroIndexDdl]
+    ).
+
+dred_wave_ddl(_, _, none, []) :- !.
+dred_wave_ddl(RelPlans, HeadRef, _, [PingDdl, PongDdl, ConeDdl]) :-
+    relplan_columns(RelPlans, HeadRef, Columns),
+    relplan_column_types(RelPlans, HeadRef, ColumnTypes),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
+    dred_ping_table_name(HeadRef, PingTable),
+    dred_pong_table_name(HeadRef, PongTable),
+    dred_cone_table_name(HeadRef, ConeTable),
+    maplist(dred_wave_table_ddl(ColumnsSql, PrimaryKeySql),
+            [PingTable, PongTable, ConeTable], [PingDdl, PongDdl, ConeDdl]).
+
+dred_wave_table_ddl(ColumnsSql, PrimaryKeySql, TableName, Ddl) :-
+    quote_ident(TableName, QuotedTable),
+    format(atom(Ddl),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedTable, ColumnsSql, PrimaryKeySql]).
+
+expand_wave_ddl(RelPlans, HeadRef, [DdlA, DdlB]) :-
+    relplan_columns(RelPlans, HeadRef, Columns),
+    relplan_column_types(RelPlans, HeadRef, ColumnTypes),
+    maplist(quote_ident, Columns, QuotedColumns),
+    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
+    atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
+    expand_table_name(HeadRef, a, TableA),
+    expand_table_name(HeadRef, b, TableB),
+    quote_ident(TableA, QuotedTableA),
+    quote_ident(TableB, QuotedTableB),
+    format(atom(DdlA),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedTableA, ColumnsSql, PrimaryKeySql]),
+    format(atom(DdlB),
+           'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
+           [QuotedTableB, ColumnsSql, PrimaryKeySql]).
+
+ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3407,7 +3837,21 @@ ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
            'CREATE TEMP TABLE ~w (~w, "__refcount" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
-           [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]).
+           [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]),
+    % Keeps its rowid: three staging reads use it as `_sequence`, and the set
+    % is already distinct because the refCount table it drains has the key.
+    arrival_scratch_table_name(HeadRef, NewTable),
+    quote_ident(NewTable, QuotedNewTable),
+    format(atom(NewDdl),
+           'CREATE TEMP TABLE ~w (~w, "__refcount" INTEGER NOT NULL)',
+           [QuotedNewTable, ColumnsSql]),
+    % Partial, so it holds only rows the retraction pass is about to take and
+    % costs nothing on an additive tick where no row falls to zero.
+    format(atom(ZeroIndexName), '~w_zero', [HeadTable]),
+    quote_ident(ZeroIndexName, QuotedZeroIndexName),
+    format(atom(ZeroIndexDdl),
+           'CREATE INDEX ~w ON ~w ("__refcount") WHERE "__refcount" <= 0',
+           [QuotedZeroIndexName, QuotedHeadTable]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage
 % contract, so their delta reads use the quoted column directly. TEXT columns

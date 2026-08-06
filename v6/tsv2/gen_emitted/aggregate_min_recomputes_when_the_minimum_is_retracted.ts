@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_row_phase" ON "__frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_star_row_phase" ON "__next_frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stat" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stat_sign" ON "__delta_stat" ("_sign")`,
   `CREATE INDEX "__delta_stat_group" ON "__delta_stat" ("repo", "col2", "col3", "col4")`,
   `CREATE TEMP TABLE "__frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stat_phase" ON "__frontier_stat" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stat_phase" ON "__next_frontier_stat" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_stat" ("repo" TEXT NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
 ];
 
@@ -230,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "stat", ruleId: "aggregate_min_recomputes_when_the_minimum_is_retracted:stat/4#1", headDeltaTableName: "__delta_stat", headColumns: ["repo", "col2", "col3", "col4"], insertSql: null, selectSql: `SELECT "repo", "col2", "col3", "col4" FROM "stat"`, recomputeSql: `DELETE FROM "stat";
-INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_stat"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_stat" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_star_row" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "stat" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_stat") RETURNING "repo", "col2", "col3", "col4"`, insertScopedSql: [`INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_stat") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2", "col3", "col4"`], deltaMaintained: false } },
+INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_stat"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_stat" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_star_row" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "stat" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_stat") RETURNING "repo", "col2", "col3", "col4"`, insertScopedSql: [`INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", count(*), min(b0."stars"), max(b0."stars") FROM "star_row" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_stat") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2", "col3", "col4"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

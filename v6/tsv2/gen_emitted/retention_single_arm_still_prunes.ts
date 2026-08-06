@@ -162,14 +162,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_journal_phase" ON "__frontier_journal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_journal_phase" ON "__next_frontier_journal" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_ping_sign" ON "__delta_ping" ("_sign")`,
   `CREATE INDEX "__delta_ping_group" ON "__delta_ping" ("payload")`,
   `CREATE TEMP TABLE "__frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_ping_phase" ON "__frontier_ping" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_ping_phase" ON "__next_frontier_ping" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

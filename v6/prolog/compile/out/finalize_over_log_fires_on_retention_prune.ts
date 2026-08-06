@@ -168,16 +168,13 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_ev_phase" ON "__frontier_ev" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_ev_phase" ON "__next_frontier_ev" ("_phase")`,
   `CREATE TEMP TABLE "__departure_frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE INDEX "__departure_frontier_ev_phase" ON "__departure_frontier_ev" ("_phase")`,
   `CREATE TEMP TABLE "__delta_gone" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_gone_sign" ON "__delta_gone" ("_sign")`,
   `CREATE INDEX "__delta_gone_group" ON "__delta_gone" ("ordinal", "payload")`,
   `CREATE TEMP TABLE "__frontier_gone" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_gone_phase" ON "__frontier_gone" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_gone" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_gone_phase" ON "__next_frontier_gone" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

@@ -3,39 +3,29 @@
 #   bash scripts/1_compile_speed.sh --write-baseline
 # Gate bands: fail above baseline*1.10, fail below
 # baseline*0.75 (bank the win deliberately).
-# Written 2026-07-31T02:55:02Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
-#
-# The three parse rows below sit ABOVE the counts from before parse_dl.pl
-# tracked furthest-failure positions, and that is deliberate. mark_furthest/1
-# runs at every whitespace stop, every literal match and every token entry --
-# 12,723 calls parsing golden-flex -- and a Prolog call costs one inference
-# before its body does anything, so no tracker that still reports a
-# furthest-failure line:column fits inside a 10% band around counts taken when
-# nothing was tracked. door-handwritten's parse row is deliberately NOT reset:
-# at 960 bytes the same tracker still lands inside the band.
-#
+# Written 2026-08-06T23:30:21Z on arm64 SWI-Prolog version 10.0.2 for arm64-darwin
 # program	phase	inferences
-flagship-flow	parse	321398
-flagship-flow	plan	1379766
-flagship-flow	lower	164181
-flagship-flow	boot	1447
-flagship-flow	emit	397595
+flagship-flow	parse	325070
+flagship-flow	plan	1445026
+flagship-flow	lower	169237
+flagship-flow	boot	1522
+flagship-flow	emit	435350
 flagship-flow	write	90
-golden-flex	parse	261179
-golden-flex	plan	819661
-golden-flex	lower	94237
-golden-flex	boot	1630
-golden-flex	emit	219112
+golden-flex	parse	329068
+golden-flex	plan	1404424
+golden-flex	lower	136973
+golden-flex	boot	2146
+golden-flex	emit	325112
 golden-flex	write	90
-flagship-callgraph	parse	92506
-flagship-callgraph	plan	94578
-flagship-callgraph	lower	24098
-flagship-callgraph	boot	492
-flagship-callgraph	emit	108374
+flagship-callgraph	parse	93102
+flagship-callgraph	plan	113651
+flagship-callgraph	lower	25032
+flagship-callgraph	boot	514
+flagship-callgraph	emit	115743
 flagship-callgraph	write	90
-door-handwritten	parse	41128
-door-handwritten	plan	13498
-door-handwritten	lower	3707
-door-handwritten	boot	243
-door-handwritten	emit	17201
+door-handwritten	parse	42942
+door-handwritten	plan	16325
+door-handwritten	lower	3882
+door-handwritten	boot	250
+door-handwritten	emit	18950
 door-handwritten	write	90

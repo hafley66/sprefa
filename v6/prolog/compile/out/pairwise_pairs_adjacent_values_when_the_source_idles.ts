@@ -167,16 +167,13 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_reading_phase" ON "__frontier_reading" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_reading_phase" ON "__next_frontier_reading" ("_phase")`,
   `CREATE TEMP TABLE "__departure_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
-  `CREATE INDEX "__departure_frontier_reading_phase" ON "__departure_frontier_reading" ("_phase")`,
   `CREATE TEMP TABLE "__delta_step" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_step_sign" ON "__delta_step" ("_sign")`,
   `CREATE INDEX "__delta_step_group" ON "__delta_step" ("sensor", "previous", "current")`,
   `CREATE TEMP TABLE "__frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_step_phase" ON "__frontier_step" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_step_phase" ON "__next_frontier_step" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

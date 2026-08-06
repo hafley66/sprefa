@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tallied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tallied_sign" ON "__delta_tallied" ("_sign")`,
   `CREATE INDEX "__delta_tallied_group" ON "__delta_tallied" ("line", "column", "total")`,
   `CREATE TEMP TABLE "__frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tallied_phase" ON "__frontier_tallied" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_tallied_phase" ON "__next_frontier_tallied" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_tallied" ("line" INTEGER NOT NULL, "column" INTEGER NOT NULL, PRIMARY KEY ("line", "column")) WITHOUT ROWID`,
 ];
 
@@ -228,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "tallied", ruleId: "groupby_aggregate_two_bare_integer_literals:tallied/3#1", headDeltaTableName: "__delta_tallied", headColumns: ["line", "column", "total"], insertSql: null, selectSql: `SELECT "line", "column", "total" FROM "tallied"`, recomputeSql: `DELETE FROM "tallied";
-INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_tallied"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_source" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_tallied") RETURNING "line", "column", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`], deltaMaintained: false } },
+INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_tallied"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_tallied" ("line", "column") SELECT DISTINCT (0 + 0), (0 + 0) FROM "__delta_source" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "tallied" WHERE ("line", "column") IN (SELECT "line", "column" FROM "__agg_scope_tallied") RETURNING "line", "column", "total"`, insertScopedSql: [`INSERT OR IGNORE INTO "tallied" ("line", "column", "total") SELECT 0, 0, count(*) FROM "source" b0 WHERE ((0 + 0), (0 + 0)) IN (SELECT "line", "column" FROM "__agg_scope_tallied") GROUP BY (0 + 0), (0 + 0) HAVING count(*) > 0 RETURNING "line", "column", "total"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

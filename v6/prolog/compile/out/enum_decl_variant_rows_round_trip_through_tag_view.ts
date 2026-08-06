@@ -143,22 +143,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_body_page_phase" ON "__frontier_body_page" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_body_page_phase" ON "__next_frontier_body_page" ("_phase")`,
   `CREATE TEMP TABLE "__delta_body_redirect" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_body_redirect_sign" ON "__delta_body_redirect" ("_sign")`,
   `CREATE INDEX "__delta_body_redirect_group" ON "__delta_body_redirect" ("id", "to")`,
   `CREATE TEMP TABLE "__frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_body_redirect_phase" ON "__frontier_body_redirect" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_body_redirect_phase" ON "__next_frontier_body_redirect" ("_phase")`,
   `CREATE TEMP TABLE "__delta_body_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_body_tag_sign" ON "__delta_body_tag" ("_sign")`,
   `CREATE INDEX "__delta_body_tag_group" ON "__delta_body_tag" ("id", "tag")`,
   `CREATE TEMP TABLE "__frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_body_tag_phase" ON "__frontier_body_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_body_tag_phase" ON "__next_frontier_body_tag" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "body_tag_zero" ON "body_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -246,7 +245,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "body_tag", ruleId: "enum_decl_variant_rows_round_trip_through_tag_view:body_tag/2#1", headDeltaTableName: "__delta_body_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", 'page' FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'redirect' FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "body_tag"`, recomputeSql: `DELETE FROM "body_tag";
 INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0 RETURNING "id", "tag"`, `INSERT INTO "body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", n."__refcount" FROM "__support_next_body_tag" n WHERE NOT EXISTS (SELECT 1 FROM "body_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, supportSql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_body_tag"`, `INSERT INTO "__new_body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n LEFT JOIN "body_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__next_frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT OR IGNORE INTO "body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

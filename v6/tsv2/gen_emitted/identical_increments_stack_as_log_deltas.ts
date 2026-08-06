@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_counter_phase" ON "__frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_counter_phase" ON "__next_frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__delta_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_increment_sign" ON "__delta_increment" ("_sign")`,
   `CREATE INDEX "__delta_increment_group" ON "__delta_increment" ("name")`,
   `CREATE TEMP TABLE "__frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_increment_phase" ON "__frontier_increment" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_increment_phase" ON "__next_frontier_increment" ("_phase")`,
   `CREATE TEMP TABLE "__pre_counter" ("name" TEXT NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 

@@ -162,21 +162,18 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_change_ev_phase" ON "__frontier_change_ev" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_change_ev_phase" ON "__next_frontier_change_ev" ("_phase")`,
   `CREATE TEMP TABLE "__delta_sent" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_sent_sign" ON "__delta_sent" ("_sign")`,
   `CREATE INDEX "__delta_sent_group" ON "__delta_sent" ("client", "item")`,
   `CREATE TEMP TABLE "__frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_sent_phase" ON "__frontier_sent" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_sent_phase" ON "__next_frontier_sent" ("_phase")`,
   `CREATE TEMP TABLE "__delta_subscriber" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_subscriber_sign" ON "__delta_subscriber" ("_sign")`,
   `CREATE INDEX "__delta_subscriber_group" ON "__delta_subscriber" ("client")`,
   `CREATE TEMP TABLE "__frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_subscriber_phase" ON "__frontier_subscriber" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_subscriber_phase" ON "__next_frontier_subscriber" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

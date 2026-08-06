@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_heard_phase" ON "__frontier_heard" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_heard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_heard_phase" ON "__next_frontier_heard" ("_phase")`,
   `CREATE TEMP TABLE "__delta_heard_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_heard_count_sign" ON "__delta_heard_count" ("_sign")`,
   `CREATE INDEX "__delta_heard_count_group" ON "__delta_heard_count" ("item")`,
   `CREATE TEMP TABLE "__frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_heard_count_phase" ON "__frontier_heard_count" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_heard_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_heard_count_phase" ON "__next_frontier_heard_count" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

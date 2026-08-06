@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_hit_phase" ON "__next_frontier_hit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_raw_sign" ON "__delta_raw" ("_sign")`,
   `CREATE INDEX "__delta_raw_group" ON "__delta_raw" ("text_value")`,
   `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_raw_phase" ON "__frontier_raw" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_raw_phase" ON "__next_frontier_raw" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_hit" ("text_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_hit" ("text_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "hit_zero" ON "hit" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "hit", ruleId: "backslash_in_string_literal_survives_both_doors:hit/1#1", headDeltaTableName: "__delta_hit", headColumns: ["text_value"], insertSql: `INSERT OR IGNORE INTO "hit" ("text_value") SELECT DISTINCT d0."text_value" FROM "__frontier_raw" d0 WHERE d0."_phase" >= 0 AND (d0."text_value" = 'digit \\d here') RETURNING "text_value"`, selectSql: `SELECT "text_value" FROM "hit"`, recomputeSql: `DELETE FROM "hit";
-INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here')`, supportSql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("text_value", "__refcount") SELECT "text_value", sum("__refcount") FROM (SELECT b0."text_value" AS "text_value", count(*) AS "__refcount" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here') GROUP BY b0."text_value") GROUP BY "text_value"`, `UPDATE "hit" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."text_value" = h."text_value"), 0))`, `DELETE FROM "hit" WHERE "__refcount" <= 0 RETURNING "text_value"`, `INSERT INTO "hit" ("text_value", "__refcount") SELECT "text_value", n."__refcount" FROM "__support_next_hit" n WHERE NOT EXISTS (SELECT 1 FROM "hit" h WHERE n."text_value" = h."text_value") RETURNING "text_value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here')`, supportSql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("text_value", "__refcount") SELECT "text_value", sum("__refcount") FROM (SELECT b0."text_value" AS "text_value", count(*) AS "__refcount" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here') GROUP BY b0."text_value") GROUP BY "text_value"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."text_value" = h."text_value"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT -1, row_number() OVER () - 1, "text_value" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."text_value" = h."text_value" WHERE h."text_value" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT 1, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

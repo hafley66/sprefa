@@ -141,7 +141,6 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__next_frontier_score_phase" ON "__next_frontier_score" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

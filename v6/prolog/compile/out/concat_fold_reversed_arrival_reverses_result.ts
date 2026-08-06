@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" TEXT NOT NULL, "piece" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_append_line_phase" ON "__frontier_append_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" TEXT NOT NULL, "piece" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_append_line_phase" ON "__next_frontier_append_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_log_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" TEXT NOT NULL, "next" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_log_text_sign" ON "__delta_log_text" ("_sign")`,
   `CREATE INDEX "__delta_log_text_group" ON "__delta_log_text" ("channel", "next")`,
   `CREATE TEMP TABLE "__frontier_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" TEXT NOT NULL, "next" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_log_text_phase" ON "__frontier_log_text" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" TEXT NOT NULL, "next" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_log_text_phase" ON "__next_frontier_log_text" ("_phase")`,
   `CREATE TEMP TABLE "__pre_log_text" ("channel" TEXT NOT NULL, "next" TEXT NOT NULL, PRIMARY KEY ("channel")) WITHOUT ROWID`,
 ];
 

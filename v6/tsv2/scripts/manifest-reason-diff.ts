@@ -104,7 +104,8 @@ interface IManifestReasonDiff {
    * functors, which never contained a variable.
    */
   normalizeVars(reason: string): string;
-  /** Parse a manifest's JSON text into name -> entry. Throws on a duplicate name. */
+  /** Parse a manifest's JSON text into name -> entry. A repeated name with a
+   *  DIFFERENT row is two fixtures sharing a name, and throws. */
   index(json: string, origin: string): Map<string, ManifestEntry>;
   /** Classify every difference between two indexed manifests. */
   classify(
@@ -133,7 +134,11 @@ export const ManifestReasonDiff: IManifestReasonDiff = {
     const rows = JSON.parse(json) as ManifestEntry[];
     const byName = new Map<string, ManifestEntry>();
     for (const row of rows) {
-      if (byName.has(row.name)) throw new Error(`${origin}: duplicate fixture name ${row.name}`);
+      const seen = byName.get(row.name);
+      if (seen !== undefined) {
+        if (seen.file === row.file && seen.bucket === row.bucket && seen.reason === row.reason) continue;
+        throw new Error(`${origin}: duplicate fixture name ${row.name}`);
+      }
       byName.set(row.name, row);
     }
     return byName;

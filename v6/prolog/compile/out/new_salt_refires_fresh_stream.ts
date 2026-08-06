@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_demand" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_demand_phase" ON "__frontier_demand" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_demand" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_demand_phase" ON "__next_frontier_demand" ("_phase")`,
   `CREATE TEMP TABLE "__delta_watch_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_watch_request_sign" ON "__delta_watch_request" ("_sign")`,
   `CREATE INDEX "__delta_watch_request_group" ON "__delta_watch_request" ("col1", "args", "salt")`,
   `CREATE TEMP TABLE "__frontier_watch_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_watch_request_phase" ON "__frontier_watch_request" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_watch_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "args" TEXT NOT NULL, "salt" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_watch_request_phase" ON "__next_frontier_watch_request" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

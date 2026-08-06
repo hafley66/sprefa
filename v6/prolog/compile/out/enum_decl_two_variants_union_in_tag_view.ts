@@ -143,22 +143,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_result_error_phase" ON "__frontier_result_error" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_result_error_phase" ON "__next_frontier_result_error" ("_phase")`,
   `CREATE TEMP TABLE "__delta_result_ok" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_result_ok_sign" ON "__delta_result_ok" ("_sign")`,
   `CREATE INDEX "__delta_result_ok_group" ON "__delta_result_ok" ("id", "value")`,
   `CREATE TEMP TABLE "__frontier_result_ok" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_result_ok_phase" ON "__frontier_result_ok" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_ok" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_result_ok_phase" ON "__next_frontier_result_ok" ("_phase")`,
   `CREATE TEMP TABLE "__delta_result_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_result_tag_sign" ON "__delta_result_tag" ("_sign")`,
   `CREATE INDEX "__delta_result_tag_group" ON "__delta_result_tag" ("id", "tag")`,
   `CREATE TEMP TABLE "__frontier_result_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_result_tag_phase" ON "__frontier_result_tag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_result_tag_phase" ON "__next_frontier_result_tag" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_result_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "result_tag_zero" ON "result_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -246,7 +245,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "result_tag", ruleId: "enum_decl_two_variants_union_in_tag_view:result_tag/2#1", headDeltaTableName: "__delta_result_tag", headColumns: ["id", "tag"], insertSql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ok' FROM "__frontier_result_ok" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'error' FROM "__frontier_result_error" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, selectSql: `SELECT "id", "tag" FROM "result_tag"`, recomputeSql: `DELETE FROM "result_tag";
 INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'ok' FROM "result_ok" b0;
-INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__refcount" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__refcount" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0))`, `DELETE FROM "result_tag" WHERE "__refcount" <= 0 RETURNING "id", "tag"`, `INSERT INTO "result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", n."__refcount" FROM "__support_next_result_tag" n WHERE NOT EXISTS (SELECT 1 FROM "result_tag" h WHERE n."id" = h."id" AND n."tag" = h."tag") RETURNING "id", "tag"`], aggregateSql: null },
+INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", 'error' FROM "result_error" b0`, supportSql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'ok' AS "tag", count(*) AS "__refcount" FROM "result_ok" b0 GROUP BY b0."id", 'ok' UNION ALL SELECT b0."id" AS "id", 'error' AS "tag", count(*) AS "__refcount" FROM "result_error" b0 GROUP BY b0."id", 'error') GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_result_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "result_tag" WHERE "__refcount" <= 0`, `DELETE FROM "result_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_result_tag"`, `INSERT INTO "__new_result_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_result_tag" n LEFT JOIN "result_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_result_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT INTO "__frontier_result_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT INTO "__next_frontier_result_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT OR IGNORE INTO "result_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_result_tag" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

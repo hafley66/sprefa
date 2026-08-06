@@ -162,21 +162,18 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_dispatch_ack_phase" ON "__frontier_dispatch_ack" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_dispatch_ack_phase" ON "__next_frontier_dispatch_ack" ("_phase")`,
   `CREATE TEMP TABLE "__delta_dispatch_first" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_first_sign" ON "__delta_dispatch_first" ("_sign")`,
   `CREATE INDEX "__delta_dispatch_first_group" ON "__delta_dispatch_first" ("dispatch_id", "_ack_tag")`,
   `CREATE TEMP TABLE "__frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_dispatch_first_phase" ON "__frontier_dispatch_first" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_dispatch_first_phase" ON "__next_frontier_dispatch_first" ("_phase")`,
   `CREATE TEMP TABLE "__delta_dispatch_seal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_seal_sign" ON "__delta_dispatch_seal" ("_sign")`,
   `CREATE INDEX "__delta_dispatch_seal_group" ON "__delta_dispatch_seal" ("sealed_id")`,
   `CREATE TEMP TABLE "__frontier_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_dispatch_seal_phase" ON "__frontier_dispatch_seal" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_dispatch_seal_phase" ON "__next_frontier_dispatch_seal" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

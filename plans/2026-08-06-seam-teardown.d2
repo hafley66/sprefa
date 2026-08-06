@@ -1,0 +1,97 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 30
+  }
+}
+direction: right
+
+classes: {
+  sqlite: {
+    style.fill: "#dbeafe"
+    style.stroke: "#1d4ed8"
+    style.stroke-width: 2
+  }
+  heap: {
+    style.fill: "#fee2e2"
+    style.stroke: "#b91c1c"
+    style.stroke-width: 2
+  }
+  gone: {
+    style.fill: "#f3f4f6"
+    style.stroke: "#9ca3af"
+    style.stroke-dash: 4
+    style.font-color: "#9ca3af"
+  }
+  win: {
+    style.fill: "#dcfce7"
+    style.stroke: "#15803d"
+    style.stroke-width: 2
+  }
+}
+
+cost: "106,692 ms · 1.98 GB" {
+  style.fill: "#fee2e2"
+  style.stroke: "#b91c1c"
+  style.font-size: 20
+}
+
+loop: "43 closure passes\nover a growing frontier" {
+  class: heap
+}
+ret: "RETURNING\n1M rows out" {
+  class: heap
+}
+events: "1M DeltaEvent objects" {
+  class: heap
+}
+json: "JSON.stringify\ntwice per round" {
+  class: heap
+}
+parse: "json_each reparse\nback into SQLite" {
+  class: sqlite
+}
+boundary: "boundarySql\n1M rows out again" {
+  class: heap
+}
+final: "final SELECT\n10M rows held at once" {
+  class: heap
+}
+answer: "the same answer\nchecksum 9d7239568960d6a8" {
+  class: win
+}
+
+loop -> ret -> events -> json -> parse -> boundary -> final -> answer
+
+steps: {
+  one: {
+    cost.label: "9,271 ms · 1.85 GB"
+    loop.label: "1 recursive CTE pass"
+    loop.class: win
+  }
+
+  two: {
+    cost.label: "6,148 ms · 1.64 GB"
+    ret.class: gone
+    events.class: gone
+    json.class: gone
+    ret.label: "RETURNING dropped"
+    events.label: "no event objects"
+    json.label: "no JSON round trip"
+    parse.label: "delta + frontier\nstaged by SQL"
+    parse.class: win
+  }
+
+  three: {
+    cost.label: "2,825 ms · 978 MB"
+    boundary.class: gone
+    boundary.label: "unread rel\nkeeps its rows"
+  }
+
+  four: {
+    cost.label: "2,776 ms · 738 MB"
+    final.class: gone
+    final.label: "folded 250k rows\nat a time"
+  }
+}

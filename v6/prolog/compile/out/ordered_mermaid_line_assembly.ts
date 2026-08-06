@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_mermaid_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mermaid_line_phase" ON "__frontier_mermaid_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mermaid_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_mermaid_line_phase" ON "__next_frontier_mermaid_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_mermaid_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_mermaid_text_sign" ON "__delta_mermaid_text" ("_sign")`,
   `CREATE INDEX "__delta_mermaid_text_group" ON "__delta_mermaid_text" ("file_name", "col2")`,
   `CREATE TEMP TABLE "__frontier_mermaid_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mermaid_text_phase" ON "__frontier_mermaid_text" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mermaid_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_mermaid_text_phase" ON "__next_frontier_mermaid_text" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_mermaid_text" ("file_name" TEXT NOT NULL, PRIMARY KEY ("file_name")) WITHOUT ROWID`,
 ];
 
@@ -230,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "mermaid_text", ruleId: "ordered_mermaid_line_assembly:mermaid_text/2#1", headDeltaTableName: "__delta_mermaid_text", headColumns: ["file_name", "col2"], insertSql: null, selectSql: `SELECT "file_name", "col2" FROM "mermaid_text"`, recomputeSql: `DELETE FROM "mermaid_text";
 INSERT OR IGNORE INTO "mermaid_text" ("file_name", "col2") SELECT b0."file_name", group_concat(b0."line_text", '
-' ORDER BY b0."line_ordinal") FROM "mermaid_line" b0 GROUP BY b0."file_name" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mermaid_text"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mermaid_text" ("file_name") SELECT DISTINCT d0."file_name" FROM "__delta_mermaid_line" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "mermaid_text" WHERE ("file_name") IN (SELECT "file_name" FROM "__agg_scope_mermaid_text") RETURNING "file_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "mermaid_text" ("file_name", "col2") SELECT b0."file_name", group_concat(b0."line_text", '
+' ORDER BY b0."line_ordinal") FROM "mermaid_line" b0 GROUP BY b0."file_name" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_mermaid_text"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_mermaid_text" ("file_name") SELECT DISTINCT d0."file_name" FROM "__delta_mermaid_line" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "mermaid_text" WHERE ("file_name") IN (SELECT "file_name" FROM "__agg_scope_mermaid_text") RETURNING "file_name", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "mermaid_text" ("file_name", "col2") SELECT b0."file_name", group_concat(b0."line_text", '
 ' ORDER BY b0."line_ordinal") FROM "mermaid_line" b0 WHERE (b0."file_name") IN (SELECT "file_name" FROM "__agg_scope_mermaid_text") GROUP BY b0."file_name" HAVING count(*) > 0 RETURNING "file_name", "col2"`], deltaMaintained: false } },
 ];
 

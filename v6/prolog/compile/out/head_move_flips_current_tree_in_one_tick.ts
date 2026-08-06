@@ -163,29 +163,27 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_current_tree_phase" ON "__frontier_current_tree" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_current_tree_phase" ON "__next_frontier_current_tree" ("_phase")`,
   `CREATE TEMP TABLE "__delta_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_sign" ON "__delta_head" ("_sign")`,
   `CREATE INDEX "__delta_head_group" ON "__delta_head" ("repo_id", "rev_id")`,
   `CREATE TEMP TABLE "__frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_phase" ON "__frontier_head" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_head_phase" ON "__next_frontier_head" ("_phase")`,
   `CREATE TEMP TABLE "__delta_head_move" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_move_sign" ON "__delta_head_move" ("_sign")`,
   `CREATE INDEX "__delta_head_move_group" ON "__delta_head_move" ("repo_id", "rev_id")`,
   `CREATE TEMP TABLE "__frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_move_phase" ON "__frontier_head_move" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_head_move_phase" ON "__next_frontier_head_move" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_tree_file_sign" ON "__delta_tree_file" ("_sign")`,
   `CREATE INDEX "__delta_tree_file_group" ON "__delta_tree_file" ("rev_id", "path", "digest")`,
   `CREATE TEMP TABLE "__frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_tree_file_phase" ON "__frontier_tree_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_tree_file_phase" ON "__next_frontier_tree_file" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_current_tree" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_current_tree" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "current_tree_zero" ON "current_tree" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -281,7 +279,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "current_tree", ruleId: "head_move_flips_current_tree_in_one_tick:current_tree/2#1", headDeltaTableName: "__delta_current_tree", headColumns: ["path", "digest"], insertSql: `INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT DISTINCT b0."path", b0."digest" FROM "__frontier_head" d0, "tree_file" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" UNION ALL SELECT DISTINCT d0."path", d0."digest" FROM "__frontier_tree_file" d0, "head" b0 WHERE d0."_phase" >= 0 AND b0."rev_id" = d0."rev_id" RETURNING "path", "digest"`, selectSql: `SELECT "path", "digest" FROM "current_tree"`, recomputeSql: `DELETE FROM "current_tree";
-INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT b1."path", b1."digest" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id"`, supportSql: [`DELETE FROM "__support_next_current_tree"`, `INSERT INTO "__support_next_current_tree" ("path", "digest", "__refcount") SELECT "path", "digest", sum("__refcount") FROM (SELECT b1."path" AS "path", b1."digest" AS "digest", count(*) AS "__refcount" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id" GROUP BY b1."path", b1."digest") GROUP BY "path", "digest"`, `UPDATE "current_tree" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_current_tree" n WHERE n."path" = h."path" AND n."digest" = h."digest"), 0))`, `DELETE FROM "current_tree" WHERE "__refcount" <= 0 RETURNING "path", "digest"`, `INSERT INTO "current_tree" ("path", "digest", "__refcount") SELECT "path", "digest", n."__refcount" FROM "__support_next_current_tree" n WHERE NOT EXISTS (SELECT 1 FROM "current_tree" h WHERE n."path" = h."path" AND n."digest" = h."digest") RETURNING "path", "digest"`], aggregateSql: null },
+INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT b1."path", b1."digest" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id"`, supportSql: [`DELETE FROM "__support_next_current_tree"`, `INSERT INTO "__support_next_current_tree" ("path", "digest", "__refcount") SELECT "path", "digest", sum("__refcount") FROM (SELECT b1."path" AS "path", b1."digest" AS "digest", count(*) AS "__refcount" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id" GROUP BY b1."path", b1."digest") GROUP BY "path", "digest"`, `UPDATE "current_tree" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_current_tree" n WHERE n."path" = h."path" AND n."digest" = h."digest"), 0)`, `INSERT INTO "__delta_current_tree" ("_sign", "_sequence", "path", "digest") SELECT -1, row_number() OVER () - 1, "path", "digest" FROM "current_tree" WHERE "__refcount" <= 0`, `DELETE FROM "current_tree" WHERE "__refcount" <= 0`, `DELETE FROM "__new_current_tree"`, `INSERT INTO "__new_current_tree" ("path", "digest", "__refcount") SELECT n."path", n."digest", n."__refcount" FROM "__support_next_current_tree" n LEFT JOIN "current_tree" h ON n."path" = h."path" AND n."digest" = h."digest" WHERE h."path" IS NULL`, `INSERT INTO "__delta_current_tree" ("_sign", "_sequence", "path", "digest") SELECT 1, "rowid" - 1, "path", "digest" FROM "__new_current_tree"`, `INSERT INTO "__frontier_current_tree" ("_phase", "_sequence", "path", "digest") SELECT ?, "rowid" - 1, "path", "digest" FROM "__new_current_tree"`, `INSERT INTO "__next_frontier_current_tree" ("_phase", "_sequence", "path", "digest") SELECT ?, "rowid" - 1, "path", "digest" FROM "__new_current_tree"`, `INSERT OR IGNORE INTO "current_tree" ("path", "digest", "__refcount") SELECT n."path", n."digest", n."__refcount" FROM "__support_next_current_tree" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 const EDGE_HEAD_0_PROJECT_SQL = `SELECT ?1 AS "repo_id", ?2 AS "rev_id"`;

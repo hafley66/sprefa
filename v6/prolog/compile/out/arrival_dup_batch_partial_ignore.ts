@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_derived_phase" ON "__frontier_derived" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_derived_phase" ON "__next_frontier_derived" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("value")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_derived" ("seen_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_derived" ("seen_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "derived_zero" ON "derived" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -227,7 +227,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "derived", ruleId: "arrival_dup_batch_partial_ignore:derived/1#1", headDeltaTableName: "__delta_derived", headColumns: ["seen_value"], insertSql: `INSERT OR IGNORE INTO "derived" ("seen_value") SELECT DISTINCT d0."value" FROM "__frontier_seen" d0 WHERE d0."_phase" >= 0 RETURNING "seen_value"`, selectSql: `SELECT "seen_value" FROM "derived"`, recomputeSql: `DELETE FROM "derived";
-INSERT OR IGNORE INTO "derived" ("seen_value") SELECT b0."value" FROM "seen" b0`, supportSql: [`DELETE FROM "__support_next_derived"`, `INSERT INTO "__support_next_derived" ("seen_value", "__refcount") SELECT "seen_value", sum("__refcount") FROM (SELECT b0."value" AS "seen_value", count(*) AS "__refcount" FROM "seen" b0 GROUP BY b0."value") GROUP BY "seen_value"`, `UPDATE "derived" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_derived" n WHERE n."seen_value" = h."seen_value"), 0))`, `DELETE FROM "derived" WHERE "__refcount" <= 0 RETURNING "seen_value"`, `INSERT INTO "derived" ("seen_value", "__refcount") SELECT "seen_value", n."__refcount" FROM "__support_next_derived" n WHERE NOT EXISTS (SELECT 1 FROM "derived" h WHERE n."seen_value" = h."seen_value") RETURNING "seen_value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "derived" ("seen_value") SELECT b0."value" FROM "seen" b0`, supportSql: [`DELETE FROM "__support_next_derived"`, `INSERT INTO "__support_next_derived" ("seen_value", "__refcount") SELECT "seen_value", sum("__refcount") FROM (SELECT b0."value" AS "seen_value", count(*) AS "__refcount" FROM "seen" b0 GROUP BY b0."value") GROUP BY "seen_value"`, `UPDATE "derived" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_derived" n WHERE n."seen_value" = h."seen_value"), 0)`, `INSERT INTO "__delta_derived" ("_sign", "_sequence", "seen_value") SELECT -1, row_number() OVER () - 1, "seen_value" FROM "derived" WHERE "__refcount" <= 0`, `DELETE FROM "derived" WHERE "__refcount" <= 0`, `DELETE FROM "__new_derived"`, `INSERT INTO "__new_derived" ("seen_value", "__refcount") SELECT n."seen_value", n."__refcount" FROM "__support_next_derived" n LEFT JOIN "derived" h ON n."seen_value" = h."seen_value" WHERE h."seen_value" IS NULL`, `INSERT INTO "__delta_derived" ("_sign", "_sequence", "seen_value") SELECT 1, "rowid" - 1, "seen_value" FROM "__new_derived"`, `INSERT INTO "__frontier_derived" ("_phase", "_sequence", "seen_value") SELECT ?, "rowid" - 1, "seen_value" FROM "__new_derived"`, `INSERT INTO "__next_frontier_derived" ("_phase", "_sequence", "seen_value") SELECT ?, "rowid" - 1, "seen_value" FROM "__new_derived"`, `INSERT OR IGNORE INTO "derived" ("seen_value", "__refcount") SELECT n."seen_value", n."__refcount" FROM "__support_next_derived" n`], expandSql: null, dredSql: null, aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

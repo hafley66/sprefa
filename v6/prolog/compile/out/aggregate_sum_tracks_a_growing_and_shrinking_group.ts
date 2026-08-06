@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_budget_phase" ON "__frontier_budget" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_budget_phase" ON "__next_frontier_budget" ("_phase")`,
   `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_spend_sign" ON "__delta_spend" ("_sign")`,
   `CREATE INDEX "__delta_spend_group" ON "__delta_spend" ("team", "_item", "cost")`,
   `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_spend_phase" ON "__frontier_spend" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_spend_phase" ON "__next_frontier_spend" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_budget" ("team" TEXT NOT NULL, PRIMARY KEY ("team")) WITHOUT ROWID`,
 ];
 
@@ -228,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "budget", ruleId: "aggregate_sum_tracks_a_growing_and_shrinking_group:budget/2#1", headDeltaTableName: "__delta_budget", headColumns: ["team", "col2"], insertSql: null, selectSql: `SELECT "team", "col2" FROM "budget"`, recomputeSql: `DELETE FROM "budget";
-INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 GROUP BY b0."team" HAVING count(*) > 0`, supportSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_budget"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_budget" ("team") SELECT DISTINCT d0."team" FROM "__delta_spend" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "budget" WHERE ("team") IN (SELECT "team" FROM "__agg_scope_budget") RETURNING "team", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 WHERE (b0."team") IN (SELECT "team" FROM "__agg_scope_budget") GROUP BY b0."team" HAVING count(*) > 0 RETURNING "team", "col2"`], deltaMaintained: false } },
+INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 GROUP BY b0."team" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_budget"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_budget" ("team") SELECT DISTINCT d0."team" FROM "__delta_spend" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "budget" WHERE ("team") IN (SELECT "team" FROM "__agg_scope_budget") RETURNING "team", "col2"`, insertScopedSql: [`INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 WHERE (b0."team") IN (SELECT "team" FROM "__agg_scope_budget") GROUP BY b0."team" HAVING count(*) > 0 RETURNING "team", "col2"`], deltaMaintained: false } },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

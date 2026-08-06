@@ -320,6 +320,11 @@ pickable(TreeId, Species, Lane) <-
 rel lane_gap(tree_id: int, gap: int).
 lane_gap(TreeId, Gap) <- pickable(TreeId, _Species, Lane), Gap is (Lane - 1) / 2.
 
+# regexp/2, the registered pattern guard: concat/norm BUILD text and this is the
+# only construct that reads it. Anchor, class and wildcard in one pattern.
+rel heirloom(tree_id: int, species: text).
+heirloom(TreeId, Species) <- tree(TreeId, Species, _Site), regexp(Species, "^[ap].*e").
+
 # combine/variadic: the registered splice sugar. Its atoms become one
 # conjunction, so this is the long way to write a join -- written the long way
 # precisely because nothing in the corpus ever did. `==` compares the bool.
@@ -566,3 +571,4 @@ dispatch_note(SealedId, 'sealed') <+ dispatch_seal(SealedId).
 ? dispatch_plan(_PlanDispatch, _PlanRoute, _PlanVerdict).
 ? leg_total(_TotalLeg, _TotalDispatch, _KilosSoFar).
 ? dispatch_note(_NoteDispatch, _NoteTag).
+? heirloom(_HeirloomTree, _HeirloomSpecies).

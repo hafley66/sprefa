@@ -1,0 +1,5 @@
+rel edge(source: int, target: int).
+rel reachable(source: int, target: int).
+
+reachable(Source, Target) <- edge(Source, Target).
+reachable(Source, Target) <- reachable(Source, Mid), edge(Mid, Target).
