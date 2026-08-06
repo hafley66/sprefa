@@ -34,10 +34,10 @@ masthead: |~md
 
   | | |
   |---|---|
-  | fixpoint | **2261 ms** (472,888 rows/sec) |
-  | peak RSS | 725 MB |
+  | fixpoint | **2315 ms** (461,857 rows/sec) |
+  | peak RSS | 726 MB |
   | statements per tick | 17 |
-  | measured | v24.15.0 · darwin/arm64 · 2026-08-06T19:06:03.304Z |
+  | measured | v24.15.0 · darwin/arm64 · 2026-08-06T19:09:35.412Z |
   | batches | **split**, so cost lands per statement |
   | baseline | `FACTS.baseline.json`, 2026-08-06T18:55:29.322Z |
 
@@ -204,6 +204,62 @@ emitpl.tooltip: /Users/chrishafley/projects/sprefa-lanes/emitrace/v6/prolog/emit
 }
 chain -> emitter: "step 3 is this file's output"
 
+flow: "one tick, as a sequence" {
+  shape: sequence_diagram
+
+  driver: run.ts
+  fold: TickFold
+  module: "compiled module"
+  runtime: IncrementalRuntime
+  seam: SqlRunner
+  db: SQLite
+
+  driver -> fold: "3,960 edges, ONE batch"
+  fold -> module: "tick(seam, arrivals)"
+
+  arrivals: {
+    module -> runtime: prepareTick
+    runtime -> seam: "clear delta + next-frontier"
+    seam -> db: batch
+    module -> runtime: applyArrivals
+    runtime -> seam: "json_each insert"
+    seam -> db: "batch, 3 statements"
+    db -> runtime: "3,960 edge rows staged"
+  }
+
+  the closure: {
+    module -> runtime: applyLevelsBeforeEdges
+    runtime -> runtime: "head on a cycle?"
+    runtime -> seam: "the 11 refCount statements, ONE batch"
+    seam -> db: "batch"
+    db -> db: "WITH RECURSIVE, 1478 ms"
+    db -> db: "antijoin into the scratch set, 146 ms"
+    db -> db: "stage delta, 308 ms"
+    db -> db: "stage frontier, 206 ms"
+    db -> db: "fill the head, 145 ms"
+    db -> runtime: "no rows cross"
+  }
+
+  the rest: {
+    module -> runtime: applyEdges
+    module -> runtime: recomputeLevelsAfterEdges
+    runtime -> seam: "retraction guard"
+    seam -> db: "EXISTS _sign = -1"
+    db -> runtime: "0, so skip the reconcile"
+    module -> runtime: readBoundary
+    runtime -> runtime: "rel in unreadRels?"
+    runtime -> module: "empty delta, rows stay in SQLite"
+    module -> runtime: promoteFrontiers
+    runtime -> seam: "merge next into current"
+  }
+
+  module -> fold: "ITickDeltas"
+  fold -> driver: "one tick-log line"
+  driver -> db: "paged checksum fold, 250k rows at a time"
+  db -> driver: "1,069,200 rows, 9d7239568960d6a8"
+}
+emitter -> flow: "and this is the order it runs in"
+
 legend: |~md
   ### colour on the statements below is share of the tick
   | | |
@@ -216,9 +272,9 @@ legend: |~md
   Every statement below was handed to step 6 by step 5.
 ~|
 legend.class: head
-emitter -> legend
+flow -> legend
 
-s0: "supportSql[1] seed the scratch table, the recursive CTE · 1430 ms · 64.1%" {
+s0: "supportSql[1] seed the scratch table, the recursive CTE · 1478 ms · 64.8%" {
   grid-columns: 2
   grid-gap: 20
   class: hot
@@ -244,8 +300,8 @@ s0: "supportSql[1] seed the scratch table, the recursive CTE · 1430 ms · 64.1%
     ### measured
     | | |
     |---|---|
-    | wall | **1429.7 ms** · flat |
-    | share of tick | **64.1%** |
+    | wall | **1478.4 ms** · ▲ 97 ms |
+    | share of tick | **64.8%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -267,7 +323,7 @@ s0: "supportSql[1] seed the scratch table, the recursive CTE · 1430 ms · 64.1%
 }
 legend -> s0
 
-s1: "supportSql[7] stage additions into the delta · 308 ms · 13.8%" {
+s1: "supportSql[7] stage additions into the delta · 308 ms · 13.5%" {
   grid-columns: 2
   grid-gap: 20
   class: warm
@@ -286,8 +342,8 @@ s1: "supportSql[7] stage additions into the delta · 308 ms · 13.8%" {
     ### measured
     | | |
     |---|---|
-    | wall | **307.7 ms** · flat |
-    | share of tick | **13.8%** |
+    | wall | **307.9 ms** · flat |
+    | share of tick | **13.5%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -303,7 +359,7 @@ s1: "supportSql[7] stage additions into the delta · 308 ms · 13.8%" {
 }
 s0 -> s1
 
-s2: "supportSql[8] stage the frontier copy · 203 ms · 9.1%" {
+s2: "supportSql[8] stage the frontier copy · 206 ms · 9.0%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -322,8 +378,8 @@ s2: "supportSql[8] stage the frontier copy · 203 ms · 9.1%" {
     ### measured
     | | |
     |---|---|
-    | wall | **202.7 ms** · ▼ 15 ms |
-    | share of tick | **9.1%** |
+    | wall | **205.5 ms** · ▼ 12 ms |
+    | share of tick | **9.0%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -339,7 +395,7 @@ s2: "supportSql[8] stage the frontier copy · 203 ms · 9.1%" {
 }
 s1 -> s2
 
-s3: "supportSql[6] fill the new-row set, ONE antijoin · 145 ms · 6.5%" {
+s3: "supportSql[6] fill the new-row set, ONE antijoin · 146 ms · 6.4%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -361,8 +417,8 @@ s3: "supportSql[6] fill the new-row set, ONE antijoin · 145 ms · 6.5%" {
     ### measured
     | | |
     |---|---|
-    | wall | **144.9 ms** · flat |
-    | share of tick | **6.5%** |
+    | wall | **146.0 ms** · flat |
+    | share of tick | **6.4%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |
@@ -379,7 +435,7 @@ s3: "supportSql[6] fill the new-row set, ONE antijoin · 145 ms · 6.5%" {
 }
 s2 -> s3
 
-s4: "supportSql[10] fill the head · 143 ms · 6.4%" {
+s4: "supportSql[10] fill the head · 145 ms · 6.3%" {
   grid-columns: 2
   grid-gap: 20
   class: cool
@@ -398,8 +454,8 @@ s4: "supportSql[10] fill the head · 143 ms · 6.4%" {
     ### measured
     | | |
     |---|---|
-    | wall | **143.5 ms** · flat |
-    | share of tick | **6.4%** |
+    | wall | **144.6 ms** · flat |
+    | share of tick | **6.3%** |
     | executions | 1 |
     | rows returned | 0 |
     | head rel | `reachable` |

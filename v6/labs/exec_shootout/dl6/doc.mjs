@@ -331,6 +331,66 @@ ${EMITTER.map((step) => linkedBox(step.key, step.className, step.md, step.where)
 chain -> emitter: "step 3 is this file's output"
 `);
 
+const byName = (needle) => withCost.find((one) => one.label.includes(needle));
+const ms = (needle) => (byName(needle) ? byName(needle).cost.ms.toFixed(0) : "?");
+
+lines.push(`flow: "one tick, as a sequence" {
+  shape: sequence_diagram
+
+  driver: run.ts
+  fold: TickFold
+  module: "compiled module"
+  runtime: IncrementalRuntime
+  seam: SqlRunner
+  db: SQLite
+
+  driver -> fold: "${first.edges.toLocaleString()} edges, ONE batch"
+  fold -> module: "tick(seam, arrivals)"
+
+  arrivals: {
+    module -> runtime: prepareTick
+    runtime -> seam: "clear delta + next-frontier"
+    seam -> db: batch
+    module -> runtime: applyArrivals
+    runtime -> seam: "json_each insert"
+    seam -> db: "batch, ${ms("boundarySql edge") === "?" ? "3" : "3"} statements"
+    db -> runtime: "${first.edges.toLocaleString()} edge rows staged"
+  }
+
+  the closure: {
+    module -> runtime: applyLevelsBeforeEdges
+    runtime -> runtime: "head on a cycle?"
+    runtime -> seam: "the 11 refCount statements, ONE batch"
+    seam -> db: "batch"
+    db -> db: "WITH RECURSIVE, ${ms("recursive CTE")} ms"
+    db -> db: "antijoin into the scratch set, ${ms("ONE antijoin")} ms"
+    db -> db: "stage delta, ${ms("additions into the delta")} ms"
+    db -> db: "stage frontier, ${ms("frontier copy")} ms"
+    db -> db: "fill the head, ${ms("fill the head")} ms"
+    db -> runtime: "no rows cross"
+  }
+
+  the rest: {
+    module -> runtime: applyEdges
+    module -> runtime: recomputeLevelsAfterEdges
+    runtime -> seam: "retraction guard"
+    seam -> db: "EXISTS _sign = -1"
+    db -> runtime: "0, so skip the reconcile"
+    module -> runtime: readBoundary
+    runtime -> runtime: "rel in unreadRels?"
+    runtime -> module: "empty delta, rows stay in SQLite"
+    module -> runtime: promoteFrontiers
+    runtime -> seam: "merge next into current"
+  }
+
+  module -> fold: "ITickDeltas"
+  fold -> driver: "one tick-log line"
+  driver -> db: "paged checksum fold, 250k rows at a time"
+  db -> driver: "${first.derived.toLocaleString()} rows, ${first.checksum}"
+}
+emitter -> flow: "and this is the order it runs in"
+`);
+
 lines.push(`legend: |~md
   ### colour on the statements below is share of the tick
   | | |
@@ -343,7 +403,7 @@ lines.push(`legend: |~md
   Every statement below was handed to step 6 by step 5.
 ~|
 legend.class: head
-emitter -> legend
+flow -> legend
 `);
 
 let previous = "legend";
