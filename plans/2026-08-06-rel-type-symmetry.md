@@ -72,13 +72,25 @@ Each hash answers one question and is allowed to break exactly one thing.
 | `h_rule` | every rule body whose head is this ref, canonical order | the derivation fingerprint | keep the table, `DELETE FROM`, recompute rows |
 | `h_rows` | the rows themselves | the data fingerprint | wake the consumers; equal means red stops travelling |
 
-Written out:
+```d2
+direction: down
 
-```
-h_id     = H(module_id, local_name, arity)
-h_schema = H(columns, column_types, key_positions)
-h_rule   = H(sorted canonical rule bodies for this head)
-h_rows   = H(the rows)
+id: "h_id = H(module_id, local_name, arity)\n\nthe identity. an edit never moves it." {
+  style.fill: "#e6f4ea"; style.font-color: "#0b3d1f"; style.stroke: "#137333"
+}
+schema: "h_schema = H(columns, column_types, key_positions)\n\ndiffers -> DROP TABLE + CREATE TABLE, rows lost" {
+  style.fill: "#fce8e6"; style.font-color: "#7f1d1b"; style.stroke: "#c5221f"
+}
+rule: "h_rule = H(sorted canonical rule bodies for this head)\n\ndiffers -> keep the table, DELETE FROM, recompute" {
+  style.fill: "#fef7e0"; style.font-color: "#5c3200"; style.stroke: "#b06000"
+}
+rows: "h_rows = H(the rows)\n\ndiffers -> wake the consumers\nequal -> red stops travelling" {
+  style.fill: "#e8f0fe"; style.font-color: "#0b3d6b"; style.stroke: "#1967d2"
+}
+
+id -> schema -> rule -> rows: "strictly decreasing blast radius" {
+  style.stroke: "#5f6368"
+}
 ```
 
 `h_schema` must NOT appear in the table name. A content hash in the name makes
@@ -204,13 +216,19 @@ interface IRedPropagator {
 
 Sequence of reads and writes on a swap:
 
-1. read `__rel` (all rows) once, into `before`
-2. compile the changed file alone, producing `after` with three hashes per rel
-3. `plan(before, after)` classifies every row into one of the five verdicts
-4. execute `plan.ddl` in order: every `DROP` before every `CREATE`
-5. `INSERT OR REPLACE` the new `__rel` rows
-6. recompute `plan.recompute`, then write each fresh `h_rows`
-7. `advance` walks red forward, stopping wherever `h_rows` came out equal
+```d2
+direction: down
+
+s1: "1. READ __rel, all rows, once -> before" { style.fill: "#e8f0fe"; style.font-color: "#0b3d6b" }
+s2: "2. compile the changed file ALONE -> after, three hashes per rel" { style.fill: "#e8f0fe"; style.font-color: "#0b3d6b" }
+s3: "3. plan(before, after): every row gets one of five verdicts" { style.fill: "#fef7e0"; style.font-color: "#5c3200"; shape: hexagon }
+s4: "4. WRITE plan.ddl in order: every DROP before every CREATE" { style.fill: "#fce8e6"; style.font-color: "#7f1d1b" }
+s5: "5. WRITE the new __rel rows, INSERT OR REPLACE" { style.fill: "#fce8e6"; style.font-color: "#7f1d1b" }
+s6: "6. recompute plan.recompute, then WRITE each fresh h_rows" { style.fill: "#fce8e6"; style.font-color: "#7f1d1b" }
+s7: "7. advance red forward, stop wherever h_rows came out equal" { style.fill: "#e6f4ea"; style.font-color: "#0b3d1f"; style.stroke: "#137333"; style.stroke-width: 2 }
+
+s1 -> s2 -> s3 -> s4 -> s5 -> s6 -> s7
+```
 
 Uniqueness conditions:
 
