@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_stream_end_phase" ON "__frontier_stream_end" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stream_end_phase" ON "__next_frontier_stream_end" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stream_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_stream_item_sign" ON "__delta_stream_item" ("_sign")`,
   `CREATE INDEX "__delta_stream_item_group" ON "__delta_stream_item" ("col1", "col2", "col3")`,
   `CREATE TEMP TABLE "__frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_stream_item_phase" ON "__frontier_stream_item" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stream_item_phase" ON "__next_frontier_stream_item" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

@@ -551,8 +551,10 @@ function reconcileRefCountStatement(
   if (relation === undefined) {
     throw new Error(`incremental level head relation missing: ${statement.headRel}`);
   }
-  const [clear, seed, update, stageRetract, collectZero, stageAdd, stageFrontier, stageNextFrontier, insertNew] =
-    statement.supportSql;
+  const [
+    clear, seed, update, stageRetract, collectZero,
+    clearNew, fillNew, stageAdd, stageFrontier, stageNextFrontier, insertNew,
+  ] = statement.supportSql;
   // Each copy names the table it wants and the emitted statement carries its
   // phase as the one bind, so the two copies share one prepared shape.
   const frontierStages = frontierCopies.map((copy): SqlStatement => ({
@@ -560,7 +562,7 @@ function reconcileRefCountStatement(
     args: [copy.phase],
   }));
   const sql: SqlStatement[] = [
-    ...[clear, seed, update, stageRetract, collectZero, stageAdd].map(
+    ...[clear, seed, update, stageRetract, collectZero, clearNew, fillNew, stageAdd].map(
       (text): SqlStatement => ({ sql: text!, args: [] }),
     ),
     ...frontierStages,

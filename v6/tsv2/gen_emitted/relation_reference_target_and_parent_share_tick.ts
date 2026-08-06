@@ -155,22 +155,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_finding_phase" ON "__frontier_finding" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_finding" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_finding_phase" ON "__next_frontier_finding" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
   `CREATE INDEX "__delta_span_group" ON "__delta_span" ("start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_seen_sign" ON "__delta_span_seen" ("_sign")`,
   `CREATE INDEX "__delta_span_seen_group" ON "__delta_span_seen" ("start", "end")`,
   `CREATE TEMP TABLE "__frontier_span_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_seen_phase" ON "__frontier_span_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_span_seen_phase" ON "__next_frontier_span_seen" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_span_seen" ("start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("start", "end")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_span_seen" ("start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "span_seen_zero" ON "span_seen" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -256,7 +255,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "span_seen", ruleId: "relation_reference_target_and_parent_share_tick:span_seen/2#1", headDeltaTableName: "__delta_span_seen", headColumns: ["start", "end"], insertSql: `INSERT OR IGNORE INTO "span_seen" ("start", "end") SELECT DISTINCT d0."start", d0."end" FROM "__frontier_span" d0, "span" r0 WHERE d0."_phase" >= 0 AND r0."start" = d0."start" AND r0."end" = d0."end" RETURNING "start", "end"`, selectSql: `SELECT "start", "end" FROM "span_seen"`, recomputeSql: `DELETE FROM "span_seen";
-INSERT OR IGNORE INTO "span_seen" ("start", "end") SELECT b0."start", b0."end" FROM "span" b0`, supportSql: [`DELETE FROM "__support_next_span_seen"`, `INSERT INTO "__support_next_span_seen" ("start", "end", "__refcount") SELECT "start", "end", sum("__refcount") FROM (SELECT b0."start" AS "start", b0."end" AS "end", count(*) AS "__refcount" FROM "span" b0 GROUP BY b0."start", b0."end") GROUP BY "start", "end"`, `UPDATE "span_seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_span_seen" n WHERE n."start" = h."start" AND n."end" = h."end"), 0))`, `INSERT INTO "__delta_span_seen" ("_sign", "_sequence", "start", "end") SELECT -1, row_number() OVER () - 1, "start", "end" FROM "span_seen" WHERE "__refcount" <= 0`, `DELETE FROM "span_seen" WHERE "__refcount" <= 0`, `INSERT INTO "__delta_span_seen" ("_sign", "_sequence", "start", "end") SELECT 1, row_number() OVER () - 1, n."start", n."end" FROM "__support_next_span_seen" n WHERE NOT EXISTS (SELECT 1 FROM "span_seen" h WHERE n."start" = h."start" AND n."end" = h."end")`, `INSERT INTO "__frontier_span_seen" ("_phase", "_sequence", "start", "end") SELECT ?, row_number() OVER () - 1, n."start", n."end" FROM "__support_next_span_seen" n WHERE NOT EXISTS (SELECT 1 FROM "span_seen" h WHERE n."start" = h."start" AND n."end" = h."end")`, `INSERT INTO "__next_frontier_span_seen" ("_phase", "_sequence", "start", "end") SELECT ?, row_number() OVER () - 1, n."start", n."end" FROM "__support_next_span_seen" n WHERE NOT EXISTS (SELECT 1 FROM "span_seen" h WHERE n."start" = h."start" AND n."end" = h."end")`, `INSERT INTO "span_seen" ("start", "end", "__refcount") SELECT n."start", n."end", n."__refcount" FROM "__support_next_span_seen" n WHERE NOT EXISTS (SELECT 1 FROM "span_seen" h WHERE n."start" = h."start" AND n."end" = h."end")`], aggregateSql: null },
+INSERT OR IGNORE INTO "span_seen" ("start", "end") SELECT b0."start", b0."end" FROM "span" b0`, supportSql: [`DELETE FROM "__support_next_span_seen"`, `INSERT INTO "__support_next_span_seen" ("start", "end", "__refcount") SELECT "start", "end", sum("__refcount") FROM (SELECT b0."start" AS "start", b0."end" AS "end", count(*) AS "__refcount" FROM "span" b0 GROUP BY b0."start", b0."end") GROUP BY "start", "end"`, `UPDATE "span_seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_span_seen" n WHERE n."start" = h."start" AND n."end" = h."end"), 0)`, `INSERT INTO "__delta_span_seen" ("_sign", "_sequence", "start", "end") SELECT -1, row_number() OVER () - 1, "start", "end" FROM "span_seen" WHERE "__refcount" <= 0`, `DELETE FROM "span_seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_span_seen"`, `INSERT INTO "__new_span_seen" ("start", "end", "__refcount") SELECT n."start", n."end", n."__refcount" FROM "__support_next_span_seen" n LEFT JOIN "span_seen" h ON n."start" = h."start" AND n."end" = h."end" WHERE h."start" IS NULL`, `INSERT INTO "__delta_span_seen" ("_sign", "_sequence", "start", "end") SELECT 1, "rowid" - 1, "start", "end" FROM "__new_span_seen"`, `INSERT INTO "__frontier_span_seen" ("_phase", "_sequence", "start", "end") SELECT ?, "rowid" - 1, "start", "end" FROM "__new_span_seen"`, `INSERT INTO "__next_frontier_span_seen" ("_phase", "_sequence", "start", "end") SELECT ?, "rowid" - 1, "start", "end" FROM "__new_span_seen"`, `INSERT OR IGNORE INTO "span_seen" ("start", "end", "__refcount") SELECT n."start", n."end", n."__refcount" FROM "__support_next_span_seen" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -143,22 +143,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pair_phase" ON "__frontier_pair" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_pair_phase" ON "__next_frontier_pair" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_source_a_sign" ON "__delta_source_a" ("_sign")`,
   `CREATE INDEX "__delta_source_a_group" ON "__delta_source_a" ("left")`,
   `CREATE TEMP TABLE "__frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_source_a_phase" ON "__frontier_source_a" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_a_phase" ON "__next_frontier_source_a" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_source_b_sign" ON "__delta_source_b" ("_sign")`,
   `CREATE INDEX "__delta_source_b_group" ON "__delta_source_b" ("right")`,
   `CREATE TEMP TABLE "__frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_source_b_phase" ON "__frontier_source_b" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_b_phase" ON "__next_frontier_source_b" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_pair" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("left", "right")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_pair" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "pair_zero" ON "pair" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -241,7 +240,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "pair", ruleId: "conjunction_level_control_for_combine:pair/2#1", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], insertSql: `INSERT OR IGNORE INTO "pair" ("left", "right") SELECT DISTINCT d0."left", b0."right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."left", d0."right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 RETURNING "left", "right"`, selectSql: `SELECT "left", "right" FROM "pair"`, recomputeSql: `DELETE FROM "pair";
-INSERT OR IGNORE INTO "pair" ("left", "right") SELECT b0."left", b1."right" FROM "source_a" b0, "source_b" b1`, supportSql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("left", "right", "__refcount") SELECT "left", "right", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."right" AS "right", count(*) AS "__refcount" FROM "source_a" b0, "source_b" b1 GROUP BY b0."left", b1."right") GROUP BY "left", "right"`, `UPDATE "pair" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."left" = h."left" AND n."right" = h."right"), 0))`, `DELETE FROM "pair" WHERE "__refcount" <= 0 RETURNING "left", "right"`, `INSERT INTO "pair" ("left", "right", "__refcount") SELECT "left", "right", n."__refcount" FROM "__support_next_pair" n WHERE NOT EXISTS (SELECT 1 FROM "pair" h WHERE n."left" = h."left" AND n."right" = h."right") RETURNING "left", "right"`], aggregateSql: null },
+INSERT OR IGNORE INTO "pair" ("left", "right") SELECT b0."left", b1."right" FROM "source_a" b0, "source_b" b1`, supportSql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("left", "right", "__refcount") SELECT "left", "right", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."right" AS "right", count(*) AS "__refcount" FROM "source_a" b0, "source_b" b1 GROUP BY b0."left", b1."right") GROUP BY "left", "right"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."left" = h."left" AND n."right" = h."right"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT -1, row_number() OVER () - 1, "left", "right" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."left" = h."left" AND n."right" = h."right" WHERE h."left" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT 1, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

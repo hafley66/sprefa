@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__frontier_child_phase" ON "__frontier_child" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE INDEX "__next_frontier_child_phase" ON "__next_frontier_child" ("_phase")`,
   `CREATE TEMP TABLE "__delta_nested" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_nested_sign" ON "__delta_nested" ("_sign")`,
   `CREATE INDEX "__delta_nested_group" ON "__delta_nested" ("group", "col2")`,
   `CREATE TEMP TABLE "__frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_nested_phase" ON "__frontier_nested" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE INDEX "__next_frontier_nested_phase" ON "__next_frontier_nested" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_nested" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 

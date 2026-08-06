@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mirror_phase" ON "__frontier_mirror" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_mirror_phase" ON "__next_frontier_mirror" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_source_row_sign" ON "__delta_source_row" ("_sign")`,
   `CREATE INDEX "__delta_source_row_group" ON "__delta_source_row" ("item")`,
   `CREATE TEMP TABLE "__frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_row_phase" ON "__frontier_source_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_row_phase" ON "__next_frontier_source_row" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "mirror_zero" ON "mirror" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -226,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "mirror", ruleId: "retraction_only_tick_retracts_level_view:mirror/1#1", headDeltaTableName: "__delta_mirror", headColumns: ["item"], insertSql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT DISTINCT d0."item" FROM "__frontier_source_row" d0 WHERE d0."_phase" >= 0 RETURNING "item"`, selectSql: `SELECT "item" FROM "mirror"`, recomputeSql: `DELETE FROM "mirror";
-INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__refcount") SELECT "item", sum("__refcount") FROM (SELECT b0."item" AS "item", count(*) AS "__refcount" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0))`, `DELETE FROM "mirror" WHERE "__refcount" <= 0 RETURNING "item"`, `INSERT INTO "mirror" ("item", "__refcount") SELECT "item", n."__refcount" FROM "__support_next_mirror" n WHERE NOT EXISTS (SELECT 1 FROM "mirror" h WHERE n."item" = h."item") RETURNING "item"`], aggregateSql: null },
+INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, supportSql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__refcount") SELECT "item", sum("__refcount") FROM (SELECT b0."item" AS "item", count(*) AS "__refcount" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0)`, `INSERT INTO "__delta_mirror" ("_sign", "_sequence", "item") SELECT -1, row_number() OVER () - 1, "item" FROM "mirror" WHERE "__refcount" <= 0`, `DELETE FROM "mirror" WHERE "__refcount" <= 0`, `DELETE FROM "__new_mirror"`, `INSERT INTO "__new_mirror" ("item", "__refcount") SELECT n."item", n."__refcount" FROM "__support_next_mirror" n LEFT JOIN "mirror" h ON n."item" = h."item" WHERE h."item" IS NULL`, `INSERT INTO "__delta_mirror" ("_sign", "_sequence", "item") SELECT 1, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT INTO "__frontier_mirror" ("_phase", "_sequence", "item") SELECT ?, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT INTO "__next_frontier_mirror" ("_phase", "_sequence", "item") SELECT ?, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT OR IGNORE INTO "mirror" ("item", "__refcount") SELECT n."item", n."__refcount" FROM "__support_next_mirror" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

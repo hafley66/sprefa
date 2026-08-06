@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_item_phase" ON "__frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "ordinal" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_item_phase" ON "__next_frontier_item" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ordered_values" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_ordered_values_sign" ON "__delta_ordered_values" ("_sign")`,
   `CREATE INDEX "__delta_ordered_values_group" ON "__delta_ordered_values" ("group", "col2")`,
   `CREATE TEMP TABLE "__frontier_ordered_values" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_ordered_values_phase" ON "__frontier_ordered_values" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ordered_values" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE INDEX "__next_frontier_ordered_values_phase" ON "__next_frontier_ordered_values" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_ordered_values" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 

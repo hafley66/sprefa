@@ -141,7 +141,6 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
   `CREATE INDEX "__frontier_flag_phase" ON "__frontier_flag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
-  `CREATE INDEX "__next_frontier_flag_phase" ON "__next_frontier_flag" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

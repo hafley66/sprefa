@@ -51,7 +51,7 @@ function chainArrivals(depth: number): readonly IArrivalRow[] {
 
 /** Pinned rather than only compared: an equality assertion alone would still
  *  hold if every depth grew together. Measured at depths 3, 8 and 16. */
-const STATEMENTS_PER_TICK = 34;
+const STATEMENTS_PER_TICK = 36;
 
 async function runOneTick(depth: number) {
   const seam = ScratchStore.open(":memory:");

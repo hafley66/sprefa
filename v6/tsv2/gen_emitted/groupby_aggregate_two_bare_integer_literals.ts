@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__delta_tallied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tallied_sign" ON "__delta_tallied" ("_sign")`,
   `CREATE INDEX "__delta_tallied_group" ON "__delta_tallied" ("line", "column", "total")`,
   `CREATE TEMP TABLE "__frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tallied_phase" ON "__frontier_tallied" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_tallied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_tallied_phase" ON "__next_frontier_tallied" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_tallied" ("line" INTEGER NOT NULL, "column" INTEGER NOT NULL, PRIMARY KEY ("line", "column")) WITHOUT ROWID`,
 ];
 

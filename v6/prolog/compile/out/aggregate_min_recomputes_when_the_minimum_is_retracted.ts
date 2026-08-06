@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_row_phase" ON "__frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_star_row_phase" ON "__next_frontier_star_row" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stat" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stat_sign" ON "__delta_stat" ("_sign")`,
   `CREATE INDEX "__delta_stat_group" ON "__delta_stat" ("repo", "col2", "col3", "col4")`,
   `CREATE TEMP TABLE "__frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stat_phase" ON "__frontier_stat" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stat_phase" ON "__next_frontier_stat" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_stat" ("repo" TEXT NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
 ];
 

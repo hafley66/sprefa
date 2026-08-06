@@ -104,10 +104,10 @@ function arrivals(repoCount: number): readonly IArrivalRow[] {
  *  grew together. Measured at 5, 100 and 1,000 source rows.
  *
  *  Moved 33 -> 35 when the refCount reconcile stopped shipping its rows through
- *  JS: the delta and frontier copies became two SQL statements that always run,
- *  where the JS staging issued none when a side had no rows. Two constant
- *  statements bought zero derived rows crossing the seam. */
-const STATEMENTS_PER_TICK = 35;
+ *  JS, then 35 -> 37 when the antijoin was materialized once into a scratch
+ *  table so three staging reads share it. Constant statements, and the tick
+ *  went 2,771 ms to 2,166 ms on grid_10000. */
+const STATEMENTS_PER_TICK = 37;
 
 async function runOneTick(repoCount: number) {
   const seam = ScratchStore.open(":memory:");

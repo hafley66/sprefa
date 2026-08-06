@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_budget_phase" ON "__frontier_budget" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_budget_phase" ON "__next_frontier_budget" ("_phase")`,
   `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_spend_sign" ON "__delta_spend" ("_sign")`,
   `CREATE INDEX "__delta_spend_group" ON "__delta_spend" ("team", "_item", "cost")`,
   `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_spend_phase" ON "__frontier_spend" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_spend_phase" ON "__next_frontier_spend" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_budget" ("team" TEXT NOT NULL, PRIMARY KEY ("team")) WITHOUT ROWID`,
 ];
 

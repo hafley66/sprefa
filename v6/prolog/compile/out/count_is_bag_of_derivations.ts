@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_hit_phase" ON "__next_frontier_hit" ("_phase")`,
   `CREATE TEMP TABLE "__delta_hits" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hits_sign" ON "__delta_hits" ("_sign")`,
   `CREATE INDEX "__delta_hits_group" ON "__delta_hits" ("path", "col2")`,
   `CREATE TEMP TABLE "__frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hits_phase" ON "__frontier_hits" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_hits_phase" ON "__next_frontier_hits" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_hits" ("path" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 

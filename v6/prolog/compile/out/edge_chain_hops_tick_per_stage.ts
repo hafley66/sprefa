@@ -162,21 +162,18 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_source_ev_phase" ON "__frontier_source_ev" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_source_ev_phase" ON "__next_frontier_source_ev" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stage_one" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_stage_one_sign" ON "__delta_stage_one" ("_sign")`,
   `CREATE INDEX "__delta_stage_one_group" ON "__delta_stage_one" ("item")`,
   `CREATE TEMP TABLE "__frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_stage_one_phase" ON "__frontier_stage_one" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stage_one_phase" ON "__next_frontier_stage_one" ("_phase")`,
   `CREATE TEMP TABLE "__delta_stage_two" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_stage_two_sign" ON "__delta_stage_two" ("_sign")`,
   `CREATE INDEX "__delta_stage_two_group" ON "__delta_stage_two" ("item")`,
   `CREATE TEMP TABLE "__frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_stage_two_phase" ON "__frontier_stage_two" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_stage_two_phase" ON "__next_frontier_stage_two" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

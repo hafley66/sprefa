@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_line_phase" ON "__frontier_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "_name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_line_phase" ON "__next_frontier_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("path")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_seen" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_seen" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "seen_zero" ON "seen" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -226,7 +226,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "level_view_reads_set_projection_not_occurrences:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "seen" ("path") SELECT DISTINCT d0."path" FROM "__frontier_line" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0))`, `DELETE FROM "seen" WHERE "__refcount" <= 0 RETURNING "path"`, `INSERT INTO "seen" ("path", "__refcount") SELECT "path", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."path" = h."path") RETURNING "path"`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("path") SELECT b0."path" FROM "line" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "line" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_seen"`, `INSERT INTO "__new_seen" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_seen" n LEFT JOIN "seen" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_seen"`, `INSERT INTO "__frontier_seen" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_seen"`, `INSERT INTO "__next_frontier_seen" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_seen"`, `INSERT OR IGNORE INTO "seen" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_seen" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

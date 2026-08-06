@@ -162,21 +162,18 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_labelled_phase" ON "__frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_labelled_phase" ON "__next_frontier_labelled" ("_phase")`,
   `CREATE TEMP TABLE "__delta_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_name_sign" ON "__delta_name" ("_sign")`,
   `CREATE INDEX "__delta_name_group" ON "__delta_name" ("tree_id", "label")`,
   `CREATE TEMP TABLE "__frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_name_phase" ON "__frontier_name" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_name_phase" ON "__next_frontier_name" ("_phase")`,
   `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ping_sign" ON "__delta_ping" ("_sign")`,
   `CREATE INDEX "__delta_ping_group" ON "__delta_ping" ("tree_id")`,
   `CREATE TEMP TABLE "__frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ping_phase" ON "__frontier_ping" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_ping_phase" ON "__next_frontier_ping" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

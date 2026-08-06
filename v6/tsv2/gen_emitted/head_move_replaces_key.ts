@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_phase" ON "__frontier_head" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_head_phase" ON "__next_frontier_head" ("_phase")`,
   `CREATE TEMP TABLE "__delta_head_move" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_move_sign" ON "__delta_head_move" ("_sign")`,
   `CREATE INDEX "__delta_head_move_group" ON "__delta_head_move" ("repo_id", "rev_id")`,
   `CREATE TEMP TABLE "__frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_move_phase" ON "__frontier_head_move" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_head_move_phase" ON "__next_frontier_head_move" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

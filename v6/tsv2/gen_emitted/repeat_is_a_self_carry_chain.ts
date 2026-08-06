@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_kick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_kick_phase" ON "__frontier_kick" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_kick" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_kick_phase" ON "__next_frontier_kick" ("_phase")`,
   `CREATE TEMP TABLE "__delta_pulse" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pulse_sign" ON "__delta_pulse" ("_sign")`,
   `CREATE INDEX "__delta_pulse_group" ON "__delta_pulse" ("next")`,
   `CREATE TEMP TABLE "__frontier_pulse" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pulse_phase" ON "__frontier_pulse" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_pulse" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_pulse_phase" ON "__next_frontier_pulse" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

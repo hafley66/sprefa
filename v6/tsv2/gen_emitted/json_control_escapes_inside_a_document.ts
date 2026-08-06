@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_echoed_phase" ON "__frontier_echoed" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__next_frontier_echoed_phase" ON "__next_frontier_echoed" ("_phase")`,
   `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
   `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
   `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__next_frontier_raw_doc_phase" ON "__next_frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "echoed_zero" ON "echoed" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "echoed", ruleId: "json_control_escapes_inside_a_document:echoed/1#1", headDeltaTableName: "__delta_echoed", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "echoed" ("body") SELECT DISTINCT d0."body" FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "echoed"`, recomputeSql: `DELETE FROM "echoed";
-INSERT OR IGNORE INTO "echoed" ("body") SELECT b0."body" FROM "raw_doc" b0`, supportSql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "raw_doc" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "echoed" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_echoed" n WHERE n."body" = h."body"), 0))`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "echoed" WHERE "__refcount" <= 0`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT 1, row_number() OVER () - 1, n."body" FROM "__support_next_echoed" n WHERE NOT EXISTS (SELECT 1 FROM "echoed" h WHERE n."body" = h."body")`, `INSERT INTO "__frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, row_number() OVER () - 1, n."body" FROM "__support_next_echoed" n WHERE NOT EXISTS (SELECT 1 FROM "echoed" h WHERE n."body" = h."body")`, `INSERT INTO "__next_frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, row_number() OVER () - 1, n."body" FROM "__support_next_echoed" n WHERE NOT EXISTS (SELECT 1 FROM "echoed" h WHERE n."body" = h."body")`, `INSERT INTO "echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_echoed" n WHERE NOT EXISTS (SELECT 1 FROM "echoed" h WHERE n."body" = h."body")`], aggregateSql: null },
+INSERT OR IGNORE INTO "echoed" ("body") SELECT b0."body" FROM "raw_doc" b0`, supportSql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "raw_doc" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "echoed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_echoed" n WHERE n."body" = h."body"), 0)`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_echoed"`, `INSERT INTO "__new_echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_echoed" n LEFT JOIN "echoed" h ON n."body" = h."body" WHERE h."body" IS NULL`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "body") SELECT 1, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT INTO "__frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT INTO "__next_frontier_echoed" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_echoed"`, `INSERT OR IGNORE INTO "echoed" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_echoed" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

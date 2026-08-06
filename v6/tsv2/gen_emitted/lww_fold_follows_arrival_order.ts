@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_latest_phase" ON "__frontier_latest" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_latest_phase" ON "__next_frontier_latest" ("_phase")`,
   `CREATE TEMP TABLE "__delta_set_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_set_value_sign" ON "__delta_set_value" ("_sign")`,
   `CREATE INDEX "__delta_set_value_group" ON "__delta_set_value" ("key", "value")`,
   `CREATE TEMP TABLE "__frontier_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_set_value_phase" ON "__frontier_set_value" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_set_value_phase" ON "__next_frontier_set_value" ("_phase")`,
   `CREATE TEMP TABLE "__pre_latest" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
 ];
 

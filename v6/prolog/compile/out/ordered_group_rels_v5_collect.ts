@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_group_rels_phase" ON "__frontier_group_rels" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE INDEX "__next_frontier_group_rels_phase" ON "__next_frontier_group_rels" ("_phase")`,
   `CREATE TEMP TABLE "__delta_rel_catalog" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_rel_catalog_sign" ON "__delta_rel_catalog" ("_sign")`,
   `CREATE INDEX "__delta_rel_catalog_group" ON "__delta_rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text")`,
   `CREATE TEMP TABLE "__frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_rel_catalog_phase" ON "__frontier_rel_catalog" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_rel_catalog_phase" ON "__next_frontier_rel_catalog" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_group_rels" ("group_name" TEXT NOT NULL, PRIMARY KEY ("group_name")) WITHOUT ROWID`,
 ];
 

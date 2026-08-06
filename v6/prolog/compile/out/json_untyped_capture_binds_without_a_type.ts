@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__frontier_event_phase" ON "__frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE INDEX "__next_frontier_event_phase" ON "__next_frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("value")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_seen" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_seen" ("value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "seen_zero" ON "seen" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "json_untyped_capture_binds_without_a_type:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "seen" ("value") SELECT DISTINCT json_extract(d0."payload", '$."stars"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_extract(d0."payload", '$."stars"') IS NOT NULL RETURNING "value"`, selectSql: `SELECT "value" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_extract(b0."payload", '$."stars"') AS "value", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL GROUP BY json_extract(b0."payload", '$."stars"')) GROUP BY "value"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0))`, `DELETE FROM "seen" WHERE "__refcount" <= 0 RETURNING "value"`, `INSERT INTO "seen" ("value", "__refcount") SELECT "value", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."value" = h."value") RETURNING "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT json_extract(b0."payload", '$."stars"') AS "value", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_extract(b0."payload", '$."stars"') IS NOT NULL GROUP BY json_extract(b0."payload", '$."stars"')) GROUP BY "value"`, `UPDATE "seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_seen"`, `INSERT INTO "__new_seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_seen" n LEFT JOIN "seen" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_seen"`, `INSERT INTO "__frontier_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_seen"`, `INSERT INTO "__next_frontier_seen" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_seen"`, `INSERT OR IGNORE INTO "seen" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_seen" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

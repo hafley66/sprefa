@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pair_phase" ON "__frontier_pair" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_pair_phase" ON "__next_frontier_pair" ("_phase")`,
   `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
   `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
   `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE INDEX "__next_frontier_raw_doc_phase" ON "__next_frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_pair" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_pair" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "pair_zero" ON "pair" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "pair", ruleId: "json_marker_shaped_keys_are_ordinary_data:pair/2#1", headDeltaTableName: "__delta_pair", headColumns: ["name", "value"], insertSql: `INSERT OR IGNORE INTO "pair" ("name", "value") SELECT DISTINCT j0.key, j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "name", "value"`, selectSql: `SELECT "name", "value" FROM "pair"`, recomputeSql: `DELETE FROM "pair";
-INSERT OR IGNORE INTO "pair" ("name", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT j0.key AS "name", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "name", "value"`, `UPDATE "pair" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."name" = h."name" AND n."value" = h."value"), 0))`, `DELETE FROM "pair" WHERE "__refcount" <= 0 RETURNING "name", "value"`, `INSERT INTO "pair" ("name", "value", "__refcount") SELECT "name", "value", n."__refcount" FROM "__support_next_pair" n WHERE NOT EXISTS (SELECT 1 FROM "pair" h WHERE n."name" = h."name" AND n."value" = h."value") RETURNING "name", "value"`], aggregateSql: null },
+INSERT OR IGNORE INTO "pair" ("name", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, supportSql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT j0.key AS "name", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "name", "value"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."name" = h."name" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT -1, row_number() OVER () - 1, "name", "value" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."name" = h."name" AND n."value" = h."value" WHERE h."name" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT 1, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

@@ -163,29 +163,27 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_counter_phase" ON "__frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_counter" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_counter_phase" ON "__next_frontier_counter" ("_phase")`,
   `CREATE TEMP TABLE "__delta_decrement" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_decrement_sign" ON "__delta_decrement" ("_sign")`,
   `CREATE INDEX "__delta_decrement_group" ON "__delta_decrement" ("name", "col2")`,
   `CREATE TEMP TABLE "__frontier_decrement" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_decrement_phase" ON "__frontier_decrement" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_decrement" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_decrement_phase" ON "__next_frontier_decrement" ("_phase")`,
   `CREATE TEMP TABLE "__delta_hot" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_hot_sign" ON "__delta_hot" ("_sign")`,
   `CREATE INDEX "__delta_hot_group" ON "__delta_hot" ("name")`,
   `CREATE TEMP TABLE "__frontier_hot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_hot_phase" ON "__frontier_hot" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_hot" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_hot_phase" ON "__next_frontier_hot" ("_phase")`,
   `CREATE TEMP TABLE "__delta_increment" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_increment_sign" ON "__delta_increment" ("_sign")`,
   `CREATE INDEX "__delta_increment_group" ON "__delta_increment" ("name", "col2")`,
   `CREATE TEMP TABLE "__frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_increment_phase" ON "__frontier_increment" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_increment" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_increment_phase" ON "__next_frontier_increment" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_hot" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_hot" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "hot_zero" ON "hot" ("__refcount") WHERE "__refcount" <= 0`,
   `CREATE TEMP TABLE "__pre_counter" ("name" TEXT NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
 ];
 
@@ -278,7 +276,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "hot", ruleId: "counter_fold_matches_hand_computation:hot/1#1", headDeltaTableName: "__delta_hot", headColumns: ["name"], insertSql: `INSERT OR IGNORE INTO "hot" ("name") SELECT DISTINCT d0."name" FROM "__frontier_counter" d0 WHERE d0."_phase" >= 0 AND (d0."next" >= 2) RETURNING "name"`, selectSql: `SELECT "name" FROM "hot"`, recomputeSql: `DELETE FROM "hot";
-INSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`, supportSql: [`DELETE FROM "__support_next_hot"`, `INSERT INTO "__support_next_hot" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "counter" b0 WHERE (b0."next" >= 2) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "hot" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_hot" n WHERE n."name" = h."name"), 0))`, `INSERT INTO "__delta_hot" ("_sign", "_sequence", "name") SELECT -1, row_number() OVER () - 1, "name" FROM "hot" WHERE "__refcount" <= 0`, `DELETE FROM "hot" WHERE "__refcount" <= 0`, `INSERT INTO "__delta_hot" ("_sign", "_sequence", "name") SELECT 1, row_number() OVER () - 1, n."name" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name")`, `INSERT INTO "__frontier_hot" ("_phase", "_sequence", "name") SELECT ?, row_number() OVER () - 1, n."name" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name")`, `INSERT INTO "__next_frontier_hot" ("_phase", "_sequence", "name") SELECT ?, row_number() OVER () - 1, n."name" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name")`, `INSERT INTO "hot" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_hot" n WHERE NOT EXISTS (SELECT 1 FROM "hot" h WHERE n."name" = h."name")`], aggregateSql: null },
+INSERT OR IGNORE INTO "hot" ("name") SELECT b0."name" FROM "counter" b0 WHERE (b0."next" >= 2)`, supportSql: [`DELETE FROM "__support_next_hot"`, `INSERT INTO "__support_next_hot" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "counter" b0 WHERE (b0."next" >= 2) GROUP BY b0."name") GROUP BY "name"`, `UPDATE "hot" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hot" n WHERE n."name" = h."name"), 0)`, `INSERT INTO "__delta_hot" ("_sign", "_sequence", "name") SELECT -1, row_number() OVER () - 1, "name" FROM "hot" WHERE "__refcount" <= 0`, `DELETE FROM "hot" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hot"`, `INSERT INTO "__new_hot" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_hot" n LEFT JOIN "hot" h ON n."name" = h."name" WHERE h."name" IS NULL`, `INSERT INTO "__delta_hot" ("_sign", "_sequence", "name") SELECT 1, "rowid" - 1, "name" FROM "__new_hot"`, `INSERT INTO "__frontier_hot" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_hot"`, `INSERT INTO "__next_frontier_hot" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_hot"`, `INSERT OR IGNORE INTO "hot" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_hot" n`], aggregateSql: null },
 ];
 
 const EDGE_COUNTER_0_PROJECT_SQL = `SELECT ?1 AS "name", (b0."next" + 1) AS "next" FROM "__pre_counter" b0 WHERE b0."name" = ?1`;

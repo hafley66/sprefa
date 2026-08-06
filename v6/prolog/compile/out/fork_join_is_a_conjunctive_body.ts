@@ -143,22 +143,21 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_combined_phase" ON "__frontier_combined" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_combined_phase" ON "__next_frontier_combined" ("_phase")`,
   `CREATE TEMP TABLE "__delta_result_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_result_a_sign" ON "__delta_result_a" ("_sign")`,
   `CREATE INDEX "__delta_result_a_group" ON "__delta_result_a" ("value_a")`,
   `CREATE TEMP TABLE "__frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_result_a_phase" ON "__frontier_result_a" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_result_a_phase" ON "__next_frontier_result_a" ("_phase")`,
   `CREATE TEMP TABLE "__delta_result_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_result_b_sign" ON "__delta_result_b" ("_sign")`,
   `CREATE INDEX "__delta_result_b_group" ON "__delta_result_b" ("value_b")`,
   `CREATE TEMP TABLE "__frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_result_b_phase" ON "__frontier_result_b" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_result_b_phase" ON "__next_frontier_result_b" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "combined_zero" ON "combined" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -241,7 +240,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "combined", ruleId: "fork_join_is_a_conjunctive_body:combined/2#1", headDeltaTableName: "__delta_combined", headColumns: ["value_a", "value_b"], insertSql: `INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT DISTINCT d0."value_a", b0."value_b" FROM "__frontier_result_a" d0, "result_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."value_a", d0."value_b" FROM "__frontier_result_b" d0, "result_a" b0 WHERE d0."_phase" >= 0 RETURNING "value_a", "value_b"`, selectSql: `SELECT "value_a", "value_b" FROM "combined"`, recomputeSql: `DELETE FROM "combined";
-INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__refcount") SELECT "value_a", "value_b", sum("__refcount") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__refcount" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0))`, `DELETE FROM "combined" WHERE "__refcount" <= 0 RETURNING "value_a", "value_b"`, `INSERT INTO "combined" ("value_a", "value_b", "__refcount") SELECT "value_a", "value_b", n."__refcount" FROM "__support_next_combined" n WHERE NOT EXISTS (SELECT 1 FROM "combined" h WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b") RETURNING "value_a", "value_b"`], aggregateSql: null },
+INSERT OR IGNORE INTO "combined" ("value_a", "value_b") SELECT b0."value_a", b1."value_b" FROM "result_a" b0, "result_b" b1`, supportSql: [`DELETE FROM "__support_next_combined"`, `INSERT INTO "__support_next_combined" ("value_a", "value_b", "__refcount") SELECT "value_a", "value_b", sum("__refcount") FROM (SELECT b0."value_a" AS "value_a", b1."value_b" AS "value_b", count(*) AS "__refcount" FROM "result_a" b0, "result_b" b1 GROUP BY b0."value_a", b1."value_b") GROUP BY "value_a", "value_b"`, `UPDATE "combined" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_combined" n WHERE n."value_a" = h."value_a" AND n."value_b" = h."value_b"), 0)`, `INSERT INTO "__delta_combined" ("_sign", "_sequence", "value_a", "value_b") SELECT -1, row_number() OVER () - 1, "value_a", "value_b" FROM "combined" WHERE "__refcount" <= 0`, `DELETE FROM "combined" WHERE "__refcount" <= 0`, `DELETE FROM "__new_combined"`, `INSERT INTO "__new_combined" ("value_a", "value_b", "__refcount") SELECT n."value_a", n."value_b", n."__refcount" FROM "__support_next_combined" n LEFT JOIN "combined" h ON n."value_a" = h."value_a" AND n."value_b" = h."value_b" WHERE h."value_a" IS NULL`, `INSERT INTO "__delta_combined" ("_sign", "_sequence", "value_a", "value_b") SELECT 1, "rowid" - 1, "value_a", "value_b" FROM "__new_combined"`, `INSERT INTO "__frontier_combined" ("_phase", "_sequence", "value_a", "value_b") SELECT ?, "rowid" - 1, "value_a", "value_b" FROM "__new_combined"`, `INSERT INTO "__next_frontier_combined" ("_phase", "_sequence", "value_a", "value_b") SELECT ?, "rowid" - 1, "value_a", "value_b" FROM "__new_combined"`, `INSERT OR IGNORE INTO "combined" ("value_a", "value_b", "__refcount") SELECT n."value_a", n."value_b", n."__refcount" FROM "__support_next_combined" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

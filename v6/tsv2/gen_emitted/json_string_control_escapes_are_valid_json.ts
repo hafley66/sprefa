@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_note" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_note_phase" ON "__frontier_note" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_note" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_note_phase" ON "__next_frontier_note" ("_phase")`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("body")`,
   `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_seen_phase" ON "__next_frontier_seen" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_seen" ("body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_seen" ("body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "seen_zero" ON "seen" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -228,7 +228,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "seen", ruleId: "json_string_control_escapes_are_valid_json:seen/1#1", headDeltaTableName: "__delta_seen", headColumns: ["body"], insertSql: `INSERT OR IGNORE INTO "seen" ("body") SELECT DISTINCT d0."body" FROM "__frontier_note" d0 WHERE d0."_phase" >= 0 RETURNING "body"`, selectSql: `SELECT "body" FROM "seen"`, recomputeSql: `DELETE FROM "seen";
-INSERT OR IGNORE INTO "seen" ("body") SELECT b0."body" FROM "note" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "note" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "seen" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."body" = h."body"), 0))`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "seen" WHERE "__refcount" <= 0`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "body") SELECT 1, row_number() OVER () - 1, n."body" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."body" = h."body")`, `INSERT INTO "__frontier_seen" ("_phase", "_sequence", "body") SELECT ?, row_number() OVER () - 1, n."body" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."body" = h."body")`, `INSERT INTO "__next_frontier_seen" ("_phase", "_sequence", "body") SELECT ?, row_number() OVER () - 1, n."body" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."body" = h."body")`, `INSERT INTO "seen" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_seen" n WHERE NOT EXISTS (SELECT 1 FROM "seen" h WHERE n."body" = h."body")`], aggregateSql: null },
+INSERT OR IGNORE INTO "seen" ("body") SELECT b0."body" FROM "note" b0`, supportSql: [`DELETE FROM "__support_next_seen"`, `INSERT INTO "__support_next_seen" ("body", "__refcount") SELECT "body", sum("__refcount") FROM (SELECT b0."body" AS "body", count(*) AS "__refcount" FROM "note" b0 GROUP BY b0."body") GROUP BY "body"`, `UPDATE "seen" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_seen" n WHERE n."body" = h."body"), 0)`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "body") SELECT -1, row_number() OVER () - 1, "body" FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "seen" WHERE "__refcount" <= 0`, `DELETE FROM "__new_seen"`, `INSERT INTO "__new_seen" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_seen" n LEFT JOIN "seen" h ON n."body" = h."body" WHERE h."body" IS NULL`, `INSERT INTO "__delta_seen" ("_sign", "_sequence", "body") SELECT 1, "rowid" - 1, "body" FROM "__new_seen"`, `INSERT INTO "__frontier_seen" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_seen"`, `INSERT INTO "__next_frontier_seen" ("_phase", "_sequence", "body") SELECT ?, "rowid" - 1, "body" FROM "__new_seen"`, `INSERT OR IGNORE INTO "seen" ("body", "__refcount") SELECT n."body", n."__refcount" FROM "__support_next_seen" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

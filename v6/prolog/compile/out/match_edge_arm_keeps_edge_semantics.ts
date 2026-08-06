@@ -161,14 +161,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_cache_phase" ON "__frontier_cache" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_cache_phase" ON "__next_frontier_cache" ("_phase")`,
   `CREATE TEMP TABLE "__delta_poll_result" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_poll_result_sign" ON "__delta_poll_result" ("_sign")`,
   `CREATE INDEX "__delta_poll_result_group" ON "__delta_poll_result" ("key", "value")`,
   `CREATE TEMP TABLE "__frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_poll_result_phase" ON "__frontier_poll_result" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_poll_result_phase" ON "__next_frontier_poll_result" ("_phase")`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {

@@ -1000,12 +1000,14 @@ optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
 ref_count_sql_text(none, null) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
-                               CollectZeroSql, StageAddSql, StageFrontierSql,
+                               CollectZeroSql, ClearNewSql, FillNewSql,
+                               StageAddSql, StageFrontierSql,
                                StageNextFrontierSql, InsertNewSql),
                  Text) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
-             StageAddSql, StageFrontierSql, StageNextFrontierSql, InsertNewSql],
+             ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
+             StageNextFrontierSql, InsertNewSql],
             Templates),
     atomic_list_concat(Templates, ', ', Joined),
     format(atom(Text), '[~w]', [Joined]).

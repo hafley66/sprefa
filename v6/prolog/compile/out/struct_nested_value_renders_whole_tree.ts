@@ -159,29 +159,27 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "where" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_diag_phase" ON "__frontier_diag" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "where" INTEGER NOT NULL, "message" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_diag_phase" ON "__next_frontier_diag" ("_phase")`,
   `CREATE TEMP TABLE "__delta_diag_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_diag_file_sign" ON "__delta_diag_file" ("_sign")`,
   `CREATE INDEX "__delta_diag_file_group" ON "__delta_diag_file" ("file")`,
   `CREATE TEMP TABLE "__frontier_diag_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_diag_file_phase" ON "__frontier_diag_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_diag_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_diag_file_phase" ON "__next_frontier_diag_file" ("_phase")`,
   `CREATE TEMP TABLE "__delta_place" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_place_sign" ON "__delta_place" ("_sign")`,
   `CREATE INDEX "__delta_place_group" ON "__delta_place" ("file", "at")`,
   `CREATE TEMP TABLE "__frontier_place" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_place_phase" ON "__frontier_place" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_place" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_place_phase" ON "__next_frontier_place" ("_phase")`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
   `CREATE INDEX "__delta_span_group" ON "__delta_span" ("start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE INDEX "__next_frontier_span_phase" ON "__next_frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_diag_file" ("file" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_diag_file" ("file" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "diag_file_zero" ON "diag_file" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -275,7 +273,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "diag_file", ruleId: "struct_nested_value_renders_whole_tree:diag_file/1#1", headDeltaTableName: "__delta_diag_file", headColumns: ["file"], insertSql: `INSERT OR IGNORE INTO "diag_file" ("file") SELECT DISTINCT b0."file" FROM "__frontier_diag" d0, "__ref_place" b0 WHERE d0."_phase" >= 0 AND b0."__id" = d0."where" RETURNING "file"`, selectSql: `SELECT "file" FROM "diag_file"`, recomputeSql: `DELETE FROM "diag_file";
-INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__refcount") SELECT "file", sum("__refcount") FROM (SELECT b1."file" AS "file", count(*) AS "__refcount" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0))`, `DELETE FROM "diag_file" WHERE "__refcount" <= 0 RETURNING "file"`, `INSERT INTO "diag_file" ("file", "__refcount") SELECT "file", n."__refcount" FROM "__support_next_diag_file" n WHERE NOT EXISTS (SELECT 1 FROM "diag_file" h WHERE n."file" = h."file") RETURNING "file"`], aggregateSql: null },
+INSERT OR IGNORE INTO "diag_file" ("file") SELECT b1."file" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where"`, supportSql: [`DELETE FROM "__support_next_diag_file"`, `INSERT INTO "__support_next_diag_file" ("file", "__refcount") SELECT "file", sum("__refcount") FROM (SELECT b1."file" AS "file", count(*) AS "__refcount" FROM "diag" b0, "__ref_place" b1 WHERE b1."__id" = b0."where" GROUP BY b1."file") GROUP BY "file"`, `UPDATE "diag_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_diag_file" n WHERE n."file" = h."file"), 0)`, `INSERT INTO "__delta_diag_file" ("_sign", "_sequence", "file") SELECT -1, row_number() OVER () - 1, "file" FROM "diag_file" WHERE "__refcount" <= 0`, `DELETE FROM "diag_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_diag_file"`, `INSERT INTO "__new_diag_file" ("file", "__refcount") SELECT n."file", n."__refcount" FROM "__support_next_diag_file" n LEFT JOIN "diag_file" h ON n."file" = h."file" WHERE h."file" IS NULL`, `INSERT INTO "__delta_diag_file" ("_sign", "_sequence", "file") SELECT 1, "rowid" - 1, "file" FROM "__new_diag_file"`, `INSERT INTO "__frontier_diag_file" ("_phase", "_sequence", "file") SELECT ?, "rowid" - 1, "file" FROM "__new_diag_file"`, `INSERT INTO "__next_frontier_diag_file" ("_phase", "_sequence", "file") SELECT ?, "rowid" - 1, "file" FROM "__new_diag_file"`, `INSERT OR IGNORE INTO "diag_file" ("file", "__refcount") SELECT n."file", n."__refcount" FROM "__support_next_diag_file" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {

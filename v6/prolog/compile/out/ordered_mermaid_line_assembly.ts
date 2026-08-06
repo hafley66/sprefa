@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_mermaid_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mermaid_line_phase" ON "__frontier_mermaid_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mermaid_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_mermaid_line_phase" ON "__next_frontier_mermaid_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_mermaid_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_mermaid_text_sign" ON "__delta_mermaid_text" ("_sign")`,
   `CREATE INDEX "__delta_mermaid_text_group" ON "__delta_mermaid_text" ("file_name", "col2")`,
   `CREATE TEMP TABLE "__frontier_mermaid_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_mermaid_text_phase" ON "__frontier_mermaid_text" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_mermaid_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_mermaid_text_phase" ON "__next_frontier_mermaid_text" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_mermaid_text" ("file_name" TEXT NOT NULL, PRIMARY KEY ("file_name")) WITHOUT ROWID`,
 ];
 

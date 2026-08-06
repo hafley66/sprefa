@@ -142,14 +142,12 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_fragment_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fragment_line_phase" ON "__frontier_fragment_line" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fragment_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_fragment_line_phase" ON "__next_frontier_fragment_line" ("_phase")`,
   `CREATE TEMP TABLE "__delta_fragment_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__delta_fragment_text_sign" ON "__delta_fragment_text" ("_sign")`,
   `CREATE INDEX "__delta_fragment_text_group" ON "__delta_fragment_text" ("fragment_name", "col2")`,
   `CREATE TEMP TABLE "__frontier_fragment_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
   `CREATE INDEX "__frontier_fragment_text_phase" ON "__frontier_fragment_text" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_fragment_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE INDEX "__next_frontier_fragment_text_phase" ON "__next_frontier_fragment_text" ("_phase")`,
   `CREATE TEMP TABLE "__agg_scope_fragment_text" ("fragment_name" TEXT NOT NULL, PRIMARY KEY ("fragment_name")) WITHOUT ROWID`,
 ];
 

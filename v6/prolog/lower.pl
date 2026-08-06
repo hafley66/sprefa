@@ -2385,7 +2385,8 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
 % predicates the head mutation reads, so no derived row crosses the JS seam.
 level_ref_count_sql(RelPlans, HeadRef, Rules,
                   refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
-                             CollectZeroSql, StageAddSql, StageFrontierSql,
+                             CollectZeroSql, ClearNewSql, FillNewSql,
+                             StageAddSql, StageFrontierSql,
                              StageNextFrontierSql, InsertNewSql)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
@@ -2412,7 +2413,7 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
                                 HeadColumnsSql, SeedSql)
     ),
     format(atom(UpdateSql),
-           'UPDATE ~w AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0))',
+           'UPDATE ~w AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0)',
            [QuotedHeadTable, QuotedRefCountTable, EqualitySql]),
     format(atom(StageRetractSql),
            'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT -1, row_number() OVER () - 1, ~w FROM ~w WHERE "__refcount" <= 0',
@@ -2420,21 +2421,34 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
     format(atom(CollectZeroSql),
            'DELETE FROM ~w WHERE "__refcount" <= 0',
            [QuotedHeadTable]),
-    format(atom(NewRowsSql),
-           'FROM ~w n WHERE NOT EXISTS (SELECT 1 FROM ~w h WHERE ~w)',
-           [QuotedRefCountTable, QuotedHeadTable, EqualitySql]),
+    arrival_scratch_table_name(HeadRef, NewTable),
+    quote_ident(NewTable, QuotedNewTable),
+    format(atom(ClearNewSql), 'DELETE FROM ~w', [QuotedNewTable]),
+    % The antijoin runs ONCE into a rowid scratch table. Its rowid then serves
+    % as `_sequence`, which no set rel orders by, replacing three window sorts.
+    nth0(0, HeadColumns, FirstColumn),
+    quote_ident(FirstColumn, QuotedFirstColumn),
+    format(atom(FillNewSql),
+           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n LEFT JOIN ~w h ON ~w WHERE h.~w IS NULL',
+           [QuotedNewTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable,
+            QuotedHeadTable, EqualitySql, QuotedFirstColumn]),
     format(atom(StageAddSql),
-           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT 1, row_number() OVER () - 1, ~w ~w',
-           [QuotedDeltaTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
+           'INSERT INTO ~w ("_sign", "_sequence", ~w) SELECT 1, "rowid" - 1, ~w FROM ~w',
+           [QuotedDeltaTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
     format(atom(StageFrontierSql),
-           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, row_number() OVER () - 1, ~w ~w',
-           [QuotedFrontierTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
     format(atom(StageNextFrontierSql),
-           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, row_number() OVER () - 1, ~w ~w',
-           [QuotedNextFrontierTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]),
+           'INSERT INTO ~w ("_phase", "_sequence", ~w) SELECT ?, "rowid" - 1, ~w FROM ~w',
+           [QuotedNextFrontierTable, HeadColumnsSql, HeadColumnsSql, QuotedNewTable]),
+    % OR IGNORE lets the head's own primary key reject the rows already there,
+    % so the fill reads the support table straight through with no antijoin.
     format(atom(InsertNewSql),
-           'INSERT INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" ~w',
-           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, NewRowsSql]).
+           'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n',
+           [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable]).
+
+arrival_scratch_table_name(Name/_Arity, NewTable) :-
+    format(atom(NewTable), '__new_~w', [Name]).
 
 qualified_column_list(Columns, Alias, Sql) :-
     findall(Part,
@@ -3217,7 +3231,7 @@ delta_ddl(DepartureRefs, RelPlan, Ddl) :-
     ;   Ddl = BaseDdl
     ).
 
-departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
+departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3225,11 +3239,7 @@ departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl, IndexDdl]) :-
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedDepartureTable, ColumnsSql]),
-    format(atom(IndexName), '~w_phase', [DepartureTable]),
-    quote_ident(IndexName, QuotedIndexName),
-    format(atom(IndexDdl), 'CREATE INDEX ~w ON ~w ("_phase")',
-           [QuotedIndexName, QuotedDepartureTable]).
+           [QuotedDepartureTable, ColumnsSql]).
 
 pre_ddl(RelPlans, Ref, Ddl) :-
     memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
@@ -3249,9 +3259,11 @@ pre_ddl(RelPlans, Ref, Ddl) :-
               [QuotedPreTable, ColumnsSql])
     ).
 
+% No _phase index on the next-frontier: nothing filters that table by phase
+% (0 of 747 emitted modules had a query plan choose one).
 delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
           [TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
-           NextFrontierDdl, NextFrontierIndexDdl]) :-
+           NextFrontierDdl]) :-
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3285,20 +3297,17 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     format(atom(NextFrontierDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedNextFrontierTable, ColumnsSql]),
-    format(atom(NextFrontierIndexName), '~w_phase', [NextFrontierTable]),
-    quote_ident(NextFrontierIndexName, QuotedNextFrontierIndexName),
-    format(atom(NextFrontierIndexDdl),
-           'CREATE INDEX ~w ON ~w ("_phase")',
-           [QuotedNextFrontierIndexName, QuotedNextFrontierTable]).
+           [QuotedNextFrontierTable, ColumnsSql]).
 
 % An aggregate head has no refCount table (aggsql/6 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
 ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
-ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
+ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl, NewDdl, ZeroIndexDdl]) :-
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
+    table_name(HeadRef, HeadTable),
+    quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -3307,7 +3316,21 @@ ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, _, _), [Ddl]) :-
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
            'CREATE TEMP TABLE ~w (~w, "__refcount" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
-           [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]).
+           [QuotedRefCountTable, ColumnsSql, PrimaryKeySql]),
+    % Keeps its rowid: three staging reads use it as `_sequence`, and the set
+    % is already distinct because the refCount table it drains has the key.
+    arrival_scratch_table_name(HeadRef, NewTable),
+    quote_ident(NewTable, QuotedNewTable),
+    format(atom(NewDdl),
+           'CREATE TEMP TABLE ~w (~w, "__refcount" INTEGER NOT NULL)',
+           [QuotedNewTable, ColumnsSql]),
+    % Partial, so it holds only rows the retraction pass is about to take and
+    % costs nothing on an additive tick where no row falls to zero.
+    format(atom(ZeroIndexName), '~w_zero', [HeadTable]),
+    quote_ident(ZeroIndexName, QuotedZeroIndexName),
+    format(atom(ZeroIndexDdl),
+           'CREATE INDEX ~w ON ~w ("__refcount") WHERE "__refcount" <= 0',
+           [QuotedZeroIndexName, QuotedHeadTable]).
 
 % INTEGER columns cannot hold a json1 compound under the inferred storage
 % contract, so their delta reads use the quoted column directly. TEXT columns

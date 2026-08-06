@@ -142,15 +142,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_copied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__frontier_copied_phase" ON "__frontier_copied" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_copied" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
-  `CREATE INDEX "__next_frontier_copied_phase" ON "__next_frontier_copied" ("_phase")`,
   `CREATE TEMP TABLE "__delta_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__delta_source_sign" ON "__delta_source" ("_sign")`,
   `CREATE INDEX "__delta_source_group" ON "__delta_source" ("items")`,
   `CREATE TEMP TABLE "__frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__frontier_source_phase" ON "__frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_source" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
-  `CREATE INDEX "__next_frontier_source_phase" ON "__next_frontier_source" ("_phase")`,
   `CREATE TEMP TABLE "__support_next_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("items")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "copied_zero" ON "copied" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const relColumns: Record<string, readonly string[]> = {
@@ -229,7 +229,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { headRel: "copied", ruleId: "head_column_list_and_json_share_storage:copied/1#1", headDeltaTableName: "__delta_copied", headColumns: ["items"], insertSql: `INSERT OR IGNORE INTO "copied" ("items") SELECT DISTINCT d0."items" FROM "__frontier_source" d0 WHERE d0."_phase" >= 0 RETURNING "items"`, selectSql: `SELECT "items" FROM "copied"`, recomputeSql: `DELETE FROM "copied";
-INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_copied"`, `INSERT INTO "__support_next_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "copied" AS h SET "__refcount" = "__refcount" - ("__refcount" - COALESCE((SELECT n."__refcount" FROM "__support_next_copied" n WHERE n."items" = h."items"), 0))`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT -1, row_number() OVER () - 1, "items" FROM "copied" WHERE "__refcount" <= 0`, `DELETE FROM "copied" WHERE "__refcount" <= 0`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT 1, row_number() OVER () - 1, n."items" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items")`, `INSERT INTO "__frontier_copied" ("_phase", "_sequence", "items") SELECT ?, row_number() OVER () - 1, n."items" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items")`, `INSERT INTO "__next_frontier_copied" ("_phase", "_sequence", "items") SELECT ?, row_number() OVER () - 1, n."items" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items")`, `INSERT INTO "copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_copied" n WHERE NOT EXISTS (SELECT 1 FROM "copied" h WHERE n."items" = h."items")`], aggregateSql: null },
+INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, supportSql: [`DELETE FROM "__support_next_copied"`, `INSERT INTO "__support_next_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "copied" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_copied" n WHERE n."items" = h."items"), 0)`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT -1, row_number() OVER () - 1, "items" FROM "copied" WHERE "__refcount" <= 0`, `DELETE FROM "copied" WHERE "__refcount" <= 0`, `DELETE FROM "__new_copied"`, `INSERT INTO "__new_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_copied" n LEFT JOIN "copied" h ON n."items" = h."items" WHERE h."items" IS NULL`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT 1, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT INTO "__frontier_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT INTO "__next_frontier_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT OR IGNORE INTO "copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_copied" n`], aggregateSql: null },
 ];
 
 function recomputeLevels(seam: ISqlSeam): Observable<void> {
