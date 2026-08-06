@@ -1,0 +1,736 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 30
+  }
+}
+
+classes: {
+  defn: {
+    style.fill: "#eef2ff"
+    style.stroke: "#4338ca"
+    style.stroke-width: 2
+  }
+  lemma: {
+    style.fill: "#fefce8"
+    style.stroke: "#ca8a04"
+    style.stroke-width: 2
+  }
+  bad: {
+    style.fill: "#fee2e2"
+    style.stroke: "#b91c1c"
+    style.stroke-width: 2
+  }
+  good: {
+    style.fill: "#dcfce7"
+    style.stroke: "#15803d"
+    style.stroke-width: 2
+  }
+  code: {
+    style.fill: "#f6f8fa"
+    style.stroke: "#d0d7de"
+    style.font-size: 13
+  }
+  rig: {
+    style.fill: "#f0f9ff"
+    style.stroke: "#0369a1"
+    style.stroke-width: 2
+  }
+  math: {
+    style.fill: "#ffffff"
+    style.stroke: "#374151"
+  }
+}
+
+cover: |~md
+  # Transitive closure, and how to charge for it
+  ### the dl6 arc of 2026-08-06, as a paper
+
+  Every recursive dl6 rule is one shape. This is that shape, the two ways to
+  charge for it, the recurrence a defect swapped in behind our backs, and the
+  rail that grades a recurrence rather than an answer.
+
+  | § | section |
+  |---|---|
+  | 1 | The problem, once |
+  | 2 | Base and step |
+  | 3 | Two ways to charge for the same answer |
+  | 4 | The defect, as a recurrence |
+  | 5 | The fix, already emitted |
+  | 6 | The test rig |
+  | 7 | Why the checksum is a set function |
+  | 8 | Three independent oracles |
+  | 9 | The rail that closes the gap |
+  | 10 | Where dl6 sits |
+
+  Workload throughout: `grid_10000`, 3,960 edges, 1,069,200 derived rows,
+  checksum `9d7239568960d6a8`.
+
+  **106,692 ms / 1.98 GB  ->  2,776 ms / 738 MB**
+~|
+
+spine: |~md
+  ### the spine, in one block
+  ```
+  base       R0 = E
+  step       R(n+1) = Rn u (Rn o E)
+  fixpoint   R* = U Rn = Rk   for the least k with R(k+1) = Rk
+
+  naive      W = sum |Rn|.|E| = O(k.|R*|.|E|)
+  semi       W = sum |Dn|.|E| = O(|R*|.|E|)    since sum |Dn| = |R*|
+
+  defect     frontier_n = U(i<=n) Di = Rn  =>  W_actual = W_naive
+  rail       S(k) = O(1) one pass    vs    S(k) = O(k) round loop
+  ```
+  The k in the cost sums and the k in the rail are the same k. That is why a
+  statement count against depth catches what three answer-grading oracles
+  all passed.
+~|
+
+cover -> spine: "read this first"
+spine -> contents: "then walk it"
+
+contents: {
+  style.fill: "#ffffff"
+  style.stroke: "#4338ca"
+
+  c1: |~md
+    ### 1
+    The problem, once
+  ~|
+  c1.shape: rectangle
+  c1.class: defn
+  c1.link: layers."1 · The problem, once"
+
+  c2: |~md
+    ### 2
+    Base and step
+  ~|
+  c2.shape: rectangle
+  c2.class: defn
+  c2.link: layers."2 · Base and step"
+
+  c3: |~md
+    ### 3
+    Two ways to charge for the same answer
+  ~|
+  c3.shape: rectangle
+  c3.class: defn
+  c3.link: layers."3 · Two ways to charge for the same answer"
+
+  c4: |~md
+    ### 4
+    The defect, as a recurrence
+  ~|
+  c4.shape: rectangle
+  c4.class: defn
+  c4.link: layers."4 · The defect, as a recurrence"
+
+  c5: |~md
+    ### 5
+    The fix, already emitted
+  ~|
+  c5.shape: rectangle
+  c5.class: defn
+  c5.link: layers."5 · The fix, already emitted"
+
+  c6: |~md
+    ### 6
+    The test rig
+  ~|
+  c6.shape: rectangle
+  c6.class: defn
+  c6.link: layers."6 · The test rig"
+
+  c7: |~md
+    ### 7
+    Why the checksum is a set function
+  ~|
+  c7.shape: rectangle
+  c7.class: defn
+  c7.link: layers."7 · Why the checksum is a set function"
+
+  c8: |~md
+    ### 8
+    Three independent oracles
+  ~|
+  c8.shape: rectangle
+  c8.class: defn
+  c8.link: layers."8 · Three independent oracles"
+
+  c9: |~md
+    ### 9
+    The rail that closes the gap
+  ~|
+  c9.shape: rectangle
+  c9.class: defn
+  c9.link: layers."9 · The rail that closes the gap"
+
+  c10: |~md
+    ### 10
+    Where dl6 sits
+  ~|
+  c10.shape: rectangle
+  c10.class: defn
+  c10.link: layers."10 · Where dl6 sits"
+
+  c1 -> c2
+  c2 -> c3
+  c3 -> c4
+  c4 -> c5
+  c5 -> c6
+  c6 -> c7
+  c7 -> c8
+  c8 -> c9
+  c9 -> c10
+}
+
+layers: {
+  "1 · The problem, once": {
+    style.fill: "#ffffff"
+    style.stroke: "#4338ca"
+
+    given: |~md
+      ### Given
+      a finite directed graph
+    ~|
+    given.shape: rectangle
+    given.class: defn
+
+    gdef: |~latex
+      G = (V, E), \quad E \subseteq V \times V
+    ~|
+    gdef.class: math
+
+    want: |~md
+      ### Want
+      the reachability relation: every pair joined by a path of length one or more
+    ~|
+    want.shape: rectangle
+    want.class: defn
+
+    wdef: |~latex
+      R = E^{+} = \{(x,z) \mid \exists\, \text{a path } x \rightsquigarrow z \text{ in } G\}
+    ~|
+    wdef.class: math
+
+    prog: |`prolog
+      rel edge(source: int, target: int).
+      rel reachable(source: int, target: int).
+
+      reachable(Source, Target) <- edge(Source, Target).
+      reachable(Source, Target) <- reachable(Source, Mid),
+                                   edge(Mid, Target).
+    `|
+    prog.class: code
+
+    claim: |~md
+      ### Why this one program
+      Every recursive dl6 rule is this shape with a different join.
+      Fix the cost here and every recursive head inherits it.
+    ~|
+    claim.shape: rectangle
+    claim.class: defn
+
+    given -> gdef
+    gdef -> want
+    want -> wdef
+    wdef -> prog: "the two clauses ARE the base and the step"
+    prog -> claim
+  }
+
+  "2 · Base and step": {
+    style.fill: "#ffffff"
+    style.stroke: "#4338ca"
+
+    basehead: |~md
+      ### Base
+      clause one seeds the relation with the edges themselves
+    ~|
+    basehead.shape: rectangle
+    basehead.class: defn
+
+    base: |~latex
+      R_0 = E
+    ~|
+    base.class: math
+
+    stephead: |~md
+      ### Step
+      clause two composes what is known with one more edge
+    ~|
+    stephead.shape: rectangle
+    stephead.class: defn
+
+    step: |~latex
+      R_{n+1} = R_n \cup (R_n \circ E) \quad\text{where}\quad R \circ E = \{(x,z) \mid (x,y) \in R,\ (y,z) \in E\}
+    ~|
+    step.class: math
+
+    monotone: |~latex
+      R_0 \subseteq R_1 \subseteq R_2 \subseteq \cdots \subseteq V \times V
+    ~|
+    monotone.class: math
+
+    term: |~md
+      ### Termination
+      The chain is monotone and bounded above by a finite set, so it stops.
+      It stops at the first repeat, and that repeat is the answer.
+    ~|
+    term.shape: rectangle
+    term.class: lemma
+
+    fix: |~latex
+      R^{*} = \bigcup_{n \geq 0} R_n = R_k \quad\text{for the least } k \text{ with } R_{k+1} = R_k
+    ~|
+    fix.class: math
+
+    depth: |~md
+      ### k is the graph's depth
+      | family | k on the 10k case |
+      |---|---|
+      | `chain` (one long path) | 2,582 |
+      | `grid` (45 x 45 lattice) | 88 |
+      | `layered` (193 layers) | 193 |
+
+      k is what a per-round evaluator pays for, and the families
+      were chosen to spread it by three orders of magnitude.
+    ~|
+    depth.shape: rectangle
+    depth.class: lemma
+
+    basehead -> base
+    base -> stephead
+    stephead -> step
+    step -> monotone
+    monotone -> term
+    term -> fix
+    fix -> depth
+  }
+
+  "3 · Two ways to charge for the same answer": {
+    style.fill: "#ffffff"
+    style.stroke: "#374151"
+
+    naivehead: |~md
+      ### Naive evaluation
+      Round n composes **everything known so far** with E.
+    ~|
+    naivehead.shape: rectangle
+    naivehead.class: bad
+
+    naivework: |~latex
+      W_{\text{naive}} = \sum_{n=0}^{k} |R_n| \cdot |E| \;=\; \Theta(k \cdot |R^{*}| \cdot |E|)
+    ~|
+    naivework.class: math
+
+    sndef: |~md
+      ### Semi-naive evaluation
+      Round n composes only what round n-1 **newly** produced.
+    ~|
+    sndef.shape: rectangle
+    sndef.class: good
+
+    delta: |~latex
+      \Delta_n = R_n \setminus R_{n-1}, \qquad R_{n+1} = R_n \cup (\Delta_n \circ E)
+    ~|
+    delta.class: math
+
+    snwork: |~latex
+      W_{\text{semi}} = \sum_{n=0}^{k} |\Delta_n| \cdot |E| \;=\; \Theta(|R^{*}| \cdot |E|)
+    ~|
+    snwork.class: math
+
+    why: |~latex
+      \text{because } \textstyle\sum_n |\Delta_n| = |R^{*}| \text{ : each derived pair is new exactly once}
+    ~|
+    why.class: math
+
+    ratio: |~md
+      ### The whole prize
+      The two differ by a factor of **k**, the recursion depth.
+      On `grid_10000`, k = 88.
+    ~|
+    ratio.shape: rectangle
+    ratio.class: lemma
+
+    naivehead -> naivework
+    naivework -> sndef: "the fix is to shrink the left operand"
+    sndef -> delta
+    delta -> snwork
+    snwork -> why
+    why -> ratio
+  }
+
+  "4 · The defect, as a recurrence": {
+    style.fill: "#ffffff"
+    style.stroke: "#b91c1c"
+
+    claimed: |~md
+      ### What the code claimed
+      `__frontier_reachable` holds the delta.
+    ~|
+    claimed.shape: rectangle
+    claimed.class: good
+
+    claimedtex: |~latex
+      \texttt{frontier}_n \overset{?}{=} \Delta_n
+    ~|
+    claimedtex.class: math
+
+    sql: |`sql
+      SELECT DISTINCT d0."source", b0."target"
+        FROM "__frontier_reachable" d0, "edge" b0
+       WHERE d0."_phase" >= 0          -- admits every row
+         AND b0."source" = d0."target" -- ever staged
+    `|
+    sql.class: code
+
+    actual: |~md
+      ### What it actually held
+      Nothing retired the frontier between rounds, and the filter
+      `_phase >= 0` admits every row ever staged.
+    ~|
+    actual.shape: rectangle
+    actual.class: bad
+
+    actualtex: |~latex
+      \texttt{frontier}_n = \textstyle\bigcup_{i \leq n} \Delta_i = R_n
+    ~|
+    actualtex.class: math
+
+    conclusion: |~latex
+      \Rightarrow\; W_{\text{actual}} = \sum_n |R_n| \cdot |E| = W_{\text{naive}}
+    ~|
+    conclusion.class: math
+
+    evidence: |~md
+      ### Measured, 22 x 22 grid
+      | pass n | new rows | frontier holds | ms |
+      |---|---|---|---|
+      | 1 | 924 | 0 | 1.1 |
+      | 10 | 3,069 | 19,206 | 30.1 |
+      | 19 | 2,460 | 46,161 | 68.4 |
+      | 43 | **0** | 63,525 | **87.6** |
+
+      The last column tracks the third, never the second.
+      Pass 43 has an empty delta and still charges 87 ms.
+    ~|
+    evidence.shape: rectangle
+    evidence.class: bad
+
+    claimed -> claimedtex
+    claimedtex -> sql
+    sql -> actual
+    actual -> actualtex
+    actualtex -> conclusion
+    conclusion -> evidence
+  }
+
+  "5 · The fix, already emitted": {
+    style.fill: "#ffffff"
+    style.stroke: "#15803d"
+
+    intro: |~md
+      ### The compiler had written it months ago
+      `supportSql` carried the closure as one recursive query.
+      `retractionGuardSql` only let it run when a delta carried a retraction,
+      so a purely additive tick fell through to the round loop.
+    ~|
+    intro.shape: rectangle
+    intro.class: good
+
+    cte: |`sql
+      WITH RECURSIVE "reachable" ("source","target") AS (
+        SELECT b0."source", b0."target"
+          FROM "edge" b0                        -- base: R0 = E
+        UNION                                   -- UNION, not UNION ALL:
+        SELECT b0."source", b1."target"         -- dedup IS the delta
+          FROM "reachable" b0, "edge" b1
+         WHERE b1."source" = b0."target")       -- step: Rn o E
+      SELECT "source","target", 1 FROM "reachable";
+    `|
+    cte.class: code
+
+    claim: |~md
+      ### Why `UNION` buys semi-naive for free
+      SQLite keeps the queue of rows it has yet to expand and drops
+      duplicates on insert. A pair enters the queue exactly once,
+      which is the same accounting as the delta.
+    ~|
+    claim.shape: rectangle
+    claim.class: lemma
+
+    claimtex: |~latex
+      \text{each } (x,z) \in R^{*} \text{ expanded once} \;\Rightarrow\; W = \Theta(|R^{*}| \cdot |E|) = W_{\text{semi}}
+    ~|
+    claimtex.class: math
+
+    measured: |~md
+      ### Measured, same input, same checksum
+      | evaluation | ms | rounds |
+      |---|---|---|
+      | accumulating loop | 100,809 | 89 |
+      | frontier retired per round | 4,452 | 89 |
+      | one recursive CTE | **1,429** | **1** |
+
+      `grid_10000`, 1,069,200 rows, `9d7239568960d6a8` on all three.
+    ~|
+    measured.shape: rectangle
+    measured.class: good
+
+    intro -> cte
+    cte -> claim
+    claim -> claimtex
+    claimtex -> measured
+  }
+
+  "6 · The test rig": {
+    style.fill: "#ffffff"
+    style.stroke: "#0369a1"
+
+    gen: |~md
+      ### Generator
+      `harness/src/gen.rs`, seeded and deterministic.
+      Three families, parameters TUNED per scale so every case lands in the band.
+    ~|
+    gen.shape: rectangle
+    gen.class: rig
+
+    band: |~latex
+      10^{6} \;\leq\; |R^{*}| \;\leq\; 2 \times 10^{7}
+    ~|
+    band.class: math
+
+    families: |~md
+      ### The three families isolate different k
+      | family | shape | what it stresses |
+      |---|---|---|
+      | `chain` | one path, truncated | max depth, tiny fan-out |
+      | `grid` | 2D lattice, right and down | mixed depth and fan-out |
+      | `layered` | DAG, adjacent layers only | join width, shallow |
+    ~|
+    families.shape: rectangle
+    families.class: rig
+
+    contract: |~md
+      ### Every entrant speaks one wire contract
+      Three JSONL lines on stdout, nothing else, ever.
+    ~|
+    contract.shape: rectangle
+    contract.class: rig
+
+    wire: |`json
+      {"event":"loaded","edges":3960,"ms":17}
+      {"event":"fixpoint","derived":1069200,"ms":2776}
+      {"event":"done","checksum":"9d7239568960d6a8","peak_rss_kb":737584}
+    `|
+    wire.class: code
+
+    gen -> band
+    band -> families
+    families -> contract
+    contract -> wire
+  }
+
+  "7 · Why the checksum is a set function": {
+    style.fill: "#ffffff"
+    style.stroke: "#ca8a04"
+
+    why: |~md
+      ### The lemma that makes paging sound
+      Comparing engines needs one number per ANSWER, and the answer is a
+      **set**. Any digest that depends on enumeration order compares
+      implementations rather than results.
+    ~|
+    why.shape: rectangle
+    why.class: lemma
+
+    cdef: |~latex
+      c(R) \;=\; \bigoplus_{(x,y) \in R} h(x,y), \qquad h = \text{fnv1a64}(x \Vert y)
+    ~|
+    cdef.class: math
+
+    proof: |~latex
+      \oplus \text{ is commutative and associative} \;\Rightarrow\; c \text{ is well defined on the set } R
+    ~|
+    proof.class: math
+
+    corollary: |~md
+      ### Corollary, used to fix a real OOM
+      Any partition of R folds to the same number, so the driver can read the
+      head table in pages and drop each one.
+    ~|
+    corollary.shape: rectangle
+    corollary.class: good
+
+    cortex: |~latex
+      R = P_1 \sqcup \cdots \sqcup P_m \;\Rightarrow\; c(R) = c(P_1) \oplus \cdots \oplus c(P_m)
+    ~|
+    cortex.class: math
+
+    paged: |`ts
+      // 250,000 rows per page, folded and dropped
+      SELECT "source","target" FROM "reachable"
+       WHERE ("source","target") > (?, ?)
+       ORDER BY "source","target" LIMIT 250000
+    `|
+    paged.class: code
+
+    why -> cdef
+    cdef -> proof
+    proof -> corollary
+    corollary -> cortex
+    cortex -> paged: "holding 10M rows to XOR them\nwas the last OOM"
+  }
+
+  "8 · Three independent oracles": {
+    style.fill: "#ffffff"
+    style.stroke: "#0369a1"
+
+    intro: |~md
+      ### An answer is trusted when three different things agree
+    ~|
+    intro.shape: rectangle
+    intro.class: rig
+
+    o1: |~md
+      ### 1 · the reference engine
+      `harness/src/refengine.rs`, deliberately naive.
+      Anchors truth at the 10k cases and is never timed.
+
+      Grades: `derived` and `checksum`.
+    ~|
+    o1.shape: rectangle
+    o1.class: rig
+
+    o2: |~md
+      ### 2 · the swipl oracle
+      `v6/prolog/conformance/`, the language definition itself.
+      420 fixtures, tick log compared **byte for byte**.
+
+      `RUN total=420 identical=418 wrong=0`
+    ~|
+    o2.shape: rectangle
+    o2.class: rig
+
+    o3: |~md
+      ### 3 · the other engines
+      `mono`, `rxgraph`, `interp`. Any disagreement on
+      `(derived, checksum)` fails the whole run and
+      no standings are written.
+
+      `chain_10000` -> `df09b2f409f8b9a8` on dl6 AND mono.
+    ~|
+    o3.shape: rectangle
+    o3.class: rig
+
+    gap: |~md
+      ### The gap all three miss
+      Every oracle above grades the **answer**. A naive closure returns the
+      right answer, so it passes all three while paying a factor of k.
+    ~|
+    gap.shape: rectangle
+    gap.class: bad
+
+    intro -> o1
+    intro -> o2
+    intro -> o3
+    o1 -> gap
+    o2 -> gap
+    o3 -> gap
+  }
+
+  "9 · The rail that closes the gap": {
+    style.fill: "#ffffff"
+    style.stroke: "#15803d"
+
+    idea: |~md
+      ### Grade the RECURRENCE, not the answer
+      A one-pass closure issues a statement count independent of k.
+      A per-round loop issues one insert plus its staging per round.
+    ~|
+    idea.shape: rectangle
+    idea.class: good
+
+    pred: |~latex
+      S(k) = \Theta(1) \;\text{ for one pass}, \qquad S(k) = \Theta(k) \;\text{ for a round loop}
+    ~|
+    pred.class: math
+
+    test: |`ts
+      // v6/tsv2/tests/recursiveClosureCounts.test.ts
+      const STATEMENTS_PER_TICK = 34;
+
+      assert.deepEqual(
+        [shallow.statementCount,
+         middle.statementCount,
+         deep.statementCount],
+        [34, 34, 34],
+        "closure must not pay per round",
+      );
+    `|
+    test.class: code
+
+    receipt: |~md
+      ### Fail-pre-fix receipt
+      Chain of n edges fed as ONE arrival batch, closure is n(n+1)/2 rows.
+
+      | runtime | k=3 | k=8 | k=16 |
+      |---|---|---|---|
+      | round loop | 39 | 59 | 91 |
+      | one pass | **34** | **34** | **34** |
+
+      Slope 4 against slope 0. Non-vacuity: 6 / 36 / 136 rows derived.
+      A COUNT, never a timing, so it cannot flake.
+    ~|
+    receipt.shape: rectangle
+    receipt.class: good
+
+    idea -> pred
+    pred -> test
+    test -> receipt
+  }
+
+  "10 · Where dl6 sits": {
+    style.fill: "#ffffff"
+    style.stroke: "#374151"
+
+    same: |~latex
+      \text{every engine computes the same } R^{*} \text{ with the same } \Theta(|R^{*}| \cdot |E|) \text{ recurrence}
+    ~|
+    same.class: math
+
+    diff: |~md
+      ### So the ladder prices the CONSTANT, not the algorithm
+      `chain_10000`, 9,996,213 rows, `df09b2f409f8b9a8` on every row.
+
+      | engine | rows/sec | constant is |
+      |---|---|---|
+      | `mono` | 68,467,212 | a u32 pair in a hash set |
+      | `rxgraph` | 23,529,153 | + one virtual call per batch |
+      | `interp` | 4,750,542 | + reading the rules per row |
+      | `dl6` | 336,844 | + btree, WAL, planner, durability |
+
+      dl6 is **203x** behind mono, down from **6,832x** this morning.
+    ~|
+    diff.shape: rectangle
+    diff.class: math
+
+    close: |~md
+      ### What today actually removed
+      Zero of the 38.4x came from a better algorithm. All of it came from
+      deleting work that bought nothing: a factor of k the frontier was
+      charging, and rows that crossed into V8 only to be discarded.
+
+      What remains is the price of durability and generality, which is a
+      thing to buy on purpose.
+    ~|
+    close.shape: rectangle
+    close.class: good
+
+    same -> diff
+    diff -> close
+  }
+}
