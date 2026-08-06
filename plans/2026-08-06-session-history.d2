@@ -1,0 +1,185 @@
+...@_house
+
+# A markdown TABLE starts its rows with |, so those blocks need the ||| fence.
+grid-rows: 2
+grid-columns: 2
+grid-gap: 50
+
+# ─── A ───────────────────────────────────────────────────────────────────────
+a: "A. THE SESSION, IN ORDER  ::  what was asked, what came back" {
+  class: stage
+
+  convo: "" {
+    shape: sequence_diagram
+
+    you: "you" { shape: person; class: chosen }
+    me: "opus, main tree" { class: designed }
+    lane: "flash4 lane\ncatrel" { class: muted }
+    repo: "the repo + gates" { class: shipped }
+    gh: "github" { shape: cylinder; class: muted }
+
+    orient: "1. ORIENT" {
+      you -> me: "read the last chat log"
+      me -> repo: "chat_log/LATEST.md"
+      you -> me: "where is the rendered d2"
+      me -> repo: "found the PNG STALE: 10:24 render vs 11:35 source"
+    }
+
+    research: "2. PRIOR ART, because nothing in-repo answered it" {
+      you -> me: "how do rust / go / python / sqlite do modules"
+      me -> repo: "read v5: `use` is a textual include, canonical-path dedup, NO namespace"
+      me -> repo: "read Go sym.go:14, objabi/path.go:18, cpython _bootstrap.py:1350"
+      me -> repo: "ran ATTACH locally: main.t and other.t coexist, MAX_ATTACHED=10"
+      me -> you: "everyone keeps a PAIR inside and flattens at the exit"
+    }
+
+    design: "3. THE DESIGN, four hashes" {
+      you -> me: "plan doc, hashing for hot reload, call it __rel"
+      me -> repo: "symmetry plan + unga twin + a 6-tier d2"
+      you -> me: "d2 in markdown fences, my app renders it"
+      me -> repo: "12 fences + _d2_fence_check.sh, a compile gate"
+      you -> me: "own file, svg, ornate, arrows only if useful"
+      me -> repo: "journey-map.d2, 8 bands, 28 edges all carrying dataflow"
+      you -> me: "weird links? properly protocol'd?"
+      me -> you: "ZERO anchors existed; d2 drops a scheme-less path silently"
+      me -> repo: "file:// + #line on 8 citations, scheme in one var"
+    }
+
+    build: "4. BUILD" {
+      you -> me: "h1 + h2, give flash4 specific instructions"
+      me -> lane: "bus dispatch + BRIEF.md, 6 sections, zero judgment calls"
+      lane -> repo: "3a4a628e rename, 1a43106a arity + refusal"
+      lane -> me: "hail: gates green, deviations listed" {
+        style.stroke: "#b06000"
+        style.stroke-width: 2
+      }
+      you -> me: "h3, dots in the parser"
+      me -> repo: "rel_path/2 in functor position"
+      repo -> me: "146 TESTS RED: a literal '.'(A,B) in a head is dict-expanded" {
+        style.stroke: "#c5221f"
+        style.stroke-width: 3
+      }
+      me -> repo: "inspect with functor/3 + arg/3 instead; 352/352 green"
+    }
+
+    close: "5. REVIEW AND SHIP" {
+      you -> me: "review it and get a PR up"
+      me -> lane: "design review of the diff, hunk by hunk"
+      me -> repo: "found a NEW quadratic path; rewrote it linear over the sorted list"
+      me -> repo: "merge, then own-run every rail"
+      me -> gh: "PR #8, 16 commits" {
+        style.stroke: "#137333"
+        style.stroke-width: 3
+      }
+    }
+  }
+}
+
+# ─── B ───────────────────────────────────────────────────────────────────────
+b: "B. WHAT WAS TRIED, AND WHAT IT COST" {
+  class: stage
+  direction: down
+
+  tried: |||md
+  | tried | outcome |
+  |---|---|
+  | render the committed d2 | the PNG was STALE, rendered before the `_house` import refactor |
+  | one giant d2 for the design | compiled clean and read badly; a grid filled COLUMN-major and scrambled 30 cells |
+  | markdown in d2 shapes | works, including real tables, but a table row's leading `|` needs the `\|\|\|` fence |
+  | multi-line md in a grid cell | CLIPPED. a grid row has a fixed height |
+  | `class:` on an md label | no border: a markdown label implies `shape: text`, so it needs `shape: rectangle` |
+  | a scheme-less link | d2 drops it silently, no anchor, no warning |
+  | `[text](url)` inside an md block | text renders, the anchor is discarded |
+  | 4 rows x 2 cols of bands | ratio 0.65, portrait, dead space under the short bands |
+  | 3 cols after merging short bands | ratio 1.44 then 1.66, every row has a tall anchor |
+  | flash4 on h1 + h2 | followed the brief exactly, and shipped one quadratic path |
+  | `'.'(A, B)` in a clause head | 146 tests red with instantiation_error, by the very expansion the feature is about |
+  ||| { class: shipped; shape: rectangle }
+
+  lesson: |||md
+  ## the one that generalizes
+  Every d2 fact above was learned by RENDERING and looking. Each broken version
+  exited 0. A clean compile says nothing about whether a diagram reads.
+
+  Same shape in the compiler: `plunit 352/352` said nothing about whether
+  `check_single_arity_per_name/1` was quadratic. The gate proves the brief was
+  followed; reading the diff is what proves the brief was right.
+  ||| { class: chosen; shape: rectangle }
+}
+
+# ─── C ───────────────────────────────────────────────────────────────────────
+c: "C. COLLISION COVERAGE  ::  what is actually tested, and what CANNOT be yet" {
+  class: stage
+  direction: down
+
+  have: |||md
+  ## tested, 6 cases, ALL inside ONE program
+  | case | refusal | where |
+  |---|---|---|
+  | `edge/2` and `edge/3` in one program | `rel_arity_collision(edge, 2, 3)` | plunit `:651`, 1 test |
+  | dotted head | `module_path_unresolved([orchard, tree])` | `7_module_path.pl`, fixture 1 |
+  | dotted goal in a body | `module_path_unresolved([orchard, fruit])` | fixture 2 |
+  | 3-segment path keeps every segment | `module_path_unresolved([orchard, north, tree])` | fixture 3 |
+  | enum variant name collides with a plain decl | `enum_variant_name_collision` | pre-existing, 1 |
+  | generated variant name collides | `enum_variant_rel_collision` | pre-existing, 1 |
+  ||| { class: shipped; shape: rectangle }
+
+  havent: |||md
+  ## NOT tested, and why not one of them is testable today
+  | case | why it cannot be tested |
+  |---|---|
+  | async loading | no such code path exists anywhere |
+  | two files declaring one rel name | `serve/0_compile.ts:98` is `compile(source: string)`. ONE string. there is no second file to collide with |
+  | filename to rel-name mangling | `grep -rl "module_id\|moduleId"` over all of `v6/prolog` and `v6/tsv2` returns **zero files**. the concept does not exist |
+  | export-name collision across files | needs both a filename concept and a multi-file compile |
+  | two programs in one database | DEMOED in an earlier session (rel_id 6 existed twice) and still UNFIXED. ids are positional per compile |
+  | hot reload verdicts | `plan(before, after)` is a design in a plan doc, zero lines of code |
+  | reshape under a running server | `3_engine.ts:224` still swallows "already exists", so a reshape is still invisible |
+  ||| { class: danger; shape: rectangle }
+}
+
+# ─── D ───────────────────────────────────────────────────────────────────────
+d: "D. WHERE WE ARE, AND WHAT ONE STEP UNLOCKS" {
+  class: stage
+  direction: down
+
+  now: |||md
+  ## the position
+  | | |
+  |---|---|
+  | branch | `catalog-rel-module-path`, PR #8, 16 commits ahead of `origin/main` |
+  | shipped this arc | h1 rename, h2 arity + refusal, h3 module path parsed and refused |
+  | gates | plunit 352/352, conformance 306/0, TEXT_DOOR 422/422, tsv2 149/1/0, lint 1=1, sweep final_wrong=0 |
+  | usable today | a program can query its own `__rel` catalog: rel rows, column rows, arity, and a covering index on the parent walk |
+  | NOT usable today | anything involving a second file |
+  ||| { class: shipped; shape: rectangle }
+
+  unlock: "h4 is the unlock, and it is ONE concept" {
+    direction: down
+    class: designed
+
+    h4: "h4  module_id + h_id\n\nhash the FILE once (StableCrateId).\nStore it on every __rel row." {
+      shape: step
+      class: chosen
+    }
+    multi: "then multi-file compile has\nsomething to key on" { shape: step; class: designed }
+    coll: "then a filename collision is\nEXPRESSIBLE, so it is testable" { shape: step; class: designed }
+    two: "then two programs in one db\nstop overwriting each other" { shape: step; class: designed }
+    reload: "then h5 verdicts have an identity\nto look a rel up BY" { shape: step; class: designed }
+
+    h4 -> multi -> coll -> two -> reload: "each one waits on the one before" {
+      style.stroke: "#5f6368"
+    }
+  }
+
+  gate: |||md
+  ## three answers gate h4
+  | # | question | why it blocks |
+  |---|---|---|
+  | 1 | xxh3 or truncated SHA-256? | the hash goes in a column that ships in DDL; changing it later rewrites every row |
+  | 2 | `__` as the module separator? | it is the flat table name, and it must not read like the enum join `body_page` |
+  | 3 | a reshape deletes rows under a running server: silently, or refuse and demand a flag? | it decides whether h5 is a data-loss path or a refusal path |
+
+  Answer those three and h4 through h6 are mechanical enough for a flash lane.
+  ||| { class: chosen; shape: rectangle }
+}
