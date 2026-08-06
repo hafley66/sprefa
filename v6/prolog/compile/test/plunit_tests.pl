@@ -580,7 +580,7 @@ test(catalog_table_shape) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id")) WITHOUT ROWID',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % The catalog is seeded by DDL, so the serve door must never accept a write
@@ -617,28 +617,55 @@ test(catalog_ids_are_positional) :-
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [CatalogSeed]),
     forall(member(Expected, [
-        "(1,0,0,'text','primitive',0,0)",
-        "(2,0,0,'int','primitive',0,0)",
-        "(3,0,0,'float','primitive',0,0)",
-        "(4,0,0,'bool','primitive',0,0)",
-        "(5,0,0,'json','primitive',0,0)",
-        "(6,0,0,'__rel','rel',0,7)",
-        "(7,6,1,'rel_id','column',2,0)",
-        "(8,6,2,'parent_id','column',2,0)",
-        "(9,6,3,'ordinal','column',2,0)",
-        "(10,6,4,'local_name','column',1,0)",
-        "(11,6,5,'kind','column',1,0)",
-        "(12,6,6,'type_id','column',2,0)",
-        "(13,6,7,'arity','column',2,0)",
-        "(14,0,0,'rel_named','rel',0,1)",
-        "(15,14,1,'col1','column',1,0)"]),
+        "(1,0,0,'text','primitive',0,0,0,'')",
+        "(2,0,0,'int','primitive',0,0,0,'')",
+        "(3,0,0,'float','primitive',0,0,0,'')",
+        "(4,0,0,'bool','primitive',0,0,0,'')",
+        "(5,0,0,'json','primitive',0,0,0,'')",
+        "(6,0,0,'catalog_reader','module',0,0,6,'52371c9ee530d976')",
+        "(7,6,0,'__rel','rel',0,9,6,'a50fabb173953929')",
+        "(8,7,1,'rel_id','column',2,0,6,'967451ea906c22e6')",
+        "(9,7,2,'parent_id','column',2,0,6,'bc66c0b3d9fd2a32')",
+        "(10,7,3,'ordinal','column',2,0,6,'2086b1238d2fdaaf')",
+        "(11,7,4,'local_name','column',1,0,6,'2ff6d6016fd32294')",
+        "(12,7,5,'kind','column',1,0,6,'63dde6670d739c37')",
+        "(13,7,6,'type_id','column',2,0,6,'02dae67701442d3b')",
+        "(14,7,7,'arity','column',2,0,6,'5c395a10ecce5214')",
+        "(15,7,8,'module_id','column',2,0,6,'27702224844be6b6')",
+        "(16,7,9,'h_id','column',1,0,6,'4154abba7621bdfe')",
+        "(17,6,0,'rel_named','rel',0,1,6,'839df246b6d13056')",
+        "(18,17,1,'col1','column',1,0,6,'459ae5fa6daa411d')"]),
         sub_atom(CatalogSeed, _, _, _, Expected)).
+
+% Two rel names that differ only by module must produce DIFFERENT h_id
+% values: a rel's h_id mixes its own name with its module's hash, so the same
+% local name in two modules stays distinguishable.
+test(catalog_module_scope_distinguishes_h_id) :-
+    module_rel_h_id(catalog_reader, FirstHId),
+    module_rel_h_id(other_module, SecondHId),
+    FirstHId \== '',
+    FirstHId \== SecondHId.
+
+% The h_id of the single rel_named/1 rel row a fixture with this module name emits.
+module_rel_h_id(ModuleName, HId) :-
+    Prog = prog([], [ (rel_named(LocalName) <-
+                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
+                                 _TypeId, _Arity, _ModuleId, _HId)) ]),
+    Term = fixture(ModuleName, Prog, [], [], []),
+    once(( program_plan(Term-[], Plan),
+           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+           member(Seed, Ddl),
+           sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"'),
+           sub_atom(Seed, MarkerStart, MarkerLen, _, "'rel_named','rel',0,1,6,'"),
+           HashStart is MarkerStart + MarkerLen,
+           sub_atom(Seed, HashStart, 16, _, HId) )).
 
 % One program for the whole group: a level rule reading the catalog's own rows,
 % which is the read the g1 increment exists to make possible.
 catalog_program(fixture(catalog_reader, Prog, [], [], [])) :-
     Prog = prog([], [ (rel_named(LocalName) <-
-                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel, _TypeId, _Arity)) ]).
+                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
+                                 _TypeId, _Arity, _ModuleId, _HId)) ]).
 
 catalog_lowered(_Name, Ddl) :-
     catalog_program(Term),

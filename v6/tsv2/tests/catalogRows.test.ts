@@ -54,9 +54,9 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { ISqlSeam } from "../runtime/types.ts";
 
 const CATALOG_DDL: readonly string[] = [
-  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity")) WITHOUT ROWID`,
+  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id")) WITHOUT ROWID`,
   `CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")`,
-  `INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity") VALUES (1,0,0,'text','primitive',0,0),(2,0,0,'int','primitive',0,0),(3,0,0,'float','primitive',0,0),(4,0,0,'bool','primitive',0,0),(5,0,0,'json','primitive',0,0),(6,0,0,'flow_edge','rel',0,2),(7,6,1,'from_path','column',1,0),(8,6,2,'to_path','column',1,0),(9,0,0,'flow_reach','rel',0,2),(10,9,1,'from_path','column',1,0),(11,9,2,'to_path','column',1,0)`,
+  `INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id") VALUES (1,0,0,'text','primitive',0,0,0,''),(2,0,0,'int','primitive',0,0,0,''),(3,0,0,'float','primitive',0,0,0,''),(4,0,0,'bool','primitive',0,0,0,''),(5,0,0,'json','primitive',0,0,0,''),(6,0,0,'catalog','module',0,0,6,'652f55016243bf1b'),(7,6,0,'flow_edge','rel',0,2,6,'e088c4e83f6bd590'),(8,7,1,'from_path','column',1,0,6,'8e573bdafd8b831d'),(9,7,2,'to_path','column',1,0,6,'6ab063888c4aeed5'),(10,6,0,'flow_reach','rel',0,2,6,'fbdcdb48481fdfb8'),(11,10,1,'from_path','column',1,0,6,'8e573bdafd8b831d'),(12,10,2,'to_path','column',1,0,6,'6ab063888c4aeed5')`,
 ];
 
 function run(seam: ISqlSeam, sql: string) {
@@ -80,7 +80,7 @@ test("catalog rows land in the program database", async () => {
   await firstValueFrom(ScratchStore.boot(seam, CATALOG_DDL));
 
   const count = await run(seam, `SELECT count(*) AS c FROM "__rel"`);
-  assert.equal(Number(count.rows[0]!.c), 11, "the seed must insert every declared row");
+  assert.equal(Number(count.rows[0]!.c), 12, "the seed must insert every declared row");
 
   const primitives = await run(
     seam,
@@ -104,7 +104,7 @@ test("a column is a child row of its rel", async () => {
 
   const columns = await run(
     seam,
-    `SELECT local_name AS name, ordinal AS ordinal FROM "__rel" WHERE parent_id = 6 ORDER BY ordinal`,
+    `SELECT local_name AS name, ordinal AS ordinal FROM "__rel" WHERE parent_id = 7 ORDER BY ordinal`,
   );
   assert.deepEqual(columns.rows.map((row) => row.name), ["from_path", "to_path"], "the rel's columns must be its child rows");
   assert.deepEqual(columns.rows.map((row) => Number(row.ordinal)), [1, 2], "each column must carry its 1-based argument position");
@@ -116,13 +116,29 @@ test("replaying the DDL mints no duplicate rows", async () => {
   await replayDdl(seam);
 
   const count = await run(seam, `SELECT count(*) AS c FROM "__rel"`);
-  assert.equal(Number(count.rows[0]!.c), 11, "re-running the DDL must not double the catalog rows");
+  assert.equal(Number(count.rows[0]!.c), 12, "re-running the DDL must not double the catalog rows");
 
   const duplicates = await run(
     seam,
     `SELECT rel_id AS id FROM "__rel" GROUP BY rel_id HAVING count(*) > 1`,
   );
   assert.equal(duplicates.rows.length, 0, "no catalog rel_id may appear twice after replay");
+});
+
+test("exactly one module row with a non-empty h_id", async () => {
+  const seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(seam, CATALOG_DDL));
+
+  const modules = await run(
+    seam,
+    `SELECT rel_id AS id, local_name AS name, h_id AS h FROM "__rel" WHERE kind = 'module'`,
+  );
+  assert.equal(modules.rows.length, 1, "there must be exactly one module row");
+  const theModule = modules.rows[0]!;
+  assert.equal(Number(theModule.id), 6, "the module row owns rel_id 6");
+  assert.equal(theModule.name, "catalog", "the module row carries the program name");
+  assert.equal(typeof theModule.h, "string", "the module h_id must be text");
+  assert.equal(String(theModule.h).length, 16, "the module h_id must be 16 hex characters");
 });
 
 test("the parent index is used, never a scan", async () => {

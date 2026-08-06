@@ -143,6 +143,7 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(crypto)).
 :- use_module(analyze).
 :- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
@@ -631,27 +632,44 @@ tick_table_ddl([ 'CREATE TABLE "__tick" ("n" INTEGER NOT NULL)',
                ]).
 
 % ═══ step g1 SCAFFOLD: the program catalog (rulings.pl:613 catalog_universe) ═
-% Rows describing this program's OWN rel decls, through the door tick_table_ddl/1 uses. A column is a CHILD ROW of its rel, so it carries a type and an annotation exactly the way a rel does: kind in {primitive, rel, column}, ordinal 0 on a rel and the 1-based argument position on a column, parent_id 0 until module nesting lands, type_id another rel_id or 0.
+% A column is a CHILD ROW of its rel (ordinal 1-based); a rel's parent_id is the
+% module row's, module_id is the module row's own id, h_id the row identity hash.
 catalog_ddl_contract('__rel',
                      [ rel_id-int, parent_id-int, ordinal-int,
-                       local_name-text, kind-text, type_id-int, arity-int ]).
+                       local_name-text, kind-text, type_id-int, arity-int,
+                       module_id-int, h_id-text ]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
 catalog_table_ddl([
     'CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")']).
 
+%! module_hash(+ModuleName, -HashText) is det.
+%   SHA-256 of the module name, truncated to 16 hex characters (64 bits).
+module_hash(ModuleName, HashText) :-
+    crypto_data_hash(ModuleName, FullHash, [algorithm(sha256)]),
+    sub_atom(FullHash, 0, 16, _, HashText).
+
+%! rel_h_id(+ModuleHash, +LocalName, +Arity, -HashText) is det.
+rel_h_id(ModuleHash, LocalName, Arity, HashText) :-
+    format(atom(Key), '~w/~w/~w', [ModuleHash, LocalName, Arity]),
+    module_hash(Key, HashText).
+
 % Ids are assigned by POSITION for a byte-stable recompile: the five
-% primitives take 1..5, then each rel, then its columns (one INSERT OR IGNORE).
-catalog_row_ddl(_Decls, RelPlans, [Statement]) :-
+% primitives take 1..5, the module row takes 6, then each rel, then its
+% columns (one INSERT OR IGNORE).
+catalog_row_ddl(ModuleName, _Decls, RelPlans, [Statement]) :-
+    ModuleId = 6,
+    module_hash(ModuleName, ModuleHash),
     catalog_primitive_rows(1, PrimitiveRows),
-    catalog_rel_rows(RelPlans, 6, _FinalId, RelRows),
-    append(PrimitiveRows, RelRows, AllRows),
+    ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash),
+    catalog_rel_rows(RelPlans, ModuleId, ModuleHash, 7, _FinalId, RelRows),
+    append([PrimitiveRows, [ModuleRow], RelRows], AllRows),
     foldl(catalog_row_part, AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
-           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity") VALUES ~w',
+           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id") VALUES ~w',
            [ValuesText]).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
@@ -660,25 +678,31 @@ catalog_primitive_rows(StartId, PrimitiveRows) :-
 catalog_primitive_rows(_, [], Acc, Rows) :- reverse(Acc, Rows).
 catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
-    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0) | Acc], Rows).
+    catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '') | Acc], Rows).
 
-catalog_rel_rows([], Id, Id, []).
-catalog_rel_rows([RelPlan | Rest], Id0, FinalId, Rows) :-
+catalog_rel_rows([], _ModuleId, _ModuleHash, Id, Id, []).
+catalog_rel_rows([RelPlan | Rest], ModuleId, ModuleHash, Id0, FinalId, Rows) :-
     RelPlan = relplan(Name/RelArity, _Kind, Columns, _Key, ColumnTypes),
-    RelRow = row(Id0, 0, 0, Name, rel, 0, RelArity),
+    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId),
     IdAfterRel is Id0 + 1,
-    catalog_column_rows(Columns, ColumnTypes, Id0, 1, IdAfterRel, IdAfterColumns, ColumnRows),
-    catalog_rel_rows(Rest, IdAfterColumns, FinalId, RestRows),
+    catalog_column_rows(Columns, ColumnTypes, ModuleId, ModuleHash, Id0, 1,
+                        IdAfterRel, IdAfterColumns, ColumnRows),
+    catalog_rel_rows(Rest, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 
-catalog_column_rows([], _ColumnTypes, _RelId, _Ordinal, Id, Id, []).
-catalog_column_rows([ColumnName | RestColumns], ColumnTypes, RelId, Ordinal, Id0, IdFinal, [ColumnRow | MoreRows]) :-
+catalog_column_rows([], _ColumnTypes, _ModuleId, _ModuleHash, _RelId, _Ordinal,
+                    Id, Id, []).
+catalog_column_rows([ColumnName | RestColumns], ColumnTypes, ModuleId, ModuleHash,
+                    RelId, Ordinal, Id0, IdFinal, [ColumnRow | MoreRows]) :-
     nth1(Ordinal, ColumnTypes, ColumnType),
     catalog_type_id(ColumnType, TypeId),
+    rel_h_id(ModuleHash, ColumnName, 0, ColumnHId),
     NextId is Id0 + 1,
     NextOrdinal is Ordinal + 1,
-    catalog_column_rows(RestColumns, ColumnTypes, RelId, NextOrdinal, NextId, IdFinal, MoreRows),
-    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0).
+    catalog_column_rows(RestColumns, ColumnTypes, ModuleId, ModuleHash, RelId,
+                        NextOrdinal, NextId, IdFinal, MoreRows),
+    ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId, ColumnHId).
 
 % Primitive id for a column's boundary type: the five primitives take 1..5,
 % every other boundary (ref(_), a struct name, a list) is 0.
@@ -689,11 +713,14 @@ catalog_type_id(bool, 4) :- !.
 catalog_type_id(json, 5) :- !.
 catalog_type_id(_, 0).
 
-catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity), Acc, [Part | Acc]) :-
+catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
+                     ModuleId, HId), Acc, [Part | Acc]) :-
     sql_text_literal(Name, NameLiteral),
     sql_text_literal(Kind, KindLiteral),
-    format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d)',
-           [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId, Arity]).
+    sql_text_literal(HId, HIdLiteral),
+    format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d,~d,~w)',
+           [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId, Arity,
+            ModuleId, HIdLiteral]).
 
 % SQL string literal: single-quoted, embedded single quotes doubled.
 sql_text_literal(Text, Literal) :-
@@ -3568,7 +3595,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
-       catalog_row_ddl(Decls, RelPlans, CatalogRowDdl)
+       catalog_row_ddl(Name, Decls, RelPlans, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
