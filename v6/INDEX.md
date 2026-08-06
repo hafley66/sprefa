@@ -41,6 +41,7 @@
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
 | [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 70 | exec_shootout STANDINGS |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
+| [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -559,6 +560,20 @@
 22:## `grid_10000`: where the fixpoint went
 39:## `layered_10000`: where the fixpoint went
 56:## `chain_10000`: where the fixpoint went
+```
+
+### labs/exec_shootout/sqlite_raw/REPORT.md
+```
+1:# sqlite_raw: what the medium can do with zero reactive machinery
+5:## TOC
+15:## Final numbers beside the rust engines and dl6
+48:## The chosen design
+72:## Writes per derived row
+93:## Variant race
+123:## Checksum fold race
+138:## Pragma sweep
+154:## What failed, what surprised
+163:## Reproducing
 ```
 
 ### plans/2026-07-19-reactive-style-port.md
