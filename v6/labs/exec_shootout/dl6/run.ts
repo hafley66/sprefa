@@ -4,7 +4,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { concatMap, map, tap, toArray, type Observable } from "rxjs";
+import { EMPTY, concatMap, expand, last, map, of, tap, toArray, type Observable } from "rxjs";
 
 import { BootRunner } from "./runtime/2_boot.ts";
 import { ScratchStore } from "./runtime/scratchStore.ts";
@@ -64,10 +64,43 @@ function arrivalBatch(edges: readonly IEdge[]): IArrivalBatch {
   return edges.map((edge) => ({ rel: "edge", sign: "add" as const, row: [edge.source, edge.target] }));
 }
 
-function foldChecksum(rows: readonly (readonly number[])[]): bigint {
-  let checksum = 0n;
-  for (const row of rows) checksum ^= fnv1a64(row[0]!, row[1]!);
-  return checksum;
+const CHECKSUM_PAGE_ROWS = 250_000;
+
+// Materializing the whole answer costs about 140 bytes per row in V8 and
+// exceeds the heap at 10M rows, so each page is folded and dropped.
+function foldChecksum(seam: ISqlSeam, table: string): Observable<{ rows: number; checksum: bigint }> {
+  type Page = { rows: number; checksum: bigint; lastSource: number; lastTarget: number; done: boolean };
+  const readPage = (source: number, target: number, carried: Page): Observable<Page> =>
+    seam.runner
+      .execute(seam.db, {
+        sql: `SELECT "source", "target" FROM ${table} WHERE ("source", "target") > (?, ?) ORDER BY "source", "target" LIMIT ?`,
+        args: [source, target, CHECKSUM_PAGE_ROWS],
+      })
+      .pipe(
+        map((result): Page => {
+          let checksum = carried.checksum;
+          let lastSource = source;
+          let lastTarget = target;
+          for (const row of result.rows) {
+            lastSource = Number(row.source);
+            lastTarget = Number(row.target);
+            checksum ^= fnv1a64(lastSource, lastTarget);
+          }
+          return {
+            rows: carried.rows + result.rows.length,
+            checksum,
+            lastSource,
+            lastTarget,
+            done: result.rows.length < CHECKSUM_PAGE_ROWS,
+          };
+        }),
+      );
+  const seed: Page = { rows: 0, checksum: 0n, lastSource: -1, lastTarget: -1, done: false };
+  return readPage(-1, -1, seed).pipe(
+    expand((page) => (page.done ? EMPTY : readPage(page.lastSource, page.lastTarget, page))),
+    last(),
+    map((page) => ({ rows: page.rows, checksum: page.checksum })),
+  );
 }
 
 // Probe reachable count mid-run so a timeout kill still leaves a last count.
@@ -149,25 +182,24 @@ function main(): void {
               toArray(),
               map(() => {
                 const fixpointMs = Math.round(performance.now() - fixpointStart);
+                process.stderr.write(`dl6: tick settled in ${fixpointMs}ms, reading final table\n`);
                 const finalColumns = program.relColumns["reachable"];
                 return { fixpointMs, finalColumns };
               }),
             );
           }),
-          concatMap(({ fixpointMs, finalColumns }) =>
-            seam.runner.execute(seam.db, program.finalSelect["reachable"]!).pipe(
-              map((result) => {
-                const rows = result.rows.map((row): readonly number[] =>
-                  (finalColumns ?? []).map((column) => row[column] as number),
-                );
-                const checksum = foldChecksum(rows).toString(16).padStart(16, "0");
-                return { fixpointMs, rows, checksum };
-              }),
+          concatMap(({ fixpointMs }) =>
+            foldChecksum(seam, `"reachable"`).pipe(
+              map(({ rows, checksum }) => ({
+                fixpointMs,
+                rows,
+                checksum: checksum.toString(16).padStart(16, "0"),
+              })),
             ),
           ),
           map(({ fixpointMs, rows, checksum }) => {
-            process.stdout.write(`{"event":"fixpoint","derived":${rows.length},"ms":${fixpointMs}}\n`);
-            process.stderr.write(`dl6: fixpoint derived=${rows.length}\n`);
+            process.stdout.write(`{"event":"fixpoint","derived":${rows},"ms":${fixpointMs}}\n`);
+            process.stderr.write(`dl6: fixpoint derived=${rows}\n`);
             process.stdout.write(
               `{"event":"done","checksum":"${checksum}","peak_rss_kb":${rssKb()}}\n`,
             );
