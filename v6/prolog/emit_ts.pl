@@ -17,7 +17,7 @@
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
-                level_body_pre_ref/2 ]).
+                level_body_pre_ref/2, rel_rule_observers/3 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
@@ -880,9 +880,10 @@ arrival_statement_fn_lines(Name, Lines) :-
 
 % ═══ incremental relation plans ══════════════════════════════════════════════
 
-incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements,
+incremental_relation_lines(RelPlans, Rules, ArrivalStatements, DeltaStatements,
                            DepartureRefs, Lines) :-
-    maplist(incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs),
+    maplist(incremental_relation_entry_line(RelPlans, Rules, ArrivalStatements,
+                                            DepartureRefs),
             DeltaStatements, EntryLines),
     append(
         [ ['const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = ['],
@@ -890,7 +891,7 @@ incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements,
           ['];']
         ], Lines).
 
-incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
+incremental_relation_entry_line(RelPlans, Rules, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql), Line) :-
     ref_name(Ref, Name),
     relplan_kind(RelPlans, Ref, Kind),
@@ -925,11 +926,22 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
                [DepartureTable])
     ;   DepartureField = ''
     ),
+    % ruleObservers is emitted on EVERY relation entry, empty array when no
+    % rule reads this rel's event tables, so the runtime's boot-time skip has
+    % a per-rel observer set to test against.
+    rel_rule_observers(Rules, Ref, Observers),
+    rel_ref_text_list(Observers, ObserverRefTexts),
+    quoted_string_array_text(ObserverRefTexts, ObserversText),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, columnTypes: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w },',
+           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, columnTypes: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w, ruleObservers: ~w },',
            [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate, DepartureField]).
+            BoundaryTemplate, DepartureField, ObserversText]).
+
+rel_ref_text_list([], []) :- !.
+rel_ref_text_list([Name/Arity | Rest], [Text | More]) :-
+    format(atom(Text), '~w/~w', [Name, Arity]),
+    rel_ref_text_list(Rest, More).
 
 position_index(Position, Index) :- Index is Position - 1.
 
@@ -2312,7 +2324,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     final_select_lines(DeltaStatements, FinalSelectLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
-    incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
+    incremental_relation_lines(RelPlans, PlanRules, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
     incremental_edge_statement_lines(Name, EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
     incremental_level_statement_lines(Name, RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,

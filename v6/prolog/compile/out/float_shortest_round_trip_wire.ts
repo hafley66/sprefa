@@ -202,7 +202,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "sample", kind: "set", tableName: "sample", deltaTableName: "__delta_sample", frontierTableName: "__frontier_sample", nextFrontierTableName: "__next_frontier_sample", columns: ["value"], columnTypes: ["float"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "sample" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "sample" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sample" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
+  { rel: "sample", kind: "set", tableName: "sample", deltaTableName: "__delta_sample", frontierTableName: "__frontier_sample", nextFrontierTableName: "__next_frontier_sample", columns: ["value"], columnTypes: ["float"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "sample" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "sample" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sample" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
