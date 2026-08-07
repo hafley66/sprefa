@@ -86,3 +86,6 @@ v6/labs/exec_shootout/dl6/FACTS.baseline.json
 dist-local/
 !.claude/skills/
 !.claude/skills/**
+
+# sed -i backups; a lane committed five of these through git add -A
+*.bak
