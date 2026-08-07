@@ -1,0 +1,141 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+  today: { style.fill: "#eef1f4"; style.stroke: "#57606a"; style.font-color: "#1f2328" }
+  armed: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0a3069" }
+  gatebox: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#116329" }
+  pending: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#6f5500" }
+  prizebox: { style.fill: "#ffeff7"; style.stroke: "#bf3989"; style.font-color: "#99286e" }
+}
+
+legend: {
+  near: top-right
+  grid-rows: 4
+  grid-gap: 4
+  a: "shipped, live today" { class: today; width: 220 }
+  b: "landed, dormant (dict)" { class: armed; width: 220 }
+  c: "gate, runs every commit" { class: gatebox; width: 220 }
+  d: "queued lane / future" { class: pending; width: 220 }
+}
+
+s1: "1. one compiler, and the gun is a plan argument" {
+  gun: |`prolog
+    % lower.pl -- never a runtime flag
+    intern_mode(Options, Mode) :-
+        (  memberchk(intern(Requested), Options)
+        -> Mode = Requested
+        ;  Mode = dict ).
+  `| { class: code }
+  note: |md
+    - threaded program_plan/3 -> plan/8
+    - every emission site reads it
+    - runtime flip: FORBIDDEN by contract
+      (affinity would store text in
+      INTEGER columns, probes go empty)
+  |
+  note.shape: rectangle
+  note.class: today
+}
+
+s2: "2. two worlds out of one source" {
+  direct: "intern(direct) -- shipped corpus today" {
+    class: today
+    ddl: |`sql
+      CREATE TABLE "flow_reach" (
+        "from_path" TEXT, "from_name" TEXT,
+        "to_path" TEXT,   "to_name" TEXT,
+        PRIMARY KEY (...)) WITHOUT ROWID;
+      -- module stamp:
+      -- internMode: "direct"
+    `| { class: code }
+  }
+  dict: "intern(dict) -- landed, dormant, A/B-proven" {
+    class: armed
+    ddl: |`sql
+      CREATE TABLE "__str" ("__id" INTEGER
+        PRIMARY KEY, "content" TEXT
+        NOT NULL UNIQUE);
+      CREATE TABLE "flow_reach" (
+        "from_sym" INTEGER, "to_sym" INTEGER,
+        PRIMARY KEY (...)) WITHOUT ROWID;
+      CREATE VIEW "__txt_flow_reach" AS ...;
+      -- internMode: "dict"
+    `| { class: code }
+  }
+}
+
+s3: "3. runtime doors" {
+  door: "ingest door: textPlane.ts" {
+    class: armed
+    plan: |`ts
+      // two set-based stmts per batch, flat in
+      // DISTINCT values; runs BEFORE StructPlane
+      INSERT OR IGNORE INTO __str ...
+      // then swap text -> ids via JOIN
+    `| { class: code }
+  }
+  attach: "serve attach check" {
+    class: today
+    note: |md
+      - artifact stamp vs db mode
+      - crossing = refused by name
+      - no silent affinity corruption
+    |
+    note.shape: rectangle
+    note.class: today
+  }
+}
+
+s4: "4. the police, every commit" {
+  g9: "G9 A/B: 211 modules\ncompiled BOTH modes,\ndiff = named interning\nclasses only, unexplained=0" { class: gatebox }
+  g11: "G11: every text column\nINTEGER + dict('__str')\nunder dict mode" { class: gatebox }
+  rail: "COUNT rail: door stays\n2 statements per batch,\nnever per-row" { class: gatebox }
+  swp: "sweep: 211 schedules,\nRUN wrong=0,\nFINAL wrong=0" { class: gatebox }
+}
+
+s5: "5. the flip path -- speed lives at the end" {
+  lits: "I-C literals:\nValue == 'foo' and\n'warning' projections\nintern at boot" { class: pending }
+  built: "I-K built strings:\nCount || ' hits'\ninterned on write" { class: pending }
+  telem: "I-F/I-G telemetry:\n__str_stats log rel,\nrunning totals, one\nbatch with the door" { class: pending }
+  flip: "FLIP: default_intern_mode\ndict -- one atom" { class: pending }
+  referee: "final referee:\nfull sweep executing\nUNDER dict, wrong=0" { class: gatebox }
+  prize: {
+    class: prizebox
+    label: "the collected prize"
+    note: |md
+      - keyed inserts 1.7-2.0x (measured)
+      - 86% of keyed tables affected
+      - btree keys 16 bytes, fanout ~10x
+      - opens rowid+unique heads:
+        grid sub-1,000 + chain tail
+      - rust executor reads (i64, i64)
+    |
+    note.shape: rectangle
+    note.class: prizebox
+  }
+}
+
+s1.gun -> s2.direct: "default today"
+s1.gun -> s2.dict: "A/B + tests only"
+s2.direct -> s3.attach: "stamp: direct"
+s2.dict -> s3.door: "text arrives once"
+s3.door -> s3.attach: "stamp: dict"
+s2.direct <-> s4.g9: "compiled both,\ndiffed"
+s2.dict <-> s4.g9
+s2.dict -> s4.g11
+s3.door -> s4.rail
+s4.swp -> s5.referee: "re-run under dict"
+s5.lits -> s5.flip
+s5.built -> s5.flip
+s5.telem -> s5.flip
+s2.dict -> s5.flip: "machinery ready"
+s5.flip -> s5.referee
+s5.referee -> s5.prize
