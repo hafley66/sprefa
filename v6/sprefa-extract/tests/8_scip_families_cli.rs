@@ -538,8 +538,10 @@ fn the_binary_states_what_diet_means() {
     let schema = run(&["--schema"]);
     assert!(schema.contains(SENTENCE), "missing from --schema");
 
+    // --help states the same fact in its own words (help.rs LONG_ABOUT).
+    const HELP_SENTENCE: &str = "\"diet\" names the technique";
     let help = String::from_utf8_lossy(&raw(&["--help"]).stdout).to_string();
-    assert!(help.contains(SENTENCE), "missing from --help: {help}");
+    assert!(help.contains(HELP_SENTENCE), "missing from --help: {help}");
 
     // And the record vocabulary the scip family emits is documented, so a
     // consumer can decode the stream without reading this crate.
