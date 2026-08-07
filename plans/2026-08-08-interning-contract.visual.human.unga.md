@@ -8,6 +8,12 @@ are fixed in the sections below, and section 16 lists what each one was. Three
 of the seven were "answers wrong and says nothing", which is the category that
 matters.
 
+**Rev 3.** Your call: *"do we have to have direct(string/text), can we please
+just intern it all for now. this mixing and all its woes is whack."* Done. There
+is no per-column opt-out any more, the compiler never quietly leaves a column as
+words, and runtime-built strings go into the bag too. Section 17 is the summary
+of what that deleted.
+
 ## TOC
 
 - [1. The one-sentence version](#1-the-one-sentence-version)
@@ -18,7 +24,7 @@ matters.
 - [6. The scary part: sorting](#6-the-scary-part-sorting)
 - [7. The front door](#7-the-front-door)
 - [8. Table shapes](#8-table-shapes)
-- [9. The escape hatch](#9-the-escape-hatch)
+- [9. The escape hatch, removed](#9-the-escape-hatch-removed)
 - [10. Proving nothing broke](#10-proving-nothing-broke)
 - [11. Who builds what](#11-who-builds-what)
 - [12. Numbers to hit](#12-numbers-to-hit)
@@ -26,6 +32,7 @@ matters.
 - [14. The gun](#14-the-gun)
 - [15. Watching the word bag](#15-watching-the-word-bag)
 - [16. What the red team broke](#16-what-the-red-team-broke)
+- [17. What rev 3 deleted](#17-what-rev-3-deleted)
 
 ---
 
@@ -258,8 +265,8 @@ and that side is a write:
 26 programs do this. Same fix: the constant is in the bag, so the rule writes
 its number.
 
-The third case has no fix, so it gets a different answer. A rule that BUILDS a
-string, by gluing pieces together, produces a word nobody has seen before:
+The third case is a rule that BUILDS a string by gluing pieces together, so the
+word does not exist until the rule runs:
 
 ```
    diag_message(path, hits || ' counted hits; the baseline allows ' || cap)
@@ -269,23 +276,69 @@ string, by gluing pieces together, produces a word nobody has seen before:
                      same statement that computes it
 ```
 
-For that column the compiler gives up on interning, automatically, and records
-why. Which is the right call anyway: a column full of unique built strings is
-exactly the case where interning loses (section 9).
+Rev 2 let that column quietly stay words. **Rev 3 does not**, because quietly
+staying words is exactly the mixing you rejected. The string goes in the bag as
+it is written, in two statements instead of one:
 
-### Giving up automatically needs a guard
+```
+   1. build the strings and put the new ones in the bag
+        INSERT OR IGNORE INTO bag(word)
+          SELECT DISTINCT <the built string> FROM <the rule's inputs> WHERE <its filter>
 
-If one column quietly falls back to holding words, and another relation holds
-the same thing as numbers, joining them compares a word to a number and returns
-nothing. Same silent-empty failure as before.
+   2. write the rows, looking each string up as it goes
+        INSERT INTO diag(path, message)
+          SELECT path, bag.number
+          FROM <the rule's inputs> JOIN bag ON bag.word = <the built string>
+          WHERE <its filter>
+```
 
-So that comparison is now **refused by the compiler, by name**. You cannot
-compile a program that joins a word column to a number column. It stops, and it
-tells you which two columns.
+The rule's inputs and filter are copied word for word into both, so both see the
+same rows. Statement 1 only ever ADDS to the bag, so it cannot change what
+statement 2 reads.
 
-That refusal is also what makes the escape hatch in section 9 safe. Rev 1 left
-this to a code-review comment, which the red team correctly called not a
-guard at all.
+### What that costs, counted rather than guessed
+
+```
+   programs that build a string into a column:        17
+   of those, inside a fixpoint loop:                   0   ← the number that matters
+   where they land:  diag (11)   message (1)   host demands (5)
+```
+
+Zero is the whole story. Every built string in the test corpus lands in a
+diagnostics-shaped relation, written once per tick, outside any loop. Their cost
+goes from one statement to two, plus one index lookup per row.
+
+The bad case, named so it is not a surprise: a built string inside a fixpoint
+loop would run its rule twice on **every round**. On the grid benchmark the two
+loop statements are 56% of the time, so doubling one is roughly a 28% hit. That
+case does not exist today, and the compiler now WARNS at build time on the first
+one that does.
+
+### And it was tested, on both databases
+
+```
+   inputs:  a.rs/3/x   b.rs/7/y   c.rs/3/x   d.rs/9/NULL      filter: n > 2
+
+   today, one statement, words in the column   →  3 rows
+   rev 3, two statements, numbers in column    →  3 rows, bag holds 2
+                                                  (the duplicate stored once)
+   decode the numbers back and compare         →  ZERO difference
+```
+
+Both statements run in one transaction. The row with the missing note is dropped
+by BOTH designs, for the same reason, so that is not a new behaviour.
+
+### The refusal rev 2 needed is now unnecessary
+
+Rev 2 had to add a compiler refusal for "word column joined to number column",
+because two things could leave a column as words: your opt-out, and the
+automatic give-up above. Rev 3 deleted both, so no program can produce that
+situation at all.
+
+The check does not vanish entirely. It shrinks to an internal alarm that should
+never go off, kept for the day someone brings the opt-out back with evidence. A
+check nobody can trigger is not a guard, so it gets a unit test rather than a
+pretend test program.
 
 ### Why the tick log survives
 
@@ -399,36 +452,66 @@ nobody can read.
 
 ---
 
-## 9. The escape hatch
+## 9. The escape hatch, removed
 
 Interning is a 2.44x win when words repeat and a 1.2% loss when every word is
 unique. That was measured in this repo and written down nowhere useful.
 
-So the default is on, and there is one word to turn it off:
+Rev 2 spent a new keyword, two error messages, a whole-program analysis, an
+automatic give-up rule, and a join checker to recover **that 1.2%** on the
+columns where interning loses.
+
+Rev 3 spends none of it:
 
 ```
-  rel http_log(url: text, body: text) log keep(count(64)) direct(body).
-                                                          ▲
-                                            url gets a number (paths repeat)
-                                            body stays a word (every one unique)
+   rev 2                                    rev 3
+   ─────────────────────────────────        ──────────────────────────────
+   rel log(url: text, body: text)           rel log(url: text, body: text)
+       direct(body).                            .
+        ▲
+   one column opts out                      nothing opts out
+
+   plus: 2 error messages for getting       plus: nothing
+         the opt-out wrong
+   plus: a rule for when the compiler
+         opts a column out for you
+   plus: a checker for when an
+         opted-out column meets one
+         that did not
 ```
 
-`direct` is the word because the compiler's internal record already calls the
-two choices "direct" and "dict". Same word inside and outside, nothing to
-translate.
+Every one of those extra pieces was a place two kinds of column could meet, and
+the red team proved one of them was reachable and silent. That is the trade in
+one line: **1.2% on some columns, against four moving parts and one confirmed
+silent-wrong-answer bug.**
 
-| turn it off when | leave it on when |
+### What it costs you
+
+| you pay | how much |
 |---|---|
-| every value is different: digests, ids, request bodies | the value is a path, a name, a kind, a tag |
-| the column is written once, read once, never compared | the column is joined against another relation's text column |
-| the relation is a small rolling log | the column is part of a key on a table with real row counts |
+| a column where every value is different, like a digest or a request body | up to 1.2% slower than leaving it alone. No way to turn it off per column |
+| a column built by gluing strings together | one extra statement per rule, plus one lookup per row. 17 programs, none in a loop |
+| the bag gets bigger | one entry per distinct built string. Diagnostics-shaped relations today |
 
-Guessing wrong toward `direct` costs 2.44x. Guessing wrong toward interning
-costs 1.2%. That asymmetry is why the default is on.
+### How the escape hatch comes back
 
-Write one line of reason next to every `direct` in a `.dl6`. Review asks for it.
+Written down so this is a reversible decision rather than a forgotten one.
 
----
+It comes back when a measured case shows a real loss. The monitoring in section
+15 is exactly how you would spot it: **a relation whose hit rate sits near zero,
+tick after tick, is a relation whose words never repeat.** That is the evidence
+to bring, along with a row count and a before/after.
+
+Three things are kept so the return is cheap rather than a rewrite:
+
+- the compiler's internal record still has a slot saying which kind a column is,
+  so a mixed program is expressible the day the surface allows it
+- the internal alarm from section 6 fires at build time if two kinds ever meet
+- the gun (section 14) still has a whole-program off switch, which is the blunt
+  version of the same escape and enough for a first measurement
+
+Until then, one rule with no exceptions: **every text column is a number.**
+
 
 ## 10. Proving nothing broke
 
@@ -525,7 +608,7 @@ flowchart TD
 | C review | walk the break list line by line against real emitted SQL; also confirm equality checks did NOT grow a decode by accident | the careful model |
 | D | three clauses so the compiler's own record says "this column is a number now" | the fast model |
 | D review | does the agreement test compare two real outputs or two hardcoded strings | the fast model |
-| E | measure the table-shape constant, then flip only the tables that need it | the careful model: this is a compiler-wide change, not a local one |
+| E | measure the table-shape constant, then flip only the tables that need it | the careful model: this ripples through every program rather than staying local |
 | E review | did any tick log move, and did the sequence number move anywhere unpredicted | the careful model |
 
 Every lane starts by fast-forwarding to the commit the coordinator names. If
@@ -573,7 +656,8 @@ has mixed two different workloads.
 | **NULL** | a text column arrives empty | impossible in storage, named error at the door, never a silent zero |
 | **numbers do not travel** | somebody copies a snapshot to another database and the numbers mean different words | law: a number is a fact about one database, and nothing written outside the database contains one |
 | **the bag only grows** | long-running process, high word churn, the bag outgrows the data | accepted for now, matching how the previous version ships. Measure it on a real workload before building any cleanup |
-| **all-unique workloads** | 1.2% slower than doing nothing | the `direct` escape hatch exists exactly for this |
+| **all-unique workloads** | 1.2% slower than doing nothing | accepted, everywhere, on purpose (section 9). The monitoring is how you would find a case worth arguing about |
+| **strings built at run time** | one extra statement per rule, one lookup per row | 17 programs, none inside a loop, and the compiler warns on the first one that is |
 | **doing the swap in the wrong order** | a word lands in a column declared as a number, the database stores it anyway, and the row is unfindable forever | the door's count rail also asserts the batch it hands onward contains no words in numbered positions |
 | **a new text operator forgets to decode** | it reads a number, matches nothing, ever | a test walks the operator registry and fails the day the operator is added |
 | **the view drifting from the table** | a reader gets fewer columns than the table has | impossible while both are built from the same column list in one function; the reviewer's job is to confirm no second builder appears |
@@ -616,9 +700,8 @@ this plan says so in advance so nobody adds one later as a convenience.
 ```
    ┌─────────────────────────────────────────────────────────────┐
    │  level 0 ── one column                                      │
-   │     add  direct(body)  to the relation                      │
-   │     blast radius: that column, that program                 │
-   │     cost: edit one line, recompile, rebuild that database   │
+   │     ✗ REMOVED IN REV 3 (section 9). Per-column granularity  │
+   │       was the mixing you asked us to stop doing.            │
    ├─────────────────────────────────────────────────────────────┤
    │  level 1 ── one program                                     │
    │     compile with  --intern=direct                           │
@@ -947,6 +1030,9 @@ constants the program has. There is a test for it.
 | F review | does a program that never mentions it come out byte-identical to before | the fast model |
 | G | the one extra statement, the running totals, the live channel, the statement-count test | the fast model: the SQL is written out |
 | G review | **does anything in here read the whole word bag**, and does the running total survive a crash | the careful model: a hidden full scan is what turns monitoring into the outage |
+| J | the reserved-name refusal, and its test programs | the fast model: one rule with a named error |
+| K | **strings built at run time go in the bag** (section 6): split the rule into two statements, warn if one ever lands inside a loop | the careful model: splitting a rule in two while keeping the output byte-identical is the whole job |
+| K review | are the rule's inputs and filter copied word for word into both statements, is the duplicate-removal there, is the missing-value row still dropped the same way | the careful model |
 
 
 ---
@@ -990,3 +1076,53 @@ row and stops. Timed at 1.3 microseconds over a thousand rows and 1.0 microsecon
 hundred thousand, so it does not grow with the log.
 
 It is written down here so the answer costs a minute rather than a lane.
+
+
+---
+
+## 17. What rev 3 deleted
+
+Your word: *"do we have to have direct(string/text), can we please just intern it
+all for now. this mixing and all its woes is whack."*
+
+### The four changes
+
+| # | what | why |
+|---|---|---|
+| 1 | the per-column opt-out is gone from the language | it was one of two ways a column could stay words, and the way the red team's worst bug got in |
+| 2 | the compiler no longer gives up on a column by itself; built strings go in the bag as they are written | that was the other way |
+| 3 | the "word column meets number column" refusal shrinks to an internal alarm | with both ways gone, no program can reach that state, and a check nothing can trigger is not a check |
+| 4 | the compiler's record still labels each column's kind | a text column now stores a number, and that pair means nothing without the label. It is also what makes the opt-out cheap to bring back |
+
+### What got simpler
+
+```
+   rev 2                                  rev 3
+   ───────────────────────────────        ────────────────────────
+   "is this column a number?"             "is it text?"
+     read the declaration
+     check for an opt-out
+     scan every rule that writes it
+     three possible answers                one answer
+
+   4 new error messages                   1
+   1 new keyword                          0
+   2 kinds of text column                 1
+```
+
+### What got more expensive
+
+Said plainly, because you chose this knowing the cost:
+
+- **1.2%** on any column whose values never repeat, with no way to turn it off
+- **one extra statement plus one lookup per row** on the 17 programs that build
+  strings, none of which sit inside a loop
+- the bag grows by one entry per distinct built string
+
+### The one number that decides whether this was right
+
+The monitoring in section 15 reports, every tick, how many words were already
+known. A relation whose hit rate sits near zero is a relation whose words never
+repeat, and that is the exact case the opt-out existed for. If that number never
+approaches zero, the opt-out was never worth its four moving parts. If it does,
+section 9 names the evidence to bring to get it back.

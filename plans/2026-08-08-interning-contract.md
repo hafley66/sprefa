@@ -9,8 +9,14 @@ Plain-words twin: `plans/2026-08-08-interning-contract.visual.human.unga.md`.
 
 **Rev 2, 2026-08-08.** Red-teamed at `e8bb9911` (report:
 `plans/2026-08-08-interning-contract.redteam.md`, 7 confirmed findings, 5 held
-attacks). Every finding is closed in place; §19 is the changelog with the
-section each one moved.
+attacks). Every finding is closed in place; §19 is the changelog.
+
+**Rev 3, 2026-08-08 (user word).** *"do we have to have direct(string/text), can
+we please just intern it all for now. this mixing and all its woes is whack."*
+The per-column waiver is withdrawn, the automatic fallback is deleted, and
+runtime-built strings are interned on write. **Every text column in a program is
+a dictionary id, with no exceptions.** §20 is the changelog; §9 records what was
+deleted and how it returns if a case ever earns it.
 
 ## TOC
 
@@ -22,7 +28,7 @@ section each one moved.
 - [6. Ingest-door intern](#6-ingest-door-intern)
 - [7. Head storage: rowid+unique vs WITHOUT ROWID](#7-head-storage-rowidunique-vs-without-rowid)
 - [8. IR handshake](#8-ir-handshake)
-- [9. The waiver: `direct`](#9-the-waiver-direct)
+- [9. The waiver, withdrawn](#9-the-waiver-withdrawn)
 - [10. Migration across the 306-fixture corpus](#10-migration-across-the-306-fixture-corpus)
 - [11. Lanes, ownership, two-pass law](#11-lanes-ownership-two-pass-law)
 - [12. Phase gates with numbers](#12-phase-gates-with-numbers)
@@ -35,6 +41,8 @@ section each one moved.
 - [Rev 2 2026-08-08 (red team)](#rev-2-2026-08-08-red-team)
   - [18. The `__` namespace is refused, not requested](#18-the-__-namespace-is-refused-not-requested)
   - [19. Changelog: the seven findings and where each closed](#19-changelog-the-seven-findings-and-where-each-closed)
+- [Rev 3 2026-08-08 (user word: intern it all)](#rev-3-2026-08-08-user-word-intern-it-all)
+  - [20. Changelog: what rev 3 deleted, added and re-scoped](#20-changelog-what-rev-3-deleted-added-and-re-scoped)
 
 ---
 
@@ -42,14 +50,16 @@ section each one moved.
 
 | question | decision | argued in |
 |---|---|---|
-| is interning opt-in or the default? | **default** for every `text`-typed stored column; opt-out spelled `direct` | §9 |
+| is interning opt-in or the default? | **universal.** Every `text`-typed stored column, no per-column opt-out (rev 3) | §9 |
+| what about a string built at run time? | interned on write, two statements, verified on both builds | §5.7 |
+| can two encodings meet in one program? | **no, by construction.** There is nothing to mix, which is why rev 2's join refusal is demoted to an assertion that never fires | §5.6 |
 | one dictionary per natural-key shape, or one global? | **one global `__str`** | §3 |
 | when is the decode view emitted? | **in the same `rel_ddl/5` call that emits the table**, same returned list | §4 |
 | what reads text? | the emitted view `__txt_<rel>`, and nothing hand-written | §4, §5 |
 | what compares text? | identity only (`==`, `\==`, join equality), which survives interning **as long as both sides are in the id space** | §5, §5.6 |
 | what about a text CONSTANT? | it is interned at boot and compared as an id; a constant is the sixth decode site and the one the first draft missed | §5.2 rows 11-13, §5.3 |
 | what breaks? | nine statement families, all named, all with a fix | §5, §13 |
-| what refuses mechanically? | mixing encodings across a join (`mixed_encoding_join`), and a user rel in the `__` namespace (`reserved_rel_namespace`) | §5.6, §18 |
+| what refuses mechanically? | a user rel in the compiler-owned `__` namespace (`reserved_rel_namespace`) | §18 |
 | head table shape | WITHOUT ROWID stays everywhere except recursive heads taking the rowid-range delta | §7 |
 | how does the oracle stay the referee? | it never runs SQL; the sweep's tick-log diff is the migration receipt unchanged | §10 |
 
@@ -110,31 +120,28 @@ written to make that sentence unspellable.
 %   before every rel_ddl/5 output. No per-rel and no per-shape variant.
 intern_ddl([StringTableDdl]).
 
-% interned_column(+Decls, +Rules, +Ref, +Column, +Type, -Reason)
-%   TRUE when a stored column takes dict('__str') encoding. This is a
-%   PROGRAM-WIDE analysis, not a per-column type test: what WRITES the column
-%   decides as much as what the column is declared to be (§5.2 row 13).
-%   Pseudo-code:
-%     Type == text,                       % json stays TEXT: json1 reads it in place
-%     \+ direct_waiver(Decls, Ref, Column),        % Reason = waiver, else
-%     forall( a rule head writing this column,
-%             the head expression at that position is a column reference
-%             or a text literal ),                 % Reason = dict, else
-%     % a computed text head expression (concat, norm, json_extract) produces a
-%     % value that is not in the dictionary and cannot be looked up in the same
-%     % statement that writes it, so the column falls back:
-%     Reason = computed_text_head(Rule).
-interned_column(Decls, Rules, Ref, Column, Type, Reason).
-
-% Reason is carried into the IR (§8) and printed by the waiver report, so
-% "why is this column TEXT" is answered by the artifact, never by reading
-% lower.pl.
+% interned_column(+Type)
+%   TRUE when a stored column takes dict('__str') encoding.
+%   Rev 3: one line. json stays TEXT because json1 reads it in place.
+interned_column(text).
 ```
 
-The auto-fallback is safe rather than dangerous because §5.6 refuses a join
-across two different encodings by name. A column that falls back and is then
-joined to an interned column stops the compile with `mixed_encoding_join`
-instead of returning nothing.
+Rev 2 had this as a program-wide analysis with two escape routes: an author's
+`direct(col)` waiver, and an automatic fallback for a column written by a
+computed text expression. **Rev 3 deletes both.** The waiver is withdrawn (§9)
+and the computed-text case is handled by interning on write instead of by
+falling back (§5.7).
+
+What that buys, and it is the reason the user asked for it: **there is no second
+encoding for a text column anywhere in a program**, so no analysis can be wrong,
+no join can span two encodings, and no reader has to ask which kind of text
+column they are looking at. The predicate is one clause and it cannot drift from
+the DDL, because the DDL reads the same clause.
+
+A rel-reference column still carries `dict(TargetType)` rather than
+`dict('__str')`, which is a different dictionary family and not a mixing case:
+the declared types differ, so `join_column_types_agree/4` already refuses any
+join between them by declared type alone (`lower.pl:311-315`).
 
 ### 3.2 The DDL
 
@@ -455,43 +462,164 @@ text columns are INTEGER, the emit-order comparator is integer compare, and that
 whole class of risk is deleted rather than mitigated. Record it in the offload
 contract when task #4 lands.
 
-### 5.6 Mixing encodings across a join is refused by name
+### 5.6 Mixing, and why the refusal is demoted to an assertion
 
-Red-team finding 3. `rel a(p: text) direct(p)` joined to interned `b(p: text)`
-lowers to `a."p" = b."p"`, TEXT against INTEGER, silently empty. Rev 1 guarded
-this with a prose do-not in §9.3 and a review comment, which is not a guard.
+Rev 2 added `mixed_encoding_join`, a compiler refusal for `a."p" = b."p"` where
+one side was a `direct` text column and the other an interned one. It closed
+red-team finding 3, which was real: rev 2 had two ways to produce a `direct`
+text column (the author's waiver, and the automatic fallback), so two encodings
+could meet.
 
-The compiler already refuses the neighbouring mistake:
+**Rev 3 deletes both producers, so the state is unreachable.** Within one
+compiled program every text column is `dict('__str')`. There is no surface
+syntax, no analysis outcome, and no lowering path that yields a `direct` text
+column.
+
+Two candidate fates, and the call:
+
+| option | argument | verdict |
+|---|---|---|
+| keep the surface refusal | it is already written and costs nothing | **no.** A refusal that no program can trigger has no fixture that can be red, so it is untested code claiming to be a guard. That is worse than no guard, because a reader trusts it |
+| delete it entirely | uniformity makes it dead | **no.** The encoding field survives in the IR (§8), the gun's direct mode still exists at the program level (§15), and a future waiver would reintroduce the case silently |
+| **keep one internal assertion at the single place encoding is chosen** | it fires before anything is emitted if the invariant ever breaks, and it is unit-testable by calling the predicate directly | **yes** |
+
+The assertion, stated so its job is clear:
 
 ```prolog
-% lower.pl:311-315, today
-join_column_types_agree(_, ColumnType, _, ExistingType) :-
-    ColumnType == ExistingType, !.
-join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType) :-
-    throw(unsupported_construct(
-        join_column_type_mismatch(ColumnExpr, ColumnType, Existing, ExistingType))).
+% uniform_text_encoding(+ColumnClasses)
+%   INVARIANT, not a refusal. Every text-typed column in one program carries
+%   the same Encoding. Today that is dict('__str') under intern(dict) and
+%   direct under intern(direct) (§15.3), uniformly, so this never fires.
+%   It exists so that the day a per-column waiver returns (§9.3), it fires
+%   at compile time rather than producing an empty join at run time.
+uniform_text_encoding(ColumnClasses) :-
+    ( setof(E, C^T^S^Co^member(colclass(C,T,S,Co,E), text_typed(ColumnClasses)), [_])
+    -> true
+    ;  throw(unsupported_construct(mixed_text_encoding(ColumnClasses))) ).
 ```
 
-Both sides of the bad join carry declared type `text`, so this predicate passes
-them. The fix is to compare the pair (Type, Encoding) rather than Type alone,
-and to name the new failure separately so the diagnosis is not confused with the
-text-vs-integer one it already reports:
+Its test is a **plunit unit test that calls the predicate with a hand-built
+mismatched list**, not a `.dl6` fixture. No program can build that list, and
+pretending otherwise with a fixture that cannot be red is the failure mode the
+first option above names.
 
-```prolog
-% join_column_types_agree(+ColumnExpr, +Type-+Encoding, +Existing, +Type-+Encoding)
-%   Type mismatch          -> join_column_type_mismatch  (unchanged)
-%   Type agrees, Encoding differs -> mixed_encoding_join(ColumnExpr, Existing,
-%                                      LeftEncoding, RightEncoding)
+Cross-family joins are a different question and are already answered: a text
+column is `dict('__str')` and a rel-reference column is `dict(TargetType)`, but
+their DECLARED types differ (`text` vs `ref(Target)`), so
+`join_column_types_agree/4` refuses them today with `join_column_type_mismatch`
+(`lower.pl:311-315`). Rev 3 adds nothing there.
+
+### 5.7 Intern on write: strings built at run time
+
+Rev 2's answer to a head projecting `concat(...)` into a text column was to let
+that column fall back to `direct`. Rev 3's user word rejects the mixing that
+creates, so the string is interned instead. The value is unknown until the arm
+computes it, so the intern happens as part of writing the row.
+
+#### 5.7.1 The two statements
+
+```sql
+-- 1. intern every built string the arm will produce, set-based, one statement
+INSERT OR IGNORE INTO "__str" ("content")
+SELECT DISTINCT (b0."n" || ' hits; ' || b0."note")
+FROM "hits" b0 WHERE b0."n" > 2;
+
+-- 2. the head insert, with the built expression resolved to its id by a join
+INSERT OR IGNORE INTO "diag" ("path","message")
+SELECT b0."path", s."__id"
+FROM "hits" b0 JOIN "__str" s ON s."content" = (b0."n" || ' hits; ' || b0."note")
+WHERE b0."n" > 2;
 ```
 
-The predicate is already on every join path (`lower.pl:308-315` header cites the
-measured `'1' = 1` case it was built for), so this is one clause and no new
-traversal. Its fixture is §10.3's new `direct_column_joined_to_interned_refuses`.
+The arm's `FROM` and `WHERE` are reproduced verbatim in both. Statement 1 writes
+only to `__str`, which no arm reads by content, and it only ADDS rows, never
+changing an existing id, so the two executions of the arm see identical input
+and produce identical rows. Both statements go in the tick's existing batch, so
+they are one transaction.
 
-This refusal is also what makes §3.1's automatic `direct` fallback safe: a
-column that falls back for a computed head stops the compile if anyone joins it
-to an interned column, rather than returning nothing.
+#### 5.7.2 Why not a staging table
 
+The obvious alternative materializes the arm once into a per-arm staging table,
+interns from it, then joins it to `__str`. Four statements, and the arm runs
+once instead of twice. It loses on the repo's own measured law:
+
+> "One-table-with-state-columns vs many tables measured as a wash; you save a
+> write only by deleting the QUESTION it answers, never by relocating the
+> answer." (`sqlite-costs`)
+
+Staging relocates the arm's output rather than deleting work: it pays one bare
+rowid append plus one read per row, to avoid one arm execution. It also adds a
+`CREATE TABLE` per affected arm to every program's DDL. The two-statement form
+adds no DDL and no new table.
+
+**The condition that flips this call is named rather than left implicit:** if an
+arm's join is expensive and its output is small, running it twice is the wrong
+trade. §5.7.4 shows no such arm exists in the corpus today, and the gate in
+§5.7.5 is what would catch the first one.
+
+#### 5.7.3 Where it sits in the walks
+
+| path | statement family | cost |
+|---|---|---|
+| recompute / from-scratch insert | one intern statement before the head insert | once per tick |
+| delta arm (`level_delta_*`) | same, per arm that carries a built text projection | once per tick per arm |
+| DRed assert / revive / expand rounds | **per round**, if the head's arm carries a built text projection | this is the expensive case, and §5.7.4 measures that it does not currently occur |
+| refCount / staging fills | untouched: they copy an already-written column, never rebuild the string | zero |
+
+#### 5.7.4 The price, measured on the corpus
+
+| question | answer |
+|---|---|
+| modules with a concat projected into a head text column | **17** |
+| distinct (module, target rel) pairs | 17 |
+| **of those, target is a fixpoint head** (has a `__ping_`, `__pong_` or `__expand_` companion table) | **0** |
+| target rels | `diag` (11 modules), `message` (1), `__host_demand_*` (5) |
+| busiest module | 7 such projections (`clean_state_gate_and_exit_zero`, `extraction_fork_callgraph`, `clean_state_no_diags`) |
+
+**The ugly case does not exist today.** Every built string in the corpus lands in
+a diagnostic-shaped or host-demand-shaped rel, all outside the fixpoint, all
+written once per tick. Their cost goes from one statement to two, and the second
+gains one index probe per row.
+
+The number that would be ugly, stated so it is not a surprise later: a built
+string projected into a RECURSIVE head would pay the arm twice on **every round**
+of the walk. On `grid_10000`'s 45-round profile the two wave hops are 56% of the
+fixpoint, so doubling one of them is roughly a 28% regression on that case. The
+user chose uniformity knowing the shape of that risk; §5.7.5 is the gate that
+makes the first occurrence loud instead of silent.
+
+#### 5.7.5 The gate
+
+> A built-text projection on a rel whose plan carries a `fixpointIr` emits a
+> compile-time WARNING naming the rel and the arm, and the sweep counts them.
+> The count is 0 today and a non-zero count is a review item, not a failure.
+
+A warning rather than a refusal, because the construct is legal and someone will
+eventually want it. What is not acceptable is discovering it from a bench number
+six weeks later.
+
+#### 5.7.6 Verified, not proposed
+
+Run on both builds. Input `hits(path, n, note)` with rows
+`('a.rs',3,'x') ('b.rs',7,'y') ('c.rs',3,'x') ('d.rs',9,NULL)`, arm
+`WHERE n > 2`, projection `n || ' hits; ' || note`.
+
+| check | result |
+|---|---|
+| baseline (today's single statement, TEXT head column) | 3 rows |
+| intern-on-write (two statements, INTEGER head column) | 3 rows, `__str` holds 2 (the duplicate `'3 hits; x'` interned once) |
+| **decoded through `__txt_`, symmetric difference against the baseline** | **0**, on CLI sqlite3 3.43.2 and on @libsql 0.17.4 alike |
+| both statements in one `batch(..., "write")` on @libsql | accepted, 2 results |
+| `EXPLAIN QUERY PLAN` for statement 2 | `SCAN b0` + `SEARCH s USING COVERING INDEX sqlite_autoindex___str_1 (content=?)`: one index probe per row, never a scan of `__str` |
+
+**NULL parity, checked because it is where a silent row loss would hide.** The
+`d.rs` row has `note = NULL`, so the concat is NULL. Today's single statement
+drops it: the head column is `NOT NULL` and `INSERT OR IGNORE` skips the
+violation. Intern-on-write drops it too, at `__str.content`'s `NOT NULL` under
+the same `OR IGNORE`, and then the join finds nothing. **Same answer, same
+silence, for the same reason.** The behavior is pre-existing and rev 3 does not
+change it; it is recorded here so the sweep's first NULL-concat diff is not
+mistaken for a regression this arc introduced.
 
 ---
 
@@ -609,7 +737,7 @@ tick; the only durable copy is `__str`.
 ## 7. Head storage: rowid+unique vs WITHOUT ROWID
 
 Interning and head-shape are two independent switches. Interning is decided by
-column type plus the waiver. rowid+unique is decided by whether the head takes
+column type alone (rev 3). rowid+unique is decided by whether the head takes
 the rowid-range delta from `REPORT-SUBSEC.md`. Coupling them is a mistake the
 existing emitter invites, because `rel_ddl/5`'s `__id` arm exists for a
 different reason (declared struct types need a dense endpoint for PARENT columns
@@ -651,14 +779,56 @@ Live code, base `f650f2b7`:
 
 | site | today | after |
 |---|---|---|
-| `lower.pl:3039` | `ir_column_storage(text, text, text, direct).` | splits: interned -> `ir_column_storage(text, text, integer, dict('__str'))`, waived -> unchanged |
+| `lower.pl:3039` | `ir_column_storage(text, text, text, direct).` | becomes `ir_column_storage(text, text, integer, dict('__str')).` One clause replaced by one clause. Rev 2 needed two clauses and a decl argument for the waiver; rev 3 needs neither |
 | `lower.pl:3028-3030` `ir_column_class/3` | `StorageClass == text -> Collation = binary` | an interned column's storage class is `integer`, so `Collation = none` falls out with no edit |
 | `emit_ts.pl:1169-1170` `fixpoint_encoding_text/2` | already renders both `{ kind: "direct" }` and `{ kind: "dict", rel: ... }` | **no edit** |
-| `lower.pl:3043-3049` `fixpoint_ir_columns/4` | admits head column types `[int, text, float, bool]` | unchanged. The column's TYPE stays `text`; only its ENCODING and STORAGE CLASS move. The executor learns "text values, carried as dictionary ids" from the `colclass` row |
+| `lower.pl:3043-3049` `fixpoint_ir_columns/4` | admits head column types `[int, text, float, bool]` | unchanged. The column's TYPE stays `text`; only its ENCODING and STORAGE CLASS move |
 
-`ir_column_storage/4` must become decl-aware to read the waiver, which means
-threading `Decls` into `ir_rel_storage/3` (`lower.pl:3019`). That is the only
-signature change in the IR path.
+**No signature change in the IR path.** Rev 2 had to thread `Decls` into
+`ir_rel_storage/3` (`lower.pl:3019`) so the encoding could read the waiver. With
+no waiver, encoding is a function of the declared type alone and the existing
+signature stands.
+
+### 8.1 Does `encoding` collapse to a constant?
+
+Reasonable question after rev 3, and the answer is no. Encoding is now a total
+function of `Type`, which is a different thing from constant:
+
+| declared type | storage | encoding |
+|---|---|---|
+| `text` | integer | `dict('__str')` |
+| `ref(Target)` | integer | `dict(Target)` |
+| `int`, `bool` | integer | `direct` |
+| `float` | real | `direct` |
+| `json` | text | `direct` |
+
+Three distinct values across five types, and two of them are dictionaries into
+DIFFERENT tables.
+
+### 8.2 So why keep the field, if `Type` determines it
+
+Because of the row the table makes unavoidable: **a `text` column now reports
+storage class `integer`.** Without `encoding`, the pair `{type: "text", storage:
+"integer"}` is uninterpretable. An executor reading it has three choices and no
+way to pick: the value is an id into some dictionary, or the type is wrong, or
+the storage is wrong.
+
+Three more reasons, each a thing that would otherwise become the executor's
+problem:
+
+| reason | what breaks if the field goes |
+|---|---|
+| **the executor must know WHICH dictionary** | `dict('__str')` and `dict(span)` are both integers into different tables. Deriving that from `text` vs `ref(span)` means the executor reimplements the mapping the compiler owns, and the two drift on the first change |
+| **the gun** | `intern(direct)` (§15.3) emits `{type: "text", storage: "text", encoding: "direct"}`. The field is how one executor reads modules built in either mode without being recompiled |
+| **the return path** | §9.3 brings the waiver back the day a case earns it. The IR is already shaped for it; deleting the field means the offload contract's §2.4 is amended twice |
+
+**The handshake with the offload contract is unchanged.** Its §2.4 record already
+declares `Encoding : direct | dict(TargetRelName)` and `emit_ts.pl:1169-1170`
+already renders both arms. Rev 3 changes which value a `text` column gets, and
+nothing about the shape lane P1-A-R built. The rust executor's contract is one
+sentence: **a column whose `encoding` is `dict(R)` carries an integer id into
+`R`, and comparing two such columns is an integer comparison; rendering one
+requires a lookup in `R` and belongs at the boundary, never in the walk.**
 
 Plunit pins to add, beside the existing `fixpoint_ir_` tests:
 
@@ -670,90 +840,66 @@ Plunit pins to add, beside the existing `fixpoint_ir_` tests:
 
 ---
 
-## 9. The waiver: `direct`
+## 9. The waiver, withdrawn
 
-### 9.1 Spelling
+### 9.1 The word, and what it deleted
 
-```
-rel http_log(url: text, body: text) log keep(count(64)) direct(body).
-rel scratch_note(text_body: text) direct.
-```
+> *"do we have to have direct(string/text), can we please just intern it all for
+> now. this mixing and all its woes is whack."*
 
-`direct` because §8's IR already spells the two encodings `direct | dict(rel)`.
-The surface word and the IR atom are the same word, so a reader never has to
-translate. It is also a SQL-family word (dictionary encoding vs direct
-encoding), satisfying the vocabulary law.
+Rev 3 removes the per-column waiver from the surface. What went with it:
 
-### 9.2 Parse
+| deleted | was | now |
+|---|---|---|
+| the `direct(col)` / `direct` decl modifier | rev 2's `decl_a_modifiers/4` clause | not parsed. A program carrying it gets the ordinary unknown-modifier path |
+| `direct_column_unknown(Ref, Column)` | a refusal | deleted with the modifier |
+| `direct_column_not_text(Ref, Column, Type)` | a refusal | deleted with the modifier |
+| the automatic fallback for computed-text heads | §3.1's `computed_text_head` reason | deleted; §5.7 interns on write instead |
+| `mixed_encoding_join` as a surface refusal | §5.6 | demoted to an internal assertion that cannot fire |
+| the encoding `Reason` field | §3.1, carried into the IR | deleted; with one outcome there is nothing to explain |
+| gun level 0 | §15.2's per-column trigger | deleted; the gun keeps levels 1 and 2 (§15.2) |
 
-`parse_dl.pl:603-609` `decl_a_modifiers/4` is a findall-in-order loop over
-optional modifiers (`log`, `keep(...)`, `key(...)`) in ANY order. One more
-clause, same shape:
+### 9.2 Why the user is right on the numbers, and where the cost lands
 
-```prolog
-decl_a_modifiers(Ref, [Decl | Rest], S0, S) :-
-    ( word(`log`, S0, S1)               -> Decl = kind(Ref, log)
-    ; keep_clause(Policy, S0, S1)       -> Decl = keep(Ref, Policy)
-    ; key_clause(Positions, S0, S1)     -> Decl = keyed(Ref, Positions)
-    ; direct_clause(Columns, S0, S1)    -> Decl = direct(Ref, Columns)   % NEW
-    ), !, ws0(S1, S2), decl_a_modifiers(Ref, Rest, S2, S).
+The measurement that justified a waiver is still true and still recorded:
+**interning is a 2.44x win when names repeat and a 1.2% LOSS when every value is
+unique** (`v6/prolog/ARCH.pl:833`, `stale_labs_sweep`, landed 2026-07-30).
 
-% direct_clause(-Columns) :  `direct`  ->  all
-%                            `direct(a, b)` -> [a, b]
-```
+Rev 2 spent a surface construct, two refusals, a program-wide analysis, an
+automatic fallback, and a join checker to recover **1.2% on the columns where
+interning loses**. Set against that: every one of those pieces was a place two
+encodings could meet, and red-team finding 3 confirmed one of them was reachable
+and silent.
 
-Decl term `direct(Ref, all | [Column, ...])`. Refusals, by name:
-
-| refusal | when |
+| what uniformity costs | what it buys |
 |---|---|
-| `direct_column_unknown(Ref, Column)` | a named column is not in the rel's column list |
-| `direct_column_not_text(Ref, Column, Type)` | a named column is not `text`; waiving a column that was never interned is a reader trap |
-| `mixed_encoding_join(LeftExpr, RightExpr, LeftEncoding, RightEncoding)` | §5.6. A join equality spans a `direct` column and an interned one. Red-team finding 3: rev 1 left this to a review comment |
-| `reserved_rel_namespace(Name)` | §18. A user rel declared or derived in the compiler-owned `__` namespace |
+| up to 1.2% on a column whose every value is distinct | one encoding, program-wide, so mixing is unreachable rather than refused |
+| one extra statement plus one index probe per row on a built-string arm (§5.7), on 17 modules, none of them in a fixpoint | `interned_column/1` is one clause and cannot drift from the DDL |
+| `__str` grows by the distinct built strings, which for a digest-like column is one row per value | no waiver report, no reason field, no per-column question at review time |
 
-The printer (`print_dl.pl`) must reproduce exactly the modifier that was
-literally present, per `parse_dl.pl:564-567`'s round-trip law: no synthesized
-default `direct`.
+### 9.3 How it comes back, if a case earns it
 
-### 9.3 When a waiver is legitimate
+Recorded so the decision is reversible with evidence rather than by memory.
 
-The in-repo measurement, from `v6/prolog/ARCH.pl:833` (`stale_labs_sweep`,
-landed 2026-07-30): **"interning is a 2.44x win ONLY when names repeat and a
-1.2% LOSS when unique."** That is the whole test.
+The waiver returns when a measured case shows a real loss, which means: a column
+whose values are effectively all distinct, in a rel with enough rows to matter,
+where `interned` in `__str_stats` tracks `looked_up` tick after tick (§16.5's
+`dict_hit_pct` staying near 0 is exactly that signal, and it is why the telemetry
+exists).
 
-| waiver is right when | waiver is wrong when |
-|---|---|
-| every value is distinct (a digest column, a UUID, a full request body) | the column holds a path, a symbol name, a kind tag, an enum-like word |
-| the rel is a Log rel with a small `keep(count(N))` window and its rows never join another rel on that column | the column appears in any join equality with another rel's text column (that join needs one id space, §3.3) |
-| the value is written once and read once, never compared | the column is in a PRIMARY KEY of a table with more than a few thousand rows |
+What survives to make the return cheap:
 
-Row 2 of the right-hand column is **no longer a review request**. §5.6 refuses a
-join that spans encodings by name (`mixed_encoding_join`), so waiving a column
-that something joins stops the compile rather than returning nothing. Rev 1 had
-this as prose enforced by a comment, which red-team finding 3 correctly called
-not a guard.
+- the IR still carries `encoding` per column (§8), so a mixed program is
+  expressible in the IR the day the surface allows it
+- §5.6's `uniform_text_encoding/1` assertion fires at compile time if the
+  invariant breaks, so the return cannot silently reintroduce the empty join
+- §15's gun keeps a whole-program direct mode, which is the coarse version of
+  the same escape and is enough for a first measurement
+- this section names the evidence to bring: a `dict_hit_pct` series, a row
+  count, and a before/after on the flagship
 
-Review still asks for a one-line reason in the `.dl6` beside the modifier. The
-comment budget admits it: this is a constraint the code cannot show.
+Until then: **every text column is a dictionary id, everywhere, no exceptions.**
 
-### 9.4 The waiver .dl snippet, with its rx lowering
-
-```
-rel http_log(url: text, body: text) log keep(count(64)) direct(body).
-```
-
-```ts
-// `url` interns (paths repeat); `body` does not (every payload distinct).
-const httpLog$ = arrivals$.pipe(
-  withLatestFrom(dictionary$),
-  map(([batch, dictionary]) =>
-    batch.rows.map((row) => [dictionary.id(row[0] as string), row[1]] as const)),
-  // keep(count(64)) is a bounded window, not a Subject and not a Subscription
-  scan((window, rows) => [...window, ...rows].slice(-64), [] as readonly IRow[]),
-);
-```
-
----
 
 ## 10. Migration across the 306-fixture corpus
 
@@ -786,6 +932,7 @@ finding):
 | 3 | a delta read's `FROM` swapped to the view | I-A |
 | 4 | a §5.3 rule-one decode subquery added (`SELECT s."content" ...`) | I-C |
 | 5 | a §5.3 rule-two literal subquery added (`SELECT s."__id" ... WHERE s."content" = ...`), or the module's boot intern statement | I-C |
+| 5b | a §5.7 intern-on-write pair: an `INSERT OR IGNORE INTO "__str" ... SELECT DISTINCT <built expr>` added before a head insert, and that head insert's projection replaced by a `JOIN "__str"` | I-K |
 | 6 | a `WITHOUT ROWID` head became rowid + `UNIQUE` | I-E |
 | 7 | the `__str_stats` contract row's DDL and the door's three statements | I-F, I-G |
 
@@ -805,11 +952,13 @@ runs it rather than reads 167 diffs.
 | retention | §5.2 row 8 | `keep(count(2))` on a Log rel fed by a derived rel with interned columns, arrivals ordered so id order and text order disagree |
 | cross-rel text join | §3.3's decisive argument | two rels joining on a text column, asserting a nonempty result. Under per-shape dictionaries this fixture is silently empty; it is the regression test for the one-global decision |
 | non-ASCII text | offload contract risk row 3 | a text column holding multi-byte values, round-tripped through `__str` and out the view |
-| waiver | §9 | a `direct(col)` rel, asserting the emitted DDL keeps `TEXT` for that column and the IR keeps `encoding: direct` |
+| **uniformity** | §3.1, rev 3 | a program with several text rels, asserting EVERY text column emits `INTEGER` and every one carries `encoding: dict("__str")`. The fixture that would have proved a waiver works now proves no waiver exists |
 | **text literal comparison** | §5.2 row 11, red-team finding 1 | `backslash_in_string_literal_survives_both_doors` is already in the corpus (`compile/dl_view/`) and is the pinning receipt: its emitted output and tick log must survive the whole arc. It is patient zero because the literal carries a backslash, so any re-quoting on the way through `__str` shows up immediately |
 | **text literal projection** | §5.2 row 12 | a rule head writing a text constant into an interned column, asserting the row is findable afterwards. 26 corpus modules already do this; the fixture makes it a named check rather than a side effect |
 | **computed text head** | §5.2 row 13 | a head projecting a concatenation into a text column, asserting the column's IR encoding is `direct` and the recorded reason is `computed_text_head` |
-| **mixed-encoding join** | §5.6, red-team finding 3 | `direct_column_joined_to_interned_refuses`: a `direct` text column joined to an interned one, asserting the named refusal. Fail-first: RED before the checker clause lands |
+| **intern on write** | §5.7 | `concat_into_head_text_interns_on_write`: a rule head projecting a concatenation, asserting (a) the emitted module carries the two-statement pair, (b) the tick log is byte-identical to the pre-arc log, (c) `__str` holds the built strings de-duplicated |
+| **NULL concat parity** | §5.7.6 | a built string with a NULL operand, asserting the row is dropped exactly as it is today. This one exists to stop a pre-existing behavior being blamed on this arc |
+| **built text on a recursive head** | §5.7.5 | a program projecting a built string into a rel carrying `fixpointIr`, asserting the compile-time warning fires and the sweep counts it. Expected count in the corpus: 0 |
 | **reserved namespace** | §18, red-team finding 7 | one program declaring a rel in the `__` namespace and one deriving into `__str_stats`, both asserting `reserved_rel_namespace`; plus a program READING `__rel` that still compiles |
 | **boot seed row** | §16.4 | a module carrying text literals, asserting `__str_stats.rows` at tick 0 equals the dictionary's row count |
 
@@ -823,7 +972,7 @@ it first, I-C opens only after I-A merges, I-D and I-E after I-C.
 
 | lane | owns (exclusive) | task | gate | routing |
 |---|---|---|---|---|
-| **I-A** | `v6/prolog/lower.pl` (`rel_ddl/5`, `column_def/3`, a new intern-DDL section), `v6/prolog/compile/parse_dl.pl` (one `decl_a_modifiers/4` clause), `v6/prolog/print_dl.pl` (round-trip of the new modifier) | §3 DDL, §4 view in the same returned list, §9 waiver parse | plunit (incl. the `Ddls` length assertion), sweep stage 1, `swipl -g go -t halt ARCH.pl` | **opus**: which columns intern, and the waiver's refusal set, are judgment |
+| **I-A** | `v6/prolog/lower.pl` (`rel_ddl/5`, `column_def/3`, a new intern-DDL section) | §3 DDL, §4 view in the same returned list. **Rev 3: no surface parsing at all** (the `direct` modifier is withdrawn), so `parse_dl.pl` and `print_dl.pl` leave this lane's ownership | plunit (incl. the `Ddls` length assertion), sweep stage 1, `swipl -g go -t halt ARCH.pl` | **opus**: the DDL split and the gun's threading are judgment |
 | **I-A-R** | review only | count the `rel_ddl/5` clauses; assert every interned arm returns a 2-element list; find any path that returns a table without a view | n/a | **flash4**: mechanical, the question is a clause count and a plunit read |
 | **I-B** | `v6/tsv2/runtime/types.ts` (additions), NEW `v6/tsv2/runtime/textPlane.ts`, NEW `v6/tsv2/tests/textIntern.test.ts` | §6 ingest door: 2 statements, NOT NULL refusal, the ordering vs StructPlane, the COUNT rail | typecheck, the COUNT test, `pnpm test` | **flash4**: `structPlane.ts` is a line-for-line template and the SQL is given verbatim in §6.2 |
 | **I-B-R** | review only | header-types law and `I` prefix; interface-bound, no bare `export function`; exactly one manual `.subscribe()`; no `await` on an Observable; the COUNT test actually counts (a test that passes with the door disabled passes vacuously) | n/a | **flash4** |
@@ -836,7 +985,7 @@ it first, I-C opens only after I-A merges, I-D and I-E after I-C.
 
 ```mermaid
 flowchart TD
-  IA["I-A opus<br/>DDL + view + waiver parse"] --> IAR["I-A-R flash4"]
+  IA["I-A opus<br/>DDL + view"] --> IAR["I-A-R flash4"]
   IAR --> IB["I-B flash4<br/>textPlane.ts + COUNT rail"]
   IAR --> IC["I-C opus<br/>text_operand_sql/4"]
   IAR --> ID["I-D flash4<br/>IR encoding slot"]
@@ -879,7 +1028,9 @@ subagents.
 | G5 | sweep | 306 / 211 / **wrong=0**, buckets unchanged | §10.2 receipt 1 |
 | G6 | inverted byte-identity probe | every changed emitted line in one of the SEVEN classes | §10.2 receipt 3 |
 | G9 | **the gun, A/B at one commit** | `intern(dict)` vs `intern(direct)` at HEAD differ only in classes 1-5 and 7 | §15.4 |
-| G10 | **encoding refusals fire** | `mixed_encoding_join` and `reserved_rel_namespace` each carry a fail-first fixture that is RED before the checker clause lands | §5.6, §18 |
+| G10 | **the reserved-namespace refusal fires** | `reserved_rel_namespace` carries a fail-first fixture that is RED before the checker clause lands. `mixed_encoding_join` is gone from this gate: rev 3 made it unreachable, and §5.6 covers it with a unit test on the predicate instead | §18 |
+| G11 | **uniformity** | every `text` column in every emitted module is `INTEGER` with `encoding: dict("__str")`. One grep over `out/*.ts` plus one over the IR; a single `TEXT` column outside `json` is a finding | §3.1 |
+| G12 | **built text stays out of the fixpoint** | the §5.7.5 warning count is 0 across the corpus | §5.7.4 |
 | G7 | plunit / conformance / ARCH / `just green-all` / typecheck | green | standing battery |
 | G8 | the 10-second law | every gate above under 10s except SCIP | standing law |
 
@@ -903,7 +1054,8 @@ which `REPORT-INTERN.md` §7 mirrors deliberately.
 | 2 | **NULL keys** | a text column reaching the door as NULL | throw at the door | impossible in stored columns (`TEXT NOT NULL`); at the door it is the named refusal `text_intern_null(Rel, Column)` (§6.3), never a dictionary row and never id 0 |
 | 3 | **ids are not portable across databases** | a snapshot copied between databases; a `pre/1` read against another db; any future cross-db compare | silent wrong answers | ids never leave the database as ids. Every boundary read goes through `__txt_<rel>` (§4.3). State it as a law: **an id is a within-database physical detail, and no artifact the system writes outside the database contains one** |
 | 4 | **append-only growth** | a long-running daemon with high string churn; retracting every row referencing a string does not free it | `__str` row count grows without bound while rel row counts do not | accepted for phase 1, matching `sql-relational-design/SKILL.md:47` ("append-only within a run"). v5 carries the same open item. Named mitigations for later, both out of scope here: a refcount column maintained by the same statements that maintain `__refcount`, or a mark-sweep at a quiescent tick. **Do not build either in this arc**; measure the growth first on the flagship |
-| 5 | **all-new-strings workloads** | every value distinct: digests, UUIDs, request bodies | a 1.2% LOSS, measured (`ARCH.pl:833`) | the `direct` waiver (§9) exists exactly for this, and §9.3's table is its decision rule. The loss is small enough that the DEFAULT stays interned: guessing wrong costs 1.2%, guessing wrong the other way costs 2.44x |
+| 5 | **all-new-strings workloads** | every value distinct: digests, UUIDs, request bodies | a 1.2% LOSS, measured (`ARCH.pl:833`), now **accepted program-wide** | rev 3 withdrew the waiver (§9). The loss is bounded at 1.2% on the affected columns and it buys uniformity. The signal that a real case has appeared is `dict_hit_pct` (§16.5) sitting near 0 for a rel, tick after tick; §9.3 is the evidence to bring and the path back |
+| 5b | **built strings inflate `__str`** | a concat into a head text column whose values are effectively unique adds one dictionary row per output row | `__str` grows as fast as the rel that feeds it, and row 4's append-only growth applies to it | 17 modules today, all diagnostic-shaped and low-volume (§5.7.4). §5.7.5's warning is the alarm for the first high-volume one, and §9.3's waiver return is the answer if one lands |
 | 6 | **intern-before-swap ordering** | any path that rewrites a row before the lookup completes, or that runs struct intern first | a `string` reaching a column the DDL declares INTEGER; SQLite's affinity stores it anyway and the row is silently unfindable | §6.4's sequence diagram plus the COUNT rail's assertion that the batch handed to `StructPlane.intern` contains no `string` in an interned position. This is the assertion that catches an ordering regression |
 | 7 | **a text expression added without a decode** | a new `text_only` operator lands after this arc | the operator reads an integer id and silently never matches | §5.3's registry-walking plunit test fails on the day the operator is added, before any fixture exists |
 | 8 | **the view drifting from the table** | a column added to a rel and not to its view | a reader sees a shorter row | structurally impossible while `rel_ddl/5` builds both from the same `Columns`/`ColumnTypes` lists in one clause (§4.1); I-A-R's job is to confirm no second construction site appears |
@@ -966,14 +1118,20 @@ nothing. Silent, total, and only recoverable by rebuilding the database.
 **Therefore: the gun is a compile-time switch, and a runtime toggle is a defect
 that this contract forbids in advance.**
 
-### 15.2 The four levels
+### 15.2 The levels, after rev 3
 
 | level | the move | scope | what it changes | rebuild needed | cost of pulling |
 |---|---|---|---|---|---|
-| **0** | add `direct(col)` to a `rel` declaration (§9) | one column | that column's storage in that rel | that database | one source edit + recompile |
-| **1** | compile with `intern(off)` | one program | every text column in that program | that database | one flag |
-| **2** | compile the corpus with `intern(off)` | everything | all emitted output returns to pre-task-#4 bytes | every database built by an interned program | one flag + a sweep run |
+| ~~0~~ | ~~`direct(col)` on a declaration~~ | ~~one column~~ | **DELETED IN REV 3** (§9). Per-column granularity is the mixing the user rejected | n/a | n/a |
+| **1** | compile with `intern(direct)` | one program | every text column in that program | that database | one flag |
+| **2** | compile the corpus with `intern(direct)` | everything | all emitted output returns to pre-task-#4 bytes | every database built by an interned program | one flag + a sweep run |
 | **3** | flip a flag on a running database | n/a | **DOES NOT EXIST, AND MUST NOT** | n/a | §15.1 |
+
+Losing level 0 makes the gun coarser and makes it ACCURATE about its own
+granularity: the unit that can be in one encoding or the other is the program,
+which is exactly the unit §15.5's mode stamp records and §15.7's crossing check
+enforces. Rev 2's level 0 was a per-column exception dressed as a trigger, and
+it was the source of the reachable mixing red-team finding 3 found.
 
 ### 15.3 Signature of the level-1/2 flag
 
@@ -983,10 +1141,10 @@ that this contract forbids in advance.**
 %   Threading, not a global: a global flag is unrecordable in the artifact,
 %   and §15.5 needs the artifact to say which mode built it.
 %
-%   interned_column/4 (§3.1) gains one leading guard:
+%   interned_column/1 (§3.1) gains one leading guard and nothing else:
 %     Options carries intern(dict),
-%     Type == text,
-%     \+ direct_waiver(Decls, Ref, Column).
+%     Type == text.
+%   Rev 3: no per-column term to consult. The mode is the whole decision.
 ```
 
 CLI spelling on the sweep and the compile entry point: `--intern=direct`.
@@ -1103,7 +1261,7 @@ relation. Steps 2-5 cost the same either way.
 | un-intern a live database in place | the column types are declared, and affinity makes a wrong write silent (§15.1) | route A or route B of §15.6 |
 | survive a mixed database | half the tables interned, half not, is not a state the compiler can emit or the runtime can read | the mode is per-module, and §15.5's check refuses the crossing |
 | recover `__str` after it is dropped | ids in relation tables become meaningless integers | `__str` is dropped only together with the tables that reference it |
-| be pulled per-tick or per-request | see §15.1 | level 0 waiver, which is per-column and permanent for that program |
+| be pulled per column | rev 3 withdrew level 0 (§9); the program is the unit | recompile that program at `intern(direct)`, or bring §9.3's evidence and argue the waiver back |
 
 ### 15.8 Where the gun is built
 
@@ -1376,7 +1534,7 @@ Updated flow:
 
 ```mermaid
 flowchart TD
-  IA["I-A opus<br/>DDL + view + waiver + THE GUN"] --> IAR["I-A-R flash4<br/>incl. byte-diff at intern(direct)"]
+  IA["I-A opus<br/>DDL + view + THE GUN"] --> IAR["I-A-R flash4<br/>incl. A/B at intern(direct)"]
   IAR --> IB["I-B flash4<br/>the door"]
   IAR --> IC["I-C opus<br/>text expressions"]
   IAR --> ID["I-D flash4<br/>IR encoding"]
@@ -1474,7 +1632,7 @@ crashing in the emitter. Its fixtures are in §10.3.
 |---|---|---|---|---|
 | 1 | text-literal equality is a sixth decode site, absent from the enumeration | silent wrong answer, gate-breaking | §5.2 rows 11-14, §5.3 rule two | literals are interned at boot and every use (read AND write) lowers to an id subquery. **Closing it surfaced two more rows the red team did not name**: literal PROJECTION into a head (26 modules) and computed-text projection, which forces §3.1's automatic `direct` fallback |
 | 2 | `rowsAffected` is 0 under `INSERT OR IGNORE ... RETURNING` | silent wrong answer | §16.2, §16.3 | `RETURNING` is gone from the design. Every number is computed in SQL. The trap is recorded as a blockquote so I-G cannot reintroduce it |
-| 3 | `direct(col)` joined to an interned column is silently empty | silent wrong answer | §5.6, §9.2, §9.3, §10.3 | `mixed_encoding_join`, one clause on `join_column_types_agree/4`, which is already on every join path. It also makes §3.1's auto-fallback safe |
+| 3 | `direct(col)` joined to an interned column is silently empty | silent wrong answer | §5.6 | rev 2 answered with `mixed_encoding_join`, a compiler refusal. **Rev 3 went further and deleted both ways of producing a `direct` text column**, so the state is unreachable and the refusal is now an internal assertion (§5.6, §20.1 row 3) |
 | 4 | the gun's byte gate and the head flip contaminate each other | ops | §15.4, §10.2 receipt 3 | the gate becomes an A/B of two compiles at ONE commit, which cannot go stale. The historical check survives as a one-time I-A landing receipt. The classifier grows classes 5, 6 and 7 |
 | 5 | Route B's CTAS loses PK/UNIQUE/WITHOUT ROWID | ops | §15.6 | CTAS is relabelled a data dump; the real five-step remount is spelled out; Route A's preference is restated with the reason |
 | 6 | intern and stats commit separately, so a kill under-counts forever | silent wrong answer + ops | §16.3, §16.4 | stats runs FIRST, probes `__str` before the intern, and all three statements share one `batch` transaction. §16.4's "a missing row means the door did not run" becomes true for a mechanical reason. The boot-seed gap is named as a required step |
@@ -1524,3 +1682,72 @@ without a receipt; each now carries one.
 | the previous-row read is O(1) despite EXPLAIN printing `SCAN` | VDBE `Last` + `Prev`; timed 1.29 us at 1,000 rows and 1.00 us at 400,000 rows |
 | `rowsAffected` reads 0 under `RETURNING` on @libsql 0.17.4 | `plans/2026-08-08-interning-contract.redteam.md` finding 2 transcript |
 | the red-team report itself | `plans/2026-08-08-interning-contract.redteam.md`, head `e8bb9911` |
+
+
+---
+
+# Rev 3 2026-08-08 (user word: intern it all)
+
+## 20. Changelog: what rev 3 deleted, added and re-scoped
+
+> *"do we have to have direct(string/text), can we please just intern it all for
+> now. this mixing and all its woes is whack."*
+
+### 20.1 The four changes
+
+| # | change | where | why |
+|---|---|---|---|
+| 1 | the per-column `direct(col)` waiver is withdrawn from the surface | §9, §15.2 | it was one of two producers of a second encoding, and the one red-team finding 3 rode in on. Gun levels 1 and 2 survive; level 0 is deleted |
+| 2 | the automatic fallback for computed-text heads is deleted; those strings are **interned on write** | §3.1, §5.2 row 13, §5.7 | it was the other producer. Two statements, verified on both builds, and the corpus says it never lands inside a fixpoint |
+| 3 | `mixed_encoding_join` is demoted from a surface refusal to an internal assertion with a unit test | §5.6 | with both producers gone the state is unreachable, and a refusal no fixture can turn red is untested code posing as a guard |
+| 4 | the IR keeps `encoding`; it becomes a total function of `Type`, not a constant | §8.1, §8.2 | a `text` column now reports storage `integer`, and that pair is uninterpretable without the field. The offload contract's §2.4 shape is untouched |
+
+### 20.2 What got simpler, in lines
+
+| thing | rev 2 | rev 3 |
+|---|---|---|
+| `interned_column` | a program-wide analysis with a decl argument, a rules argument, a waiver check, a head-expression scan and three outcomes | `interned_column(text).` |
+| refusals this contract adds | 4 (`direct_column_unknown`, `direct_column_not_text`, `mixed_encoding_join`, `reserved_rel_namespace`) | 1 (`reserved_rel_namespace`), plus one internal assertion |
+| surface constructs added | 1 (`direct`) | 0 |
+| encodings a text column can have, inside one program | 2 | 1 |
+| `ir_rel_storage/3` signature | changed, to thread `Decls` | unchanged |
+
+### 20.3 What got more expensive
+
+Stated plainly, because uniformity was chosen with the cost known.
+
+| cost | size | where it lands |
+|---|---|---|
+| a column whose every value is distinct | up to **1.2%** slower than leaving it as text (`ARCH.pl:833`) | any all-unique text column, program-wide, with no opt-out |
+| a head projecting a built string | one extra statement, plus one index probe per output row | **17 modules**, targets `diag` (11), `message` (1), `__host_demand_*` (5) |
+| the same, if it ever lands on a recursive head | the arm runs twice **per round** | **0 modules today.** §5.7.5 warns at compile time on the first one |
+| `__str` growth from built strings | one dictionary row per distinct built string | diagnostic-shaped rels today; §13 row 5b |
+
+### 20.4 Lane changes
+
+| lane | rev 3 change |
+|---|---|
+| **I-A** | scope SHRINKS: no `direct` modifier to parse, no `print_dl.pl` round-trip for it, no two refusals. Still owns the DDL, the view, and the gun's levels 1-2 |
+| **I-A-R** | unchanged, minus the waiver checks |
+| **I-C** | unchanged: the literal work of §5.3 is orthogonal to the waiver and still the largest single scope |
+| **I-D** | SHRINKS: `ir_column_storage/4` is one clause replaced by one clause, no `Decls` threading, no `Reason` field. Still owns the `eq_lit` fence addition |
+| **I-J** | REFOCUSED: `mixed_encoding_join` leaves its brief and becomes a plunit unit test on `uniform_text_encoding/1`. `reserved_rel_namespace` (§18) plus its fixtures is the whole lane now. Still **flash4** |
+| **new: I-K** | **intern on write** (§5.7). Owns the head-insert lowering across the level families, the §5.7.5 warning, and the three fixtures in §10.3. Sequenced after I-C merges, since both touch the head projection path. **opus**: splitting an arm into two statements while keeping the tick log byte-identical is the judgment this lane turns on |
+| **I-K-R** | **opus**. Grade: is the arm's `FROM`/`WHERE` reproduced verbatim in both statements; is `DISTINCT` present on the intern; is the NULL-concat row dropped exactly as before; does any built-text projection reach a rel carrying `fixpointIr` |
+
+Sequencing, revised: I-A -> {I-B, I-C, I-D, I-F, I-J} -> I-K -> {I-G} -> I-E.
+
+### 20.5 Rev 3 receipts
+
+| claim | receipt |
+|---|---|
+| 17 modules project a concat into a head text column | regex over `v6/prolog/compile/out/*.ts` at base, `INSERT ... SELECT` projection lists containing `\|\|` |
+| **0 of them target a fixpoint head** | the same scan, cross-checked against each module's `__ping_`, `__pong_`, `__expand_a_`, `__expand_b_` table names |
+| targets are `diag` (11 modules), `message` (1), `__host_demand_*` (5) | same scan, target table names |
+| intern-on-write is row-identical to today, decoded | CLI sqlite3 3.43.2 and @libsql 0.17.4: symmetric difference 0 against the single-statement baseline, 3 rows each, `__str` de-duplicated to 2 |
+| both statements run in one `batch(..., "write")` on @libsql | probe returned 2 results, one transaction |
+| the head insert's dictionary join is an index SEARCH | `EXPLAIN QUERY PLAN`: `SCAN b0` + `SEARCH s USING COVERING INDEX sqlite_autoindex___str_1 (content=?)` |
+| a NULL-valued concat is dropped identically by both designs | same probe, row `('d.rs',9,NULL)`: absent from the baseline and from the interned path alike, both via `INSERT OR IGNORE` against a `NOT NULL` column |
+| interning is 2.44x when names repeat, 1.2% LOSS when unique | `v6/prolog/ARCH.pl:833` |
+| the join-type checker already refuses `ref(a)` against `ref(b)` by declared type | `v6/prolog/lower.pl:311-315` |
+| the offload contract's encoding slot admits both arms already | `v6/prolog/emit_ts.pl:1169-1170`, `plans/2026-08-07-plan-ir-offload-contract.md` §2.4 |
