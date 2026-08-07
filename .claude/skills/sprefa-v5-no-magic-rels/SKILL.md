@@ -1,0 +1,1 @@
+../../../assets/sprefa-v5-no-magic-rels.skill.md
