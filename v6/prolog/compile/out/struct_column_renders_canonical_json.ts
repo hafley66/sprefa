@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: struct_column_renders_canonical_json.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
 import type {
   IArrivalBatch,
@@ -45,7 +45,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -55,21 +55,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -81,29 +81,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -138,7 +138,7 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 export const STRUCT_TYPES: readonly IStructTypePlan[] = [
-  { name: "span", columns: ["start", "end"], refs: [null, null], keyIndices: [0, 1], conflictSql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, internSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookupSql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
+  { name: "span", columns: ["start", "end"], refs: [null, null], key_indices: [0, 1], conflict_sql: `SELECT i.value AS "__requested", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]') WHERE json_array(t."start", t."end") <> i.value`, intern_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`, lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."start", t."end") AS "__stored" FROM json_each(?) i JOIN "span" t ON t."start" = json_extract(i.value, '$[0]') AND t."end" = json_extract(i.value, '$[1]')` },
 ];
 
 export const STRUCT_REF_COLUMNS: IStructRefColumns = {
@@ -173,42 +173,42 @@ const ddl: readonly string[] = [
   `CREATE INDEX "touched_zero" ON "touched" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   finding: ["path", "at"],
   span: ["start", "end"],
   touched: ["path"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   finding: ["text", "ref"],
   span: ["int", "int"],
   touched: ["text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "struct_column_renders_canonical_json", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "c322a70d6efca208", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "finding", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "3e755e73fb437127", hSchema: "84e705b54ef112ba", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3c704d2aca2e6c72", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "at", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "dfd2f7d54bd3b6ca", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "span", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "cc858705ff2a828a", hSchema: "302755ba572df023", hRule: "" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "6b4bc22234e3a8c6", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0f94e03e7affb117", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "touched", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "919922701e95ca89", hSchema: "8596fa45d0ad8be0", hRule: "5f59ac8351ff9c0a" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "173c86063ddda525", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "struct_column_renders_canonical_json", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "c322a70d6efca208", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "finding", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "3e755e73fb437127", h_schema: "84e705b54ef112ba", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "3c704d2aca2e6c72", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "at", kind: "column", type_id: 0, arity: 0, module_id: 6, h_id: "dfd2f7d54bd3b6ca", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "span", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "cc858705ff2a828a", h_schema: "302755ba572df023", h_rule: "" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "6b4bc22234e3a8c6", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0f94e03e7affb117", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "touched", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "919922701e95ca89", h_schema: "8596fa45d0ad8be0", h_rule: "5f59ac8351ff9c0a" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "173c86063ddda525", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   finding: ["text", "other"],
   span: ["int", "int"],
   touched: ["text"],
 };
 
-const arrivalTargets: readonly string[] = ["finding", "span"];
+const arrival_targets: readonly string[] = ["finding", "span"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "touched", sql: `DELETE FROM "touched"`, params: [] },
@@ -221,26 +221,26 @@ type Snapshot = {
   readonly touched: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    finding: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, relColumns.finding!, relColumnTypes.finding!),
-    span: selectRows(seam, `SELECT "start", "end" FROM "span"`, relColumns.span!, relColumnTypes.span!),
-    touched: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "touched"`, relColumns.touched!, relColumnTypes.touched!),
+    finding: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, rel_columns.finding!, rel_column_types.finding!),
+    span: select_rows(seam, `SELECT "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
+    touched: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "touched"`, rel_columns.touched!, rel_column_types.touched!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   finding: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`,
   span: `SELECT "start", "end" FROM "span"`,
   touched: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "touched"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  finding: { kind: "set", addSql: `INSERT OR IGNORE INTO "finding" ("path", "at") VALUES (?, ?)`, delSql: `DELETE FROM "finding" WHERE "path" = ? AND "at" = ?` },
-  span: { kind: "set", addSql: `INSERT OR IGNORE INTO "span" ("start", "end") VALUES (?, ?)`, delSql: `DELETE FROM "span" WHERE "start" = ? AND "end" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  finding: { kind: "set", add_sql: `INSERT OR IGNORE INTO "finding" ("path", "at") VALUES (?, ?)`, del_sql: `DELETE FROM "finding" WHERE "path" = ? AND "at" = ?` },
+  span: { kind: "set", add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") VALUES (?, ?)`, del_sql: `DELETE FROM "span" WHERE "start" = ? AND "end" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`struct_column_renders_canonical_json: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -249,61 +249,61 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`struct_column_renders_canonical_json: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`struct_column_renders_canonical_json: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", tableName: "finding", deltaTableName: "__delta_finding", frontierTableName: "__frontier_finding", nextFrontierTableName: "__next_frontier_finding", columns: ["path", "at"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrivalDelSql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"`, ruleObservers: ["touched/1"] },
-  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["start", "end"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrivalDelSql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundarySql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, ruleObservers: [] },
-  { rel: "touched", kind: "set", tableName: "touched", deltaTableName: "__delta_touched", frontierTableName: "__frontier_touched", nextFrontierTableName: "__next_frontier_touched", columns: ["path"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_touched" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, ruleObservers: [] },
+  { rel: "finding", kind: "set", table_name: "finding", delta_table_name: "__delta_finding", frontier_table_name: "__frontier_finding", next_frontier_table_name: "__next_frontier_finding", columns: ["path", "at"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "finding" ("path", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "at"`, arrival_del_sql: `DELETE FROM "finding" WHERE ("path", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "at"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "path", "at", "_sign"`, rule_observers: ["touched/1"] },
+  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: [] },
+  { rel: "touched", kind: "set", table_name: "touched", delta_table_name: "__delta_touched", frontier_table_name: "__frontier_touched", next_frontier_table_name: "__next_frontier_touched", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_touched" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "touched", ruleId: "struct_column_renders_canonical_json:touched/1#1", headDeltaTableName: "__delta_touched", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "touched" ("path") SELECT DISTINCT d0."path" FROM "__frontier_finding" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, selectSql: `SELECT "path" FROM "touched"`, recomputeSql: `DELETE FROM "touched";
-INSERT OR IGNORE INTO "touched" ("path") SELECT b0."path" FROM "finding" b0`, supportSql: [`DELETE FROM "__support_next_touched"`, `INSERT INTO "__support_next_touched" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "finding" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "touched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_touched" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_touched" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "touched" WHERE "__refcount" <= 0`, `DELETE FROM "touched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_touched"`, `INSERT INTO "__new_touched" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_touched" n LEFT JOIN "touched" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_touched" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT INTO "__frontier_touched" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT INTO "__next_frontier_touched" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT OR IGNORE INTO "touched" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_touched" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "touched", rule_id: "struct_column_renders_canonical_json:touched/1#1", head_delta_table_name: "__delta_touched", head_columns: ["path"], insert_sql: `INSERT OR IGNORE INTO "touched" ("path") SELECT DISTINCT d0."path" FROM "__frontier_finding" d0 WHERE d0."_phase" >= 0 RETURNING "path"`, select_sql: `SELECT "path" FROM "touched"`, recompute_sql: `DELETE FROM "touched";
+INSERT OR IGNORE INTO "touched" ("path") SELECT b0."path" FROM "finding" b0`, support_sql: [`DELETE FROM "__support_next_touched"`, `INSERT INTO "__support_next_touched" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "finding" b0 GROUP BY b0."path") GROUP BY "path"`, `UPDATE "touched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_touched" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_touched" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "touched" WHERE "__refcount" <= 0`, `DELETE FROM "touched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_touched"`, `INSERT INTO "__new_touched" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_touched" n LEFT JOIN "touched" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_touched" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT INTO "__frontier_touched" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT INTO "__next_frontier_touched" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_touched"`, `INSERT OR IGNORE INTO "touched" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_touched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "touched";
 INSERT OR IGNORE INTO "touched" ("path") SELECT b0."path" FROM "finding" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const finding = multisetDiff(before.finding, after.finding);
-  const span = multisetDiff(before.span, after.span);
-  const touched = multisetDiff(before.touched, after.touched);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const finding = multiset_diff(before.finding, after.finding);
+  const span = multiset_diff(before.span, after.span);
+  const touched = multiset_diff(before.touched, after.touched);
   return {
     rels: [
       { rel: "finding", add: finding.add, del: finding.del },
       { rel: "span", add: span.add, del: span.del },
       { rel: "touched", add: touched.add, del: touched.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
     concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => applyArrivals(seam, targets),
+      (targets) => apply_arrivals(seam, targets),
     ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // struct_column_renders_canonical_json: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -317,41 +317,41 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.applyArrivals(seam, targets, SUBSCRIBED_RELATIONS),
+      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),
     ).pipe(map((normalized) => { arrivals = normalized; }))),
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -360,16 +360,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "struct_column_renders_canonical_json",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: take_until_keyed_replace_negated_done.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -19,10 +19,10 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -215,7 +215,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__pre_phase" ("endpoint" TEXT NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   demanded: ["col1", "endpoint"],
   fetch_result: ["endpoint", "col2"],
   live_fetch: ["endpoint"],
@@ -225,7 +225,7 @@ const relColumns: Record<string, readonly string[]> = {
   scope_done: ["endpoint"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   demanded: ["text", "text"],
   fetch_result: ["text", "text"],
   live_fetch: ["text"],
@@ -235,36 +235,36 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   scope_done: ["text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "take_until_keyed_replace_negated_done", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "40b9bbb365dfcca2", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "demanded", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4b4d909eefc92025", hSchema: "81d71b3233d1ddf5", hRule: "032412c23a6d77f7" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "col1", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ce64c0ebdda0badf", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9ca3b780d04654c4", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "fetch_result", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "fe9f873761e0eaf1", hSchema: "1a8f8f4ee0362116", hRule: "" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "90a3185abbfd00ac", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b3975de41743408a", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "live_fetch", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "e370db6e0bf444e1", hSchema: "b7fb1ec867ca237e", hRule: "24da4c0ea7052f41" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "600ad1088bc82432", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 6, ordinal: 0, localName: "open_fetch", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "4d340c681c71bad2", hSchema: "5fee25318042232d", hRule: "0223c9a36a9405ab" },
-  { relId: 16, parentId: 15, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1a5b154e6dca06f2", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 6, ordinal: 0, localName: "phase", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "e20bd2b7ffc30b0c", hSchema: "1462fdcd2c853111", hRule: "55996212685ee1b9" },
-  { relId: 18, parentId: 17, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "aed726b268e3ee69", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 17, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6f4cc8c21717f527", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 6, ordinal: 0, localName: "poll_due", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "fad5fbea9a2afee3", hSchema: "b7fb1ec867ca237e", hRule: "" },
-  { relId: 21, parentId: 20, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0ad698194579dbc1", hSchema: "", hRule: "" },
-  { relId: 22, parentId: 6, ordinal: 0, localName: "scope_done", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "48a748f7c2f118cd", hSchema: "b7fb1ec867ca237e", hRule: "51b872f89fd10842" },
-  { relId: 23, parentId: 22, ordinal: 1, localName: "endpoint", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "458a357987b04bd9", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "take_until_keyed_replace_negated_done", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "40b9bbb365dfcca2", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "demanded", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4b4d909eefc92025", h_schema: "81d71b3233d1ddf5", h_rule: "032412c23a6d77f7" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "col1", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ce64c0ebdda0badf", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "9ca3b780d04654c4", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "fetch_result", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "fe9f873761e0eaf1", h_schema: "1a8f8f4ee0362116", h_rule: "" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "90a3185abbfd00ac", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "col2", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b3975de41743408a", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "live_fetch", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "e370db6e0bf444e1", h_schema: "b7fb1ec867ca237e", h_rule: "24da4c0ea7052f41" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "600ad1088bc82432", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 6, ordinal: 0, local_name: "open_fetch", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "4d340c681c71bad2", h_schema: "5fee25318042232d", h_rule: "0223c9a36a9405ab" },
+  { rel_id: 16, parent_id: 15, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1a5b154e6dca06f2", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 6, ordinal: 0, local_name: "phase", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "e20bd2b7ffc30b0c", h_schema: "1462fdcd2c853111", h_rule: "55996212685ee1b9" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "aed726b268e3ee69", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 17, ordinal: 2, local_name: "col2", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "6f4cc8c21717f527", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 6, ordinal: 0, local_name: "poll_due", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "fad5fbea9a2afee3", h_schema: "b7fb1ec867ca237e", h_rule: "" },
+  { rel_id: 21, parent_id: 20, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "0ad698194579dbc1", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 6, ordinal: 0, local_name: "scope_done", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "48a748f7c2f118cd", h_schema: "b7fb1ec867ca237e", h_rule: "51b872f89fd10842" },
+  { rel_id: 23, parent_id: 22, ordinal: 1, local_name: "endpoint", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "458a357987b04bd9", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["fetch_result", "poll_due"];
+const arrival_targets: readonly string[] = ["fetch_result", "poll_due"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "phase", sql: `INSERT OR IGNORE INTO "phase" ("endpoint", "col2") VALUES (?, ?)`, params: ["gh_repos", "idle"] },
@@ -286,19 +286,19 @@ type Snapshot = {
   readonly scope_done: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "demanded"`, relColumns.demanded!, relColumnTypes.demanded!),
-    fetch_result: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "fetch_result"`, relColumns.fetch_result!, relColumnTypes.fetch_result!),
-    live_fetch: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "live_fetch"`, relColumns.live_fetch!, relColumnTypes.live_fetch!),
-    open_fetch: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "open_fetch"`, relColumns.open_fetch!, relColumnTypes.open_fetch!),
-    phase: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "phase"`, relColumns.phase!, relColumnTypes.phase!),
-    poll_due: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "poll_due"`, relColumns.poll_due!, relColumnTypes.poll_due!),
-    scope_done: selectRows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "scope_done"`, relColumns.scope_done!, relColumnTypes.scope_done!),
+    demanded: select_rows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
+    fetch_result: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "fetch_result"`, rel_columns.fetch_result!, rel_column_types.fetch_result!),
+    live_fetch: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "live_fetch"`, rel_columns.live_fetch!, rel_column_types.live_fetch!),
+    open_fetch: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "open_fetch"`, rel_columns.open_fetch!, rel_column_types.open_fetch!),
+    phase: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "phase"`, rel_columns.phase!, rel_column_types.phase!),
+    poll_due: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "poll_due"`, rel_columns.poll_due!, rel_column_types.poll_due!),
+    scope_done: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "scope_done"`, rel_columns.scope_done!, rel_column_types.scope_done!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   demanded: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "demanded"`,
   fetch_result: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "fetch_result"`,
   live_fetch: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "live_fetch"`,
@@ -308,12 +308,12 @@ const finalSelect: Record<string, string> = {
   scope_done: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "scope_done"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  fetch_result: { kind: "log", addSql: `INSERT INTO "fetch_result" ("endpoint", "col2") VALUES (?, ?)`, delSql: null },
-  poll_due: { kind: "log", addSql: `INSERT INTO "poll_due" ("endpoint") VALUES (?)`, delSql: null },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  fetch_result: { kind: "log", add_sql: `INSERT INTO "fetch_result" ("endpoint", "col2") VALUES (?, ?)`, del_sql: null },
+  poll_due: { kind: "log", add_sql: `INSERT INTO "poll_due" ("endpoint") VALUES (?)`, del_sql: null },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`take_until_keyed_replace_negated_done: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -322,42 +322,42 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`take_until_keyed_replace_negated_done: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`take_until_keyed_replace_negated_done: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demanded", kind: "set", tableName: "demanded", deltaTableName: "__delta_demanded", frontierTableName: "__frontier_demanded", nextFrontierTableName: "__next_frontier_demanded", columns: ["col1", "endpoint"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "endpoint", "_sign"`, ruleObservers: [] },
-  { rel: "fetch_result", kind: "log", tableName: "fetch_result", deltaTableName: "__delta_fetch_result", frontierTableName: "__frontier_fetch_result", nextFrontierTableName: "__next_frontier_fetch_result", columns: ["endpoint", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "fetch_result" ("endpoint", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "endpoint", "col2"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "col2", "_sign"`, ruleObservers: ["phase/2"] },
-  { rel: "live_fetch", kind: "set", tableName: "live_fetch", deltaTableName: "__delta_live_fetch", frontierTableName: "__frontier_live_fetch", nextFrontierTableName: "__next_frontier_live_fetch", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_fetch" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, ruleObservers: ["demanded/2"] },
-  { rel: "open_fetch", kind: "set", tableName: "open_fetch", deltaTableName: "__delta_open_fetch", frontierTableName: "__frontier_open_fetch", nextFrontierTableName: "__next_frontier_open_fetch", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_fetch" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, ruleObservers: ["live_fetch/1", "scope_done/1"] },
-  { rel: "phase", kind: "set", tableName: "phase", deltaTableName: "__delta_phase", frontierTableName: "__frontier_phase", nextFrontierTableName: "__next_frontier_phase", columns: ["endpoint", "col2"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_phase" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "col2", "_sign"`, ruleObservers: [] },
-  { rel: "poll_due", kind: "log", tableName: "poll_due", deltaTableName: "__delta_poll_due", frontierTableName: "__frontier_poll_due", nextFrontierTableName: "__next_frontier_poll_due", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "poll_due" ("endpoint") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "endpoint"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_poll_due" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, ruleObservers: ["open_fetch/1", "phase/2"] },
-  { rel: "scope_done", kind: "set", tableName: "scope_done", deltaTableName: "__delta_scope_done", frontierTableName: "__frontier_scope_done", nextFrontierTableName: "__next_frontier_scope_done", columns: ["endpoint"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_scope_done" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, ruleObservers: [] },
+  { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["col1", "endpoint"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "endpoint", "_sign"`, rule_observers: [] },
+  { rel: "fetch_result", kind: "log", table_name: "fetch_result", delta_table_name: "__delta_fetch_result", frontier_table_name: "__frontier_fetch_result", next_frontier_table_name: "__next_frontier_fetch_result", columns: ["endpoint", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "fetch_result" ("endpoint", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "endpoint", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "col2", "_sign"`, rule_observers: ["phase/2"] },
+  { rel: "live_fetch", kind: "set", table_name: "live_fetch", delta_table_name: "__delta_live_fetch", frontier_table_name: "__frontier_live_fetch", next_frontier_table_name: "__next_frontier_live_fetch", columns: ["endpoint"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_fetch" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: ["demanded/2"] },
+  { rel: "open_fetch", kind: "set", table_name: "open_fetch", delta_table_name: "__delta_open_fetch", frontier_table_name: "__frontier_open_fetch", next_frontier_table_name: "__next_frontier_open_fetch", columns: ["endpoint"], column_types: ["text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_fetch" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: ["live_fetch/1", "scope_done/1"] },
+  { rel: "phase", kind: "set", table_name: "phase", delta_table_name: "__delta_phase", frontier_table_name: "__frontier_phase", next_frontier_table_name: "__next_frontier_phase", columns: ["endpoint", "col2"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_phase" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "col2", "_sign"`, rule_observers: [] },
+  { rel: "poll_due", kind: "log", table_name: "poll_due", delta_table_name: "__delta_poll_due", frontier_table_name: "__frontier_poll_due", next_frontier_table_name: "__next_frontier_poll_due", columns: ["endpoint"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "poll_due" ("endpoint") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "endpoint"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_poll_due" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: ["open_fetch/1", "phase/2"] },
+  { rel: "scope_done", kind: "set", table_name: "scope_done", delta_table_name: "__delta_scope_done", frontier_table_name: "__frontier_scope_done", next_frontier_table_name: "__next_frontier_scope_done", columns: ["endpoint"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_scope_done" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "phase", ruleId: "take_until_keyed_replace_negated_done:phase/2#1", headKind: "set", headTableName: "phase", headDeltaTableName: "__delta_phase", headColumns: ["endpoint", "col2"], keyIndices: [0], projectSql: `SELECT d0."endpoint" AS "endpoint", 'fetching' AS "col2" FROM "__frontier_poll_due" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'idle' ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "phase", ruleId: "take_until_keyed_replace_negated_done:phase/2#2", headKind: "set", headTableName: "phase", headDeltaTableName: "__delta_phase", headColumns: ["endpoint", "col2"], keyIndices: [0], projectSql: `SELECT d0."endpoint" AS "endpoint", 'idle' AS "col2" FROM "__frontier_fetch_result" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'fetching' ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "open_fetch", ruleId: "take_until_keyed_replace_negated_done:open_fetch/1#1", headKind: "set", headTableName: "open_fetch", headDeltaTableName: "__delta_open_fetch", headColumns: ["endpoint"], keyIndices: [0], projectSql: `SELECT d0."endpoint" AS "endpoint" FROM "__frontier_poll_due" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'idle' ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "phase", rule_id: "take_until_keyed_replace_negated_done:phase/2#1", head_kind: "set", head_table_name: "phase", head_delta_table_name: "__delta_phase", head_columns: ["endpoint", "col2"], key_indices: [0], project_sql: `SELECT d0."endpoint" AS "endpoint", 'fetching' AS "col2" FROM "__frontier_poll_due" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'idle' ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "phase", rule_id: "take_until_keyed_replace_negated_done:phase/2#2", head_kind: "set", head_table_name: "phase", head_delta_table_name: "__delta_phase", head_columns: ["endpoint", "col2"], key_indices: [0], project_sql: `SELECT d0."endpoint" AS "endpoint", 'idle' AS "col2" FROM "__frontier_fetch_result" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'fetching' ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "open_fetch", rule_id: "take_until_keyed_replace_negated_done:open_fetch/1#1", head_kind: "set", head_table_name: "open_fetch", head_delta_table_name: "__delta_open_fetch", head_columns: ["endpoint"], key_indices: [0], project_sql: `SELECT d0."endpoint" AS "endpoint" FROM "__frontier_poll_due" d0, "__pre_phase" b0 WHERE d0."_phase" >= 0 AND b0."endpoint" = d0."endpoint" AND b0."col2" = 'idle' ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "scope_done", ruleId: "take_until_keyed_replace_negated_done:scope_done/1#1", headDeltaTableName: "__delta_scope_done", headColumns: ["endpoint"], insertSql: `INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_open_fetch" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = d0."endpoint" AND n0."col2" = 'fetching') RETURNING "endpoint"`, selectSql: `SELECT "endpoint" FROM "scope_done"`, recomputeSql: `DELETE FROM "scope_done";
-INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching')`, supportSql: [`DELETE FROM "__support_next_scope_done"`, `INSERT INTO "__support_next_scope_done" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching') GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "scope_done" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_scope_done" n WHERE n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_scope_done" ("_sign", "_sequence", "endpoint") SELECT -1, row_number() OVER () - 1, "endpoint" FROM "scope_done" WHERE "__refcount" <= 0`, `DELETE FROM "scope_done" WHERE "__refcount" <= 0`, `DELETE FROM "__new_scope_done"`, `INSERT INTO "__new_scope_done" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_scope_done" n LEFT JOIN "scope_done" h ON n."endpoint" = h."endpoint" WHERE h."endpoint" IS NULL`, `INSERT INTO "__delta_scope_done" ("_sign", "_sequence", "endpoint") SELECT 1, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT INTO "__frontier_scope_done" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT INTO "__next_frontier_scope_done" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT OR IGNORE INTO "scope_done" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_scope_done" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "live_fetch", ruleId: "take_until_keyed_replace_negated_done:live_fetch/1#1", headDeltaTableName: "__delta_live_fetch", headColumns: ["endpoint"], insertSql: `INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_open_fetch" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = d0."endpoint") RETURNING "endpoint"`, selectSql: `SELECT "endpoint" FROM "live_fetch"`, recomputeSql: `DELETE FROM "live_fetch";
-INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint")`, supportSql: [`DELETE FROM "__support_next_live_fetch"`, `INSERT INTO "__support_next_live_fetch" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint") GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "live_fetch" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_fetch" n WHERE n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_live_fetch" ("_sign", "_sequence", "endpoint") SELECT -1, row_number() OVER () - 1, "endpoint" FROM "live_fetch" WHERE "__refcount" <= 0`, `DELETE FROM "live_fetch" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_fetch"`, `INSERT INTO "__new_live_fetch" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_live_fetch" n LEFT JOIN "live_fetch" h ON n."endpoint" = h."endpoint" WHERE h."endpoint" IS NULL`, `INSERT INTO "__delta_live_fetch" ("_sign", "_sequence", "endpoint") SELECT 1, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT INTO "__frontier_live_fetch" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT INTO "__next_frontier_live_fetch" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT OR IGNORE INTO "live_fetch" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_live_fetch" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "demanded", ruleId: "take_until_keyed_replace_negated_done:demanded/2#1", headDeltaTableName: "__delta_demanded", headColumns: ["col1", "endpoint"], insertSql: `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT DISTINCT json_object('fn', 'fetch_of', 'args', json_array(d0."endpoint")), d0."endpoint" FROM "__frontier_live_fetch" d0 WHERE d0."_phase" >= 0 RETURNING "col1", "endpoint"`, selectSql: `SELECT "col1", "endpoint" FROM "demanded"`, recomputeSql: `DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint" FROM "live_fetch" b0`, supportSql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("col1", "endpoint", "__refcount") SELECT "col1", "endpoint", sum("__refcount") FROM (SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")) AS "col1", b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "live_fetch" b0 GROUP BY json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint") GROUP BY "col1", "endpoint"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."col1" = h."col1" AND n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "endpoint") SELECT -1, row_number() OVER () - 1, "col1", "endpoint" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("col1", "endpoint", "__refcount") SELECT n."col1", n."endpoint", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."col1" = h."col1" AND n."endpoint" = h."endpoint" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "endpoint") SELECT 1, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "col1", "endpoint") SELECT ?, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "col1", "endpoint") SELECT ?, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint", "__refcount") SELECT n."col1", n."endpoint", n."__refcount" FROM "__support_next_demanded" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "scope_done", rule_id: "take_until_keyed_replace_negated_done:scope_done/1#1", head_delta_table_name: "__delta_scope_done", head_columns: ["endpoint"], insert_sql: `INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_open_fetch" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = d0."endpoint" AND n0."col2" = 'fetching') RETURNING "endpoint"`, select_sql: `SELECT "endpoint" FROM "scope_done"`, recompute_sql: `DELETE FROM "scope_done";
+INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching')`, support_sql: [`DELETE FROM "__support_next_scope_done"`, `INSERT INTO "__support_next_scope_done" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching') GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "scope_done" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_scope_done" n WHERE n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_scope_done" ("_sign", "_sequence", "endpoint") SELECT -1, row_number() OVER () - 1, "endpoint" FROM "scope_done" WHERE "__refcount" <= 0`, `DELETE FROM "scope_done" WHERE "__refcount" <= 0`, `DELETE FROM "__new_scope_done"`, `INSERT INTO "__new_scope_done" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_scope_done" n LEFT JOIN "scope_done" h ON n."endpoint" = h."endpoint" WHERE h."endpoint" IS NULL`, `INSERT INTO "__delta_scope_done" ("_sign", "_sequence", "endpoint") SELECT 1, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT INTO "__frontier_scope_done" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT INTO "__next_frontier_scope_done" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_scope_done"`, `INSERT OR IGNORE INTO "scope_done" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_scope_done" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "live_fetch", rule_id: "take_until_keyed_replace_negated_done:live_fetch/1#1", head_delta_table_name: "__delta_live_fetch", head_columns: ["endpoint"], insert_sql: `INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT DISTINCT d0."endpoint" FROM "__frontier_open_fetch" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = d0."endpoint") RETURNING "endpoint"`, select_sql: `SELECT "endpoint" FROM "live_fetch"`, recompute_sql: `DELETE FROM "live_fetch";
+INSERT OR IGNORE INTO "live_fetch" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint")`, support_sql: [`DELETE FROM "__support_next_live_fetch"`, `INSERT INTO "__support_next_live_fetch" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "scope_done" n0 WHERE n0."endpoint" = b0."endpoint") GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "live_fetch" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_fetch" n WHERE n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_live_fetch" ("_sign", "_sequence", "endpoint") SELECT -1, row_number() OVER () - 1, "endpoint" FROM "live_fetch" WHERE "__refcount" <= 0`, `DELETE FROM "live_fetch" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_fetch"`, `INSERT INTO "__new_live_fetch" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_live_fetch" n LEFT JOIN "live_fetch" h ON n."endpoint" = h."endpoint" WHERE h."endpoint" IS NULL`, `INSERT INTO "__delta_live_fetch" ("_sign", "_sequence", "endpoint") SELECT 1, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT INTO "__frontier_live_fetch" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT INTO "__next_frontier_live_fetch" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_live_fetch"`, `INSERT OR IGNORE INTO "live_fetch" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_live_fetch" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "demanded", rule_id: "take_until_keyed_replace_negated_done:demanded/2#1", head_delta_table_name: "__delta_demanded", head_columns: ["col1", "endpoint"], insert_sql: `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT DISTINCT json_object('fn', 'fetch_of', 'args', json_array(d0."endpoint")), d0."endpoint" FROM "__frontier_live_fetch" d0 WHERE d0."_phase" >= 0 RETURNING "col1", "endpoint"`, select_sql: `SELECT "col1", "endpoint" FROM "demanded"`, recompute_sql: `DELETE FROM "demanded";
+INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint" FROM "live_fetch" b0`, support_sql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("col1", "endpoint", "__refcount") SELECT "col1", "endpoint", sum("__refcount") FROM (SELECT json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")) AS "col1", b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "live_fetch" b0 GROUP BY json_object('fn', 'fetch_of', 'args', json_array(b0."endpoint")), b0."endpoint") GROUP BY "col1", "endpoint"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."col1" = h."col1" AND n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "endpoint") SELECT -1, row_number() OVER () - 1, "col1", "endpoint" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("col1", "endpoint", "__refcount") SELECT n."col1", n."endpoint", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."col1" = h."col1" AND n."endpoint" = h."endpoint" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "endpoint") SELECT 1, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "col1", "endpoint") SELECT ?, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "col1", "endpoint") SELECT ?, "rowid" - 1, "col1", "endpoint" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("col1", "endpoint", "__refcount") SELECT n."col1", n."endpoint", n."__refcount" FROM "__support_next_demanded" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const EDGE_PHASE_0_PROJECT_SQL = `SELECT ?1 AS "endpoint", 'fetching' AS "col2" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'idle'`;
@@ -376,94 +376,94 @@ const EDGE_OPEN_FETCH_2_HEAD_COLUMNS: readonly string[] = ["endpoint"];
 const EDGE_OPEN_FETCH_2_KEY_INDICES: readonly number[] = [0];
 
 function resolvePhase_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "poll_due", before.poll_due, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PHASE_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "poll_due", before.poll_due, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PHASE_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_PHASE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_PHASE_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_PHASE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_PHASE_0_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PHASE_0_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PHASE_0_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolvePhase_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "fetch_result", before.fetch_result, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PHASE_1_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "fetch_result", before.fetch_result, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PHASE_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_PHASE_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_PHASE_1_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_PHASE_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_PHASE_1_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PHASE_1_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PHASE_1_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolveOpenFetch_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "poll_due", before.poll_due, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_FETCH_2_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "poll_due", before.poll_due, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_FETCH_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_OPEN_FETCH_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_OPEN_FETCH_2_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_OPEN_FETCH_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_OPEN_FETCH_2_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_FETCH_2_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_FETCH_2_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
-function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
+function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_phase";
 INSERT INTO "__pre_phase" ("endpoint", "col2") SELECT "endpoint", "col2" FROM "phase"`);
 }
 
-interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
-function quoteOrderedIdentifier(identifier: string): string {
+function quote_ordered_identifier(identifier: string): string {
   return '"' + identifier.replaceAll('"', '""') + '"';
 }
 
-function orderedPreWriteStatement(write: IOrderedWrite): SqlStatement | null {
+function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
-  if (!arm.evolvesPre) return null;
-  const table = quoteOrderedIdentifier("__pre_" + arm.headRel);
-  const columns = arm.headColumns.map(quoteOrderedIdentifier);
+  if (!arm.evolves_pre) return null;
+  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
-  if (arm.headKind === "log") {
-    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bindArgs(row) };
+  if (arm.head_kind === "log") {
+    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bind_args(row) };
   }
-  const keyIndices = new Set(arm.keyIndices);
-  const keyColumns = arm.keyIndices.map((index) => columns[index]!);
-  const nonKeyColumns = columns.filter((_column, index) => !keyIndices.has(index));
-  const conflict = nonKeyColumns.length === 0
-    ? "ON CONFLICT(" + keyColumns.join(", ") + ") DO NOTHING"
-    : "ON CONFLICT(" + keyColumns.join(", ") + ") DO UPDATE SET " + nonKeyColumns.map((column) => column + " = excluded." + column).join(", ");
-  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bindArgs(row) };
+  const key_indices = new Set(arm.key_indices);
+  const key_columns = arm.key_indices.map((index) => columns[index]!);
+  const non_key_columns = columns.filter((_column, index) => !key_indices.has(index));
+  const conflict = non_key_columns.length === 0
+    ? "ON CONFLICT(" + key_columns.join(", ") + ") DO NOTHING"
+    : "ON CONFLICT(" + key_columns.join(", ") + ") DO UPDATE SET " + non_key_columns.map((column) => column + " = excluded." + column).join(", ");
+  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bind_args(row) };
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { triggerRel: "poll_due", triggerKind: "arrival", headRel: "phase", headKind: "set", headColumns: ["endpoint", "col2"], keyIndices: [0], projectSql: `SELECT ?1 AS "endpoint", 'fetching' AS "col2" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'idle'`, writeSql: `INSERT INTO "phase" ("endpoint", "col2") VALUES (?, ?) ON CONFLICT("endpoint") DO UPDATE SET "col2" = excluded."col2"`, evolvesPre: true },
-  { triggerRel: "fetch_result", triggerKind: "arrival", headRel: "phase", headKind: "set", headColumns: ["endpoint", "col2"], keyIndices: [0], projectSql: `SELECT ?1 AS "endpoint", 'idle' AS "col2" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'fetching'`, writeSql: `INSERT INTO "phase" ("endpoint", "col2") VALUES (?, ?) ON CONFLICT("endpoint") DO UPDATE SET "col2" = excluded."col2"`, evolvesPre: true },
-  { triggerRel: "poll_due", triggerKind: "arrival", headRel: "open_fetch", headKind: "set", headColumns: ["endpoint"], keyIndices: [0], projectSql: `SELECT ?1 AS "endpoint" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'idle'`, writeSql: `INSERT INTO "open_fetch" ("endpoint") VALUES (?) ON CONFLICT("endpoint") DO NOTHING`, evolvesPre: false },
+  { trigger_rel: "poll_due", trigger_kind: "arrival", head_rel: "phase", head_kind: "set", head_columns: ["endpoint", "col2"], key_indices: [0], project_sql: `SELECT ?1 AS "endpoint", 'fetching' AS "col2" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'idle'`, write_sql: `INSERT INTO "phase" ("endpoint", "col2") VALUES (?, ?) ON CONFLICT("endpoint") DO UPDATE SET "col2" = excluded."col2"`, evolves_pre: true },
+  { trigger_rel: "fetch_result", trigger_kind: "arrival", head_rel: "phase", head_kind: "set", head_columns: ["endpoint", "col2"], key_indices: [0], project_sql: `SELECT ?1 AS "endpoint", 'idle' AS "col2" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'fetching'`, write_sql: `INSERT INTO "phase" ("endpoint", "col2") VALUES (?, ?) ON CONFLICT("endpoint") DO UPDATE SET "col2" = excluded."col2"`, evolves_pre: true },
+  { trigger_rel: "poll_due", trigger_kind: "arrival", head_rel: "open_fetch", head_kind: "set", head_columns: ["endpoint"], key_indices: [0], project_sql: `SELECT ?1 AS "endpoint" FROM "__pre_phase" b0 WHERE b0."endpoint" = ?1 AND b0."col2" = 'idle'`, write_sql: `INSERT INTO "open_fetch" ("endpoint") VALUES (?) ON CONFLICT("endpoint") DO NOTHING`, evolves_pre: false },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
@@ -474,19 +474,19 @@ const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string
   { rel: "poll_due", sql: `SELECT "_sequence" AS "__sequence", "endpoint" FROM "__frontier_poll_due" ORDER BY "_phase", "_sequence"`, columns: ["endpoint"] },
 ];
 
-function orderedOutsideOccurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
+function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
   const accepted = new Set<IArrivalRow>();
-  for (const arrival of triggerOccurrences("log", "fetch_result", before["fetch_result"], arrivals)) accepted.add(arrival);
-  for (const arrival of triggerOccurrences("log", "poll_due", before["poll_due"], arrivals)) accepted.add(arrival);
+  for (const arrival of trigger_occurrences("log", "fetch_result", before["fetch_result"], arrivals)) accepted.add(arrival);
+  for (const arrival of trigger_occurrences("log", "poll_due", before["poll_due"], arrivals)) accepted.add(arrival);
   return arrivals.filter((arrival) => accepted.has(arrival)).map((arrival): IOrderedOccurrence => ({ rel: arrival.rel, kind: "arrival", row: arrival.row }));
 }
 
-function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+function read_ordered_departures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
   void seam;
   return of([]);
 }
 
-function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+function read_ordered_carry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
   if (ORDERED_CARRY_READS.length === 0) return of([]);
   return forkJoin(ORDERED_CARRY_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(
     map((result) => result.rows.map((row): IOrderedOccurrence => ({
@@ -498,16 +498,16 @@ function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrenc
   ))).pipe(map((groups) => groups.flat().sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))));
 }
 
-function orderedLevelOccurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {
+function ordered_level_occurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {
   const occurrences: IOrderedOccurrence[] = [];
   return occurrences;
 }
 
-function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {
-  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.triggerRel === occurrence.rel && arm.triggerKind === occurrence.kind);
+function apply_ordered_occurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {
+  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.trigger_rel === occurrence.rel && arm.trigger_kind === occurrence.kind);
   if (arms.length === 0) return of(undefined);
-  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.projectSql, args: bindArgs(occurrence.row) }).pipe(
-    map((result) => ({ arm, rows: result.rows.map((row) => arm.headColumns.map((column) => row[column] as IRowValue) as IRow) })),
+  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(
+    map((result) => ({ arm, rows: result.rows.map((row) => arm.head_columns.map((column) => row[column] as IRowValue) as IRow) })),
   ))).pipe(
     concatMap((groups) => {
       const writes: IOrderedWrite[] = [];
@@ -515,14 +515,14 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
       const keyed = new Map<string, IRow>();
       for (const group of groups) {
         for (const row of group.rows) {
-          const exactKey = JSON.stringify([group.arm.headRel, row]);
-          if (exact.has(exactKey)) continue;
-          exact.add(exactKey);
-          if (group.arm.headKind === "set") {
-            const key = JSON.stringify([group.arm.headRel, group.arm.keyIndices.map((index) => row[index])]);
+          const exact_key = JSON.stringify([group.arm.head_rel, row]);
+          if (exact.has(exact_key)) continue;
+          exact.add(exact_key);
+          if (group.arm.head_kind === "set") {
+            const key = JSON.stringify([group.arm.head_rel, group.arm.key_indices.map((index) => row[index])]);
             const prior = keyed.get(key);
             if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(row)) {
-              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.headRel}: ${key}`);
+              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.head_rel}: ${key}`);
             }
             keyed.set(key, row);
           }
@@ -531,8 +531,8 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
       }
       if (writes.length === 0) return of(undefined);
       const statements = writes.flatMap((write): readonly SqlStatement[] => {
-        const base: SqlStatement = { sql: write.arm.writeSql, args: bindArgs(write.row) };
-        const pre = orderedPreWriteStatement(write);
+        const base: SqlStatement = { sql: write.arm.write_sql, args: bind_args(write.row) };
+        const pre = ordered_pre_write_statement(write);
         return pre === null ? [base] : [base, pre];
       });
       return seam.runner.batch(seam.db, statements).pipe(map(() => {
@@ -543,38 +543,38 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
   );
 }
 
-function processOrderedOccurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {
-  return forkJoin([readOrderedCarry(seam), readOrderedDepartures(seam)]).pipe(
+function process_ordered_occurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {
+  return forkJoin([read_ordered_carry(seam), read_ordered_departures(seam)]).pipe(
     concatMap(([carry, departures]) => {
       const written: IOrderedWrite[] = [];
-      const occurrences = [...carry, ...departures, ...orderedOutsideOccurrences(before, arrivals), ...orderedLevelOccurrences(before, mid)];
+      const occurrences = [...carry, ...departures, ...ordered_outside_occurrences(before, arrivals), ...ordered_level_occurrences(before, mid)];
       return occurrences.reduce(
-        (work, occurrence) => work.pipe(concatMap(() => applyOrderedOccurrence(seam, occurrence, written))),
+        (work, occurrence) => work.pipe(concatMap(() => apply_ordered_occurrence(seam, occurrence, written))),
         of(undefined) as Observable<void>,
       ).pipe(map(() => written as readonly IOrderedWrite[]));
     }),
   );
 }
 
-function orderedCarryAdditions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {
-  const boundaryByRel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));
-  const boundaryAdds = new Map([...boundaryByRel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));
+function ordered_carry_additions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {
+  const boundary_by_rel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));
+  const boundary_adds = new Map([...boundary_by_rel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));
   const additions: IRelDelta[] = [];
   const seen = new Set<string>();
   for (const { arm, row } of written) {
-    const rowText = JSON.stringify(row);
-    const exact = JSON.stringify([arm.headRel, row]);
-    if (seen.has(exact) || !(boundaryAdds.get(arm.headRel)?.has(rowText) ?? false)) continue;
+    const row_text = JSON.stringify(row);
+    const exact = JSON.stringify([arm.head_rel, row]);
+    if (seen.has(exact) || !(boundary_adds.get(arm.head_rel)?.has(row_text) ?? false)) continue;
     seen.add(exact);
-    additions.push({ rel: arm.headRel, add: [row], del: [] });
+    additions.push({ rel: arm.head_rel, add: [row], del: [] });
   }
-  for (const row of multisetDiff(mid["demanded"], after["demanded"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["demanded", row]); if (seen.has(exact) || !(boundaryAdds.get("demanded")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "demanded", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["live_fetch"], after["live_fetch"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["live_fetch", row]); if (seen.has(exact) || !(boundaryAdds.get("live_fetch")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "live_fetch", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["scope_done"], after["scope_done"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["scope_done", row]); if (seen.has(exact) || !(boundaryAdds.get("scope_done")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "scope_done", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["demanded"], after["demanded"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["demanded", row]); if (seen.has(exact) || !(boundary_adds.get("demanded")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "demanded", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["live_fetch"], after["live_fetch"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["live_fetch", row]); if (seen.has(exact) || !(boundary_adds.get("live_fetch")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "live_fetch", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["scope_done"], after["scope_done"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["scope_done", row]); if (seen.has(exact) || !(boundary_adds.get("scope_done")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "scope_done", add: [row], del: [] }); }
   return additions.filter((delta) => delta.add.length > 0);
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "scope_done";
 INSERT OR IGNORE INTO "scope_done" ("endpoint") SELECT b0."endpoint" FROM "open_fetch" b0 WHERE NOT EXISTS (SELECT 1 FROM "phase" n0 WHERE n0."endpoint" = b0."endpoint" AND n0."col2" = 'fetching');
 DELETE FROM "live_fetch";
@@ -584,14 +584,14 @@ INSERT OR IGNORE INTO "demanded" ("col1", "endpoint") SELECT json_object('fn', '
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const demanded = multisetDiff(before.demanded, after.demanded);
-  const fetch_result = multisetDiff(before.fetch_result, after.fetch_result);
-  const live_fetch = multisetDiff(before.live_fetch, after.live_fetch);
-  const open_fetch = multisetDiff(before.open_fetch, after.open_fetch);
-  const phase = multisetDiff(before.phase, after.phase);
-  const poll_due = multisetDiff(before.poll_due, after.poll_due);
-  const scope_done = multisetDiff(before.scope_done, after.scope_done);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const demanded = multiset_diff(before.demanded, after.demanded);
+  const fetch_result = multiset_diff(before.fetch_result, after.fetch_result);
+  const live_fetch = multiset_diff(before.live_fetch, after.live_fetch);
+  const open_fetch = multiset_diff(before.open_fetch, after.open_fetch);
+  const phase = multiset_diff(before.phase, after.phase);
+  const poll_due = multiset_diff(before.poll_due, after.poll_due);
+  const scope_done = multiset_diff(before.scope_done, after.scope_done);
   return {
     rels: [
       { rel: "demanded", add: demanded.add, del: demanded.del },
@@ -602,38 +602,38 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "poll_due", add: poll_due.add, del: poll_due.del },
       { rel: "scope_done", add: scope_done.add, del: scope_done.del },
     ],
-    carryPending: open_fetch.add.length > 0 || open_fetch.del.length > 0 || phase.add.length > 0 || phase.del.length > 0,
+    carry_pending: open_fetch.add.length > 0 || open_fetch.del.length > 0 || phase.add.length > 0 || phase.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       forkJoin([resolvePhase_0Writes(seam, before, arrivals), resolvePhase_1Writes(seam, before, arrivals), resolveOpenFetch_2Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // take_until_keyed_replace_negated_done: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
-function runOrderedTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => snapshotOrderedPre(seam).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),
-    concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
-    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),
+function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap(({ before, mid, written }) => recompute_levels(seam).pipe(map(() => ({ before, mid, written })))),
   ).pipe(
-    concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),
-    concatMap(({ mid, after, written, deltas }) => stageOrderedFrontiers(seam, INCREMENTAL_RELATIONS, orderedCarryAdditions(mid, after, deltas, written)).pipe(
-      map((postWriteCarry): ITickDeltas => ({ rels: deltas.rels, carryPending: deltas.carryPending || postWriteCarry })),
+    concatMap(({ before, mid, written }) => read_snapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before, after) })))),
+    concatMap(({ mid, after, written, deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after, deltas, written)).pipe(
+      map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
   );
   // take_until_keyed_replace_negated_done: ordered process_occurrences with evolving pre snapshots.
@@ -648,37 +648,37 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
-  return runOrderedTick(seam, arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
+  return run_ordered_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -687,16 +687,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "take_until_keyed_replace_negated_done",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

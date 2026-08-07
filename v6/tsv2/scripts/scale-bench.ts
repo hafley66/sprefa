@@ -16,20 +16,20 @@ const BATCH_SIZE = 100;
 
 type Shape = "s1" | "s2" | "s3";
 
-function parseArgs(): { shape: Shape; rows: number; recordPath: string; logPath: string | undefined } {
-  const [, , shapeArg, rowsArg, recordPath, logPath] = process.argv;
-  if (shapeArg !== "s1" && shapeArg !== "s2" && shapeArg !== "s3") throw new Error("scale-bench: shape must be s1, s2, or s3");
-  const rows = Number(rowsArg);
+function parse_args(): { shape: Shape; rows: number; record_path: string; log_path: string | undefined } {
+  const [, , shape_arg, rows_arg, record_path, log_path] = process.argv;
+  if (shape_arg !== "s1" && shape_arg !== "s2" && shape_arg !== "s3") throw new Error("scale-bench: shape must be s1, s2, or s3");
+  const rows = Number(rows_arg);
   if (!Number.isInteger(rows) || rows < BATCH_SIZE || rows % BATCH_SIZE !== 0) throw new Error("scale-bench: rows must be a positive multiple of 100");
-  if (recordPath === undefined) throw new Error("scale-bench: missing record path");
-  return { shape: shapeArg, rows, recordPath, logPath };
+  if (record_path === undefined) throw new Error("scale-bench: missing record path");
+  return { shape: shape_arg, rows, record_path, log_path };
 }
 
 function batch<T>(rows: readonly T[], start: number): readonly T[] {
   return rows.slice(start, start + BATCH_SIZE);
 }
 
-function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
+function schedule_for(shape: Shape, rows: number): readonly IArrivalBatch[] {
   if (shape === "s1") {
     return Array.from({ length: rows / BATCH_SIZE }, (_, tick) =>
       Array.from({ length: BATCH_SIZE }, (_, key) => ({
@@ -58,14 +58,14 @@ function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
   ];
 }
 
-function rowCount(seam: ISqlSeam, rel: string) {
+function row_count(seam: ISqlSeam, rel: string) {
   return seam.runner.execute(seam.db, `SELECT count(*) FROM ${rel}`);
 }
 
-async function finalTableSizes(seam: ISqlSeam): Promise<Readonly<Record<string, number>>> {
-  const relations = Object.keys(program.relColumns);
+async function final_table_sizes(seam: ISqlSeam): Promise<Readonly<Record<string, number>>> {
+  const relations = Object.keys(program.rel_columns);
   const counts = await lastValueFrom(
-    forkJoin(Object.fromEntries(relations.map((rel) => [rel, rowCount(seam, rel)]))),
+    forkJoin(Object.fromEntries(relations.map((rel) => [rel, row_count(seam, rel)]))),
   );
   return Object.fromEntries(
     relations.map((rel) => [rel, Number(counts[rel]?.rows[0]?.[0] ?? 0)]),
@@ -73,8 +73,8 @@ async function finalTableSizes(seam: ISqlSeam): Promise<Readonly<Record<string, 
 }
 
 async function main(): Promise<void> {
-  const { shape, rows, recordPath, logPath } = parseArgs();
-  const schedule = scheduleFor(shape, rows);
+  const { shape, rows, record_path, log_path } = parse_args();
+  const schedule = schedule_for(shape, rows);
   const seam = ScratchStore.open(":memory:");
   await lastValueFrom(ScratchStore.boot(seam, program.ddl));
   await lastValueFrom(
@@ -85,29 +85,29 @@ async function main(): Promise<void> {
     ).pipe(toArray()),
   );
 
-  const tickDurations: number[] = [];
-  let hostPeakBytes = process.memoryUsage().heapUsed;
+  const tick_durations: number[] = [];
+  let host_peak_bytes = process.memoryUsage().heapUsed;
   let previous = process.hrtime.bigint();
   const started = previous;
   const lines = await lastValueFrom(
     TickFold.run(program, seam, schedule).pipe(
       tap(() => {
         const now = process.hrtime.bigint();
-        tickDurations.push(Number(now - previous) / 1_000_000);
-        hostPeakBytes = Math.max(hostPeakBytes, process.memoryUsage().heapUsed);
+        tick_durations.push(Number(now - previous) / 1_000_000);
+        host_peak_bytes = Math.max(host_peak_bytes, process.memoryUsage().heapUsed);
         previous = now;
       }),
       toArray(),
     ),
   );
   const finished = process.hrtime.bigint();
-  const totalWallMs = Number(finished - started) / 1_000_000;
-  const ordered = [...tickDurations].sort((a, b) => a - b);
-  const meanTickMs = tickDurations.reduce((sum, value) => sum + value, 0) / tickDurations.length;
-  const p95TickMs = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? 0;
-  const maxTickMs = ordered.at(-1) ?? 0;
+  const total_wall_ms = Number(finished - started) / 1_000_000;
+  const ordered = [...tick_durations].sort((a, b) => a - b);
+  const mean_tick_ms = tick_durations.reduce((sum, value) => sum + value, 0) / tick_durations.length;
+  const p95_tick_ms = ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? 0;
+  const max_tick_ms = ordered.at(-1) ?? 0;
   const arrivals = schedule.reduce((sum, tick) => sum + tick.length, 0);
-  const tableSizes = await finalTableSizes(seam);
+  const table_sizes = await final_table_sizes(seam);
   const result = {
     engine: "tsv2-gen",
     shape,
@@ -115,19 +115,19 @@ async function main(): Promise<void> {
     status: "OK",
     ticks: schedule.length,
     arrivals,
-    total_wall_ms: totalWallMs,
-    mean_tick_ms: meanTickMs,
-    p95_tick_ms: p95TickMs,
-    max_tick_ms: maxTickMs,
-    final_table_sizes: tableSizes,
-    ms_per_1k_arrivals: totalWallMs / (arrivals / 1000),
+    total_wall_ms: total_wall_ms,
+    mean_tick_ms: mean_tick_ms,
+    p95_tick_ms: p95_tick_ms,
+    max_tick_ms: max_tick_ms,
+    final_table_sizes: table_sizes,
+    ms_per_1k_arrivals: total_wall_ms / (arrivals / 1000),
     worker_rss_mb: process.memoryUsage().rss / 1_048_576,
-    host_peak_mb: hostPeakBytes / 1_048_576,
+    host_peak_mb: host_peak_bytes / 1_048_576,
   };
-  if (logPath !== undefined) writeFileSync(logPath, `${lines.join("\n")}\n`);
-  if (recordPath !== "/dev/null") appendFileSync(recordPath, `${JSON.stringify(result)}\n`);
-  const finalRows = Object.values(tableSizes).reduce((sum, value) => sum + value, 0);
-  process.stdout.write(`CSV,tsv2-gen,${rows},${arrivals},${finalRows},${totalWallMs},${meanTickMs}\n`);
+  if (log_path !== undefined) writeFileSync(log_path, `${lines.join("\n")}\n`);
+  if (record_path !== "/dev/null") appendFileSync(record_path, `${JSON.stringify(result)}\n`);
+  const final_rows = Object.values(table_sizes).reduce((sum, value) => sum + value, 0);
+  process.stdout.write(`CSV,tsv2-gen,${rows},${arrivals},${final_rows},${total_wall_ms},${mean_tick_ms}\n`);
 }
 
 void main().catch((error: unknown) => {

@@ -52,16 +52,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 const FIXTURE = "aggregate_min_recomputes_when_the_minimum_is_retracted";
 
-function emittedSource(): string {
+function emitted_source(): string {
   return readFileSync(join(COMPILE_OUT, `${FIXTURE}.ts`), "utf8");
 }
 
-function emittedDdl(source: string): string[] {
+function emitted_ddl(source: string): string[] {
   return [...source.matchAll(/^ {2}`(CREATE [\s\S]*?)`,$/gm)].map((match) => match[1]!);
 }
 
-function emittedAggregateSql(source: string, field: string): string {
-  const block = source.match(/aggregateSql: \{[\s\S]*?\} \},/)![0];
+function emitted_aggregate_sql(source: string, field: string): string {
+  const block = source.match(/aggregate_sql: \{[\s\S]*?\} \},/)![0];
   return block.match(new RegExp(`${field}: \\[?\`([\\s\\S]*?)\``))![1]!;
 }
 
@@ -69,10 +69,10 @@ function run(seam: ISqlSeam, sql: string) {
   return firstValueFrom(seam.runner.execute(seam.db, sql));
 }
 
-async function loadedSeam(): Promise<{ seam: ISqlSeam; source: string }> {
-  const source = emittedSource();
+async function loaded_seam(): Promise<{ seam: ISqlSeam; source: string }> {
+  const source = emitted_source();
   const seam = ScratchStore.open(":memory:");
-  await firstValueFrom(ScratchStore.boot(seam, emittedDdl(source)));
+  await firstValueFrom(ScratchStore.boot(seam, emitted_ddl(source)));
 
   const values: string[] = [];
   for (let repo = 0; repo < 5000; repo += 1) {
@@ -91,18 +91,18 @@ async function loadedSeam(): Promise<{ seam: ISqlSeam; source: string }> {
     seam,
     `INSERT INTO "__delta_star_row" ("_sign","_sequence","repo","stars") VALUES (-1, 0, 'repo_7', 1)`,
   );
-  await run(seam, emittedAggregateSql(source, "scopeClearSql"));
-  await run(seam, emittedAggregateSql(source, "scopeSeedSql"));
+  await run(seam, emitted_aggregate_sql(source, "scope_clear_sql"));
+  await run(seam, emitted_aggregate_sql(source, "scope_seed_sql"));
   return { seam, source };
 }
 
-async function planLines(seam: ISqlSeam, sql: string): Promise<string[]> {
+async function plan_lines(seam: ISqlSeam, sql: string): Promise<string[]> {
   const plan = await run(seam, `EXPLAIN QUERY PLAN ${sql}`);
   return plan.rows.map((row) => String(row.detail));
 }
 
 test("aggregate scope seed selects only the groups this tick touched", async () => {
-  const { seam } = await loadedSeam();
+  const { seam } = await loaded_seam();
   const groups = await run(seam, `SELECT count(*) AS c FROM "stat"`);
   assert.equal(Number(groups.rows[0]!.c), 5000, "corpus must be big enough for scan-vs-search to matter");
   const derivations = await run(seam, `SELECT count(*) AS c FROM "star_row"`);
@@ -112,16 +112,16 @@ test("aggregate scope seed selects only the groups this tick touched", async () 
 });
 
 test("scoped delete and recompute SEARCH by group key, never SCAN", async () => {
-  const { seam, source } = await loadedSeam();
-  const deletePlan = await planLines(seam, emittedAggregateSql(source, "deleteScopedSql"));
-  const insertPlan = await planLines(seam, emittedAggregateSql(source, "insertScopedSql"));
-  for (const [label, lines] of [["deleteScoped", deletePlan], ["insertScoped", insertPlan]] as const) {
+  const { seam, source } = await loaded_seam();
+  const delete_plan = await plan_lines(seam, emitted_aggregate_sql(source, "delete_scoped_sql"));
+  const insert_plan = await plan_lines(seam, emitted_aggregate_sql(source, "insert_scoped_sql"));
+  for (const [label, lines] of [["deleteScoped", delete_plan], ["insertScoped", insert_plan]] as const) {
     assert.ok(
       lines.some((line) => line.includes("SEARCH")),
       `${label} must SEARCH by group key, got: ${lines.join(" | ")}`,
     );
     assert.ok(
-      !lines.some((line) => /\bSCAN\b/.test(line)),
+      !lines.some((line) => /\b_scan\b/.test(line)),
       `${label} must not SCAN the whole table, got: ${lines.join(" | ")}`,
     );
     assert.ok(
@@ -132,10 +132,10 @@ test("scoped delete and recompute SEARCH by group key, never SCAN", async () => 
 });
 
 test("scoped delete and recompute touch one group out of 5000, and min moves", async () => {
-  const { seam, source } = await loadedSeam();
-  const deleted = await run(seam, emittedAggregateSql(source, "deleteScopedSql"));
+  const { seam, source } = await loaded_seam();
+  const deleted = await run(seam, emitted_aggregate_sql(source, "delete_scoped_sql"));
   assert.equal(deleted.rows.length, 1, "only the affected group may be deleted");
-  const inserted = await run(seam, emittedAggregateSql(source, "insertScopedSql"));
+  const inserted = await run(seam, emitted_aggregate_sql(source, "insert_scoped_sql"));
   assert.equal(inserted.rows.length, 1, "only the affected group may be re-derived");
   assert.deepEqual(
     { repo: inserted.rows[0]!.repo, count: inserted.rows[0]!.col2, min: inserted.rows[0]!.col3, max: inserted.rows[0]!.col4 },

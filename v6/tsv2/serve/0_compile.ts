@@ -19,19 +19,19 @@ const GEN_SERVED_DIR = fileURLToPath(new URL("../gen_served", import.meta.url));
 
 const DEFAULT_COMPILE_BUDGET_MS = 600_000;
 
-function compileBudgetMs(): number {
+function compile_budget_ms(): number {
   const raw = Number(process.env.TSV2_COMPILE_BUDGET_MS ?? "");
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_COMPILE_BUDGET_MS;
 }
 
-function sourceDigest(source: string): string {
+function source_digest(source: string): string {
   return bytesToHex(sha256(new TextEncoder().encode(source))).slice(0, 32);
 }
 
 /** Kill the child's whole process group, then the child itself if it never led
  *  one. `detached` makes the group exist; a spawn that failed outright has no
  *  pid and there is nothing to kill. */
-function killGroup(pid: number | undefined): void {
+function kill_group(pid: number | undefined): void {
   if (pid === undefined) return;
   try {
     process.kill(-pid, "SIGKILL");
@@ -49,16 +49,16 @@ function killGroup(pid: number | undefined): void {
  *  finding) rather than as a bare nonzero exit, and a compile that outruns
  *  `budgetMs` errors as a NAMED `compile_timeout` with its process group
  *  killed rather than holding the request open behind a live swipl. */
-function runSwipl(args: readonly string[], budgetMs: number): Observable<string> {
+function run_swipl(args: readonly string[], budget_ms: number): Observable<string> {
   return new Observable<string>((subscriber) => {
     const child = spawn("swipl", [...args], { shell: false, detached: true });
     let stdout = "";
     let stderr = "";
-    let timedOut = false;
+    let timed_out = false;
     const alarm = setTimeout(() => {
-      timedOut = true;
-      killGroup(child.pid);
-    }, budgetMs);
+      timed_out = true;
+      kill_group(child.pid);
+    }, budget_ms);
     child.stdout?.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
@@ -71,10 +71,10 @@ function runSwipl(args: readonly string[], budgetMs: number): Observable<string>
     });
     child.on("close", (code) => {
       clearTimeout(alarm);
-      if (timedOut) {
+      if (timed_out) {
         subscriber.error(
           new Error(
-            `compile_timeout: the dl6 compiler exceeded its ${budgetMs}ms budget and its process group was killed ` +
+            `compile_timeout: the dl6 compiler exceeded its ${budget_ms}ms budget and its process group was killed ` +
               `(raise TSV2_COMPILE_BUDGET_MS if this program is honestly that slow)`,
           ),
         );
@@ -89,26 +89,26 @@ function runSwipl(args: readonly string[], budgetMs: number): Observable<string>
     });
     return () => {
       clearTimeout(alarm);
-      killGroup(child.pid);
+      kill_group(child.pid);
     };
   });
 }
 
 export const ProgramCompiler: IProgramCompiler = {
   compile(source: string): Observable<IServedProgram> {
-    const name = sourceDigest(source);
-    const sourcePath = `${GEN_SERVED_DIR}/${name}.dl6`;
-    const modulePath = `${GEN_SERVED_DIR}/${name}.ts`;
+    const name = source_digest(source);
+    const source_path = `${GEN_SERVED_DIR}/${name}.dl6`;
+    const module_path = `${GEN_SERVED_DIR}/${name}.ts`;
     mkdirSync(GEN_SERVED_DIR, { recursive: true });
-    writeFileSync(sourcePath, source, "utf8");
+    writeFileSync(source_path, source, "utf8");
     // The `-g` goal is a prolog term, so the two paths are quoted as atoms.
     // Both are this process's own absolute paths under gen_served/, never
     // caller text, so there is no quote to escape.
-    return runSwipl(
-      ["-q", "-l", COMPILE_PL, "-g", `compile_dl6('${sourcePath}', '${modulePath}')`, "-g", "halt"],
-      compileBudgetMs(),
+    return run_swipl(
+      ["-q", "-l", COMPILE_PL, "-g", `compile_dl6('${source_path}', '${module_path}')`, "-g", "halt"],
+      compile_budget_ms(),
     ).pipe(
-      concatMap(() => from(import(modulePath) as Promise<{ readonly program: IServedProgram }>)),
+      concatMap(() => from(import(module_path) as Promise<{ readonly program: IServedProgram }>)),
       map((loaded) => loaded.program),
     );
   },

@@ -69,11 +69,11 @@ import type { ISqlRunner } from "sprefa-store-engine/src/engine/types.ts";
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IArrivalBatch, ISqlSeam, SqlStatement } from "../runtime/types.ts";
-import { incrementalPlan, program } from "../gen_emitted/clock_rel_join_storms.ts";
+import { incremental_plan, program } from "../gen_emitted/clock_rel_join_storms.ts";
 
 /** Wraps the store's own `SqlRunner`, counting every statement that crosses
  *  the seam. Nothing is intercepted or rewritten; the count is the receipt. */
-function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
+function counting_seam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
   const statements: string[] = [];
   const record = (statement: string | SqlStatement): void => {
     statements.push(typeof statement === "string" ? statement : statement.sql);
@@ -96,17 +96,17 @@ function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } 
   return { seam: { db: seam.db, runner }, statements };
 }
 
-function bootedSeam(): Promise<ISqlSeam> {
+function booted_seam(): Promise<ISqlSeam> {
   const seam = ScratchStore.open(":memory:");
   return firstValueFrom(ScratchStore.boot(seam, program.ddl)).then(() => seam);
 }
 
 function freeze(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<void> {
-  return IncrementalRuntime.recomputeLevelsBeforeEdges(
+  return IncrementalRuntime.recompute_levels_before_edges(
     seam,
-    incrementalPlan.levels,
-    incrementalPlan.relations,
-    incrementalPlan.reconcileEveryTick,
+    incremental_plan.levels,
+    incremental_plan.relations,
+    incremental_plan.reconcile_every_tick,
     arrivals,
   );
 }
@@ -114,20 +114,20 @@ function freeze(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<void> {
 const ONE_ARRIVAL: IArrivalBatch = [{ rel: "file_line", sign: "add", row: ["a_rs", 3, "eprintln_ban"] }];
 
 test("count: a drain tick pays nothing for the mid-tick level freeze", async () => {
-  const base = await bootedSeam();
-  const { seam, statements } = countingSeam(base);
+  const base = await booted_seam();
+  const { seam, statements } = counting_seam(base);
   await firstValueFrom(freeze(seam, []));
   assert.equal(statements.length, 0, `a drain tick must not touch the level plane: ${statements.length} statements`);
 });
 
 test("count: an arrival tick with no retraction is the retraction guard alone", async () => {
   assert.equal(
-    incrementalPlan.reconcileEveryTick,
+    incremental_plan.reconcile_every_tick,
     false,
     "this fixture is the guarded case; a negated level body would make it unconditional",
   );
-  const base = await bootedSeam();
-  const { seam, statements } = countingSeam(base);
+  const base = await booted_seam();
+  const { seam, statements } = counting_seam(base);
   await firstValueFrom(freeze(seam, ONE_ARRIVAL));
   assert.equal(
     statements.length,
@@ -138,44 +138,44 @@ test("count: an arrival tick with no retraction is the retraction guard alone", 
 });
 
 test("count: a staged retraction reconciles exactly the plain level statements", async () => {
-  const plainLevels = incrementalPlan.levels.filter((statement) => statement.aggregateSql === null);
-  assert.equal(plainLevels.length, 1, "fixture shape assumed by the expected count below");
-  const base = await bootedSeam();
+  const plain_levels = incremental_plan.levels.filter((statement) => statement.aggregate_sql === null);
+  assert.equal(plain_levels.length, 1, "fixture shape assumed by the expected count below");
+  const base = await booted_seam();
   await firstValueFrom(
     base.runner.execute(base.db, {
       sql: `INSERT INTO "__delta_file_line" ("_sign", "_sequence", "path", "line", "code") VALUES (-1, 0, ?, ?, ?)`,
       args: ["a_rs", 3n, "eprintln_ban"],
     }),
   );
-  const { seam, statements } = countingSeam(base);
+  const { seam, statements } = counting_seam(base);
   await firstValueFrom(freeze(seam, ONE_ARRIVAL));
   // 1 guard + 10 of the 11 supportSql statements per plain level statement; the
   // next-frontier copy is skipped because this pass asks for the frontier only.
   assert.equal(
     statements.length,
-    1 + 10 * plainLevels.length,
+    1 + 10 * plain_levels.length,
     `guard + one refCount reconcile per plain level statement: ${statements.length} statements`,
   );
   assert.equal(
     statements.slice(1).join("\n"),
-    plainLevels
-      .flatMap((statement) => (statement.supportSql ?? []).filter((_, index) => index !== 9))
+    plain_levels
+      .flatMap((statement) => (statement.support_sql ?? []).filter((_, index) => index !== 9))
       .join("\n"),
     "the reconcile must run the emitter's own supportSql, byte for byte, not runtime-built SQL",
   );
 });
 
 test("plan: the retraction guard SEARCHes each delta table by its _sign index", async () => {
-  const seam = await bootedSeam();
-  const counted = countingSeam(seam);
+  const seam = await booted_seam();
+  const counted = counting_seam(seam);
   await firstValueFrom(freeze(counted.seam, ONE_ARRIVAL));
-  const guardSql = counted.statements[0]!;
+  const guard_sql = counted.statements[0]!;
   const explained = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${guardSql}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${guard_sql}`),
   );
   const plan = explained.rows.map((row) => String(row.detail)).join(" | ");
   assert.ok(
-    !/\bSCAN __delta_/.test(plan),
+    !/\b_scan __delta_/.test(plan),
     `the retraction guard must SEARCH by _sign, got: ${plan}`,
   );
   assert.ok(

@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import { Observable, Subject, VirtualTimeScheduler } from "rxjs";
 
 import { SERVE_CHANNEL_NAMES } from "../serve/0_trace.ts";
-import { serveTsv2 } from "../serve/4_http.ts";
+import { serve_tsv2 } from "../serve/4_http.ts";
 import type { IServeEvent, IServeTickEvent, IWatchSource } from "../runtime/types.ts";
 
 const PROGRAM = fileURLToPath(new URL("../../dl/fixtures/0_extraction-clock-golden.dl6", import.meta.url));
@@ -55,17 +55,17 @@ type RunningServer = {
   readonly stop: () => Promise<void>;
 };
 
-function startServer(root: string, scheduler: VirtualTimeScheduler, watchSource: IWatchSource): Promise<RunningServer> {
+function startServer(root: string, scheduler: VirtualTimeScheduler, watch_source: IWatchSource): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     const events: IServeEvent[] = [];
     let listening = false;
-    const subscription = serveTsv2({
-      dbUrl: ":memory:",
+    const subscription = serve_tsv2({
+      db_url: ":memory:",
       port: 0,
       scheduler,
-      watchRoot: root,
-      watchCoalesceMs: COALESCE_MS,
-      watchSource,
+      watch_root: root,
+      watch_coalesce_ms: COALESCE_MS,
+      watch_source,
     }).subscribe({
       next: (event) => {
         events.push(event);
@@ -87,7 +87,11 @@ function startServer(root: string, scheduler: VirtualTimeScheduler, watchSource:
 }
 
 async function json(port: number, path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, init);
+  // A server that accepts but never writes headers otherwise costs undici's 300s default.
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    signal: AbortSignal.timeout(10_000),
+    ...init,
+  });
   const body = await response.text();
   assert.equal(response.status, 200, `${path} -> ${response.status} ${body}`);
   return JSON.parse(body);
@@ -135,6 +139,7 @@ async function main(): Promise<void> {
     const programResponse = await fetch(`http://127.0.0.1:${server.port}/program`, {
       method: "POST",
       body: readFileSync(PROGRAM, "utf8"),
+      signal: AbortSignal.timeout(10_000),
     });
     const programText = await programResponse.text();
     assert.equal(programResponse.status, 200, `/program -> ${programResponse.status} ${programText}`);

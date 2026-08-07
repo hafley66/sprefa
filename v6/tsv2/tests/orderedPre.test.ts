@@ -52,16 +52,16 @@ import { test } from "node:test";
 import { firstValueFrom } from "rxjs";
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
-import { program as orderedProgram } from "../gen_emitted/batched_increments_both_count.ts";
-import { program as incrementalProgram } from "../gen_emitted/comparison_filters_rows.ts";
-import { stageOrderedFrontiers } from "../runtime/1_incremental.ts";
+import { program as ordered_program } from "../gen_emitted/batched_increments_both_count.ts";
+import { program as incremental_program } from "../gen_emitted/comparison_filters_rows.ts";
+import { stage_ordered_frontiers } from "../runtime/1_incremental.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IArrivalBatch, IIncrementalRelationPlan, IServedProgram } from "../runtime/types.ts";
 
 /** One tick of one emitted program on a fresh `:memory:` db, counting the SQL
  *  statements it executed. The counter is reset after boot so the DDL is not in
  *  the number. */
-async function statementsForOneTick(program: IServedProgram, arrivals: IArrivalBatch): Promise<number> {
+async function statements_for_one_tick(program: IServedProgram, arrivals: IArrivalBatch): Promise<number> {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   stmt_counter.reset();
@@ -71,7 +71,7 @@ async function statementsForOneTick(program: IServedProgram, arrivals: IArrivalB
   return executed;
 }
 
-function orderedArrivals(count: number): IArrivalBatch {
+function ordered_arrivals(count: number): IArrivalBatch {
   return Array.from({ length: count }, (_value, index) => ({
     rel: "increment",
     sign: "add" as const,
@@ -79,7 +79,7 @@ function orderedArrivals(count: number): IArrivalBatch {
   }));
 }
 
-function incrementalArrivals(count: number): IArrivalBatch {
+function incremental_arrivals(count: number): IArrivalBatch {
   return Array.from({ length: count }, (_value, index) => ({
     rel: "callee_set_size",
     sign: "add" as const,
@@ -92,9 +92,9 @@ test("the ordered/pre family costs 13 + 2n statements per tick, against the incr
   const ordered = [];
   const incremental = [];
   for (const size of sizes) {
-    ordered.push(await statementsForOneTick(orderedProgram as unknown as IServedProgram, orderedArrivals(size)));
+    ordered.push(await statements_for_one_tick(ordered_program as unknown as IServedProgram, ordered_arrivals(size)));
     incremental.push(
-      await statementsForOneTick(incrementalProgram as unknown as IServedProgram, incrementalArrivals(size)),
+      await statements_for_one_tick(incremental_program as unknown as IServedProgram, incremental_arrivals(size)),
     );
   }
 
@@ -123,7 +123,7 @@ test("the ordered/pre snapshot copies the whole relation every tick, arrivals or
   // so a statement count cannot see it and an end-state test cannot either.
   // Pinned two ways: the copy runs on an EMPTY batch, and its read is a SCAN.
   const seam = ScratchStore.open(":memory:");
-  const program = orderedProgram as unknown as IServedProgram;
+  const program = ordered_program as unknown as IServedProgram;
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   // `counter` is a rule head, not an arrival target, and its own rule needs a
   // `pre` row to exist before it derives anything. Seeded directly, because
@@ -136,8 +136,8 @@ test("the ordered/pre snapshot copies the whole relation every tick, arrivals or
   await firstValueFrom(program.tick(seam, []));
   assert.equal(stmt_counter.get(), 13, "the constant term runs in full on a tick with no arrivals");
 
-  const counterRows = await firstValueFrom(seam.runner.execute(seam.db, 'SELECT count(*) AS n FROM "__pre_counter"'));
-  assert.equal(counterRows.rows[0]!.n, 3, "the pre table holds a full copy of the relation, not a delta");
+  const counter_rows = await firstValueFrom(seam.runner.execute(seam.db, 'SELECT count(*) AS n FROM "__pre_counter"'));
+  assert.equal(counter_rows.rows[0]!.n, 3, "the pre table holds a full copy of the relation, not a delta");
 
   const plan = await firstValueFrom(
     seam.runner.execute(seam.db, 'EXPLAIN QUERY PLAN INSERT INTO "__pre_counter" ("name", "next") SELECT "name", "next" FROM "counter"'),
@@ -164,19 +164,19 @@ test("ordered frontier staging carries only the supplied boundary additions", as
   const relation: IIncrementalRelationPlan = {
     rel: "counter",
     kind: "set",
-    tableName: "counter",
-    deltaTableName: "__delta_counter",
-    frontierTableName: "__frontier_counter",
-    nextFrontierTableName: "__next_frontier_counter",
+    table_name: "counter",
+    delta_table_name: "__delta_counter",
+    frontier_table_name: "__frontier_counter",
+    next_frontier_table_name: "__next_frontier_counter",
     columns: ["name", "next"],
-    keyIndices: [0],
-    arrivalAddSql: null,
-    arrivalDelSql: null,
-    boundarySql: "",
+    key_indices: [0],
+    arrival_add_sql: null,
+    arrival_del_sql: null,
+    boundary_sql: "",
   };
 
-  const carryPending = await firstValueFrom(
-    stageOrderedFrontiers(
+  const carry_pending = await firstValueFrom(
+    stage_ordered_frontiers(
       seam,
       [relation],
       [{ rel: "counter", add: [["clicks", 2]], del: [] }],
@@ -193,9 +193,9 @@ test("ordered frontier staging carries only the supplied boundary additions", as
   );
 
   assert.deepEqual(
-    { carryPending, current: current.rows, next: next.rows },
+    { carry_pending, current: current.rows, next: next.rows },
     {
-      carryPending: true,
+      carry_pending: true,
       current: [{ _phase: 0, _sequence: 0, name: "clicks", next: 2 }],
       next: [],
     },
@@ -215,19 +215,19 @@ test("ordered frontier staging retains sequence across relation groups", async (
   const relation = (rel: string): IIncrementalRelationPlan => ({
     rel,
     kind: "log",
-    tableName: rel,
-    deltaTableName: `__delta_${rel}`,
-    frontierTableName: `__frontier_${rel}`,
-    nextFrontierTableName: `__next_frontier_${rel}`,
+    table_name: rel,
+    delta_table_name: `__delta_${rel}`,
+    frontier_table_name: `__frontier_${rel}`,
+    next_frontier_table_name: `__next_frontier_${rel}`,
     columns: ["value"],
-    keyIndices: [],
-    arrivalAddSql: null,
-    arrivalDelSql: null,
-    boundarySql: "",
+    key_indices: [],
+    arrival_add_sql: null,
+    arrival_del_sql: null,
+    boundary_sql: "",
   });
 
   await firstValueFrom(
-    stageOrderedFrontiers(
+    stage_ordered_frontiers(
       seam,
       [relation("left"), relation("right")],
       [

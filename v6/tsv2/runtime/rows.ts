@@ -24,7 +24,7 @@ import type {
  *  The cast stays narrow (libsql's `Value` is `null | string | number |
  *  bigint | ArrayBuffer`) and would need widening only if a future column
  *  type introduces `null` into this seam. */
-export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefined, value: unknown): IRowValue => {
+export const row_value_from_sql: IRowValueFromSql = (type: IRowColumnType | undefined, value: unknown): IRowValue => {
   if (type === "bool") {
     if (value === 0 || value === 0n) return false;
     if (value === 1 || value === 1n) return true;
@@ -58,27 +58,27 @@ export const rowValueFromSql: IRowValueFromSql = (type: IRowColumnType | undefin
  *
  *  The same named refusal is used for values computed by SQL.
  */
-const isWideIntegerRangeError = (error: unknown): boolean =>
+const is_wide_integer_range_error = (error: unknown): boolean =>
   error instanceof RangeError && /safely represented|out of range/i.test(error.message);
 
 /** Bound to `ISelectRows` rather than folded into a namespace object: emitted
  *  modules import this name directly (137 of them), and the import text comes
  *  from the prolog emitter. The annotation is what buys the compiler check. */
-export const selectRows: ISelectRows = (
+export const select_rows: ISelectRows = (
   seam: ISqlSeam,
   sql: string,
   columns: readonly string[],
-  columnTypes: readonly IRowColumnType[] = [],
+  column_types: readonly IRowColumnType[] = [],
 ): Observable<IRow[]> => {
   return seam.runner.execute(seam.db, sql).pipe(
     catchError((error: unknown) => {
-      if (!isWideIntegerRangeError(error)) throw error;
+      if (!is_wide_integer_range_error(error)) throw error;
       throw new Error(`int_out_of_range reading ${sql}`);
     }),
     map((result) =>
       result.rows.map(
         (row): IRow =>
-          columns.map((column, index) => rowValueFromSql(columnTypes[index], row[column])),
+          columns.map((column, index) => row_value_from_sql(column_types[index], row[column])),
       ),
     ),
   );

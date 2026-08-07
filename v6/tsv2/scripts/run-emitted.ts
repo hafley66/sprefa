@@ -25,7 +25,7 @@ import {
 
 type EmittedProgram = IGenProgram & {
   readonly boot: readonly IBootStatement[];
-  readonly finalSelect: Record<string, string>;
+  readonly final_select: Record<string, string>;
 };
 
 // gen_emitted/ is compiler OUTPUT under reconciliation: it is excluded from
@@ -52,22 +52,22 @@ const SCHEDULE_OF: Readonly<Record<string, readonly IArrivalBatch[]>> = {
   door_handwritten: DOOR_HANDWRITTEN_SCHEDULE,
 };
 
-function loadEmitted(moduleName: string): Promise<EmittedProgram> {
-  const specifier = ["..", "gen_emitted", `${moduleName}.ts`].join("/");
+function load_emitted(module_name: string): Promise<EmittedProgram> {
+  const specifier = ["..", "gen_emitted", `${module_name}.ts`].join("/");
   return import(specifier).then((loaded: { program: EmittedProgram }) => loaded.program);
 }
 
 function main(): void {
   const name = process.argv[2];
-  const moduleName = name === undefined ? undefined : MODULE_OF[name];
+  const module_name = name === undefined ? undefined : MODULE_OF[name];
   const schedule = name === undefined ? undefined : SCHEDULE_OF[name];
-  if (moduleName === undefined || schedule === undefined) {
+  if (module_name === undefined || schedule === undefined) {
     process.stderr.write(`usage: run-emitted.ts <${Object.keys(MODULE_OF).join("|")}>\n`);
     process.exitCode = 2;
     return;
   }
 
-  void loadEmitted(moduleName).then((program) => {
+  void load_emitted(module_name).then((program) => {
     const seam = ScratchStore.open(":memory:");
     ScratchStore.boot(seam, program.ddl)
       .pipe(concatMap(() => concat(BootRunner.run(seam, program.boot).pipe(ignoreElements()), TickFold.run(program, seam, schedule))))

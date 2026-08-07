@@ -26,12 +26,12 @@ import { fileURLToPath } from "node:url";
 import { firstValueFrom } from "rxjs";
 
 import { HostExecutors } from "../serve/1_hosts.ts";
-import { logOfTicks, oracleLog, postArrivals, postProgram, request, scheduleFromTicks, startServed, tickEvents } from "./serveHelpers.ts";
+import { log_of_ticks, oracle_log, post_arrivals, post_program, request, schedule_from_ticks, start_served, tick_events } from "./serveHelpers.ts";
 
 const JSON_PROJECTION_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-json-projection.dl6", import.meta.url));
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => boolean | Promise<boolean>, what: string, timeout_ms = 10_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(`timeout waiting for ${what}`);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -40,14 +40,14 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, what: stri
 
 test("sh host: a JSON object stream projects by NAME, and a record missing a declared column is no row", async () => {
   const source = readFileSync(JSON_PROJECTION_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
-    const plans = JSON.parse(loaded.body) as { readonly arrivalTargets: readonly string[] };
+    const plans = JSON.parse(loaded.body) as { readonly arrival_targets: readonly string[] };
 
-    await postArrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
-    await waitUntil(async () => {
+    await post_arrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
+    await wait_until(async () => {
       const reply = await request(served.port, "/idb/picked", "GET");
       return (JSON.parse(reply.body) as { rows: unknown[] }).rows.length > 0;
     }, "the host's projected rows to land in picked");
@@ -64,9 +64,9 @@ test("sh host: a JSON object stream projects by NAME, and a record missing a dec
       "each row carries the site record's own callee, never a neighbouring field",
     );
 
-    const outcomes = tickEvents(served.events);
-    const replayed = scheduleFromTicks(outcomes, plans.arrivalTargets);
-    assert.equal(logOfTicks(outcomes), oracleLog(source, replayed));
+    const outcomes = tick_events(served.events);
+    const replayed = schedule_from_ticks(outcomes, plans.arrival_targets);
+    assert.equal(log_of_ticks(outcomes), oracle_log(source, replayed));
   } finally {
     await served.stop();
   }
@@ -121,12 +121,12 @@ listing(count, path, digest) <- want(count), files(count, path, digest).
  * nowhere else.
  */
 test("sh host: a grid answer is one row per line at every cardinality, 0 through 3", async () => {
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, GRID_HOST_DL6);
+    const loaded = await post_program(served.port, GRID_HOST_DL6);
     assert.equal(loaded.statusCode, 200, loaded.body);
 
-    await postArrivals(served.port, [
+    await post_arrivals(served.port, [
       { rel: "want", sign: "add", row: ["0"] },
       { rel: "want", sign: "add", row: ["1"] },
       { rel: "want", sign: "add", row: ["2"] },
@@ -139,8 +139,8 @@ test("sh host: a grid answer is one row per line at every cardinality, 0 through
     // trace surface is where that answer is visible, by the design note in
     // 1_hosts.ts `decodeObjectItems`).
     const answers = (): readonly number[] =>
-      served.events.flatMap((event) => (event.kind === "effect" && event.done.host === "files" ? [event.done.responseRows] : []));
-    await waitUntil(() => answers().length >= 4, "all four sh host demands to be answered");
+      served.events.flatMap((event) => (event.kind === "effect" && event.done.host === "files" ? [event.done.response_rows] : []));
+    await wait_until(() => answers().length >= 4, "all four sh host demands to be answered");
     assert.deepEqual(
       answers().slice().sort((left, right) => left - right),
       [0, 1, 2, 3],
@@ -150,21 +150,21 @@ test("sh host: a grid answer is one row per line at every cardinality, 0 through
     const listing = JSON.parse((await request(served.port, "/idb/listing", "GET")).body) as {
       rows: readonly (readonly string[])[];
     };
-    const rowsFor = (count: string): readonly (readonly string[])[] =>
+    const rows_for = (count: string): readonly (readonly string[])[] =>
       listing.rows.filter((row) => row[0] === count).slice().sort((left, right) => left[1]!.localeCompare(right[1]!));
 
-    assert.deepEqual(rowsFor("0"), [], "an empty answer is no rows");
-    assert.deepEqual(rowsFor("1"), [["1", "file1.txt", "oid1"]], "1 file must be 1 row");
+    assert.deepEqual(rows_for("0"), [], "an empty answer is no rows");
+    assert.deepEqual(rows_for("1"), [["1", "file1.txt", "oid1"]], "1 file must be 1 row");
     assert.deepEqual(
-      rowsFor("2"),
+      rows_for("2"),
       [
         ["2", "file1.txt", "oid1"],
         ["2", "file2.txt", "oid2"],
       ],
-      `2 files must be 2 rows, not one row of two lines: ${JSON.stringify(rowsFor("2"))}`,
+      `2 files must be 2 rows, not one row of two lines: ${JSON.stringify(rows_for("2"))}`,
     );
     assert.deepEqual(
-      rowsFor("3"),
+      rows_for("3"),
       [
         ["3", "file1.txt", "oid1"],
         ["3", "file2.txt", "oid2"],
@@ -196,12 +196,12 @@ meta(tag, title, author) <- ask(tag), describe(tag, title, author).
 `;
 
 test("sh host: one value per line still wins when the lines are not a grid", async () => {
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, LINE_PER_COLUMN_DL6);
+    const loaded = await post_program(served.port, LINE_PER_COLUMN_DL6);
     assert.equal(loaded.statusCode, 200, loaded.body);
-    await postArrivals(served.port, [{ rel: "ask", sign: "add", row: ["annual"] }]);
-    await waitUntil(async () => {
+    await post_arrivals(served.port, [{ rel: "ask", sign: "add", row: ["annual"] }]);
+    await wait_until(async () => {
       const reply = await request(served.port, "/idb/meta", "GET");
       return (JSON.parse(reply.body) as { rows: unknown[] }).rows.length > 0;
     }, "the two-line answer to land in meta");

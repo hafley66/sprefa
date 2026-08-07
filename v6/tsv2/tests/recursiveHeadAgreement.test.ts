@@ -55,12 +55,12 @@ import type { IArrivalRow, ISqlSeam, SqlStatement } from "../runtime/types.ts";
 
 type Pair = readonly [string, string];
 
-function callEdge(sign: "add" | "del", from: string, to: string): IArrivalRow {
+function call_edge(sign: "add" | "del", from: string, to: string): IArrivalRow {
   return { rel: "resolved_call_edge", sign, row: [from, "fn", to, "fn"] };
 }
 
 /** The referee: naive closure to fixpoint, no incrementality anywhere. */
-function transitiveClosure(edges: readonly Pair[]): Set<string> {
+function transitive_closure(edges: readonly Pair[]): Set<string> {
   const reached = new Set<string>(edges.map(([from, to]) => `${from}|${to}`));
   for (;;) {
     let grew = false;
@@ -78,9 +78,9 @@ function transitiveClosure(edges: readonly Pair[]): Set<string> {
   return reached;
 }
 
-async function headOf(seam: ISqlSeam): Promise<Set<string>> {
+async function head_of(seam: ISqlSeam): Promise<Set<string>> {
   const result = await firstValueFrom(
-    seam.runner.execute(seam.db, program.finalSelect.flow_reach!),
+    seam.runner.execute(seam.db, program.final_select.flow_reach!),
   );
   return new Set(
     result.rows.map((row) => `${String(row.from_path)}|${String(row.to_path)}`),
@@ -95,7 +95,7 @@ function disagreement(head: Set<string>, referee: Set<string>): string {
     : `missing=[${missing.join(" ")}] extra=[${extra.join(" ")}]`;
 }
 
-async function openProgram(): Promise<ISqlSeam> {
+async function open_program(): Promise<ISqlSeam> {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   return seam;
@@ -103,7 +103,7 @@ async function openProgram(): Promise<ISqlSeam> {
 
 /** Every SQL text the tick ran, so a leg can name the branch it took rather
  *  than infer it from the head it produced. */
-function recordingRunner(inner: ISqlRunner, executed: string[]): ISqlRunner {
+function recording_runner(inner: ISqlRunner, executed: string[]): ISqlRunner {
   const note = (statement: SqlStatement | string): void => {
     executed.push(typeof statement === "string" ? statement : statement.sql);
   };
@@ -130,14 +130,14 @@ function recordingRunner(inner: ISqlRunner, executed: string[]): ISqlRunner {
 
 /** `flow_reach` renders `ruleObservers: []`, so naming it here is what makes
  *  the runtime drop its event copies and take the skipped path. */
-async function openUnobservedProgram(
+async function open_unobserved_program(
   executed: string[],
 ): Promise<ISqlSeam> {
   const opened = ScratchStore.open(":memory:");
   const seam: ISqlSeam = {
     ...opened,
-    runner: recordingRunner(opened.runner, executed),
-    unobservedRels: new Set(["flow_reach"]),
+    runner: recording_runner(opened.runner, executed),
+    unobserved_rels: new Set(["flow_reach"]),
   };
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   return seam;
@@ -148,30 +148,30 @@ async function openUnobservedProgram(
  *  of a quarter of the head when the cut is near the middle. */
 function chain(length: number): IArrivalRow[] {
   return Array.from({ length }, (_unused, hop) =>
-    callEdge("add", `n${hop}`, `n${hop + 1}`),
+    call_edge("add", `n${hop}`, `n${hop + 1}`),
   );
 }
 
-function chainPairs(length: number): Pair[] {
+function chain_pairs(length: number): Pair[] {
   return Array.from({ length }, (_unused, hop): Pair => [`n${hop}`, `n${hop + 1}`]);
 }
 
 test("scripted insert/delete ticks agree with the closure referee", async () => {
-  const seam = await openProgram();
+  const seam = await open_program();
   const live: Pair[] = [];
   const script: { readonly name: string; readonly rows: readonly IArrivalRow[] }[] = [
-    { name: "chain", rows: [callEdge("add", "a", "b"), callEdge("add", "b", "c"), callEdge("add", "c", "d")] },
+    { name: "chain", rows: [call_edge("add", "a", "b"), call_edge("add", "b", "c"), call_edge("add", "c", "d")] },
     {
       name: "cycle behind one anchor",
-      rows: [callEdge("add", "p", "q"), callEdge("add", "q", "r"), callEdge("add", "r", "s"), callEdge("add", "s", "q")],
+      rows: [call_edge("add", "p", "q"), call_edge("add", "q", "r"), call_edge("add", "r", "s"), call_edge("add", "s", "q")],
     },
-    { name: "cut the cycle's only anchor", rows: [callEdge("del", "p", "q")] },
-    { name: "cut the chain mid-way", rows: [callEdge("del", "b", "c")] },
-    { name: "put it back", rows: [callEdge("add", "b", "c")] },
-    { name: "add and retract in one tick", rows: [callEdge("add", "z", "z"), callEdge("del", "z", "z")] },
+    { name: "cut the cycle's only anchor", rows: [call_edge("del", "p", "q")] },
+    { name: "cut the chain mid-way", rows: [call_edge("del", "b", "c")] },
+    { name: "put it back", rows: [call_edge("add", "b", "c")] },
+    { name: "add and retract in one tick", rows: [call_edge("add", "z", "z"), call_edge("del", "z", "z")] },
     {
       name: "kill the cycle outright",
-      rows: [callEdge("del", "q", "r"), callEdge("del", "r", "s"), callEdge("del", "s", "q")],
+      rows: [call_edge("del", "q", "r"), call_edge("del", "r", "s"), call_edge("del", "s", "q")],
     },
   ];
 
@@ -185,7 +185,7 @@ test("scripted insert/delete ticks agree with the closure referee", async () => 
       }
     }
     await firstValueFrom(program.tick(seam, step.rows));
-    const verdict = disagreement(await headOf(seam), transitiveClosure(live));
+    const verdict = disagreement(await head_of(seam), transitive_closure(live));
     assert.equal(verdict, "", `${step.name}: ${verdict}`);
   }
   seam.db.close();
@@ -194,39 +194,39 @@ test("scripted insert/delete ticks agree with the closure referee", async () => 
 test("randomized insert/delete ticks agree with the closure referee", async () => {
   const NODE_COUNT = 9;
   const TICKS = 40;
-  for (const startSeed of [4, 5, 77, 303]) {
-    let state = startSeed;
+  for (const start_seed of [4, 5, 77, 303]) {
+    let state = start_seed;
     const next = (): number => {
       state = (state * 1103515245 + 12345) & 0x7fffffff;
       return state / 0x7fffffff;
     };
-    const seam = await openProgram();
+    const seam = await open_program();
     const live = new Set<string>();
     for (let tick = 0; tick < TICKS; tick += 1) {
       const rows: IArrivalRow[] = [];
-      const batchSize = 1 + Math.floor(next() * 4);
-      for (let index = 0; index < batchSize; index += 1) {
+      const batch_size = 1 + Math.floor(next() * 4);
+      for (let index = 0; index < batch_size; index += 1) {
         if (live.size > 0 && next() < 0.45) {
           const keys = [...live];
           const key = keys[Math.floor(next() * keys.length)]!;
           const [from, to] = key.split("|");
           live.delete(key);
-          rows.push(callEdge("del", from!, to!));
+          rows.push(call_edge("del", from!, to!));
         } else {
           const from = `n${Math.floor(next() * NODE_COUNT)}`;
           const to = `n${Math.floor(next() * NODE_COUNT)}`;
           if (live.has(`${from}|${to}`)) continue;
           live.add(`${from}|${to}`);
-          rows.push(callEdge("add", from, to));
+          rows.push(call_edge("add", from, to));
         }
       }
       if (rows.length === 0) continue;
       await firstValueFrom(program.tick(seam, rows));
-      const referee = transitiveClosure(
+      const referee = transitive_closure(
         [...live].map((key) => key.split("|") as unknown as Pair),
       );
-      const verdict = disagreement(await headOf(seam), referee);
-      assert.equal(verdict, "", `seed ${startSeed} tick ${tick}: ${verdict}`);
+      const verdict = disagreement(await head_of(seam), referee);
+      assert.equal(verdict, "", `seed ${start_seed} tick ${tick}: ${verdict}`);
     }
     seam.db.close();
   }
@@ -236,31 +236,31 @@ const CHAIN_HOPS = 12;
 
 test("an unobserved head bails past cone > head/4 and still agrees with the referee", async () => {
   const executed: string[] = [];
-  const seam = await openUnobservedProgram(executed);
+  const seam = await open_unobserved_program(executed);
   await firstValueFrom(program.tick(seam, chain(CHAIN_HOPS)));
 
-  const live = chainPairs(CHAIN_HOPS);
+  const live = chain_pairs(CHAIN_HOPS);
   assert.equal(
-    disagreement(await headOf(seam), transitiveClosure(live)).length,
+    disagreement(await head_of(seam), transitive_closure(live)).length,
     0,
     "the chain must close before the cut is graded",
   );
-  const headRows = (await headOf(seam)).size;
+  const head_rows = (await head_of(seam)).size;
 
   executed.length = 0;
-  const cutAt = CHAIN_HOPS / 2;
-  await firstValueFrom(program.tick(seam, [callEdge("del", `n${cutAt}`, `n${cutAt + 1}`)]));
-  const survived = live.filter(([from]) => from !== `n${cutAt}`);
+  const cut_at = CHAIN_HOPS / 2;
+  await firstValueFrom(program.tick(seam, [call_edge("del", `n${cut_at}`, `n${cut_at + 1}`)]));
+  const survived = live.filter(([from]) => from !== `n${cut_at}`);
 
-  const cone = (cutAt + 1) * (CHAIN_HOPS - cutAt);
+  const cone = (cut_at + 1) * (CHAIN_HOPS - cut_at);
   assert.ok(
-    cone > Math.floor(headRows / 4),
-    `the cut must outgrow the cone cap: cone ${cone} vs cap ${Math.floor(headRows / 4)}`,
+    cone > Math.floor(head_rows / 4),
+    `the cut must outgrow the cone cap: cone ${cone} vs cap ${Math.floor(head_rows / 4)}`,
   );
   // Correctness before cost: the head must be right whichever branch ran, so
   // this is graded first and the branch assertion below only prices it.
   assert.equal(
-    disagreement(await headOf(seam), transitiveClosure(survived)),
+    disagreement(await head_of(seam), transitive_closure(survived)),
     "",
     "the bailed tick must leave the same head an in-place walk would",
   );
@@ -279,20 +279,20 @@ test("an unobserved head bails past cone > head/4 and still agrees with the refe
 
 test("an unobserved head under the cone cap finishes the walk in place", async () => {
   const executed: string[] = [];
-  const seam = await openUnobservedProgram(executed);
+  const seam = await open_unobserved_program(executed);
   await firstValueFrom(program.tick(seam, chain(CHAIN_HOPS)));
 
-  const live = chainPairs(CHAIN_HOPS);
+  const live = chain_pairs(CHAIN_HOPS);
   executed.length = 0;
   // The last hop orphans one head row per prefix start, which is the smallest
   // cone this shape can produce.
   await firstValueFrom(
-    program.tick(seam, [callEdge("del", `n${CHAIN_HOPS - 1}`, `n${CHAIN_HOPS}`)]),
+    program.tick(seam, [call_edge("del", `n${CHAIN_HOPS - 1}`, `n${CHAIN_HOPS}`)]),
   );
   const survived = live.filter(([from]) => from !== `n${CHAIN_HOPS - 1}`);
 
   assert.equal(
-    disagreement(await headOf(seam), transitiveClosure(survived)),
+    disagreement(await head_of(seam), transitive_closure(survived)),
     "",
     "the in-place tick must agree with the referee",
   );

@@ -308,7 +308,7 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
             sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
             SnapshotDeletes),
     length(SnapshotDeletes, 1),
-    once(sub_atom(Text, _, _, _, 'function orderedPreWriteStatement')),
+    once(sub_atom(Text, _, _, _, 'function ordered_pre_write_statement')),
     \+ sub_atom(Text, _, _, _, 'refreshOrderedPre').
 
 ddl_for_table(Table, Ddl) :-
@@ -672,7 +672,7 @@ test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
     ExpandSeed == arm([src(0, rel(ref(flow_edge, 4)))], [], [],
                       [col(0, 0), col(0, 1), col(0, 2), col(0, 3)], none).
 
-% The emitted field is additive text beside expandSql/dredSql; a head with no
+% The emitted field is additive text beside expand_sql/dred_sql; a head with no
 % in-place plan prints null rather than an absent key.
 test(fixpoint_ir_emits_beside_the_sql_fields) :-
     once(( fixture_file('4_flagship_flow.pl', File),
@@ -687,15 +687,15 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
     emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
                  Text),
     once(sub_atom(Text, _, _, _,
-                  'fixpointIr: { head: { rel: "flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], types: ["text", "text", "text", "text"] }')),
+                  'fixpoint_ir: { head: { rel: "flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], types: ["text", "text", "text", "text"] }')),
     once(sub_atom(Text, _, _, _,
                   'storage: [{ rel: "flow_edge", arity: 4, columns: [{ name: "from_path", type: "text", storage: "text", collation: "binary", encoding: { kind: "direct" } }')),
     once(sub_atom(Text, _, _, _,
                   'hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "flow_edge", arity: 4 } }]')),
     once(sub_atom(Text, _, _, _,
                   'stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major"')),
-    once(sub_atom(Text, _, _, _, 'headRel: "flow_edge"')),
-    once(sub_atom(Text, _, _, _, 'dredSql: null, fixpointIr: null')).
+    once(sub_atom(Text, _, _, _, 'head_rel: "flow_edge"')),
+    once(sub_atom(Text, _, _, _, 'dred_sql: null, fixpoint_ir: null')).
 
 % SABOTAGE RECEIPT: with arith/3 carrying no result type (the shape before this
 % test), both walks below emit the SAME `{ kind: "arith", op: "/" }` while the
@@ -1247,13 +1247,13 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
-    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.applyLevelsBeforeEdges')),
-    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recomputeLevelsBeforeEdges')),
-    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.applyEdges')),
+    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
+    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
+    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.apply_edges')),
     BeforeAt < ReconcileAt, ReconcileAt < EdgesAt,
     % The naive referee's own freeze: recomputeLevels once before the edge
     % batch and once after (engine.pl's two level closures).
-    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recomputeLevels(seam)'), RecomputeAts),
+    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recompute_levels(seam)'), RecomputeAts),
     length(RecomputeAts, 2), !.
 
 % The narrowing that keeps exhaust_policy compiled: a level rel whose own
@@ -2115,7 +2115,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
-    once(sub_atom(Text, _, _, _, 'export const hostPlans')),
+    once(sub_atom(Text, _, _, _, 'export const host_plans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
     % terms now carry the executor the served runtime dispatches on. The bind's
     % `literals` list is EMPTY for this fixture on purpose -- it declares
@@ -2124,7 +2124,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     once(sub_atom(Text, _, _, _, 'execution: "shell"')),
     once(sub_atom(Text, _, _, _, 'literals: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
-                  'export const unsupportedExecution: readonly string[] = [];')),
+                  'export const unsupported_execution: readonly string[] = [];')),
     once(sub_atom(Text, _, _, _,
                   'CREATE TABLE "__host_demand_tree_sitter"')),
     once(sub_atom(Text, _, _, _,

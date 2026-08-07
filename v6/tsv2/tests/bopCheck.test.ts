@@ -23,24 +23,24 @@ const BOP = fileURLToPath(new URL("../cli/bop.ts", import.meta.url));
 const CLEAN_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 const FINDINGS_DL6 = fileURLToPath(new URL("../../dl/fixtures/ghcacher.dl6", import.meta.url));
 
-function runCheck(file: string): { readonly status: number | null; readonly stderr: string } {
+function run_check(file: string): { readonly status: number | null; readonly stderr: string } {
   const result = spawnSync("node", ["--experimental-transform-types", BOP, "check", file], { encoding: "utf8" });
   return { status: result.status, stderr: result.stderr };
 }
 
 test("check: a program with zero findings that compiles clean exits 0, silently", () => {
-  const outcome = runCheck(CLEAN_DL6);
+  const outcome = run_check(CLEAN_DL6);
   assert.equal(outcome.status, 0, outcome.stderr);
 });
 
 test("check: a program that hits a named compiler refusal exits 2 and names it on stderr", () => {
-  const outcome = runCheck(FINDINGS_DL6);
+  const outcome = run_check(FINDINGS_DL6);
   assert.equal(outcome.status, 2, outcome.stderr);
   assert.match(outcome.stderr, /unsupported_construct/);
 });
 
 test("check: a file that does not exist exits 1, broken", () => {
-  const outcome = runCheck(join(tmpdir(), "bop-check-missing-does-not-exist.dl6"));
+  const outcome = run_check(join(tmpdir(), "bop-check-missing-does-not-exist.dl6"));
   assert.equal(outcome.status, 1, outcome.stderr);
 });
 
@@ -56,12 +56,12 @@ test("check: a file that does not exist exits 1, broken", () => {
  *   refusal: rule-index unavailable: unsupported_construct: ...
  * and goes red on the location match; restoring the catch makes it green. */
 test("check: a located refusal names file and line, the same location compile_dl6.sh prints", () => {
-  const workDir = mkdtempSync(join(tmpdir(), "bop-check-located-"));
-  const programPath = join(workDir, "broken.dl6");
+  const work_dir = mkdtempSync(join(tmpdir(), "bop-check-located-"));
+  const program_path = join(work_dir, "broken.dl6");
   // `beat` is declared `log` and headed by a level rule, which is
   // log_on_level_headed_rel. The rule is on line 4 of this exact text.
   writeFileSync(
-    programPath,
+    program_path,
     [
       "bind interval(period: int, bucket: int).",
       "",
@@ -71,22 +71,22 @@ test("check: a located refusal names file and line, the same location compile_dl
     ].join("\n"),
     "utf8",
   );
-  const outcome = runCheck(programPath);
+  const outcome = run_check(program_path);
   assert.equal(outcome.status, 2, outcome.stderr);
   assert.match(outcome.stderr, /log_on_level_headed_rel/);
   assert.ok(
-    outcome.stderr.includes(`${programPath}:4:`),
-    `expected the refusal to carry ${programPath}:4, got: ${outcome.stderr}`,
+    outcome.stderr.includes(`${program_path}:4:`),
+    `expected the refusal to carry ${program_path}:4, got: ${outcome.stderr}`,
   );
 });
 
 test("check: a file that does not parse at all exits 1, broken", () => {
-  const workDir = mkdtempSync(join(tmpdir(), "bop-check-broken-"));
-  const brokenPath = join(workDir, "broken.dl6");
+  const work_dir = mkdtempSync(join(tmpdir(), "bop-check-broken-"));
+  const broken_path = join(work_dir, "broken.dl6");
   // An unclosed paren: no grammar production in parse_dl.pl accepts this, so
   // parse_dl_file/4 either fails outright or throws dl_parse_error -- either
   // way bop_check.pl's own broken/1 path, never a "finding".
-  writeFileSync(brokenPath, "rel foo(a: int\n", "utf8");
-  const outcome = runCheck(brokenPath);
+  writeFileSync(broken_path, "rel foo(a: int\n", "utf8");
+  const outcome = run_check(broken_path);
   assert.equal(outcome.status, 1, outcome.stderr);
 });

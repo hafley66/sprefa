@@ -45,7 +45,7 @@ import type { IBootStatement, ISqlSeam } from "../runtime/types.ts";
 const TEXT_COLUMN_DDL = 'CREATE TABLE "probe" ("value" TEXT NOT NULL)';
 const INT_COLUMN_DDL = 'CREATE TABLE "probe_int" ("value" INTEGER NOT NULL)';
 
-function readProbe(seam: ISqlSeam, table: string): Promise<readonly { value: unknown; ty: unknown }[]> {
+function read_probe(seam: ISqlSeam, table: string): Promise<readonly { value: unknown; ty: unknown }[]> {
   return firstValueFrom(
     seam.runner
       .execute(seam.db, `SELECT "value", typeof("value") AS ty FROM "${table}" ORDER BY rowid`)
@@ -64,7 +64,7 @@ test("driver_binds_a_js_number_as_real (the hazard, measured not assumed)", asyn
   await firstValueFrom(
     seam.runner.execute(seam.db, { sql: 'INSERT INTO "probe" ("value") VALUES (?)', args: [2n] }),
   );
-  const rows = await readProbe(seam, "probe");
+  const rows = await read_probe(seam, "probe");
   assert.deepEqual(
     rows.map((row) => row.value),
     ["1.0", "2"],
@@ -81,7 +81,7 @@ test("boot_runner_preserves_an_integer_into_a_text_column", async () => {
     { rel: "probe", sql: 'INSERT INTO "probe" ("value") VALUES (?)', params: ["src/db.rs"] },
   ];
   await firstValueFrom(BootRunner.run(seam, statements).pipe(toArray()));
-  const rows = await readProbe(seam, "probe");
+  const rows = await read_probe(seam, "probe");
   assert.deepEqual(
     rows.map((row) => row.value),
     ["1", "40", "src/db.rs"],
@@ -97,6 +97,6 @@ test("boot_runner_leaves_an_integer_column_an_integer", async () => {
       { rel: "probe_int", sql: 'INSERT INTO "probe_int" ("value") VALUES (?)', params: [7] },
     ]).pipe(toArray()),
   );
-  const rows = await readProbe(seam, "probe_int");
+  const rows = await read_probe(seam, "probe_int");
   assert.deepEqual(rows, [{ value: 7, ty: "integer" }]);
 });

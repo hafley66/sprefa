@@ -93,7 +93,7 @@ interface Movement {
 
 interface IManifestReasonDiff {
   /** `foo(a,b)` -> `foo`; a bare atom is its own functor; "" stays "". */
-  reasonFunctor(reason: string): string;
+  reason_functor(reason: string): string;
   /**
    * Erase SWI's variable NUMBERING (`_494306` -> `_`) before comparing reason
    * arguments. Reasons that quote a rule body carry unbound variables, and swipl
@@ -103,7 +103,7 @@ interface IManifestReasonDiff {
    * is unreadable. It does not touch the gated class: `restated` compares
    * functors, which never contained a variable.
    */
-  normalizeVars(reason: string): string;
+  normalize_vars(reason: string): string;
   /** Parse a manifest's JSON text into name -> entry. A repeated name with a
    *  DIFFERENT row is two fixtures sharing a name, and throws. */
   index(json: string, origin: string): Map<string, ManifestEntry>;
@@ -114,66 +114,66 @@ interface IManifestReasonDiff {
   ): {
     restated: Movement[];
     args: Movement[];
-    bucketMoved: Movement[];
+    bucket_moved: Movement[];
     added: string[];
     removed: string[];
   };
 }
 
 export const ManifestReasonDiff: IManifestReasonDiff = {
-  reasonFunctor(reason) {
+  reason_functor(reason) {
     const open = reason.indexOf("(");
     return (open === -1 ? reason : reason.slice(0, open)).trim();
   },
 
-  normalizeVars(reason) {
+  normalize_vars(reason) {
     return reason.replace(/_\d+/g, "_");
   },
 
   index(json, origin) {
     const rows = JSON.parse(json) as ManifestEntry[];
-    const byName = new Map<string, ManifestEntry>();
+    const by_name = new Map<string, ManifestEntry>();
     for (const row of rows) {
-      const seen = byName.get(row.name);
+      const seen = by_name.get(row.name);
       if (seen !== undefined) {
         if (seen.file === row.file && seen.bucket === row.bucket && seen.reason === row.reason) continue;
         throw new Error(`${origin}: duplicate fixture name ${row.name}`);
       }
-      byName.set(row.name, row);
+      by_name.set(row.name, row);
     }
-    return byName;
+    return by_name;
   },
 
   classify(head, work) {
     const restated: Movement[] = [];
     const args: Movement[] = [];
-    const bucketMoved: Movement[] = [];
+    const bucket_moved: Movement[] = [];
     const added: string[] = [];
     const removed: string[] = [];
 
-    for (const [name, workRow] of work) {
-      const headRow = head.get(name);
-      if (headRow === undefined) {
+    for (const [name, work_row] of work) {
+      const head_row = head.get(name);
+      if (head_row === undefined) {
         added.push(name);
         continue;
       }
-      if (headRow.bucket !== workRow.bucket) {
-        bucketMoved.push({
+      if (head_row.bucket !== work_row.bucket) {
+        bucket_moved.push({
           name,
-          bucket: `${headRow.bucket} -> ${workRow.bucket}`,
-          head: headRow.reason,
-          work: workRow.reason,
+          bucket: `${head_row.bucket} -> ${work_row.bucket}`,
+          head: head_row.reason,
+          work: work_row.reason,
         });
         continue; // a bucket move is already loud; do not double-report its reason
       }
-      if (this.normalizeVars(headRow.reason) === this.normalizeVars(workRow.reason)) continue;
-      const movement: Movement = { name, bucket: workRow.bucket, head: headRow.reason, work: workRow.reason };
-      if (this.reasonFunctor(headRow.reason) === this.reasonFunctor(workRow.reason)) args.push(movement);
+      if (this.normalize_vars(head_row.reason) === this.normalize_vars(work_row.reason)) continue;
+      const movement: Movement = { name, bucket: work_row.bucket, head: head_row.reason, work: work_row.reason };
+      if (this.reason_functor(head_row.reason) === this.reason_functor(work_row.reason)) args.push(movement);
       else restated.push(movement);
     }
     for (const name of head.keys()) if (!work.has(name)) removed.push(name);
 
-    return { restated, args, bucketMoved, added, removed };
+    return { restated, args, bucket_moved, added, removed };
   },
 };
 
@@ -182,7 +182,7 @@ export const ManifestReasonDiff: IManifestReasonDiff = {
 const MANIFEST_PATH = "../prolog/compile/out/manifest.json";
 const MANIFEST_GIT_PATH = "v6/prolog/compile/out/manifest.json";
 
-function headManifest(): string | undefined {
+function head_manifest(): string | undefined {
   try {
     return execFileSync("git", ["show", `HEAD:${MANIFEST_GIT_PATH}`], { encoding: "utf8" });
   } catch {
@@ -190,7 +190,7 @@ function headManifest(): string | undefined {
   }
 }
 
-function printMovements(label: string, movements: readonly Movement[]): void {
+function print_movements(label: string, movements: readonly Movement[]): void {
   for (const m of movements) {
     console.log(`  ${label} ${m.name} [${m.bucket}]`);
     console.log(`             HEAD ${m.head === "" ? "(none)" : m.head}`);
@@ -200,24 +200,24 @@ function printMovements(label: string, movements: readonly Movement[]): void {
 
 const strict = process.env["MANIFEST_DIFF_STRICT"] === "1";
 
-const headText = headManifest();
-if (headText === undefined) {
+const head_text = head_manifest();
+if (head_text === undefined) {
   console.log("MANIFEST_REASON_DIFF skipped: no HEAD copy of the manifest to compare against");
   process.exit(0);
 }
 
-const head = ManifestReasonDiff.index(headText, "HEAD manifest");
+const head = ManifestReasonDiff.index(head_text, "HEAD manifest");
 const work = ManifestReasonDiff.index(readFileSync(MANIFEST_PATH, "utf8"), "working-tree manifest");
-const { restated, args, bucketMoved, added, removed } = ManifestReasonDiff.classify(head, work);
+const { restated, args, bucket_moved, added, removed } = ManifestReasonDiff.classify(head, work);
 
 const mode = strict ? "STRICT" : "informational";
 console.log(
   `MANIFEST_REASON_DIFF restated=${restated.length} args=${args.length} ` +
-    `bucket_moved=${bucketMoved.length} added=${added.length} removed=${removed.length} (${mode})`,
+    `bucket_moved=${bucket_moved.length} added=${added.length} removed=${removed.length} (${mode})`,
 );
-printMovements("RESTATED", restated);
-printMovements("ARGS    ", args);
-printMovements("BUCKET  ", bucketMoved);
+print_movements("RESTATED", restated);
+print_movements("ARGS    ", args);
+print_movements("BUCKET  ", bucket_moved);
 for (const name of added) console.log(`  ADDED    ${name} [${work.get(name)?.bucket}]`);
 for (const name of removed) console.log(`  REMOVED  ${name} [${head.get(name)?.bucket}]`);
 

@@ -23,7 +23,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { IArrivalBatch } from "../runtime/types.ts";
-import { oracleLog, postArrivals, postProgram, servedLog, startServed, type TickReply } from "./serveHelpers.ts";
+import { oracle_log, post_arrivals, post_program, served_log, start_served, type TickReply } from "./serveHelpers.ts";
 
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 
@@ -34,17 +34,17 @@ const DOOR_SCHEDULE: readonly IArrivalBatch[] = [
 
 test("receipt (a): door-handwritten served over http matches the oracle tick log byte for byte", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
-    const parsed = JSON.parse(loaded.body) as { readonly arrivalTargets: readonly string[] };
-    assert.ok(parsed.arrivalTargets.includes("event"));
+    const parsed = JSON.parse(loaded.body) as { readonly arrival_targets: readonly string[] };
+    assert.ok(parsed.arrival_targets.includes("event"));
 
     const replies: TickReply[] = [];
-    for (const batch of DOOR_SCHEDULE) replies.push(await postArrivals(served.port, batch));
+    for (const batch of DOOR_SCHEDULE) replies.push(await post_arrivals(served.port, batch));
 
-    assert.equal(servedLog(replies), oracleLog(source, DOOR_SCHEDULE));
+    assert.equal(served_log(replies), oracle_log(source, DOOR_SCHEDULE));
   } finally {
     await served.stop();
   }
@@ -52,21 +52,21 @@ test("receipt (a): door-handwritten served over http matches the oracle tick log
 
 test("receipt (a) guard: a batch naming a rel that is not an arrival target is a 400, not a tick", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
     // `current` is a derived rel: rules head it, the world never does.
     await assert.rejects(
-      () => postArrivals(served.port, [{ rel: "current", sign: "add", row: [1, "boot"] }]),
+      () => post_arrivals(served.port, [{ rel: "current", sign: "add", row: [1, "boot"] }]),
       /is not an arrival target/,
     );
     // Wrong column count on a real arrival target is refused the same way.
     await assert.rejects(
-      () => postArrivals(served.port, [{ rel: "event", sign: "add", row: [1] }]),
+      () => post_arrivals(served.port, [{ rel: "event", sign: "add", row: [1] }]),
       /takes 2 columns, got 1/,
     );
     // The engine is still alive and still counting from tick 1.
-    const reply = await postArrivals(served.port, [{ rel: "event", sign: "add", row: [7, "later"] }]);
+    const reply = await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [7, "later"] }]);
     assert.equal(reply.ticks[0]?.tick, 1);
   } finally {
     await served.stop();
@@ -75,13 +75,13 @@ test("receipt (a) guard: a batch naming a rel that is not an arrival target is a
 
 test("receipt (a) refusal: a program the compiler refuses is a 400 and leaves the running program alone", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
-    await postArrivals(served.port, [{ rel: "event", sign: "add", row: [1, "boot"] }]);
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
+    await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [1, "boot"] }]);
 
     // `latest` in a level rule is a live named refusal (review-B2).
-    const rejected = await postProgram(
+    const rejected = await post_program(
       served.port,
       "rel event(id: int, kind: text) log keep(all).\nrel current(id: int, kind: text).\ncurrent(Id, Kind) <- latest(event(Id, Kind)).\n",
     );
@@ -89,7 +89,7 @@ test("receipt (a) refusal: a program the compiler refuses is a 400 and leaves th
     assert.match(rejected.body, /latest_in_level_rule/);
 
     // Still the old program, still ticking from where it was.
-    const reply = await postArrivals(served.port, [{ rel: "event", sign: "add", row: [2, "ready"] }]);
+    const reply = await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [2, "ready"] }]);
     assert.equal(reply.ticks[0]?.tick, 2);
   } finally {
     await served.stop();

@@ -54,7 +54,7 @@ import type { ISqlRunner } from "sprefa-store-engine/src/engine/types.ts";
 
 import { BootRunner } from "../runtime/2_boot.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { rowValueFromSql } from "../runtime/rows.ts";
+import { row_value_from_sql } from "../runtime/rows.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import type {
@@ -89,11 +89,11 @@ const HOST_FREE_SCHEDULE: readonly IArrivalBatch[] = [
 
 type RowsByRel = Readonly<Record<string, readonly (readonly IRowValue[])[]>>;
 
-async function loadProgram(moduleName: string, mode: ISubscribePruneMode): Promise<IServedProgram> {
+async function load_program(module_name: string, mode: ISubscribePruneMode): Promise<IServedProgram> {
   const previous = process.env["SPREFA_TSV2_SUBSCRIBE_PRUNE"];
   process.env["SPREFA_TSV2_SUBSCRIBE_PRUNE"] = mode;
   try {
-    const loaded = await import(`../gen_emitted/${moduleName}.ts?subscribePrune=${mode}`) as { program: IServedProgram };
+    const loaded = await import(`../gen_emitted/${module_name}.ts?subscribePrune=${mode}`) as { program: IServedProgram };
     return loaded.program;
   } finally {
     if (previous === undefined) delete process.env["SPREFA_TSV2_SUBSCRIBE_PRUNE"];
@@ -103,7 +103,7 @@ async function loadProgram(moduleName: string, mode: ISubscribePruneMode): Promi
 
 /** Wraps the store's own runner, recording every statement text that crosses
  *  the seam. Nothing is intercepted or rewritten. */
-function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
+function counting_seam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
   const statements: string[] = [];
   const record = (statement: string | SqlStatement): void => {
     statements.push(typeof statement === "string" ? statement : statement.sql);
@@ -126,17 +126,17 @@ function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } 
   return { seam: { db: seam.db, runner }, statements };
 }
 
-function finalRows(program: IServedProgram, seam: ISqlSeam) {
-  const rels = Object.keys(program.finalSelect);
+function final_rows(program: IServedProgram, seam: ISqlSeam) {
+  const rels = Object.keys(program.final_select);
   if (rels.length === 0) return of({} as RowsByRel);
   return forkJoin(
     rels.map((rel) =>
-      seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
+      seam.runner.execute(seam.db, program.final_select[rel]!).pipe(
         map((result) => ({
           rel,
           rows: result.rows.map((row) =>
-            (program.relColumns[rel] ?? []).map((column, index) =>
-              rowValueFromSql(program.relColumnTypes?.[rel]?.[index], row[column]) as IRowValue,
+            (program.rel_columns[rel] ?? []).map((column, index) =>
+              row_value_from_sql(program.rel_column_types?.[rel]?.[index], row[column]) as IRowValue,
             ),
           ),
         })),
@@ -148,14 +148,14 @@ function finalRows(program: IServedProgram, seam: ISqlSeam) {
 /** Boot, run the schedule, read every rel back through the module's own decode
  *  SELECTs. The statement list covers boot AND the ticks. */
 async function replay(
-  moduleName: string,
+  module_name: string,
   mode: ISubscribePruneMode,
   schedule: readonly IArrivalBatch[],
 ): Promise<{ program: IServedProgram; rows: RowsByRel; statements: readonly string[] }> {
-  const program = await loadProgram(moduleName, mode);
+  const program = await load_program(module_name, mode);
   const base = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(base, program.ddl));
-  const { seam, statements } = countingSeam(base);
+  const { seam, statements } = counting_seam(base);
   await firstValueFrom(
     concat(
       BootRunner.run(seam, program.boot).pipe(ignoreElements()),
@@ -164,11 +164,11 @@ async function replay(
   );
   // Read back through the UNWRAPPED seam: the decode SELECTs are this test's
   // own measurement and must not land in the statement list it measures.
-  const rows = await firstValueFrom(finalRows(program, base));
+  const rows = await firstValueFrom(final_rows(program, base));
   return { program, rows, statements };
 }
 
-function statementsNaming(statements: readonly string[], table: string): number {
+function statements_naming(statements: readonly string[], table: string): number {
   return statements.filter((statement) => statement.includes(`"${table}"`)).length;
 }
 
@@ -176,7 +176,7 @@ function statementsNaming(statements: readonly string[], table: string): number 
 
 test("flag off is identity on every list, by reference and not by value", () => {
   const relations = [{ rel: "kept" }] as never;
-  const statements = [{ headRel: "kept" }] as never;
+  const statements = [{ head_rel: "kept" }] as never;
   const boot = [{ rel: "kept", sql: "", params: [] }] as never;
   assert.equal(SubscribeCone.relations("off", relations, [], []), relations);
   assert.equal(SubscribeCone.levels("off", statements, []), statements);
@@ -200,7 +200,7 @@ test("the default environment is flag off", () => {
 test("flag off + query-bearing: the fixture's own expectations, unpruned", async () => {
   const { program, rows, statements } = await replay(QUERY_BEARING, "off", QUERY_BEARING_SCHEDULE);
   assert.deepEqual(
-    program.subscribedRels,
+    program.subscribed_rels,
     [
       "__host_demand_tree_sitter/4",
       "__host_response_tree_sitter/5",
@@ -219,7 +219,7 @@ test("flag off + query-bearing: the fixture's own expectations, unpruned", async
     "unpruned, the host demand rel derives its row from file_digest x query_value",
   );
   assert.ok(
-    statementsNaming(statements, "__host_demand_tree_sitter") > 0,
+    statements_naming(statements, "__host_demand_tree_sitter") > 0,
     "unpruned, the module runs the demand rel's derivation",
   );
 });
@@ -228,7 +228,7 @@ test("flag on + query-bearing: subscribed rels identical, the host edge held", a
   const unpruned = await replay(QUERY_BEARING, "off", QUERY_BEARING_SCHEDULE);
   const pruned = await replay(QUERY_BEARING, "on", QUERY_BEARING_SCHEDULE);
 
-  for (const ref of pruned.program.subscribedRels) {
+  for (const ref of pruned.program.subscribed_rels) {
     const rel = ref.slice(0, ref.lastIndexOf("/"));
     assert.deepEqual(
       pruned.rows[rel],
@@ -243,7 +243,7 @@ test("flag on + query-bearing: subscribed rels identical, the host edge held", a
     "host edge: the demand rel of a subscribed response rel still derives its row",
   );
   assert.ok(
-    statementsNaming(pruned.statements, "__host_demand_tree_sitter") > 0,
+    statements_naming(pruned.statements, "__host_demand_tree_sitter") > 0,
     "host edge: and the statements that derive it still run, so a live host is asked",
   );
   assert.deepEqual(
@@ -258,7 +258,7 @@ test("flag on + query-bearing: subscribed rels identical, the host edge held", a
 test("flag off + host-free: the off-cone chain derives, cone or no cone", async () => {
   const { program, rows } = await replay(HOST_FREE, "off", HOST_FREE_SCHEDULE);
   assert.deepEqual(
-    program.subscribedRels,
+    program.subscribed_rels,
     ["reading/2", "watched/1"],
     "no host declared, so the cone is the rule graph and nothing else",
   );
@@ -271,7 +271,7 @@ test("flag on + host-free: the off-cone chain costs zero statements", async () =
   const unpruned = await replay(HOST_FREE, "off", HOST_FREE_SCHEDULE);
   const pruned = await replay(HOST_FREE, "on", HOST_FREE_SCHEDULE);
 
-  for (const ref of pruned.program.subscribedRels) {
+  for (const ref of pruned.program.subscribed_rels) {
     const rel = ref.slice(0, ref.lastIndexOf("/"));
     assert.deepEqual(
       pruned.rows[rel],
@@ -282,13 +282,13 @@ test("flag on + host-free: the off-cone chain costs zero statements", async () =
 
   for (const rel of ["audited", "audit_trail"]) {
     assert.ok(
-      statementsNaming(unpruned.statements, rel) > 0,
+      statements_naming(unpruned.statements, rel) > 0,
       `control: ${rel} costs statements when nothing is pruned`,
     );
     assert.equal(
-      statementsNaming(pruned.statements, rel),
+      statements_naming(pruned.statements, rel),
       0,
-      `flag on + host-free: ${rel} is off cone, so no statement of it may run: ${statementsNaming(pruned.statements, rel)} do`,
+      `flag on + host-free: ${rel} is off cone, so no statement of it may run: ${statements_naming(pruned.statements, rel)} do`,
     );
     assert.deepEqual(pruned.rows[rel], [], `and ${rel} ends empty`);
   }
@@ -305,7 +305,7 @@ test("flag on + host-free: the off-cone chain costs zero statements", async () =
 
 test("flag off + zero-query: the level view derives, cone or no cone", async () => {
   const { program, rows } = await replay(ZERO_QUERY, "off", ZERO_QUERY_SCHEDULE);
-  assert.deepEqual(program.subscribedRels, [], "ruling zero_query_semantics: no query, empty cone");
+  assert.deepEqual(program.subscribed_rels, [], "ruling zero_query_semantics: no query, empty cone");
   assert.deepEqual(rows["seen"], [["a.ts"]], "occurrence_identity.pl:204 deltas(seen/1, [[+seen(a.ts)], []])");
   assert.equal(rows["line"]?.length, 2, "occurrence_identity.pl:206 final(line/3, [two occurrences])");
 });
@@ -314,9 +314,9 @@ test("flag on + zero-query: nothing derives, ingestion still lands", async () =>
   const { rows, statements } = await replay(ZERO_QUERY, "on", ZERO_QUERY_SCHEDULE);
   assert.deepEqual(rows["seen"], [], "a zero-query module subscribes to nothing, so it derives nothing");
   assert.equal(
-    statementsNaming(statements, "seen"),
+    statements_naming(statements, "seen"),
     0,
-    `flag on + zero-query: a pruned rel's derivation must not run: ${statementsNaming(statements, "seen")} statements name seen`,
+    `flag on + zero-query: a pruned rel's derivation must not run: ${statements_naming(statements, "seen")} statements name seen`,
   );
   assert.equal(rows["line"]?.length, 2, "flag on + zero-query: ingestion is never pruned");
 });

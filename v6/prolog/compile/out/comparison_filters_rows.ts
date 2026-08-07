@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: comparison_filters_rows.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -171,48 +171,48 @@ const ddl: readonly string[] = [
   `CREATE INDEX "jaccard_zero" ON "jaccard" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   callee_set_size: ["left", "left_size"],
   jaccard: ["left", "right", "col3"],
   shared_count: ["left", "right", "shared"],
   union_size: ["left", "right", "union"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   callee_set_size: ["text", "int"],
   jaccard: ["text", "text", "int"],
   shared_count: ["text", "text", "int"],
   union_size: ["text", "text", "int"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "comparison_filters_rows", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "9ebc89783623719b", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "callee_set_size", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "fa2f24357972b147", hSchema: "edb533b8689f8fc1", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "left", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8e00c23979ba264a", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "left_size", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "089cb361394fc25d", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "jaccard", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "ec8a73263c9b379f", hSchema: "fcd3e999763cdb49", hRule: "d53da7dac7999c98" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "left", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "bbcf69e7503d0b0f", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "right", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "29ce38b69c43b65f", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 10, ordinal: 3, localName: "col3", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "5f09c7e06a48ab8f", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 6, ordinal: 0, localName: "shared_count", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "1c378e54c297d019", hSchema: "45ce68388ec8d4df", hRule: "" },
-  { relId: 15, parentId: 14, ordinal: 1, localName: "left", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b4ec67563a91d113", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 14, ordinal: 2, localName: "right", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fcd6ec941542a148", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 14, ordinal: 3, localName: "shared", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "cd764b2682db0fe0", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 6, ordinal: 0, localName: "union_size", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "aa92756ea0d62121", hSchema: "aeec4f8d9c804f39", hRule: "044a8ee22c9dd379" },
-  { relId: 19, parentId: 18, ordinal: 1, localName: "left", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b674f2abe7a7e5ee", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 18, ordinal: 2, localName: "right", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "035979750cb55565", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 18, ordinal: 3, localName: "union", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "8305727f15ddcf41", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "comparison_filters_rows", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "9ebc89783623719b", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "callee_set_size", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "fa2f24357972b147", h_schema: "edb533b8689f8fc1", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "left", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8e00c23979ba264a", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "left_size", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "089cb361394fc25d", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "jaccard", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "ec8a73263c9b379f", h_schema: "fcd3e999763cdb49", h_rule: "d53da7dac7999c98" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "left", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "bbcf69e7503d0b0f", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "right", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "29ce38b69c43b65f", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 10, ordinal: 3, local_name: "col3", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "5f09c7e06a48ab8f", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 6, ordinal: 0, local_name: "shared_count", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "1c378e54c297d019", h_schema: "45ce68388ec8d4df", h_rule: "" },
+  { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "left", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b4ec67563a91d113", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 14, ordinal: 2, local_name: "right", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fcd6ec941542a148", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 14, ordinal: 3, local_name: "shared", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "cd764b2682db0fe0", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 6, ordinal: 0, local_name: "union_size", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "aa92756ea0d62121", h_schema: "aeec4f8d9c804f39", h_rule: "044a8ee22c9dd379" },
+  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "left", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b674f2abe7a7e5ee", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 18, ordinal: 2, local_name: "right", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "035979750cb55565", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 18, ordinal: 3, local_name: "union", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "8305727f15ddcf41", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["callee_set_size", "shared_count"];
+const arrival_targets: readonly string[] = ["callee_set_size", "shared_count"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, params: ["db.rs", 10] },
@@ -233,28 +233,28 @@ type Snapshot = {
   readonly union_size: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    callee_set_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`, relColumns.callee_set_size!, relColumnTypes.callee_set_size!),
-    jaccard: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "jaccard"`, relColumns.jaccard!, relColumnTypes.jaccard!),
-    shared_count: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`, relColumns.shared_count!, relColumnTypes.shared_count!),
-    union_size: selectRows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "union_size"`, relColumns.union_size!, relColumnTypes.union_size!),
+    callee_set_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
+    jaccard: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "jaccard"`, rel_columns.jaccard!, rel_column_types.jaccard!),
+    shared_count: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`, rel_columns.shared_count!, rel_column_types.shared_count!),
+    union_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "union_size"`, rel_columns.union_size!, rel_column_types.union_size!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   callee_set_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`,
   jaccard: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "jaccard"`,
   shared_count: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`,
   union_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "union_size"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  callee_set_size: { kind: "set", addSql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, delSql: `DELETE FROM "callee_set_size" WHERE "left" = ? AND "left_size" = ?` },
-  shared_count: { kind: "set", addSql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES (?, ?, ?)`, delSql: `DELETE FROM "shared_count" WHERE "left" = ? AND "right" = ? AND "shared" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  callee_set_size: { kind: "set", add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, del_sql: `DELETE FROM "callee_set_size" WHERE "left" = ? AND "left_size" = ?` },
+  shared_count: { kind: "set", add_sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "shared_count" WHERE "left" = ? AND "right" = ? AND "shared" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`comparison_filters_rows: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -263,37 +263,37 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`comparison_filters_rows: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`comparison_filters_rows: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "callee_set_size", kind: "set", tableName: "callee_set_size", deltaTableName: "__delta_callee_set_size", frontierTableName: "__frontier_callee_set_size", nextFrontierTableName: "__next_frontier_callee_set_size", columns: ["left", "left_size"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrivalDelSql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"`, ruleObservers: ["union_size/3"] },
-  { rel: "jaccard", kind: "set", tableName: "jaccard", deltaTableName: "__delta_jaccard", frontierTableName: "__frontier_jaccard", nextFrontierTableName: "__next_frontier_jaccard", columns: ["left", "right", "col3"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_jaccard" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"`, ruleObservers: [] },
-  { rel: "shared_count", kind: "set", tableName: "shared_count", deltaTableName: "__delta_shared_count", frontierTableName: "__frontier_shared_count", nextFrontierTableName: "__next_frontier_shared_count", columns: ["left", "right", "shared"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrivalDelSql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"`, ruleObservers: ["jaccard/3", "union_size/3"] },
-  { rel: "union_size", kind: "set", tableName: "union_size", deltaTableName: "__delta_union_size", frontierTableName: "__frontier_union_size", nextFrontierTableName: "__next_frontier_union_size", columns: ["left", "right", "union"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "union", "_sign"`, ruleObservers: ["jaccard/3"] },
+  { rel: "callee_set_size", kind: "set", table_name: "callee_set_size", delta_table_name: "__delta_callee_set_size", frontier_table_name: "__frontier_callee_set_size", next_frontier_table_name: "__next_frontier_callee_set_size", columns: ["left", "left_size"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrival_del_sql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"`, rule_observers: ["union_size/3"] },
+  { rel: "jaccard", kind: "set", table_name: "jaccard", delta_table_name: "__delta_jaccard", frontier_table_name: "__frontier_jaccard", next_frontier_table_name: "__next_frontier_jaccard", columns: ["left", "right", "col3"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_jaccard" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"`, rule_observers: [] },
+  { rel: "shared_count", kind: "set", table_name: "shared_count", delta_table_name: "__delta_shared_count", frontier_table_name: "__frontier_shared_count", next_frontier_table_name: "__next_frontier_shared_count", columns: ["left", "right", "shared"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrival_del_sql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"`, rule_observers: ["jaccard/3", "union_size/3"] },
+  { rel: "union_size", kind: "set", table_name: "union_size", delta_table_name: "__delta_union_size", frontier_table_name: "__frontier_union_size", next_frontier_table_name: "__next_frontier_union_size", columns: ["left", "right", "union"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "union", "_sign"`, rule_observers: ["jaccard/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "union_size", ruleId: "comparison_filters_rows:union_size/3#1", headDeltaTableName: "__delta_union_size", headColumns: ["left", "right", "union"], insertSql: `INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT DISTINCT d0."left", b0."left", ((d0."left_size" + b0."left_size") - b1."shared") FROM "__frontier_callee_set_size" d0, "callee_set_size" b0, "shared_count" b1 WHERE d0."_phase" >= 0 AND b1."left" = d0."left" AND b1."right" = b0."left" UNION ALL SELECT DISTINCT b0."left", d0."left", ((b0."left_size" + d0."left_size") - b1."shared") FROM "__frontier_callee_set_size" d0, "callee_set_size" b0, "shared_count" b1 WHERE d0."_phase" >= 0 AND b1."left" = b0."left" AND b1."right" = d0."left" UNION ALL SELECT DISTINCT d0."left", d0."right", ((b0."left_size" + b1."left_size") - d0."shared") FROM "__frontier_shared_count" d0, "callee_set_size" b0, "callee_set_size" b1 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b1."left" = d0."right" RETURNING "left", "right", "union"`, selectSql: `SELECT "left", "right", "union" FROM "union_size"`, recomputeSql: `DELETE FROM "union_size";
-INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared") FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left"`, supportSql: [`DELETE FROM "__support_next_union_size"`, `INSERT INTO "__support_next_union_size" ("left", "right", "union", "__refcount") SELECT "left", "right", "union", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."left" AS "right", ((b0."left_size" + b1."left_size") - b2."shared") AS "union", count(*) AS "__refcount" FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left" GROUP BY b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared")) GROUP BY "left", "right", "union"`, `UPDATE "union_size" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_union_size" n WHERE n."left" = h."left" AND n."right" = h."right" AND n."union" = h."union"), 0)`, `INSERT INTO "__delta_union_size" ("_sign", "_sequence", "left", "right", "union") SELECT -1, row_number() OVER () - 1, "left", "right", "union" FROM "union_size" WHERE "__refcount" <= 0`, `DELETE FROM "union_size" WHERE "__refcount" <= 0`, `DELETE FROM "__new_union_size"`, `INSERT INTO "__new_union_size" ("left", "right", "union", "__refcount") SELECT n."left", n."right", n."union", n."__refcount" FROM "__support_next_union_size" n LEFT JOIN "union_size" h ON n."left" = h."left" AND n."right" = h."right" AND n."union" = h."union" WHERE h."left" IS NULL`, `INSERT INTO "__delta_union_size" ("_sign", "_sequence", "left", "right", "union") SELECT 1, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT INTO "__frontier_union_size" ("_phase", "_sequence", "left", "right", "union") SELECT ?, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT INTO "__next_frontier_union_size" ("_phase", "_sequence", "left", "right", "union") SELECT ?, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT OR IGNORE INTO "union_size" ("left", "right", "union", "__refcount") SELECT n."left", n."right", n."union", n."__refcount" FROM "__support_next_union_size" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "jaccard", ruleId: "comparison_filters_rows:jaccard/3#1", headDeltaTableName: "__delta_jaccard", headColumns: ["left", "right", "col3"], insertSql: `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT DISTINCT d0."left", d0."right", ((d0."shared" * 100) / b0."union") FROM "__frontier_shared_count" d0, "union_size" b0 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b0."right" = d0."right" AND (b0."union" > 0) AND (((d0."shared" * 100) / b0."union") >= 40) UNION ALL SELECT DISTINCT d0."left", d0."right", ((b0."shared" * 100) / d0."union") FROM "__frontier_union_size" d0, "shared_count" b0 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b0."right" = d0."right" AND (d0."union" > 0) AND (((b0."shared" * 100) / d0."union") >= 40) RETURNING "left", "right", "col3"`, selectSql: `SELECT "left", "right", "col3" FROM "jaccard"`, recomputeSql: `DELETE FROM "jaccard";
-INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."right", ((b0."shared" * 100) / b1."union") FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40)`, supportSql: [`DELETE FROM "__support_next_jaccard"`, `INSERT INTO "__support_next_jaccard" ("left", "right", "col3", "__refcount") SELECT "left", "right", "col3", sum("__refcount") FROM (SELECT b0."left" AS "left", b0."right" AS "right", ((b0."shared" * 100) / b1."union") AS "col3", count(*) AS "__refcount" FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40) GROUP BY b0."left", b0."right", ((b0."shared" * 100) / b1."union")) GROUP BY "left", "right", "col3"`, `UPDATE "jaccard" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_jaccard" n WHERE n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3"), 0)`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT -1, row_number() OVER () - 1, "left", "right", "col3" FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "__new_jaccard"`, `INSERT INTO "__new_jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n LEFT JOIN "jaccard" h ON n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3" WHERE h."left" IS NULL`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT 1, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__next_frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "union_size", rule_id: "comparison_filters_rows:union_size/3#1", head_delta_table_name: "__delta_union_size", head_columns: ["left", "right", "union"], insert_sql: `INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT DISTINCT d0."left", b0."left", ((d0."left_size" + b0."left_size") - b1."shared") FROM "__frontier_callee_set_size" d0, "callee_set_size" b0, "shared_count" b1 WHERE d0."_phase" >= 0 AND b1."left" = d0."left" AND b1."right" = b0."left" UNION ALL SELECT DISTINCT b0."left", d0."left", ((b0."left_size" + d0."left_size") - b1."shared") FROM "__frontier_callee_set_size" d0, "callee_set_size" b0, "shared_count" b1 WHERE d0."_phase" >= 0 AND b1."left" = b0."left" AND b1."right" = d0."left" UNION ALL SELECT DISTINCT d0."left", d0."right", ((b0."left_size" + b1."left_size") - d0."shared") FROM "__frontier_shared_count" d0, "callee_set_size" b0, "callee_set_size" b1 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b1."left" = d0."right" RETURNING "left", "right", "union"`, select_sql: `SELECT "left", "right", "union" FROM "union_size"`, recompute_sql: `DELETE FROM "union_size";
+INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared") FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left"`, support_sql: [`DELETE FROM "__support_next_union_size"`, `INSERT INTO "__support_next_union_size" ("left", "right", "union", "__refcount") SELECT "left", "right", "union", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."left" AS "right", ((b0."left_size" + b1."left_size") - b2."shared") AS "union", count(*) AS "__refcount" FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left" GROUP BY b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared")) GROUP BY "left", "right", "union"`, `UPDATE "union_size" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_union_size" n WHERE n."left" = h."left" AND n."right" = h."right" AND n."union" = h."union"), 0)`, `INSERT INTO "__delta_union_size" ("_sign", "_sequence", "left", "right", "union") SELECT -1, row_number() OVER () - 1, "left", "right", "union" FROM "union_size" WHERE "__refcount" <= 0`, `DELETE FROM "union_size" WHERE "__refcount" <= 0`, `DELETE FROM "__new_union_size"`, `INSERT INTO "__new_union_size" ("left", "right", "union", "__refcount") SELECT n."left", n."right", n."union", n."__refcount" FROM "__support_next_union_size" n LEFT JOIN "union_size" h ON n."left" = h."left" AND n."right" = h."right" AND n."union" = h."union" WHERE h."left" IS NULL`, `INSERT INTO "__delta_union_size" ("_sign", "_sequence", "left", "right", "union") SELECT 1, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT INTO "__frontier_union_size" ("_phase", "_sequence", "left", "right", "union") SELECT ?, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT INTO "__next_frontier_union_size" ("_phase", "_sequence", "left", "right", "union") SELECT ?, "rowid" - 1, "left", "right", "union" FROM "__new_union_size"`, `INSERT OR IGNORE INTO "union_size" ("left", "right", "union", "__refcount") SELECT n."left", n."right", n."union", n."__refcount" FROM "__support_next_union_size" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "jaccard", rule_id: "comparison_filters_rows:jaccard/3#1", head_delta_table_name: "__delta_jaccard", head_columns: ["left", "right", "col3"], insert_sql: `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT DISTINCT d0."left", d0."right", ((d0."shared" * 100) / b0."union") FROM "__frontier_shared_count" d0, "union_size" b0 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b0."right" = d0."right" AND (b0."union" > 0) AND (((d0."shared" * 100) / b0."union") >= 40) UNION ALL SELECT DISTINCT d0."left", d0."right", ((b0."shared" * 100) / d0."union") FROM "__frontier_union_size" d0, "shared_count" b0 WHERE d0."_phase" >= 0 AND b0."left" = d0."left" AND b0."right" = d0."right" AND (d0."union" > 0) AND (((b0."shared" * 100) / d0."union") >= 40) RETURNING "left", "right", "col3"`, select_sql: `SELECT "left", "right", "col3" FROM "jaccard"`, recompute_sql: `DELETE FROM "jaccard";
+INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."right", ((b0."shared" * 100) / b1."union") FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40)`, support_sql: [`DELETE FROM "__support_next_jaccard"`, `INSERT INTO "__support_next_jaccard" ("left", "right", "col3", "__refcount") SELECT "left", "right", "col3", sum("__refcount") FROM (SELECT b0."left" AS "left", b0."right" AS "right", ((b0."shared" * 100) / b1."union") AS "col3", count(*) AS "__refcount" FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40) GROUP BY b0."left", b0."right", ((b0."shared" * 100) / b1."union")) GROUP BY "left", "right", "col3"`, `UPDATE "jaccard" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_jaccard" n WHERE n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3"), 0)`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT -1, row_number() OVER () - 1, "left", "right", "col3" FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "__new_jaccard"`, `INSERT INTO "__new_jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n LEFT JOIN "jaccard" h ON n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3" WHERE h."left" IS NULL`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT 1, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__next_frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "union_size";
 INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared") FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left";
 DELETE FROM "jaccard";
@@ -301,11 +301,11 @@ INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const callee_set_size = multisetDiff(before.callee_set_size, after.callee_set_size);
-  const jaccard = multisetDiff(before.jaccard, after.jaccard);
-  const shared_count = multisetDiff(before.shared_count, after.shared_count);
-  const union_size = multisetDiff(before.union_size, after.union_size);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const callee_set_size = multiset_diff(before.callee_set_size, after.callee_set_size);
+  const jaccard = multiset_diff(before.jaccard, after.jaccard);
+  const shared_count = multiset_diff(before.shared_count, after.shared_count);
+  const union_size = multiset_diff(before.union_size, after.union_size);
   return {
     rels: [
       { rel: "callee_set_size", add: callee_set_size.add, del: callee_set_size.del },
@@ -313,15 +313,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "shared_count", add: shared_count.add, del: shared_count.del },
       { rel: "union_size", add: union_size.add, del: union_size.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // comparison_filters_rows: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -335,38 +335,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -375,16 +375,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "comparison_filters_rows",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

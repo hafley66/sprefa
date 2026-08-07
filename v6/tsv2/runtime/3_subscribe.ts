@@ -26,21 +26,21 @@ import type { ISubscribeCone, ISubscribedRel, ISubscribePruneMode } from "./type
 
 /** "captured/1" -> "captured". A rel name is unique per program (one decl per
  *  name), so dropping the arity cannot merge two different rels. */
-function coneNames(subscribedRels: readonly ISubscribedRel[]): ReadonlySet<string> {
+function cone_names(subscribed_rels: readonly ISubscribedRel[]): ReadonlySet<string> {
   const names = new Set<string>();
-  for (const ref of subscribedRels) {
+  for (const ref of subscribed_rels) {
     const slash = ref.lastIndexOf("/");
     names.add(slash === -1 ? ref : ref.slice(0, slash));
   }
   return names;
 }
 
-function storedNames(
-  subscribedRels: readonly ISubscribedRel[],
-  arrivalTargets: readonly string[],
+function stored_names(
+  subscribed_rels: readonly ISubscribedRel[],
+  arrival_targets: readonly string[],
 ): ReadonlySet<string> {
-  const names = new Set<string>(coneNames(subscribedRels));
-  for (const target of arrivalTargets) names.add(target);
+  const names = new Set<string>(cone_names(subscribed_rels));
+  for (const target of arrival_targets) names.add(target);
   return names;
 }
 
@@ -49,33 +49,33 @@ export const SubscribeCone: ISubscribeCone = {
     return process.env["SPREFA_TSV2_SUBSCRIBE_PRUNE"] === "on" ? "on" : "off";
   },
 
-  relations(mode, relations, subscribedRels, arrivalTargets) {
+  relations(mode, relations, subscribed_rels, arrival_targets) {
     if (mode === "off") return relations;
-    const kept = storedNames(subscribedRels, arrivalTargets);
+    const kept = stored_names(subscribed_rels, arrival_targets);
     return relations.filter((relation) => kept.has(relation.rel));
   },
 
-  levels(mode, statements, subscribedRels) {
+  levels(mode, statements, subscribed_rels) {
     if (mode === "off") return statements;
-    const kept = coneNames(subscribedRels);
-    return statements.filter((statement) => kept.has(statement.headRel));
+    const kept = cone_names(subscribed_rels);
+    return statements.filter((statement) => kept.has(statement.head_rel));
   },
 
-  edges(mode, statements, subscribedRels) {
+  edges(mode, statements, subscribed_rels) {
     if (mode === "off") return statements;
-    const kept = coneNames(subscribedRels);
-    return statements.filter((statement) => kept.has(statement.headRel));
+    const kept = cone_names(subscribed_rels);
+    return statements.filter((statement) => kept.has(statement.head_rel));
   },
 
-  retention(mode, statements, subscribedRels, arrivalTargets) {
+  retention(mode, statements, subscribed_rels, arrival_targets) {
     if (mode === "off") return statements;
-    const kept = storedNames(subscribedRels, arrivalTargets);
+    const kept = stored_names(subscribed_rels, arrival_targets);
     return statements.filter((statement) => kept.has(statement.rel));
   },
 
-  boot(mode, statements, subscribedRels, arrivalTargets) {
+  boot(mode, statements, subscribed_rels, arrival_targets) {
     if (mode === "off") return statements;
-    const kept = storedNames(subscribedRels, arrivalTargets);
+    const kept = stored_names(subscribed_rels, arrival_targets);
     return statements.filter((statement) => kept.has(statement.rel));
   },
 };

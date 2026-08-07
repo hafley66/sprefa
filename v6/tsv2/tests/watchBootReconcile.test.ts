@@ -64,7 +64,7 @@ class ScriptedWatchSource implements IWatchSource {
   }
 }
 
-function watchPlan(): IBindPlan {
+function watch_plan(): IBindPlan {
   return {
     name: "watch",
     columns: [
@@ -77,26 +77,26 @@ function watchPlan(): IBindPlan {
   };
 }
 
-function recordingEngine(storedRows: readonly IRow[]): {
+function recording_engine(stored_rows: readonly IRow[]): {
   readonly engine: ILiveEngine;
-  readonly rowReads: string[];
+  readonly row_reads: string[];
   readonly batches: IArrivalBatch[];
 } {
-  const rowReads: string[] = [];
+  const row_reads: string[] = [];
   const batches: IArrivalBatch[] = [];
   let tick = 0;
   const engine = {
     rows(rel: string): Observable<readonly IRow[]> {
-      rowReads.push(rel);
-      return of(storedRows);
+      row_reads.push(rel);
+      return of(stored_rows);
     },
     submit(batch: IArrivalBatch): Observable<ITickOutcome> {
       batches.push(batch);
       tick += 1;
-      return of({ tick, line: "", deltas: { rels: [], carryPending: false } });
+      return of({ tick, line: "", deltas: { rels: [], carry_pending: false } });
     },
   } as unknown as ILiveEngine;
-  return { engine, rowReads, batches };
+  return { engine, row_reads, batches };
 }
 
 test("watch boot: stored rows and tracked disk become one difference batch, then seed a later delete", () => {
@@ -113,21 +113,21 @@ test("watch boot: stored rows and tracked disk become one difference batch, then
     git(root, "add", "--", "src/added.ts", "src/changed.ts", "src/missing.ts", "src/unchanged.ts");
     rmSync(join(root, "src/missing.ts"));
 
-    const recorded = recordingEngine([
+    const recorded = recording_engine([
       [GLOB, "src/changed.ts", digest("old\n")],
       [GLOB, "src/missing.ts", digest("missing\n")],
       [GLOB, "src/unchanged.ts", digest("same\n")],
       ["other/**/*.ts", "ignored.ts", digest("ignored\n")],
     ]);
     const firings: unknown[] = [];
-    const running = new WatchBindRunner(recorded.engine, [watchPlan()], {
+    const running = new WatchBindRunner(recorded.engine, [watch_plan()], {
       root,
-      coalesceMs: COALESCE_MS,
+      coalesce_ms: COALESCE_MS,
       scheduler,
       source,
     }).firings$.subscribe((firing) => firings.push(firing));
 
-    assert.deepEqual(recorded.rowReads, ["watch"], "one engine-state read is owed for this watched glob");
+    assert.deepEqual(recorded.row_reads, ["watch"], "one engine-state read is owed for this watched glob");
     assert.deepEqual(recorded.batches, [
       [
         { rel: "watch", sign: "del", row: [GLOB, "src/changed.ts", digest("old\n")] },
@@ -162,15 +162,15 @@ test("watch boot: identical tracked rows seed state without submitting a tick", 
     writeFileSync(join(root, "src/stable.ts"), "stable\n");
     git(root, "add", "--", "src/stable.ts");
 
-    const recorded = recordingEngine([[GLOB, "src/stable.ts", digest("stable\n")]]);
-    const running = new WatchBindRunner(recorded.engine, [watchPlan()], {
+    const recorded = recording_engine([[GLOB, "src/stable.ts", digest("stable\n")]]);
+    const running = new WatchBindRunner(recorded.engine, [watch_plan()], {
       root,
-      coalesceMs: COALESCE_MS,
+      coalesce_ms: COALESCE_MS,
       scheduler,
       source,
     }).firings$.subscribe();
 
-    assert.deepEqual(recorded.rowReads, ["watch"]);
+    assert.deepEqual(recorded.row_reads, ["watch"]);
     assert.deepEqual(recorded.batches, [], "an identical restart owes zero boot ticks");
 
     source.notify(join(root, "src/stable.ts"));
@@ -191,22 +191,22 @@ test("watch boot: notifications arriving during the row read queue behind the bo
     mkdirSync(join(root, "src"));
     writeFileSync(join(root, "src/early.ts"), "early\n");
 
-    const storedRows = new Subject<readonly IRow[]>();
+    const stored_rows = new Subject<readonly IRow[]>();
     const batches: IArrivalBatch[] = [];
     let tick = 0;
     const engine = {
       rows(): Observable<readonly IRow[]> {
-        return storedRows;
+        return stored_rows;
       },
       submit(batch: IArrivalBatch): Observable<ITickOutcome> {
         batches.push(batch);
         tick += 1;
-        return of({ tick, line: "", deltas: { rels: [], carryPending: false } });
+        return of({ tick, line: "", deltas: { rels: [], carry_pending: false } });
       },
     } as unknown as ILiveEngine;
-    const running = new WatchBindRunner(engine, [watchPlan()], {
+    const running = new WatchBindRunner(engine, [watch_plan()], {
       root,
-      coalesceMs: COALESCE_MS,
+      coalesce_ms: COALESCE_MS,
       scheduler,
       source,
     }).firings$.subscribe();
@@ -215,8 +215,8 @@ test("watch boot: notifications arriving during the row read queue behind the bo
     source.settle();
     assert.deepEqual(batches, [], "live windows do not cross the seam before boot reconciliation");
 
-    storedRows.next([]);
-    storedRows.complete();
+    stored_rows.next([]);
+    stored_rows.complete();
     assert.deepEqual(batches, [
       [{ rel: "watch", sign: "add", row: [GLOB, "src/early.ts", digest("early\n")] }],
     ]);

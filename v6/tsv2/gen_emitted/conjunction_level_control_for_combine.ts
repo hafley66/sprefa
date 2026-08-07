@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: conjunction_level_control_for_combine.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -161,38 +161,38 @@ const ddl: readonly string[] = [
   `CREATE INDEX "pair_zero" ON "pair" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   pair: ["left", "right"],
   source_a: ["left"],
   source_b: ["right"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   pair: ["int", "int"],
   source_a: ["int"],
   source_b: ["int"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "conjunction_level_control_for_combine", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "ee5c687d21753259", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "pair", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4d09b014074f2f72", hSchema: "a3c2241561bccbe3", hRule: "0509e15037b57ddb" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "left", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "a52e1e3ea6a2e73c", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "right", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "4b021d204406e2a6", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "source_a", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "f110e00f3d0900ea", hSchema: "8e75f4ab37008087", hRule: "" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "left", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e9bef10d9ef4b407", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 6, ordinal: 0, localName: "source_b", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "1500b85590fc7c72", hSchema: "df1f2b9efcfed35f", hRule: "" },
-  { relId: 13, parentId: 12, ordinal: 1, localName: "right", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c4ea054b19e10b47", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "conjunction_level_control_for_combine", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "ee5c687d21753259", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "pair", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4d09b014074f2f72", h_schema: "a3c2241561bccbe3", h_rule: "0509e15037b57ddb" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "left", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "a52e1e3ea6a2e73c", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "right", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4b021d204406e2a6", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "source_a", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "f110e00f3d0900ea", h_schema: "8e75f4ab37008087", h_rule: "" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "left", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e9bef10d9ef4b407", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "source_b", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "1500b85590fc7c72", h_schema: "df1f2b9efcfed35f", h_rule: "" },
+  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "right", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "c4ea054b19e10b47", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["source_a", "source_b"];
+const arrival_targets: readonly string[] = ["source_a", "source_b"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "pair", sql: `DELETE FROM "pair"`, params: [] },
@@ -205,26 +205,26 @@ type Snapshot = {
   readonly source_b: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    pair: selectRows(seam, `SELECT "left", "right" FROM "pair"`, relColumns.pair!, relColumnTypes.pair!),
-    source_a: selectRows(seam, `SELECT "left" FROM "source_a"`, relColumns.source_a!, relColumnTypes.source_a!),
-    source_b: selectRows(seam, `SELECT "right" FROM "source_b"`, relColumns.source_b!, relColumnTypes.source_b!),
+    pair: select_rows(seam, `SELECT "left", "right" FROM "pair"`, rel_columns.pair!, rel_column_types.pair!),
+    source_a: select_rows(seam, `SELECT "left" FROM "source_a"`, rel_columns.source_a!, rel_column_types.source_a!),
+    source_b: select_rows(seam, `SELECT "right" FROM "source_b"`, rel_columns.source_b!, rel_column_types.source_b!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   pair: `SELECT "left", "right" FROM "pair"`,
   source_a: `SELECT "left" FROM "source_a"`,
   source_b: `SELECT "right" FROM "source_b"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  source_a: { kind: "set", addSql: `INSERT OR IGNORE INTO "source_a" ("left") VALUES (?)`, delSql: `DELETE FROM "source_a" WHERE "left" = ?` },
-  source_b: { kind: "set", addSql: `INSERT OR IGNORE INTO "source_b" ("right") VALUES (?)`, delSql: `DELETE FROM "source_b" WHERE "right" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  source_a: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source_a" ("left") VALUES (?)`, del_sql: `DELETE FROM "source_a" WHERE "left" = ?` },
+  source_b: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source_b" ("right") VALUES (?)`, del_sql: `DELETE FROM "source_b" WHERE "right" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`conjunction_level_control_for_combine: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -233,58 +233,58 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`conjunction_level_control_for_combine: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`conjunction_level_control_for_combine: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "pair", kind: "set", tableName: "pair", deltaTableName: "__delta_pair", frontierTableName: "__frontier_pair", nextFrontierTableName: "__next_frontier_pair", columns: ["left", "right"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "left", "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "_sign"`, ruleObservers: [] },
-  { rel: "source_a", kind: "set", tableName: "source_a", deltaTableName: "__delta_source_a", frontierTableName: "__frontier_source_a", nextFrontierTableName: "__next_frontier_source_a", columns: ["left"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrivalDelSql: `DELETE FROM "source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundarySql: `SELECT "left", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_a" WHERE "_sign" IN (-1, 1) GROUP BY "left", "_sign"`, ruleObservers: ["pair/2"] },
-  { rel: "source_b", kind: "set", tableName: "source_b", deltaTableName: "__delta_source_b", frontierTableName: "__frontier_source_b", nextFrontierTableName: "__next_frontier_source_b", columns: ["right"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrivalDelSql: `DELETE FROM "source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundarySql: `SELECT "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_b" WHERE "_sign" IN (-1, 1) GROUP BY "right", "_sign"`, ruleObservers: ["pair/2"] },
+  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "left", "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "_sign"`, rule_observers: [] },
+  { rel: "source_a", kind: "set", table_name: "source_a", delta_table_name: "__delta_source_a", frontier_table_name: "__frontier_source_a", next_frontier_table_name: "__next_frontier_source_a", columns: ["left"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrival_del_sql: `DELETE FROM "source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundary_sql: `SELECT "left", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_a" WHERE "_sign" IN (-1, 1) GROUP BY "left", "_sign"`, rule_observers: ["pair/2"] },
+  { rel: "source_b", kind: "set", table_name: "source_b", delta_table_name: "__delta_source_b", frontier_table_name: "__frontier_source_b", next_frontier_table_name: "__next_frontier_source_b", columns: ["right"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrival_del_sql: `DELETE FROM "source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundary_sql: `SELECT "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_b" WHERE "_sign" IN (-1, 1) GROUP BY "right", "_sign"`, rule_observers: ["pair/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "pair", ruleId: "conjunction_level_control_for_combine:pair/2#1", headDeltaTableName: "__delta_pair", headColumns: ["left", "right"], insertSql: `INSERT OR IGNORE INTO "pair" ("left", "right") SELECT DISTINCT d0."left", b0."right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."left", d0."right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 RETURNING "left", "right"`, selectSql: `SELECT "left", "right" FROM "pair"`, recomputeSql: `DELETE FROM "pair";
-INSERT OR IGNORE INTO "pair" ("left", "right") SELECT b0."left", b1."right" FROM "source_a" b0, "source_b" b1`, supportSql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("left", "right", "__refcount") SELECT "left", "right", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."right" AS "right", count(*) AS "__refcount" FROM "source_a" b0, "source_b" b1 GROUP BY b0."left", b1."right") GROUP BY "left", "right"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."left" = h."left" AND n."right" = h."right"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT -1, row_number() OVER () - 1, "left", "right" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."left" = h."left" AND n."right" = h."right" WHERE h."left" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT 1, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "pair", rule_id: "conjunction_level_control_for_combine:pair/2#1", head_delta_table_name: "__delta_pair", head_columns: ["left", "right"], insert_sql: `INSERT OR IGNORE INTO "pair" ("left", "right") SELECT DISTINCT d0."left", b0."right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT b0."left", d0."right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 RETURNING "left", "right"`, select_sql: `SELECT "left", "right" FROM "pair"`, recompute_sql: `DELETE FROM "pair";
+INSERT OR IGNORE INTO "pair" ("left", "right") SELECT b0."left", b1."right" FROM "source_a" b0, "source_b" b1`, support_sql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("left", "right", "__refcount") SELECT "left", "right", sum("__refcount") FROM (SELECT b0."left" AS "left", b1."right" AS "right", count(*) AS "__refcount" FROM "source_a" b0, "source_b" b1 GROUP BY b0."left", b1."right") GROUP BY "left", "right"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."left" = h."left" AND n."right" = h."right"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT -1, row_number() OVER () - 1, "left", "right" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."left" = h."left" AND n."right" = h."right" WHERE h."left" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "left", "right") SELECT 1, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "left", "right") SELECT ?, "rowid" - 1, "left", "right" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("left", "right", "__refcount") SELECT n."left", n."right", n."__refcount" FROM "__support_next_pair" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "pair";
 INSERT OR IGNORE INTO "pair" ("left", "right") SELECT b0."left", b1."right" FROM "source_a" b0, "source_b" b1`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const pair = multisetDiff(before.pair, after.pair);
-  const source_a = multisetDiff(before.source_a, after.source_a);
-  const source_b = multisetDiff(before.source_b, after.source_b);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const pair = multiset_diff(before.pair, after.pair);
+  const source_a = multiset_diff(before.source_a, after.source_a);
+  const source_b = multiset_diff(before.source_b, after.source_b);
   return {
     rels: [
       { rel: "pair", add: pair.add, del: pair.del },
       { rel: "source_a", add: source_a.add, del: source_a.del },
       { rel: "source_b", add: source_b.add, del: source_b.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // conjunction_level_control_for_combine: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -298,38 +298,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -338,16 +338,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "conjunction_level_control_for_combine",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

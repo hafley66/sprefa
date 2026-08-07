@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import { firstValueFrom, map } from "rxjs";
 
-import { rowValueFromSql, selectRows } from "../runtime/rows.ts";
+import { row_value_from_sql, select_rows } from "../runtime/rows.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 
@@ -49,7 +49,7 @@ test("bool and float storage rejects invalid values and decodes canonical values
   );
 
   const rows = await firstValueFrom(
-    selectRows(
+    select_rows(
       seam,
       'SELECT "name", "enabled", "score" FROM "value_plane" ORDER BY "name"',
       ["name", "enabled", "score"],
@@ -91,12 +91,12 @@ test("tick boundary emits booleans and shortest finite float JSON", () => {
   assert.deepEqual(
     // Not point-free: `valueText` takes an optional COLUMN TYPE as its second
     // parameter and `Array.map` would hand it the index.
-    [true, false, -0, 0.30000000000000004].map((value) => TickLogEmitter.valueText(value)),
+    [true, false, -0, 0.30000000000000004].map((value) => TickLogEmitter.value_text(value)),
     ["true", "false", "0", "0.30000000000000004"],
   );
-  assert.throws(() => TickLogEmitter.valueText(Number.NaN), /non-finite float/);
-  assert.throws(() => TickLogEmitter.valueText(Number.POSITIVE_INFINITY), /non-finite float/);
-  assert.throws(() => rowValueFromSql("float", Number.NaN), /float column crossed SQLite/);
-  assert.equal(rowValueFromSql("float", -0), 0);
-  assert.equal(Object.is(rowValueFromSql("float", -0), -0), false);
+  assert.throws(() => TickLogEmitter.value_text(Number.NaN), /non-finite float/);
+  assert.throws(() => TickLogEmitter.value_text(Number.POSITIVE_INFINITY), /non-finite float/);
+  assert.throws(() => row_value_from_sql("float", Number.NaN), /float column crossed SQLite/);
+  assert.equal(row_value_from_sql("float", -0), 0);
+  assert.equal(Object.is(row_value_from_sql("float", -0), -0), false);
 });

@@ -14,51 +14,51 @@ import type {
   IServedProgram,
 } from "../runtime/types.ts";
 
-function valueJson(value: unknown): string {
+function value_json(value: unknown): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" && Number.isInteger(value)) return `${value}`;
-  return TickLogEmitter.valueText(String(value) as IRowValue);
+  return TickLogEmitter.value_text(String(value) as IRowValue);
 }
 
-function finalStateLine(
-  rowsByRel: Readonly<Record<string, readonly (readonly unknown[])[]>>,
+function final_state_line(
+  rows_by_rel: Readonly<Record<string, readonly (readonly unknown[])[]>>,
 ): string {
   const parts: string[] = [];
-  for (const rel of Object.keys(rowsByRel).sort()) {
-    const rows = rowsByRel[rel] ?? [];
+  for (const rel of Object.keys(rows_by_rel).sort()) {
+    const rows = rows_by_rel[rel] ?? [];
     if (rows.length === 0) continue;
-    const rowTexts = rows
-      .map((row) => `[${row.map(valueJson).join(",")}]`)
+    const row_texts = rows
+      .map((row) => `[${row.map(value_json).join(",")}]`)
       .sort();
-    parts.push(`${JSON.stringify(rel)}:[${rowTexts.join(",")}]`);
+    parts.push(`${JSON.stringify(rel)}:[${row_texts.join(",")}]`);
   }
   return `{"final":{${parts.join(",")}}}`;
 }
 
-async function readFinal(
+async function read_final(
   program: IServedProgram,
   seam: ReturnType<typeof ScratchStore.open>,
 ): Promise<string> {
   const entries = await Promise.all(
-    Object.keys(program.finalSelect).map(async (rel) => {
+    Object.keys(program.final_select).map(async (rel) => {
       const result = await firstValueFrom(
-        seam.runner.execute(seam.db, program.finalSelect[rel]!),
+        seam.runner.execute(seam.db, program.final_select[rel]!),
       );
-      const columns = program.relColumns[rel] ?? [];
+      const columns = program.rel_columns[rel] ?? [];
       return {
         rel,
         rows: result.rows.map((row) => columns.map((column) => row[column])),
       };
     }),
   );
-  return finalStateLine(
+  return final_state_line(
     Object.fromEntries(entries.map((entry) => [entry.rel, entry.rows])),
   );
 }
 
 async function main(): Promise<void> {
-  const [moduleFile, scheduleFile] = process.argv.slice(2);
-  if (moduleFile === undefined || scheduleFile === undefined) {
+  const [module_file, schedule_file] = process.argv.slice(2);
+  if (module_file === undefined || schedule_file === undefined) {
     process.stderr.write(
       "usage: node --experimental-transform-types 4_ghcacher-tick-golden.ts <module.ts> <schedule.json>\n",
     );
@@ -67,20 +67,20 @@ async function main(): Promise<void> {
   }
 
   const loaded = (await import(
-    pathToFileURL(resolve(moduleFile)).href
+    pathToFileURL(resolve(module_file)).href
   )) as { readonly program: IServedProgram };
   const schedule = JSON.parse(
-    readFileSync(scheduleFile, "utf8"),
+    readFileSync(schedule_file, "utf8"),
   ) as readonly IArrivalBatch[];
   const seam = ScratchStore.open(":memory:");
   try {
     await firstValueFrom(ScratchStore.boot(seam, loaded.program.ddl));
     await firstValueFrom(BootRunner.run(seam, loaded.program.boot));
-    const tickLines = await firstValueFrom(
+    const tick_lines = await firstValueFrom(
       TickFold.run(loaded.program, seam, schedule).pipe(toArray()),
     );
-    for (const line of tickLines) process.stdout.write(`${line}\n`);
-    process.stdout.write(`${await readFinal(loaded.program, seam)}\n`);
+    for (const line of tick_lines) process.stdout.write(`${line}\n`);
+    process.stdout.write(`${await read_final(loaded.program, seam)}\n`);
   } finally {
     seam.db.close();
   }

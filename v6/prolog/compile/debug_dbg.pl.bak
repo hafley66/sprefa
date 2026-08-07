@@ -1,0 +1,5 @@
+:- use_module('../compile', []).
+main :-
+    catch(compile_dl6('/Users/chrishafley/projects/sprefa-lanes/snakecase/v6/prolog/conformance/fixtures/aggregate_count_min_max_track_arrivals_and_retraction.pl', '/tmp/door2.ts'), E,
+          (writeln('ERR='), print_term(E, [portray(true)]), nl)),
+    halt.

@@ -24,7 +24,7 @@ test("norm: emitted SQLite keeps V5 ASCII alphanumerics and lowercases them", as
       { rel: "route", sign: "add", row: ["AZ-09_é"] },
     ]]).pipe(toArray()),
   );
-  const result = await firstValueFrom(seam.runner.execute(seam.db, program.finalSelect.route_key!));
+  const result = await firstValueFrom(seam.runner.execute(seam.db, program.final_select.route_key!));
   assert.deepEqual(
     [...result.rows].sort((left, right) => String(left.raw).localeCompare(String(right.raw))),
     [

@@ -12,16 +12,16 @@
  * not one tick per file.
  */
 
-import { serveTsv2 } from "./4_http.ts";
+import { serve_tsv2 } from "./4_http.ts";
 
-const dbUrl = process.env.TSV2_DB ?? ":memory:";
+const db_url = process.env.TSV2_DB ?? ":memory:";
 const port = Number(process.env.TSV2_PORT ?? "17500");
-const watchRoot = process.env.TSV2_WATCH_ROOT ?? process.cwd();
-const watchCoalesceMs = Number(process.env.TSV2_WATCH_COALESCE_MS ?? "100");
+const watch_root = process.env.TSV2_WATCH_ROOT ?? process.cwd();
+const watch_coalesce_ms = Number(process.env.TSV2_WATCH_COALESCE_MS ?? "100");
 
-serveTsv2({ dbUrl, port, watchRoot, watchCoalesceMs }).subscribe({
+serve_tsv2({ db_url, port, watch_root, watch_coalesce_ms }).subscribe({
   next: (event) => {
-    if (event.kind === "listening") process.stdout.write(`tsv2 serving on ${event.port} (db ${dbUrl})\n`);
+    if (event.kind === "listening") process.stdout.write(`tsv2 serving on ${event.port} (db ${db_url})\n`);
     if (event.kind === "loaded") process.stdout.write(`program loaded: ${event.program}\n`);
     if (event.kind === "tick") process.stdout.write(`${event.outcome.line}\n`);
     if (event.kind === "watch") {

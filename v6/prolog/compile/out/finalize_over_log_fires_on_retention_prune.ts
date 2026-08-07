@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: finalize_over_log_fires_on_retention_prune.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -43,7 +43,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -53,21 +53,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -79,29 +79,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -135,17 +135,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -154,7 +154,7 @@ function triggerOccurrences(
   return occurrences;
 }
 
-function departureOccurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
+function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
   return seam.runner.execute(seam.db, sql).pipe(
     map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),
   );
@@ -178,35 +178,35 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__next_frontier_gone" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   ev: ["ordinal", "payload"],
   gone: ["ordinal", "payload"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   ev: ["int", "text"],
   gone: ["int", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "finalize_over_log_fires_on_retention_prune", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "4bb1d8c16cc5c1ae", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "ev", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "6c61bac623b148c1", hSchema: "86198db6aac4a59c", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b86ad6d5fb351159", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "751c4129214c776d", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "gone", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "29ee4792a805b826", hSchema: "86198db6aac4a59c", hRule: "3c6facd43036ee2d" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "74d69b05c9da2c20", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a1dc93cf4424e759", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "finalize_over_log_fires_on_retention_prune", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "4bb1d8c16cc5c1ae", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "ev", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "6c61bac623b148c1", h_schema: "86198db6aac4a59c", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "b86ad6d5fb351159", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "payload", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "751c4129214c776d", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "gone", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "29ee4792a805b826", h_schema: "86198db6aac4a59c", h_rule: "3c6facd43036ee2d" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "74d69b05c9da2c20", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "payload", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a1dc93cf4424e759", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["ev"];
+const arrival_targets: readonly string[] = ["ev"];
 
 const boot: readonly IBootStatement[] = [
 ];
@@ -216,23 +216,23 @@ type Snapshot = {
   readonly gone: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    ev: selectRows(seam, `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "ev"`, relColumns.ev!, relColumnTypes.ev!),
-    gone: selectRows(seam, `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "gone"`, relColumns.gone!, relColumnTypes.gone!),
+    ev: select_rows(seam, `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "ev"`, rel_columns.ev!, rel_column_types.ev!),
+    gone: select_rows(seam, `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "gone"`, rel_columns.gone!, rel_column_types.gone!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   ev: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "ev"`,
   gone: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "gone"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  ev: { kind: "log", addSql: `INSERT INTO "ev" ("ordinal", "payload") VALUES (?, ?)`, delSql: null },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  ev: { kind: "log", add_sql: `INSERT INTO "ev" ("ordinal", "payload") VALUES (?, ?)`, del_sql: null },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`finalize_over_log_fires_on_retention_prune: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -241,33 +241,33 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`finalize_over_log_fires_on_retention_prune: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`finalize_over_log_fires_on_retention_prune: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "ev", kind: "log", tableName: "ev", deltaTableName: "__delta_ev", frontierTableName: "__frontier_ev", nextFrontierTableName: "__next_frontier_ev", columns: ["ordinal", "payload"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "ev" ("ordinal", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ordinal", "payload"`, arrivalDelSql: null, boundarySql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ev" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, departureFrontierTableName: "__departure_frontier_ev", ruleObservers: ["gone/2"] },
-  { rel: "gone", kind: "log", tableName: "gone", deltaTableName: "__delta_gone", frontierTableName: "__frontier_gone", nextFrontierTableName: "__next_frontier_gone", columns: ["ordinal", "payload"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_gone" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, ruleObservers: [] },
+  { rel: "ev", kind: "log", table_name: "ev", delta_table_name: "__delta_ev", frontier_table_name: "__frontier_ev", next_frontier_table_name: "__next_frontier_ev", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "ev" ("ordinal", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ordinal", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ev" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, departure_frontier_table_name: "__departure_frontier_ev", rule_observers: ["gone/2"] },
+  { rel: "gone", kind: "log", table_name: "gone", delta_table_name: "__delta_gone", frontier_table_name: "__frontier_gone", next_frontier_table_name: "__next_frontier_gone", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_gone" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "gone", ruleId: "finalize_over_log_fires_on_retention_prune:gone/2#1", headKind: "log", headTableName: "gone", headDeltaTableName: "__delta_gone", headColumns: ["ordinal", "payload"], keyIndices: [], projectSql: `SELECT d0."ordinal" AS "ordinal", d0."payload" AS "payload" FROM "__departure_frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "gone", rule_id: "finalize_over_log_fires_on_retention_prune:gone/2#1", head_kind: "log", head_table_name: "gone", head_delta_table_name: "__delta_gone", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT d0."ordinal" AS "ordinal", d0."payload" AS "payload" FROM "__departure_frontier_ev" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 const INCREMENTAL_RETENTION_STATEMENTS: readonly IIncrementalRetentionStatement[] = [
-  { rel: "ev", count: 2, deleteSql: `DELETE FROM "ev" WHERE rowid NOT IN (SELECT rowid FROM "ev" ORDER BY rowid DESC LIMIT 2) RETURNING "ordinal", "payload"` },
+  { rel: "ev", count: 2, delete_sql: `DELETE FROM "ev" WHERE rowid NOT IN (SELECT rowid FROM "ev" ORDER BY rowid DESC LIMIT 2) RETURNING "ordinal", "payload"` },
 ];
 
 const EDGE_GONE_0_PROJECT_SQL = `SELECT ?1 AS "ordinal", ?2 AS "payload"`;
@@ -279,16 +279,16 @@ const EDGE_GONE_0_TRIGGER_COLUMNS: readonly string[] = ["ordinal", "payload"];
 function resolveGone_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
   void before;
   void arrivals;
-  return departureOccurrences(seam, EDGE_GONE_0_DEPARTURE_SQL, EDGE_GONE_0_TRIGGER_COLUMNS).pipe(
-    concatMap((triggerRows) => {
-      if (triggerRows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(triggerRows.map((departedRow) => seam.runner.execute(seam.db, { sql: EDGE_GONE_0_PROJECT_SQL, args: bindArgs(departedRow) }))).pipe(
+  return departure_occurrences(seam, EDGE_GONE_0_DEPARTURE_SQL, EDGE_GONE_0_TRIGGER_COLUMNS).pipe(
+    concatMap((trigger_rows) => {
+      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
+      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_GONE_0_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
         map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_GONE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_GONE_0_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_GONE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_GONE_0_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -298,42 +298,42 @@ function resolveGone_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArriva
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   void seam;
   return of(undefined);
 }
 
-function applyNaiveRetention(seam: ISqlSeam): Observable<void> {
-  const statements: SqlStatement[] = INCREMENTAL_RETENTION_STATEMENTS.map((statement) => ({ sql: statement.deleteSql, args: [] }));
+function apply_naive_retention(seam: ISqlSeam): Observable<void> {
+  const statements: SqlStatement[] = INCREMENTAL_RETENTION_STATEMENTS.map((statement) => ({ sql: statement.delete_sql, args: [] }));
   return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const ev = multisetDiff(before.ev, after.ev);
-  const gone = multisetDiff(before.gone, after.gone);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const ev = multiset_diff(before.ev, after.ev);
+  const gone = multiset_diff(before.gone, after.gone);
   return {
     rels: [
       { rel: "ev", add: ev.add, del: ev.del },
       { rel: "gone", add: gone.add, del: gone.del },
     ],
-    carryPending: gone.add.length > 0 || gone.del.length > 0 || ev.del.length > 0,
+    carry_pending: gone.add.length > 0 || gone.del.length > 0 || ev.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveGone_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => applyNaiveRetention(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
-    concatMap((deltas) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => apply_naive_retention(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
   );
   // finalize_over_log_fires_on_retention_prune: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -347,43 +347,43 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_RETENTION_STATEMENTS = SubscribeCone.retention(SUBSCRIBE_PRUNE, INCREMENTAL_RETENTION_STATEMENTS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_RETENTION_STATEMENTS = SubscribeCone.retention(SUBSCRIBE_PRUNE, INCREMENTAL_RETENTION_STATEMENTS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.applyRetention(seam, SUBSCRIBED_RETENTION_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.apply_retention(seam, SUBSCRIBED_RETENTION_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.stage_departures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -393,16 +393,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "finalize_over_log_fires_on_retention_prune",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

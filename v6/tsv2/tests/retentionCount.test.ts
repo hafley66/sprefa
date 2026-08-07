@@ -5,46 +5,46 @@ import { firstValueFrom } from "rxjs";
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
 import {
-  incrementalPlan,
+  incremental_plan,
   program,
 } from "../gen_emitted/retention_count_prunes_oldest.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 
-async function runRetentionTick(rowCount: number) {
+async function run_retention_tick(row_count: number) {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   stmt_counter.reset();
   const deltas = await firstValueFrom(
     program.tick(
       seam,
-      Array.from({ length: rowCount }, (_value, index) => ({
+      Array.from({ length: row_count }, (_value, index) => ({
         rel: "event",
         sign: "add" as const,
         row: [`row_${index}`],
       })),
     ),
   );
-  const statementCount = stmt_counter.get();
-  const finalResult = await firstValueFrom(
-    seam.runner.execute(seam.db, program.finalSelect.event!),
+  const statement_count = stmt_counter.get();
+  const final_result = await firstValueFrom(
+    seam.runner.execute(seam.db, program.final_select.event!),
   );
-  const finalRows = finalResult.rows.map((row) => String(row.col1)).sort();
+  const final_rows = final_result.rows.map((row) => String(row.col1)).sort();
   seam.db.close();
   return {
-    statementCount,
-    finalRows,
-    eventDelta: deltas.rels.find((delta) => delta.rel === "event"),
+    statement_count,
+    final_rows,
+    event_delta: deltas.rels.find((delta) => delta.rel === "event"),
   };
 }
 
 test("keep(count) lowers to one set-based retention statement", () => {
   assert.deepEqual(
-    incrementalPlan.retention,
+    incremental_plan.retention,
     [
       {
         rel: "event",
         count: 2,
-        deleteSql:
+        delete_sql:
           'DELETE FROM "event" WHERE rowid NOT IN (SELECT rowid FROM "event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"',
       },
     ],
@@ -52,22 +52,22 @@ test("keep(count) lowers to one set-based retention statement", () => {
 });
 
 test("keep(count) statement count is flat and the oldest rows are pruned", async () => {
-  const threeRows = await runRetentionTick(3);
-  const hundredRows = await runRetentionTick(100);
+  const three_rows = await run_retention_tick(3);
+  const hundred_rows = await run_retention_tick(100);
   assert.deepEqual(
     {
-      statementCounts: [threeRows.statementCount, hundredRows.statementCount],
-      threeFinal: threeRows.finalRows,
-      hundredFinal: hundredRows.finalRows,
-      threeDelta: threeRows.eventDelta,
-      hundredDeltaCount: hundredRows.eventDelta?.add.length,
+      statement_counts: [three_rows.statement_count, hundred_rows.statement_count],
+      three_final: three_rows.final_rows,
+      hundred_final: hundred_rows.final_rows,
+      three_delta: three_rows.event_delta,
+      hundred_delta_count: hundred_rows.event_delta?.add.length,
     },
     {
-      statementCounts: [12, 12],
-      threeFinal: ["row_1", "row_2"],
-      hundredFinal: ["row_98", "row_99"],
-      threeDelta: { rel: "event", add: [["row_1"], ["row_2"]], del: [] },
-      hundredDeltaCount: 2,
+      statement_counts: [12, 12],
+      three_final: ["row_1", "row_2"],
+      hundred_final: ["row_98", "row_99"],
+      three_delta: { rel: "event", add: [["row_1"], ["row_2"]], del: [] },
+      hundred_delta_count: 2,
     },
   );
 });

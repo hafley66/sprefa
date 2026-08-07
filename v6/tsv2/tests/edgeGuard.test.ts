@@ -4,7 +4,7 @@
  * equality alone").
  *
  * `not(Atom)`, comparisons and `:=` binds became legal in an EDGE body in the
- * phase-3 edge-body arc. Each one lands inside the arm's projectSql: the
+ * phase-3 edge-body arc. Each one lands inside the arm's project_sql: the
  * negation as `NOT EXISTS (SELECT 1 FROM <rel> n0 WHERE ...)`, the comparison
  * and the bind as WHERE / SELECT expressions. A `NOT EXISTS` correlated on a
  * NON-key column would still answer correctly and would still grade
@@ -52,49 +52,49 @@ import type { ISqlSeam } from "../runtime/types.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 
-function emittedSource(fixture: string): string {
+function emitted_source(fixture: string): string {
   return readFileSync(join(COMPILE_OUT, `${fixture}.ts`), "utf8");
 }
 
-function emittedDdl(source: string): string[] {
+function emitted_ddl(source: string): string[] {
   return [...source.matchAll(/^ {2}`(CREATE [\s\S]*?)`,$/gm)].map((match) => match[1]!);
 }
 
 /**
- * The incremental (delta-join) projectSql of the arm heading `headRel` and
+ * The incremental (delta-join) project_sql of the arm heading `head_rel` and
  * triggered off `frontierTable`. One rule can lower to several arms sharing a
  * head (one per candidate trigger atom), so the trigger's frontier table is
  * what names the arm.
  */
-function emittedEdgeProjectSql(source: string, headRel: string, frontierTable: string): string {
+function emitted_edge_project_sql(source: string, head_rel: string, frontier_table: string): string {
   const line = source
     .split("\n")
     .find(
       (candidate) =>
-        candidate.includes(`{ headRel: "${headRel}"`) &&
-        candidate.includes("projectSql:") &&
-        candidate.includes(`"${frontierTable}" d0`),
+        candidate.includes(`{ head_rel: "${head_rel}"`) &&
+        candidate.includes("project_sql:") &&
+        candidate.includes(`"${frontier_table}" d0`),
     );
-  assert.ok(line, `no incremental edge statement for ${headRel} off ${frontierTable}`);
-  return line.match(/projectSql: `([\s\S]*?)` \}/)![1]!;
+  assert.ok(line, `no incremental edge statement for ${head_rel} off ${frontier_table}`);
+  return line.match(/project_sql: `([\s\S]*?)` \}/)![1]!;
 }
 
 function run(seam: ISqlSeam, sql: string) {
   return firstValueFrom(seam.runner.execute(seam.db, sql));
 }
 
-async function planLines(seam: ISqlSeam, sql: string): Promise<string[]> {
+async function plan_lines(seam: ISqlSeam, sql: string): Promise<string[]> {
   const plan = await run(seam, `EXPLAIN QUERY PLAN ${sql}`);
   return plan.rows.map((row) => String(row.detail));
 }
 
-async function exhaustPolicySeam(liveTabRows: number): Promise<{ seam: ISqlSeam; source: string }> {
-  const source = emittedSource("exhaust_policy");
+async function exhaust_policy_seam(live_tab_rows: number): Promise<{ seam: ISqlSeam; source: string }> {
+  const source = emitted_source("exhaust_policy");
   const seam = ScratchStore.open(":memory:");
-  await firstValueFrom(ScratchStore.boot(seam, emittedDdl(source)));
+  await firstValueFrom(ScratchStore.boot(seam, emitted_ddl(source)));
 
   const values: string[] = [];
-  for (let session = 0; session < liveTabRows; session += 1) {
+  for (let session = 0; session < live_tab_rows; session += 1) {
     values.push(`('session_${session}', 'tab_${session}', 1)`);
   }
   if (values.length > 0) {
@@ -115,53 +115,53 @@ async function exhaustPolicySeam(liveTabRows: number): Promise<{ seam: ISqlSeam;
 }
 
 test("edge-body negation SEARCHes the negated rel by key, never SCANs it", async () => {
-  const { seam, source } = await exhaustPolicySeam(5000);
-  const projectSql = emittedEdgeProjectSql(source, "open_tab", "__frontier_open_request");
-  assert.ok(projectSql.includes("NOT EXISTS"), `the arm must carry the negation, got: ${projectSql}`);
+  const { seam, source } = await exhaust_policy_seam(5000);
+  const project_sql = emitted_edge_project_sql(source, "open_tab", "__frontier_open_request");
+  assert.ok(project_sql.includes("NOT EXISTS"), `the arm must carry the negation, got: ${project_sql}`);
 
   // `n0` is compile_negative_uses/4's alias for the negated rel; sqlite prints
   // the ALIAS in the plan detail, never the table name, so the alias is what
   // these assertions read.
-  const lines = await planLines(seam, projectSql);
+  const lines = await plan_lines(seam, project_sql);
   assert.ok(
     lines.some((line) => /SEARCH n0 USING PRIMARY KEY/.test(line)),
     `negation must SEARCH the negated rel by key, got: ${lines.join(" | ")}`,
   );
   assert.ok(
-    !lines.some((line) => /\bSCAN n0\b/.test(line)),
+    !lines.some((line) => /\b_scan n0\b/.test(line)),
     `negation must not SCAN the negated rel, got: ${lines.join(" | ")}`,
   );
 });
 
 test("edge-body negation admits exactly the arrivals its guard lets through", async () => {
-  const { seam, source } = await exhaustPolicySeam(5000);
-  const derived = await run(seam, emittedEdgeProjectSql(source, "open_tab", "__frontier_open_request"));
+  const { seam, source } = await exhaust_policy_seam(5000);
+  const derived = await run(seam, emitted_edge_project_sql(source, "open_tab", "__frontier_open_request"));
   assert.equal(derived.rows.length, 1, "only the arrival with no live_tab row may derive");
   assert.equal(String(derived.rows[0]!.session_id), "session_new");
 });
 
 test("edge-body negation plan does not change shape as the negated rel grows", async () => {
-  const small = await exhaustPolicySeam(10);
-  const large = await exhaustPolicySeam(5000);
-  const projectSql = emittedEdgeProjectSql(small.source, "open_tab", "__frontier_open_request");
-  const smallPlan = (await planLines(small.seam, projectSql)).join(" | ");
-  const largePlan = (await planLines(large.seam, projectSql)).join(" | ");
-  assert.equal(largePlan, smallPlan, "the arm's plan must be flat in the negated rel's size");
+  const small = await exhaust_policy_seam(10);
+  const large = await exhaust_policy_seam(5000);
+  const project_sql = emitted_edge_project_sql(small.source, "open_tab", "__frontier_open_request");
+  const small_plan = (await plan_lines(small.seam, project_sql)).join(" | ");
+  const large_plan = (await plan_lines(large.seam, project_sql)).join(" | ");
+  assert.equal(large_plan, small_plan, "the arm's plan must be flat in the negated rel's size");
 });
 
 test("edge-body comparison and bind filter and compute inside the arm", async () => {
-  const source = emittedSource("repeat_is_a_self_carry_chain");
+  const source = emitted_source("repeat_is_a_self_carry_chain");
   const seam = ScratchStore.open(":memory:");
-  await firstValueFrom(ScratchStore.boot(seam, emittedDdl(source)));
+  await firstValueFrom(ScratchStore.boot(seam, emitted_ddl(source)));
   await run(
     seam,
     `INSERT INTO "__frontier_pulse" ("_phase","_sequence","next") VALUES (0,0,1), (0,1,2), (0,2,3), (0,3,4)`,
   );
 
-  const projectSql = emittedEdgeProjectSql(source, "pulse", "__frontier_pulse");
-  assert.ok(/\(.*<\s*3\)/.test(projectSql), `the arm must carry the comparison, got: ${projectSql}`);
+  const project_sql = emitted_edge_project_sql(source, "pulse", "__frontier_pulse");
+  assert.ok(/\(.*<\s*3\)/.test(project_sql), `the arm must carry the comparison, got: ${project_sql}`);
 
-  const derived = await run(seam, projectSql);
+  const derived = await run(seam, project_sql);
   assert.equal(derived.rows.length, 2, "only next < 3 may derive");
   assert.deepEqual(
     derived.rows.map((row) => Number(row.next)),

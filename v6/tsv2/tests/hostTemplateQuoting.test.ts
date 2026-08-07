@@ -77,7 +77,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { postArrivals, postProgram, request, startServed } from "./serveHelpers.ts";
+import { post_arrivals, post_program, request, start_served } from "./serveHelpers.ts";
 
 /** One host per quoting context, and one rule per host so every payload is
  *  demanded through all three. */
@@ -99,8 +99,8 @@ const PROGRAM = [
 
 /** `:>path` creates a file and contains no space, so a payload that fires is
  *  visible on disk without depending on how the host answer is split. */
-function payloads(markerDir: string): readonly string[] {
-  const marker = (name: string): string => join(markerDir, name);
+function payloads(marker_dir: string): readonly string[] {
+  const marker = (name: string): string => join(marker_dir, name);
   return [
     `x';:>${marker("m1")};echo'`, // break out of single quotes
     `x";:>${marker("m2")};echo"`, // break out of double quotes
@@ -114,14 +114,14 @@ interface RowsReply {
   readonly rows: readonly (readonly unknown[])[];
 }
 
-async function rowsOf(port: number, rel: string): Promise<RowsReply["rows"]> {
+async function rows_of(port: number, rel: string): Promise<RowsReply["rows"]> {
   const reply = await request(port, `/idb/${rel}`, "GET");
   assert.equal(reply.statusCode, 200, `GET /idb/${rel} -> ${reply.statusCode} ${reply.body}`);
   return (JSON.parse(reply.body) as RowsReply).rows;
 }
 
-async function waitUntil(predicate: () => Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => Promise<boolean>, what: string, timeout_ms = 10_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -130,14 +130,14 @@ async function waitUntil(predicate: () => Promise<boolean>, what: string, timeou
 }
 
 test("a {col} splice cannot execute anything, in any quoting context", async () => {
-  const markerDir = mkdtempSync(join(tmpdir(), "tsv2-host-quote-"));
-  const values = payloads(markerDir);
-  const served = await startServed();
+  const marker_dir = mkdtempSync(join(tmpdir(), "tsv2-host-quote-"));
+  const values = payloads(marker_dir);
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, PROGRAM);
+    const loaded = await post_program(served.port, PROGRAM);
     assert.equal(loaded.statusCode, 200, loaded.body);
 
-    await postArrivals(
+    await post_arrivals(
       served.port,
       values.map((value) => ({ rel: "payload", sign: "add" as const, row: [value] })),
     );
@@ -146,30 +146,30 @@ test("a {col} splice cannot execute anything, in any quoting context", async () 
     // written by a subprocess that has not run yet proves nothing. An injected
     // payload can also make a host answer WRONG rather than late, so a timeout
     // here is itself a finding and must not hide the marker assertion below it.
-    let settleFailure: unknown = null;
+    let settle_failure: unknown = null;
     try {
       for (const rel of ["seen_single", "seen_double", "seen_bare"]) {
-        await waitUntil(
-          async () => (await rowsOf(served.port, rel)).length === values.length,
+        await wait_until(
+          async () => (await rows_of(served.port, rel)).length === values.length,
           `${rel} to hold ${values.length} host answers`,
         );
       }
     } catch (failure) {
-      settleFailure = failure;
+      settle_failure = failure;
     }
 
     assert.deepEqual(
-      readdirSync(markerDir).sort(),
+      readdirSync(marker_dir).sort(),
       [],
-      `host templates executed spliced values: ${readdirSync(markerDir).sort().join(", ")}`,
+      `host templates executed spliced values: ${readdirSync(marker_dir).sort().join(", ")}`,
     );
-    if (settleFailure !== null) throw settleFailure;
+    if (settle_failure !== null) throw settle_failure;
 
     // And the values came back through the shell UNCHANGED, which is the other
     // half: escaping that neutralized the payload by mangling it would be a
     // different defect, not a fix.
     for (const rel of ["seen_single", "seen_double", "seen_bare"]) {
-      const seen = await rowsOf(served.port, rel);
+      const seen = await rows_of(served.port, rel);
       assert.deepEqual(
         seen.map((row) => [row[0], row[1]]).sort(),
         values.map((value) => [value, value]).sort(),
@@ -178,6 +178,6 @@ test("a {col} splice cannot execute anything, in any quoting context", async () 
     }
   } finally {
     await served.stop();
-    rmSync(markerDir, { recursive: true, force: true });
+    rmSync(marker_dir, { recursive: true, force: true });
   }
 });

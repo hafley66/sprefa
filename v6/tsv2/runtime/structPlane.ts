@@ -43,7 +43,7 @@ function canonicalize(value: unknown): unknown {
   return value;
 }
 
-function canonicalText(value: unknown): string {
+function canonical_text(value: unknown): string {
   return JSON.stringify(canonicalize(value));
 }
 
@@ -54,7 +54,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 /** Host and HTTP arrivals carry JSON through IRowValue's text side. Schedule
  * fixtures may still inject the already-decoded object. Both spellings enter
  * the same shape check and canonicalization path before interning. */
-function decodedStructValue(value: unknown): unknown {
+function decoded_struct_value(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
     return JSON.parse(value) as unknown;
@@ -72,7 +72,7 @@ function decodedStructValue(value: unknown): unknown {
  * The oracle canonicalizes object key order at ingress. This door accepts any
  * key order and canonicalizes before target lookup, producing the same row.
  */
-function checkShape(plan: IStructTypePlan, byName: ReadonlyMap<string, IStructTypePlan>, value: unknown): void {
+function check_shape(plan: IStructTypePlan, by_name: ReadonlyMap<string, IStructTypePlan>, value: unknown): void {
   if (!isObject(value)) {
     throw new Error(`type_arrival_shape_mismatch: not_an_object(${plan.name}, ${JSON.stringify(value)})`);
   }
@@ -87,14 +87,14 @@ function checkShape(plan: IStructTypePlan, byName: ReadonlyMap<string, IStructTy
     }
   }
   plan.columns.forEach((column, index) => {
-    const refType = plan.refs[index];
+    const ref_type = plan.refs[index];
     const field = value[column];
-    if (refType !== null && refType !== undefined) {
-      const childPlan = byName.get(refType);
-      if (childPlan === undefined) {
-        throw new Error(`type_arrival_shape_mismatch: column_type_unknown(${refType})`);
+    if (ref_type !== null && ref_type !== undefined) {
+      const child_plan = by_name.get(ref_type);
+      if (child_plan === undefined) {
+        throw new Error(`type_arrival_shape_mismatch: column_type_unknown(${ref_type})`);
       }
-      checkShape(childPlan, byName, field);
+      check_shape(child_plan, by_name, field);
     }
   });
 }
@@ -105,128 +105,128 @@ function checkShape(plan: IStructTypePlan, byName: ReadonlyMap<string, IStructTy
  *  canonical text rather than a digest because @libsql registers no UDF and
  *  SQLite ships no hash (SLOT-SEMANTIC-DIGEST in 0_type_plane.pl's header):
  *  strictly stronger than a hash, with no collision case to reason about. */
-function semanticKey(typeName: string, rendered: string): string {
-  return `${typeName}${rendered}`;
+function semantic_key(type_name: string, rendered: string): string {
+  return `${type_name}${rendered}`;
 }
 
 interface ICollected {
   readonly rendered: string;
   /** column values; a ref column holds the CHILD'S semantic key until the
    *  child's own type has been interned and its dense id is known. */
-  readonly fields: readonly (IRowValue | { readonly childSemantic: string })[];
+  readonly fields: readonly (IRowValue | { readonly child_semantic: string })[];
 }
 
 function collect(
   plan: IStructTypePlan,
-  byName: ReadonlyMap<string, IStructTypePlan>,
+  by_name: ReadonlyMap<string, IStructTypePlan>,
   value: unknown,
-  perType: Map<string, Map<string, ICollected>>,
+  per_type: Map<string, Map<string, ICollected>>,
 ): string {
-  const decoded = decodedStructValue(value);
-  checkShape(plan, byName, decoded);
+  const decoded = decoded_struct_value(value);
+  check_shape(plan, by_name, decoded);
   const object = decoded as Record<string, unknown>;
   const fields = plan.columns.map((column, index) => {
-    const refType = plan.refs[index];
-    if (refType === null || refType === undefined) return object[column] as IRowValue;
+    const ref_type = plan.refs[index];
+    if (ref_type === null || ref_type === undefined) return object[column] as IRowValue;
     // Post-order: the child is collected (and therefore interned) first.
-    const childSemantic = collect(byName.get(refType)!, byName, object[column], perType);
-    return { childSemantic };
+    const child_semantic = collect(by_name.get(ref_type)!, by_name, object[column], per_type);
+    return { child_semantic };
   });
-  const rendered = canonicalText(object);
-  const semantic = semanticKey(plan.name, rendered);
-  let bucket = perType.get(plan.name);
+  const rendered = canonical_text(object);
+  const semantic = semantic_key(plan.name, rendered);
+  let bucket = per_type.get(plan.name);
   if (bucket === undefined) {
     bucket = new Map<string, ICollected>();
-    perType.set(plan.name, bucket);
+    per_type.set(plan.name, bucket);
   }
   bucket.set(semantic, { rendered, fields });
   return semantic;
 }
 
-function rewriteRow(
+function rewrite_row(
   row: IRow,
   refs: readonly (string | null)[],
-  byName: ReadonlyMap<string, IStructTypePlan>,
+  by_name: ReadonlyMap<string, IStructTypePlan>,
   ids: ReadonlyMap<string, number>,
 ): IRow {
   return row.map((value, index) => {
-    const refType = refs[index];
-    if (refType === null || refType === undefined) return value;
-    const rendered = canonicalText(decodedStructValue(value));
-    const id = ids.get(semanticKey(refType, rendered));
+    const ref_type = refs[index];
+    if (ref_type === null || ref_type === undefined) return value;
+    const rendered = canonical_text(decoded_struct_value(value));
+    const id = ids.get(semantic_key(ref_type, rendered));
     if (id === undefined) {
-      throw new Error(`relation reference normalization lost the id for ${refType} value ${rendered}`);
+      throw new Error(`relation reference normalization lost the id for ${ref_type} value ${rendered}`);
     }
     return id;
   });
 }
 
 export const StructPlane: IStructPlane = {
-  canonicalText,
+  canonical_text,
 
   intern(
     seam: ISqlSeam,
     types: readonly IStructTypePlan[],
-    refColumns: IStructRefColumns,
+    ref_columns: IStructRefColumns,
     arrivals: IArrivalBatch,
-    applyTargets?: (arrivals: IArrivalBatch) => Observable<unknown>,
+    apply_targets?: (arrivals: IArrivalBatch) => Observable<unknown>,
   ): Observable<IArrivalBatch> {
     if (types.length === 0 || arrivals.length === 0) return of(arrivals);
-    const byName = new Map(types.map((plan) => [plan.name, plan]));
-    const perType = new Map<string, Map<string, ICollected>>();
+    const by_name = new Map(types.map((plan) => [plan.name, plan]));
+    const per_type = new Map<string, Map<string, ICollected>>();
     for (const arrival of arrivals) {
-      const refs = refColumns[arrival.rel];
+      const refs = ref_columns[arrival.rel];
       if (refs === undefined) continue;
       arrival.row.forEach((value, index) => {
-        const refType = refs[index];
-        if (refType === null || refType === undefined) return;
-        collect(byName.get(refType)!, byName, value, perType);
+        const ref_type = refs[index];
+        if (ref_type === null || ref_type === undefined) return;
+        collect(by_name.get(ref_type)!, by_name, value, per_type);
       });
     }
-    if (perType.size === 0) return of(arrivals);
+    if (per_type.size === 0) return of(arrivals);
 
     // `types` arrives in topological order (lower.pl:struct_type_plans/2), so
     // one left fold down the list resolves every child before its parent.
     const ids = new Map<string, number>();
-    const pending = types.filter((plan) => perType.has(plan.name));
+    const pending = types.filter((plan) => per_type.has(plan.name));
     return pending.reduce<Observable<unknown>>(
       (chain, plan) => chain.pipe(concatMap(() =>
-        internOneType(seam, plan, perType.get(plan.name)!, ids, applyTargets)
+        intern_one_type(seam, plan, per_type.get(plan.name)!, ids, apply_targets)
       )),
       of(undefined),
     ).pipe(
       map(() => arrivals.map((arrival): IArrivalRow => {
-        const refs = refColumns[arrival.rel];
+        const refs = ref_columns[arrival.rel];
         if (refs === undefined) return arrival;
-        return { rel: arrival.rel, sign: arrival.sign, row: rewriteRow(arrival.row, refs, byName, ids) };
+        return { rel: arrival.rel, sign: arrival.sign, row: rewrite_row(arrival.row, refs, by_name, ids) };
       })),
     );
   },
 };
 
-function internOneType(
+function intern_one_type(
   seam: ISqlSeam,
   plan: IStructTypePlan,
   bucket: ReadonlyMap<string, ICollected>,
   ids: Map<string, number>,
-  applyTargets: ((arrivals: IArrivalBatch) => Observable<unknown>) | undefined,
+  apply_targets: ((arrivals: IArrivalBatch) => Observable<unknown>) | undefined,
 ): Observable<unknown> {
-  const lookupToSemantic = new Map<string, string>();
-  const tupleByKey = new Map<string, string>();
+  const lookup_to_semantic = new Map<string, string>();
+  const tuple_by_key = new Map<string, string>();
   const tuples = [...bucket.entries()].map(([semantic, collected]) => {
     const fields = collected.fields.map((field) =>
-      typeof field === "object" && field !== null && "childSemantic" in field
-        ? idFor(ids, field.childSemantic)
+      typeof field === "object" && field !== null && "child_semantic" in field
+        ? id_for(ids, field.child_semantic)
         : field
     );
     const tuple = JSON.stringify(fields);
-    const key = JSON.stringify(plan.keyIndices.map((index) => fields[index]));
-    const prior = tupleByKey.get(key);
+    const key = JSON.stringify(plan.key_indices.map((index) => fields[index]));
+    const prior = tuple_by_key.get(key);
     if (prior !== undefined && prior !== tuple) {
       throw new Error(`relation_reference_conflict(${plan.name}, ${key}, ${prior}, ${tuple})`);
     }
-    tupleByKey.set(key, tuple);
-    lookupToSemantic.set(tuple, semantic);
+    tuple_by_key.set(key, tuple);
+    lookup_to_semantic.set(tuple, semantic);
     return fields;
   });
   const encoded = JSON.stringify(tuples);
@@ -235,7 +235,7 @@ function internOneType(
     sign: "add",
     row,
   }));
-  return seam.runner.execute(seam.db, { sql: plan.conflictSql, args: [encoded] }).pipe(
+  return seam.runner.execute(seam.db, { sql: plan.conflict_sql, args: [encoded] }).pipe(
     map((result) => {
       if (result.rows.length === 0) return undefined;
       const row = result.rows[0]!;
@@ -244,11 +244,11 @@ function internOneType(
       );
     }),
     concatMap(() => {
-      return applyTargets === undefined
-        ? seam.runner.execute(seam.db, { sql: plan.internSql, args: [encoded] })
-        : applyTargets(arrivals);
+      return apply_targets === undefined
+        ? seam.runner.execute(seam.db, { sql: plan.intern_sql, args: [encoded] })
+        : apply_targets(arrivals);
     }),
-    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookupSql, args: [encoded] })),
+    concatMap(() => seam.runner.execute(seam.db, { sql: plan.lookup_sql, args: [encoded] })),
     map((result) => {
       for (const row of result.rows) {
         const lookup = row["__lookup"] as string;
@@ -256,7 +256,7 @@ function internOneType(
         if (stored !== lookup) {
           throw new Error(`relation_reference_conflict(${plan.name}, ${lookup}, ${stored})`);
         }
-        const semantic = lookupToSemantic.get(lookup);
+        const semantic = lookup_to_semantic.get(lookup);
         if (semantic === undefined) {
           throw new Error(`relation reference lookup returned an unknown row ${String(row["__lookup"])}`);
         }
@@ -267,7 +267,7 @@ function internOneType(
   );
 }
 
-function idFor(ids: ReadonlyMap<string, number>, semantic: string): number {
+function id_for(ids: ReadonlyMap<string, number>, semantic: string): number {
   const id = ids.get(semantic);
   if (id === undefined) {
     throw new Error(`relation reference normalization read a child id before its target row: ${semantic}`);

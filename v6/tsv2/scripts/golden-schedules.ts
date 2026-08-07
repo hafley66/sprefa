@@ -78,13 +78,13 @@ type StructValue = { readonly [key: string]: number | string | StructValue };
 
 /** One tree's whole arrival set, derived from its index so every cardinality
  *  uses the same generator and 100 rows are not 100 hand-written literals. */
-function treeRow(index: number): IArrivalRow {
+function tree_row(index: number): IArrivalRow {
   const species = index % 3 === 0 ? "apple" : index % 3 === 1 ? "pear" : "weed";
   const site: StructValue = { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } };
   return { rel: "tree", sign: "add", row: [index, species, site as unknown as string] };
 }
 
-function orchardDocument(index: number): Readonly<Record<string, unknown>> {
+function orchard_document(index: number): Readonly<Record<string, unknown>> {
   const species = index % 3 === 0 ? "apple" : index % 3 === 1 ? "pear" : "weed";
   const stars = 4 + (index % 6);
   return {
@@ -100,40 +100,40 @@ function orchardDocument(index: number): Readonly<Record<string, unknown>> {
   };
 }
 
-function orchardJsonRow(index: number): IArrivalRow {
+function orchard_json_row(index: number): IArrivalRow {
   return {
     rel: "orchard_json",
     sign: "add",
-    row: [index, StructPlane.canonicalText(orchardDocument(index))],
+    row: [index, StructPlane.canonical_text(orchard_document(index))],
   };
 }
 
-function orchardListRow(index: number): IArrivalRow {
+function orchard_list_row(index: number): IArrivalRow {
   return {
     rel: "orchard_list",
     sign: "add",
-    row: [index, StructPlane.canonicalText(["red", `tree-${index}`])],
+    row: [index, StructPlane.canonical_text(["red", `tree-${index}`])],
   };
 }
 
-function orchardTagSourceRows(index: number): readonly IArrivalRow[] {
+function orchard_tag_source_rows(index: number): readonly IArrivalRow[] {
   return [
     { rel: "orchard_tag_source", sign: "add", row: [index, "red"] },
     { rel: "orchard_tag_source", sign: "add", row: [index, `tree-${index}`] },
   ];
 }
 
-function sugarOf(index: number): number {
+function sugar_of(index: number): number {
   return 10 + (index % 9);
 }
 
-function pickRow(index: number): IArrivalRow {
+function pick_row(index: number): IArrivalRow {
   const kilos = index % 2 === 0 ? 2.5 : 0.75;
-  return { rel: "pick_event", sign: "add", row: [index, index % 2 === 0 ? "ada" : "bob", kilos, sugarOf(index)] };
+  return { rel: "pick_event", sign: "add", row: [index, index % 2 === 0 ? "ada" : "bob", kilos, sugar_of(index)] };
 }
 
-function hostAnswerRow(index: number): IArrivalRow {
-  const grams = sugarOf(index);
+function host_answer_row(index: number): IArrivalRow {
+  const grams = sugar_of(index);
   return {
     rel: "__host_response_weigh",
     sign: "add",
@@ -141,28 +141,28 @@ function hostAnswerRow(index: number): IArrivalRow {
   };
 }
 
-function gradeRow(index: number): IArrivalRow {
-  if (index % 3 === 0) return { rel: "grade_ripe", sign: "add", row: [index, sugarOf(index)] };
+function grade_row(index: number): IArrivalRow {
+  if (index % 3 === 0) return { rel: "grade_ripe", sign: "add", row: [index, sugar_of(index)] };
   if (index % 3 === 1) return { rel: "grade_green", sign: "add", row: [index, index % 5] };
   return { rel: "grade_bruised", sign: "add", row: [index, "hail"] };
 }
 
 /** Only the rail variant carries hops above two, which is what keeps the
  *  dispatch match block's three guards disjoint per ticket. */
-function hopsOf(index: number): number {
+function hops_of(index: number): number {
   return index % 3 === 2 ? 3 + (index % 2) : 1 + (index % 2);
 }
 
-function dispatchManifestRow(index: number): IArrivalRow {
-  const routeName = index % 3 === 0 ? "north" : index % 3 === 1 ? "south" : "east";
+function dispatch_manifest_row(index: number): IArrivalRow {
+  const route_name = index % 3 === 0 ? "north" : index % 3 === 1 ? "south" : "east";
   return {
     rel: "dispatch_manifest",
     sign: "add",
     row: [
       index,
-      StructPlane.canonicalText({
+      StructPlane.canonical_text({
         crates: [index, index + 1],
-        route: { hops: hopsOf(index), name: routeName },
+        route: { hops: hops_of(index), name: route_name },
       }),
     ],
   };
@@ -170,7 +170,7 @@ function dispatchManifestRow(index: number): IArrivalRow {
 
 /** Leg `step` of dispatch `index`: leg ids are index*10+step so the previous
  *  leg is nameable without a lookup, and step 1 points at 0 to say "first". */
-function dispatchLegRow(index: number, step: number): IArrivalRow {
+function dispatch_leg_row(index: number, step: number): IArrivalRow {
   const origin: StructValue = { label: `patch-${index % 4}`, at: { row: index % 5, col: index % 7 } };
   return {
     rel: "dispatch_leg",
@@ -185,7 +185,7 @@ function dispatchLegRow(index: number, step: number): IArrivalRow {
   };
 }
 
-function dispatchVariantRow(index: number): IArrivalRow {
+function dispatch_variant_row(index: number): IArrivalRow {
   if (index % 3 === 0) return { rel: "dispatch_air", sign: "add", row: [index, index] };
   if (index % 3 === 1) return { rel: "dispatch_road", sign: "add", row: [index, 1_000 + index] };
   return { rel: "dispatch_rail", sign: "add", row: [index, 2_000 + index] };
@@ -195,30 +195,30 @@ function indices(count: number): readonly number[] {
   return Array.from({ length: count }, (_unused, offset) => offset + 1);
 }
 
-export function scheduleFor(count: number): readonly IArrivalBatch[] {
+export function schedule_for(count: number): readonly IArrivalBatch[] {
   const all = indices(count);
   const half = all.filter((index) => index % 2 === 1);
   return [
     [{ rel: "quarantined", sign: "add", row: ["weed"] }],
     [
-      ...all.map(treeRow),
+      ...all.map(tree_row),
       ...all.map((index) => ({ rel: "sensor", sign: "add", row: [index, index % 4 !== 0] }) as IArrivalRow),
-      ...all.map(orchardJsonRow),
-      ...all.map(orchardListRow),
-      ...all.map(dispatchManifestRow),
-      ...all.map((index) => dispatchLegRow(index, 1)),
+      ...all.map(orchard_json_row),
+      ...all.map(orchard_list_row),
+      ...all.map(dispatch_manifest_row),
+      ...all.map((index) => dispatch_leg_row(index, 1)),
     ],
-    all.flatMap((index) => [pickRow(index), ...orchardTagSourceRows(index), dispatchLegRow(index, 2)]),
-    all.map(hostAnswerRow),
+    all.flatMap((index) => [pick_row(index), ...orchard_tag_source_rows(index), dispatch_leg_row(index, 2)]),
+    all.map(host_answer_row),
     [{ rel: "interval", sign: "add", row: [1, 1_800_000] }],
     all.flatMap((index) => [
-      gradeRow(index),
-      dispatchVariantRow(index),
+      grade_row(index),
+      dispatch_variant_row(index),
       { rel: "dispatch_ack", sign: "add", row: [index] } as IArrivalRow,
       { rel: "dispatch_seal", sign: "add", row: [index] } as IArrivalRow,
     ]),
     all.map((index) => ({ rel: "retire_event", sign: "add", row: [index] }) as IArrivalRow),
-    half.map((index) => ({ ...treeRow(index), sign: "del" }) as IArrivalRow),
+    half.map((index) => ({ ...tree_row(index), sign: "del" }) as IArrivalRow),
     [],
   ];
 }
@@ -226,47 +226,47 @@ export function scheduleFor(count: number): readonly IArrivalBatch[] {
 /** The perturbed run: the many-row schedule plus one tick naming a tree the
  *  generator never produced. A runner that replayed a canned answer instead of
  *  computing deltas from the rules cannot follow this. */
-export function perturbedSchedule(count: number): readonly IArrivalBatch[] {
+export function perturbed_schedule(count: number): readonly IArrivalBatch[] {
   const extra = 999;
   return [
-    ...scheduleFor(count),
+    ...schedule_for(count),
     [
-      treeRow(extra),
+      tree_row(extra),
       { rel: "sensor", sign: "add", row: [extra, true] },
-      orchardJsonRow(extra),
-      orchardListRow(extra),
-      dispatchManifestRow(extra),
-      dispatchLegRow(extra, 1),
+      orchard_json_row(extra),
+      orchard_list_row(extra),
+      dispatch_manifest_row(extra),
+      dispatch_leg_row(extra, 1),
     ],
-    [pickRow(extra), ...orchardTagSourceRows(extra), dispatchLegRow(extra, 2)],
+    [pick_row(extra), ...orchard_tag_source_rows(extra), dispatch_leg_row(extra, 2)],
     [
-      hostAnswerRow(extra),
-      gradeRow(extra),
-      dispatchVariantRow(extra),
+      host_answer_row(extra),
+      grade_row(extra),
+      dispatch_variant_row(extra),
       { rel: "dispatch_ack", sign: "add", row: [extra] },
       { rel: "dispatch_seal", sign: "add", row: [extra] },
     ],
-    [{ ...treeRow(extra), sign: "del" }],
+    [{ ...tree_row(extra), sign: "del" }],
     [],
   ];
 }
 
 function main(): void {
-  const outDir = process.argv[2];
-  if (outDir === undefined) {
+  const out_dir = process.argv[2];
+  if (out_dir === undefined) {
     process.stderr.write("usage: golden-schedules.ts <outDir>\n");
     process.exitCode = 2;
     return;
   }
-  mkdirSync(outDir, { recursive: true });
+  mkdirSync(out_dir, { recursive: true });
   const written: string[] = [];
   for (const [name, schedule] of [
-    ["zero", scheduleFor(0)],
-    ["one", scheduleFor(1)],
-    ["many", scheduleFor(100)],
-    ["perturbed", perturbedSchedule(100)],
+    ["zero", schedule_for(0)],
+    ["one", schedule_for(1)],
+    ["many", schedule_for(100)],
+    ["perturbed", perturbed_schedule(100)],
   ] as const) {
-    const path = join(outDir, `golden-flex.${name}.json`);
+    const path = join(out_dir, `golden-flex.${name}.json`);
     writeFileSync(path, `${JSON.stringify(schedule)}\n`, "utf8");
     written.push(path);
   }

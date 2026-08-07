@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: one_attempt_keyed_head_loses_the_first_arm_silently.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -177,38 +177,38 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__next_frontier_dispatch_winner" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "col2" TEXT NOT NULL)`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   dispatch_ack: ["dispatch_id"],
   dispatch_seal: ["sealed_id"],
   dispatch_winner: ["dispatch_id", "col2"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   dispatch_ack: ["int"],
   dispatch_seal: ["int"],
   dispatch_winner: ["int", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "one_attempt_keyed_head_loses_the_first_arm_silently", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "cac389c6200d15d4", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "dispatch_ack", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "81802c444a7634f2", hSchema: "6b1d2d1377cbda94", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "dd2ebec720dc2d4b", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 6, ordinal: 0, localName: "dispatch_seal", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "e961b255eef98c22", hSchema: "b85f757dd3ed57d5", hRule: "" },
-  { relId: 10, parentId: 9, ordinal: 1, localName: "sealed_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "af3b1a3f2980e44a", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 6, ordinal: 0, localName: "dispatch_winner", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "087794e39e3df22c", hSchema: "fce243e2ff6c25b4", hRule: "6e61803e1bb15c67" },
-  { relId: 12, parentId: 11, ordinal: 1, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "dfa5d47c51428ec8", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 11, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fc801d1e768a05ed", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "one_attempt_keyed_head_loses_the_first_arm_silently", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "cac389c6200d15d4", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "dispatch_ack", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "81802c444a7634f2", h_schema: "6b1d2d1377cbda94", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "dispatch_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "dd2ebec720dc2d4b", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "dispatch_seal", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "e961b255eef98c22", h_schema: "b85f757dd3ed57d5", h_rule: "" },
+  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "sealed_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "af3b1a3f2980e44a", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "dispatch_winner", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "087794e39e3df22c", h_schema: "fce243e2ff6c25b4", h_rule: "6e61803e1bb15c67" },
+  { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "dispatch_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "dfa5d47c51428ec8", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "col2", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fc801d1e768a05ed", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["dispatch_ack", "dispatch_seal"];
+const arrival_targets: readonly string[] = ["dispatch_ack", "dispatch_seal"];
 
 const boot: readonly IBootStatement[] = [
 ];
@@ -219,26 +219,26 @@ type Snapshot = {
   readonly dispatch_winner: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_ack: selectRows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, relColumns.dispatch_ack!, relColumnTypes.dispatch_ack!),
-    dispatch_seal: selectRows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, relColumns.dispatch_seal!, relColumnTypes.dispatch_seal!),
-    dispatch_winner: selectRows(seam, `SELECT "dispatch_id", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "dispatch_winner"`, relColumns.dispatch_winner!, relColumnTypes.dispatch_winner!),
+    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
+    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
+    dispatch_winner: select_rows(seam, `SELECT "dispatch_id", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "dispatch_winner"`, rel_columns.dispatch_winner!, rel_column_types.dispatch_winner!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   dispatch_ack: `SELECT "dispatch_id" FROM "dispatch_ack"`,
   dispatch_seal: `SELECT "sealed_id" FROM "dispatch_seal"`,
   dispatch_winner: `SELECT "dispatch_id", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "dispatch_winner"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  dispatch_ack: { kind: "set", addSql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") VALUES (?)`, delSql: `DELETE FROM "dispatch_ack" WHERE "dispatch_id" = ?` },
-  dispatch_seal: { kind: "set", addSql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") VALUES (?)`, delSql: `DELETE FROM "dispatch_seal" WHERE "sealed_id" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  dispatch_ack: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_ack" WHERE "dispatch_id" = ?` },
+  dispatch_seal: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_seal" WHERE "sealed_id" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`one_attempt_keyed_head_loses_the_first_arm_silently: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -247,28 +247,28 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`one_attempt_keyed_head_loses_the_first_arm_silently: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`one_attempt_keyed_head_loses_the_first_arm_silently: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_ack", kind: "set", tableName: "dispatch_ack", deltaTableName: "__delta_dispatch_ack", frontierTableName: "__frontier_dispatch_ack", nextFrontierTableName: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrivalDelSql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundarySql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"`, ruleObservers: ["dispatch_winner/2"] },
-  { rel: "dispatch_seal", kind: "set", tableName: "dispatch_seal", deltaTableName: "__delta_dispatch_seal", frontierTableName: "__frontier_dispatch_seal", nextFrontierTableName: "__next_frontier_dispatch_seal", columns: ["sealed_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrivalDelSql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundarySql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"`, ruleObservers: ["dispatch_winner/2"] },
-  { rel: "dispatch_winner", kind: "set", tableName: "dispatch_winner", deltaTableName: "__delta_dispatch_winner", frontierTableName: "__frontier_dispatch_winner", nextFrontierTableName: "__next_frontier_dispatch_winner", columns: ["dispatch_id", "col2"], columnTypes: ["int", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dispatch_id", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_winner" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "col2", "_sign"`, ruleObservers: [] },
+  { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"`, rule_observers: ["dispatch_winner/2"] },
+  { rel: "dispatch_seal", kind: "set", table_name: "dispatch_seal", delta_table_name: "__delta_dispatch_seal", frontier_table_name: "__frontier_dispatch_seal", next_frontier_table_name: "__next_frontier_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"`, rule_observers: ["dispatch_winner/2"] },
+  { rel: "dispatch_winner", kind: "set", table_name: "dispatch_winner", delta_table_name: "__delta_dispatch_winner", frontier_table_name: "__frontier_dispatch_winner", next_frontier_table_name: "__next_frontier_dispatch_winner", columns: ["dispatch_id", "col2"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dispatch_id", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_winner" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "col2", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "dispatch_winner", ruleId: "one_attempt_keyed_head_loses_the_first_arm_silently:dispatch_winner/2#1", headKind: "set", headTableName: "dispatch_winner", headDeltaTableName: "__delta_dispatch_winner", headColumns: ["dispatch_id", "col2"], keyIndices: [0], projectSql: `SELECT d0."dispatch_id" AS "dispatch_id", 'acked' AS "col2" FROM "__frontier_dispatch_ack" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "dispatch_winner", ruleId: "one_attempt_keyed_head_loses_the_first_arm_silently:dispatch_winner/2#2", headKind: "set", headTableName: "dispatch_winner", headDeltaTableName: "__delta_dispatch_winner", headColumns: ["dispatch_id", "col2"], keyIndices: [0], projectSql: `SELECT d0."sealed_id" AS "dispatch_id", 'sealed' AS "col2" FROM "__frontier_dispatch_seal" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_winner", rule_id: "one_attempt_keyed_head_loses_the_first_arm_silently:dispatch_winner/2#1", head_kind: "set", head_table_name: "dispatch_winner", head_delta_table_name: "__delta_dispatch_winner", head_columns: ["dispatch_id", "col2"], key_indices: [0], project_sql: `SELECT d0."dispatch_id" AS "dispatch_id", 'acked' AS "col2" FROM "__frontier_dispatch_ack" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_winner", rule_id: "one_attempt_keyed_head_loses_the_first_arm_silently:dispatch_winner/2#2", head_kind: "set", head_table_name: "dispatch_winner", head_delta_table_name: "__delta_dispatch_winner", head_columns: ["dispatch_id", "col2"], key_indices: [0], project_sql: `SELECT d0."sealed_id" AS "dispatch_id", 'sealed' AS "col2" FROM "__frontier_dispatch_seal" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -285,72 +285,72 @@ const EDGE_DISPATCH_WINNER_1_HEAD_COLUMNS: readonly string[] = ["dispatch_id", "
 const EDGE_DISPATCH_WINNER_1_KEY_INDICES: readonly number[] = [0];
 
 function resolveDispatchWinner_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("set", "dispatch_ack", before.dispatch_ack, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_WINNER_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("set", "dispatch_ack", before.dispatch_ack, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_WINNER_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_DISPATCH_WINNER_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_DISPATCH_WINNER_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_DISPATCH_WINNER_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_DISPATCH_WINNER_0_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_DISPATCH_WINNER_0_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_DISPATCH_WINNER_0_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolveDispatchWinner_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("set", "dispatch_seal", before.dispatch_seal, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_WINNER_1_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("set", "dispatch_seal", before.dispatch_seal, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_WINNER_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_DISPATCH_WINNER_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_DISPATCH_WINNER_1_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_DISPATCH_WINNER_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_DISPATCH_WINNER_1_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_DISPATCH_WINNER_1_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_DISPATCH_WINNER_1_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   void seam;
   return of(undefined);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const dispatch_ack = multisetDiff(before.dispatch_ack, after.dispatch_ack);
-  const dispatch_seal = multisetDiff(before.dispatch_seal, after.dispatch_seal);
-  const dispatch_winner = multisetDiff(before.dispatch_winner, after.dispatch_winner);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const dispatch_ack = multiset_diff(before.dispatch_ack, after.dispatch_ack);
+  const dispatch_seal = multiset_diff(before.dispatch_seal, after.dispatch_seal);
+  const dispatch_winner = multiset_diff(before.dispatch_winner, after.dispatch_winner);
   return {
     rels: [
       { rel: "dispatch_ack", add: dispatch_ack.add, del: dispatch_ack.del },
       { rel: "dispatch_seal", add: dispatch_seal.add, del: dispatch_seal.del },
       { rel: "dispatch_winner", add: dispatch_winner.add, del: dispatch_winner.del },
     ],
-    carryPending: dispatch_winner.add.length > 0 || dispatch_winner.del.length > 0,
+    carry_pending: dispatch_winner.add.length > 0 || dispatch_winner.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       forkJoin([resolveDispatchWinner_0Writes(seam, before, arrivals), resolveDispatchWinner_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // one_attempt_keyed_head_loses_the_first_arm_silently: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -364,40 +364,40 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -406,16 +406,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_keyed_head_loses_the_first_arm_silently",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

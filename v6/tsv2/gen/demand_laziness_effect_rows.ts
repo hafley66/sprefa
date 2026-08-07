@@ -29,8 +29,8 @@
 
 import { concatMap, forkJoin, map, type Observable } from "rxjs";
 
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatement } from "../runtime/types.ts";
 
 // ── DDL (run once at boot) ───────────────────────────────────────────────────
@@ -57,17 +57,17 @@ type Snapshot = {
   readonly effect_call: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    open_feed: selectRows(seam, "SELECT session_id, target FROM open_feed", REL_COLUMNS.open_feed!),
-    demanded: selectRows(seam, "SELECT target, session_id FROM demanded", REL_COLUMNS.demanded!),
-    effect_call: selectRows(seam, "SELECT target FROM effect_call", REL_COLUMNS.effect_call!),
+    open_feed: select_rows(seam, "SELECT session_id, target FROM open_feed", REL_COLUMNS.open_feed!),
+    demanded: select_rows(seam, "SELECT target, session_id FROM demanded", REL_COLUMNS.demanded!),
+    effect_call: select_rows(seam, "SELECT target FROM effect_call", REL_COLUMNS.effect_call!),
   });
 }
 
 // ── arrivals: plain Set add/remove (rulings.pl q1, engine.pl absorb_arrivals) ─
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
   const statements: SqlStatement[] = arrivals
     .filter((arrival) => arrival.rel === "open_feed")
     .map((arrival): SqlStatement =>
@@ -82,7 +82,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 // demanded(Target, SessionId) <- open_feed(SessionId, Target)
 // effect_call(Target)         <- demanded(Target, _)
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = [
     "DELETE FROM demanded",
     "INSERT INTO demanded (target, session_id) SELECT target, session_id FROM open_feed",
@@ -92,36 +92,36 @@ function recomputeLevels(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const openFeed = multisetDiff(before.open_feed, after.open_feed);
-  const demanded = multisetDiff(before.demanded, after.demanded);
-  const effectCall = multisetDiff(before.effect_call, after.effect_call);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const open_feed = multiset_diff(before.open_feed, after.open_feed);
+  const demanded = multiset_diff(before.demanded, after.demanded);
+  const effect_call = multiset_diff(before.effect_call, after.effect_call);
   return {
     rels: [
-      { rel: "open_feed", add: openFeed.add, del: openFeed.del },
+      { rel: "open_feed", add: open_feed.add, del: open_feed.del },
       { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "effect_call", add: effectCall.add, del: effectCall.del },
+      { rel: "effect_call", add: effect_call.add, del: effect_call.del },
     ],
     // No edge rule (`<+`) exists in this program, so nothing ever writes a
     // row mid-tick and level closure runs exactly once (arrivals in, then
     // recompute) — engine.pl's post-write-vs-pre-write level split, the
     // thing that can produce carry, never applies here. carryPending is a
     // real structural invariant of this program, not a per-tick guess.
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
 export const DemandLazinessEffectRows: IGenProgram = {
   name: "demand_laziness_effect_rows",
   ddl: DDL,
-  relColumns: REL_COLUMNS,
-  arrivalTargets: ARRIVAL_TARGETS,
+  rel_columns: REL_COLUMNS,
+  arrival_targets: ARRIVAL_TARGETS,
 
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-    return readSnapshot(seam).pipe(
-      concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-      concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-      concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    return read_snapshot(seam).pipe(
+      concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+      concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+      concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
     );
   },
 };

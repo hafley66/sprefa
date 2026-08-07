@@ -58,14 +58,14 @@ import { fileURLToPath } from "node:url";
 import { VirtualTimeScheduler } from "rxjs";
 
 import {
-  logOfTicks,
-  oracleLog,
-  postArrivals,
-  postProgram,
+  log_of_ticks,
+  oracle_log,
+  post_arrivals,
+  post_program,
   request,
-  scheduleFromTicks,
-  startServed,
-  tickEvents,
+  schedule_from_ticks,
+  start_served,
+  tick_events,
 } from "./serveHelpers.ts";
 
 const CRAWL_ORG_DL6 = fileURLToPath(new URL("../../dl/fixtures/crawl_org.dl6", import.meta.url));
@@ -73,7 +73,7 @@ const EXTRACT_RELEASE = fileURLToPath(new URL("../../sprefa-extract/target/relea
 
 /** One git repository with the given files, committed. `git -C` throughout, so
  *  this helper never changes the process's own directory. */
-function makeRepo(root: string, files: Readonly<Record<string, string>>): void {
+function make_repo(root: string, files: Readonly<Record<string, string>>): void {
   mkdirSync(root, { recursive: true });
   const git = (...args: readonly string[]): void => {
     execFileSync("git", ["-C", root, ...args], { stdio: "pipe" });
@@ -86,20 +86,20 @@ function makeRepo(root: string, files: Readonly<Record<string, string>>): void {
   git("commit", "-qm", "corpus");
 }
 
-function advanceVirtualSeconds(scheduler: VirtualTimeScheduler, seconds: number): void {
+function advance_virtual_seconds(scheduler: VirtualTimeScheduler, seconds: number): void {
   scheduler.maxFrames = scheduler.frame + seconds * 1000;
   scheduler.flush();
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => boolean | Promise<boolean>, what: string, timeout_ms = 60_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(`timeout waiting for ${what}`);
     await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
 }
 
-async function rowsOf(port: number, rel: string): Promise<readonly (readonly (string | number)[])[]> {
+async function rows_of(port: number, rel: string): Promise<readonly (readonly (string | number)[])[]> {
   const answer = JSON.parse((await request(port, `/idb/${rel}`, "GET")).body) as {
     rows: readonly (readonly (string | number)[])[];
   };
@@ -114,10 +114,10 @@ test(
     const corpus = mkdtempSync(join(tmpdir(), "tsv2-crawl-org-"));
     // Asymmetric on purpose: alpha has one file and one banned call, beta has
     // two files and none. A fan-out bug cannot produce these counts by luck.
-    makeRepo(join(corpus, "alpha"), {
+    make_repo(join(corpus, "alpha"), {
       "one.ts": "export const run = () => eval('1 + 1');\n",
     });
-    makeRepo(join(corpus, "beta"), {
+    make_repo(join(corpus, "beta"), {
       "two.ts": "export const twice = (n: number) => n * 2;\n",
       "three.ts": "export const thrice = (n: number) => twice(n) + n;\n",
     });
@@ -126,16 +126,16 @@ test(
     mkdirSync(join(corpus, "not-a-repo"), { recursive: true });
 
     const scheduler = new VirtualTimeScheduler();
-    const previousExtractBin = process.env.DL_EXTRACT_BIN;
+    const previous_extract_bin = process.env.DL_EXTRACT_BIN;
     process.env.DL_EXTRACT_BIN = EXTRACT_RELEASE;
-    const served = await startServed(0, scheduler);
+    const served = await start_served(0, scheduler);
     try {
-      const loaded = await postProgram(served.port, source);
+      const loaded = await post_program(served.port, source);
       assert.equal(loaded.statusCode, 200, loaded.body);
       const plans = JSON.parse(loaded.body) as {
         readonly hosts: readonly string[];
         readonly binds: readonly { readonly name: string; readonly literals: readonly (string | number)[] }[];
-        readonly arrivalTargets: readonly string[];
+        readonly arrival_targets: readonly string[];
       };
       // Four distinct host NAMES, which is the ruling made visible: the
       // repo-scoped hosts are not modes of the unscoped ones.
@@ -143,56 +143,56 @@ test(
       // The cadence came from the program's own rule literal, nowhere else.
       assert.deepEqual(plans.binds, [{ name: "interval", literals: [86400] }]);
 
-      await postArrivals(served.port, [{ rel: "want_org", sign: "add", row: [corpus] }]);
-      await waitUntil(() => scheduler.actions.length >= 1, "the interval to register on the injected scheduler");
-      advanceVirtualSeconds(scheduler, 86400);
+      await post_arrivals(served.port, [{ rel: "want_org", sign: "add", row: [corpus] }]);
+      await wait_until(() => scheduler.actions.length >= 1, "the interval to register on the injected scheduler");
+      advance_virtual_seconds(scheduler, 86400);
 
       // Three files across two repositories is the last thing the file hosts
       // produce; the extractor then runs once per file.
-      await waitUntil(async () => (await rowsOf(served.port, "repo_file")).length >= 3, "the file fan-out to settle");
-      await waitUntil(async () => (await rowsOf(served.port, "banned_call")).length >= 1, "the rail to fire");
+      await wait_until(async () => (await rows_of(served.port, "repo_file")).length >= 3, "the file fan-out to settle");
+      await wait_until(async () => (await rows_of(served.port, "banned_call")).length >= 1, "the rail to fire");
       // One more window: a count reaching its target does not by itself prove
       // no further row is in flight, and a premature schedule replay would
       // grade a truncated run.
-      await waitUntil(async () => {
-        const before = (await rowsOf(served.port, "repo_call")).length;
+      await wait_until(async () => {
+        const before = (await rows_of(served.port, "repo_call")).length;
         await new Promise<void>((resolve) => setTimeout(resolve, 500));
-        return (await rowsOf(served.port, "repo_call")).length === before;
+        return (await rows_of(served.port, "repo_call")).length === before;
       }, "repo_call to stop growing");
 
       // ── the engine half: byte identity against the reference engine ───────
-      const outcomes = tickEvents(served.events);
-      const replayed = scheduleFromTicks(outcomes, plans.arrivalTargets);
-      assert.equal(logOfTicks(outcomes), oracleLog(source, replayed));
+      const outcomes = tick_events(served.events);
+      const replayed = schedule_from_ticks(outcomes, plans.arrival_targets);
+      assert.equal(log_of_ticks(outcomes), oracle_log(source, replayed));
 
       // ── the world half: the fan-out really happened, per repository ───────
-      const repos = await rowsOf(served.port, "repo");
+      const repos = await rows_of(served.port, "repo");
       assert.deepEqual(
         repos.map((row) => String(row[0])).sort(),
         [join(corpus, "alpha"), join(corpus, "beta")],
         "the repos host answered the two repositories and skipped not-a-repo",
       );
 
-      const repoFiles = await rowsOf(served.port, "repo_file");
-      const filesPerRepo = new Map<string, number>();
-      for (const row of repoFiles) filesPerRepo.set(String(row[0]), (filesPerRepo.get(String(row[0])) ?? 0) + 1);
-      assert.equal(filesPerRepo.get(join(corpus, "alpha")), 1, "repo_file rows per repository (alpha)");
-      assert.equal(filesPerRepo.get(join(corpus, "beta")), 2, "repo_file rows per repository (beta)");
+      const repo_files = await rows_of(served.port, "repo_file");
+      const files_per_repo = new Map<string, number>();
+      for (const row of repo_files) files_per_repo.set(String(row[0]), (files_per_repo.get(String(row[0])) ?? 0) + 1);
+      assert.equal(files_per_repo.get(join(corpus, "alpha")), 1, "repo_file rows per repository (alpha)");
+      assert.equal(files_per_repo.get(join(corpus, "beta")), 2, "repo_file rows per repository (beta)");
 
       // repo_files_at pins a REVISION, so its digests are blob oids out of each
       // repository's own object database -- not a hash of a file this process
       // read, and not the other repository's.
-      const alphaOid = execFileSync("git", ["-C", join(corpus, "alpha"), "rev-parse", "HEAD:one.ts"], {
+      const alpha_oid = execFileSync("git", ["-C", join(corpus, "alpha"), "rev-parse", "HEAD:one.ts"], {
         encoding: "utf8",
       }).trim();
       assert.ok(
-        repoFiles.some((row) => row[0] === join(corpus, "alpha") && row[1] === "one.ts" && row[2] === alphaOid),
-        `repo_files_at should report alpha's one.ts at its committed blob oid ${alphaOid}`,
+        repo_files.some((row) => row[0] === join(corpus, "alpha") && row[1] === "one.ts" && row[2] === alpha_oid),
+        `repo_files_at should report alpha's one.ts at its committed blob oid ${alpha_oid}`,
       );
 
       // Extraction really crossed into both repositories: alpha's `eval` and
       // beta's `twice`, and nothing from beta's callee-free two.ts.
-      const calls = await rowsOf(served.port, "repo_call");
+      const calls = await rows_of(served.port, "repo_call");
       assert.deepEqual(
         calls.map((row) => [String(row[0]).slice(corpus.length + 1), String(row[1]), String(row[2])]).sort(),
         [
@@ -202,7 +202,7 @@ test(
         "repo_extract ran per file, in the file's own repository",
       );
 
-      const banned = await rowsOf(served.port, "banned_call");
+      const banned = await rows_of(served.port, "banned_call");
       assert.deepEqual(
         banned.map((row) => [String(row[0]), String(row[1])]),
         [[join(corpus, "alpha"), "one.ts"]],
@@ -210,8 +210,8 @@ test(
       );
     } finally {
       await served.stop();
-      if (previousExtractBin === undefined) delete process.env.DL_EXTRACT_BIN;
-      else process.env.DL_EXTRACT_BIN = previousExtractBin;
+      if (previous_extract_bin === undefined) delete process.env.DL_EXTRACT_BIN;
+      else process.env.DL_EXTRACT_BIN = previous_extract_bin;
       rmSync(corpus, { recursive: true, force: true });
     }
   },

@@ -119,7 +119,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { postProgram, request, startServed } from "./serveHelpers.ts";
+import { post_program, request, start_served } from "./serveHelpers.ts";
 
 /**
  * Three columns, three kinds of column: a `text`, an `int`, and a `ref` to a
@@ -196,16 +196,16 @@ const MALFORMED: readonly Probe[] = [
   },
 ];
 
-async function servedWithProgram(): Promise<Awaited<ReturnType<typeof startServed>>> {
-  const served = await startServed();
-  const loaded = await postProgram(served.port, PROGRAM);
+async function served_with_program(): Promise<Awaited<ReturnType<typeof start_served>>> {
+  const served = await start_served();
+  const loaded = await post_program(served.port, PROGRAM);
   assert.equal(loaded.statusCode, 200, loaded.body);
   return served;
 }
 
 for (const probe of MALFORMED) {
   test(`${probe.what} is a 400 naming what is wrong`, async () => {
-    const served = await servedWithProgram();
+    const served = await served_with_program();
     try {
       const answered = await request(served.port, "/edb/events", "POST", probe.body);
       assert.equal(answered.statusCode, 400, `${probe.what} is a client error: ${answered.body}`);
@@ -221,12 +221,12 @@ for (const probe of MALFORMED) {
   });
 }
 
-function goodBody(name: string, size: number): string {
+function good_body(name: string, size: number): string {
   return `{"batch":[{"rel":"note","sign":"add","row":[${JSON.stringify(name)},${size},${JSON.stringify(AT)}]}]}`;
 }
 
 test("a rejected row is never stored, and never printed as an empty delta", async () => {
-  const served = await servedWithProgram();
+  const served = await served_with_program();
   try {
     const rejected = await request(
       served.port,
@@ -243,7 +243,7 @@ test("a rejected row is never stored, and never printed as an empty delta", asyn
     assert.equal(JSON.parse(stored.body).rows.length, 0, `a rejected row must not be stored: ${stored.body}`);
 
     // And the server is unpolluted for the next well-formed arrival.
-    const good = await request(served.port, "/edb/events", "POST", goodBody("x", 7));
+    const good = await request(served.port, "/edb/events", "POST", good_body("x", 7));
     assert.equal(good.statusCode, 200, good.body);
     assert.deepEqual(JSON.parse((await request(served.port, "/idb/echoed", "GET")).body).rows, [["x", 7]]);
   } finally {
@@ -252,31 +252,31 @@ test("a rejected row is never stored, and never printed as an empty delta", asyn
 });
 
 test("well-formed arrivals are untouched by the new checks", async () => {
-  const served = await servedWithProgram();
+  const served = await served_with_program();
   try {
     // A STRUCT VALUE IN A REF COLUMN IS ORDINARY TRAFFIC, not a malformed row.
-    assert.equal((await request(served.port, "/edb/events", "POST", goodBody("x", 7))).statusCode, 200);
-    assert.equal((await request(served.port, "/edb/events", "POST", goodBody("y", 8))).statusCode, 200);
+    assert.equal((await request(served.port, "/edb/events", "POST", good_body("x", 7))).statusCode, 200);
+    assert.equal((await request(served.port, "/edb/events", "POST", good_body("y", 8))).statusCode, 200);
     const echoed = await request(served.port, "/idb/echoed", "GET");
     assert.deepEqual(JSON.parse(echoed.body).rows, [["x", 7], ["y", 8]], echoed.body);
 
     // The three checks that already existed still answer 400, unchanged.
-    const wrongWidth = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"note","sign":"add","row":["x"]}]}');
-    assert.equal(wrongWidth.statusCode, 400, wrongWidth.body);
-    assert.match(wrongWidth.body, /takes 3 columns, got 1/, wrongWidth.body);
+    const wrong_width = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"note","sign":"add","row":["x"]}]}');
+    assert.equal(wrong_width.statusCode, 400, wrong_width.body);
+    assert.match(wrong_width.body, /takes 3 columns, got 1/, wrong_width.body);
 
-    const wrongRel = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"echoed","sign":"add","row":["x",7]}]}');
-    assert.equal(wrongRel.statusCode, 400, wrongRel.body);
-    assert.match(wrongRel.body, /not an arrival target/, wrongRel.body);
+    const wrong_rel = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"echoed","sign":"add","row":["x",7]}]}');
+    assert.equal(wrong_rel.statusCode, 400, wrong_rel.body);
+    assert.match(wrong_rel.body, /not an arrival target/, wrong_rel.body);
 
-    const wrongSign = await request(
+    const wrong_sign = await request(
       served.port,
       "/edb/events",
       "POST",
       `{"batch":[{"rel":"note","sign":"nope","row":["x",7,${JSON.stringify(AT)}]}]}`,
     );
-    assert.equal(wrongSign.statusCode, 400, wrongSign.body);
-    assert.match(wrongSign.body, /sign must be add or del/, wrongSign.body);
+    assert.equal(wrong_sign.statusCode, 400, wrong_sign.body);
+    assert.match(wrong_sign.body, /sign must be add or del/, wrong_sign.body);
 
     // An empty batch is legal and ticks, as before.
     const empty = await request(served.port, "/edb/events", "POST", '{"batch":[]}');

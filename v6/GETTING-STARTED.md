@@ -191,7 +191,7 @@ relative to wherever you started it. Load the program into it:
 <!-- gs:run -->
 ```console
 $ "$BOP" load todos.dl6 --port 17593
-{"loaded":true,"rels":["__host_demand_scan_todos","__host_response_scan_todos","file","todo","todo_count","watch"],"arrivalTargets":["__host_response_scan_todos","watch"],"hosts":["scan_todos"],"binds":[{"name":"watch","literals":["**/*.md"]}]}
+{"loaded":true,"rels":["__host_demand_scan_todos","__host_response_scan_todos","file","todo","todo_count","watch"],"arrival_targets":["__host_response_scan_todos","watch"],"hosts":["scan_todos"],"binds":[{"name":"watch","literals":["**/*.md"]}]}
 ```
 
 The two `__host_*` relations are the host's own machinery, made of the same
@@ -281,7 +281,7 @@ pins the payload's shape, not one machine's RSS:
 <!-- gs:run norm=bytes -->
 ```console
 $ "$BOP" stats --port 17593
-{"memory":{"rssBytes":<n>,"heapUsedBytes":<n>,"externalBytes":<n>},"sqlite":{"pageCount":<n>,"pageSize":<n>,"freelistCount":<n>,"dbBytes":<n>,"freelistBytes":<n>,"dbstatAvailable":true,"objectBytes":[]}}
+{"memory":{"rss_bytes":<n>,"heap_used_bytes":<n>,"external_bytes":<n>},"sqlite":{"page_count":<n>,"page_size":<n>,"freelist_count":<n>,"db_bytes":<n>,"freelist_bytes":<n>,"dbstat_available":true,"object_bytes":[]}}
 ```
 
 `bop ticks --port 17593` streams tick events as they happen (server-sent events,

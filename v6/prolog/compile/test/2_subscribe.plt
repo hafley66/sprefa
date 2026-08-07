@@ -211,9 +211,9 @@ test(emitted_module_prunes_the_tick_path_behind_the_flag) :-
                  Program, Bindings, Text),
     once(sub_atom(Text, _, _, _, 'const SUBSCRIBE_PRUNE = SubscribeCone.mode();')),
     once(sub_atom(Text, _, _, _,
-                  'const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);')),
+                  'const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);')),
     once(sub_atom(Text, _, _, _,
-                  'IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)')),
+                  'IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)')),
     once(sub_atom(Text, _, _, _, '  boot: SUBSCRIBED_BOOT,')),
     % incrementalPlan describes the compiled program rather than the tick
     % path's working lists, so it stays unpruned.
@@ -248,7 +248,7 @@ test(emitted_module_carries_the_hand_computed_cone) :-
     emitted_text(emitted_module_carries_the_hand_computed_cone,
                  Program, Bindings, Text),
     once(sub_atom(Text, _, _, _,
-                  'export const subscribedRels: readonly string[] = ["job/2", "seed/2"];')),
+                  'export const subscribed_rels: readonly string[] = ["job/2", "seed/2"];')),
     !.
 
 % Strict at the emit seam, matching zero_query_subscribes_nothing: no query
@@ -260,7 +260,7 @@ test(zero_query_module_subscribes_nothing) :-
     parse_dl(Codes, Program, Bindings, []),
     emitted_text(zero_query_module_subscribes_nothing, Program, Bindings, Text),
     once(sub_atom(Text, _, _, _,
-                  'export const subscribedRels: readonly string[] = [];')),
+                  'export const subscribed_rels: readonly string[] = [];')),
     !.
 
 emitted_text(Name, Program, Bindings, Text) :-

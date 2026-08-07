@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: host_free_query_leaves_a_derived_rel_unsubscribed.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [{ rel: "watched", arity: 1, columns: [null], bound: [], snapshot: "current" }];
-export const subscribedRels: readonly string[] = ["reading/2", "watched/1"];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [{ rel: "watched", arity: 1, columns: [null], bound: [], snapshot: "current" }];
+export const subscribed_rels: readonly string[] = ["reading/2", "watched/1"];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -174,46 +174,46 @@ const ddl: readonly string[] = [
   `CREATE INDEX "watched_zero" ON "watched" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   audit_trail: ["value"],
   audited: ["value"],
   reading: ["sensor", "value"],
   watched: ["sensor"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   audit_trail: ["int"],
   audited: ["int"],
   reading: ["text", "int"],
   watched: ["text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "host_free_query_leaves_a_derived_rel_unsubscribed", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "a58c970dc15c567a", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "audit_trail", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "e740908c4f968de2", hSchema: "7e38e778eed579a5", hRule: "1841a8b3de0d744f" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "31b154db082259f8", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 6, ordinal: 0, localName: "audited", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "2de5f7576856447b", hSchema: "7e38e778eed579a5", hRule: "6359291a1fc49835" },
-  { relId: 10, parentId: 9, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c0666e6f4a4f2b32", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 6, ordinal: 0, localName: "reading", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "87e6b626bb72591d", hSchema: "5f1fa9247d20ea25", hRule: "" },
-  { relId: 12, parentId: 11, ordinal: 1, localName: "sensor", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a1fb41614a448557", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 11, ordinal: 2, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b60c5896f28ce1cb", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 6, ordinal: 0, localName: "watched", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "0195582c6c89f082", hSchema: "16659bd8bbf7000b", hRule: "6359291a1fc49835" },
-  { relId: 15, parentId: 14, ordinal: 1, localName: "sensor", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "94ef31a613bf1638", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "host_free_query_leaves_a_derived_rel_unsubscribed", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "a58c970dc15c567a", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "audit_trail", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "e740908c4f968de2", h_schema: "7e38e778eed579a5", h_rule: "1841a8b3de0d744f" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "31b154db082259f8", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "audited", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "2de5f7576856447b", h_schema: "7e38e778eed579a5", h_rule: "6359291a1fc49835" },
+  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "c0666e6f4a4f2b32", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "reading", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "87e6b626bb72591d", h_schema: "5f1fa9247d20ea25", h_rule: "" },
+  { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "sensor", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a1fb41614a448557", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "value", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "b60c5896f28ce1cb", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 6, ordinal: 0, local_name: "watched", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "0195582c6c89f082", h_schema: "16659bd8bbf7000b", h_rule: "6359291a1fc49835" },
+  { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "sensor", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "94ef31a613bf1638", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   audit_trail: ["int"],
   audited: ["int"],
   reading: ["text", "int"],
   watched: ["text"],
 };
 
-const arrivalTargets: readonly string[] = ["reading"];
+const arrival_targets: readonly string[] = ["reading"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "reading", sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") VALUES (?, ?)`, params: ["alpha", 3] },
@@ -232,27 +232,27 @@ type Snapshot = {
   readonly watched: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    audit_trail: selectRows(seam, `SELECT "value" FROM "audit_trail"`, relColumns.audit_trail!, relColumnTypes.audit_trail!),
-    audited: selectRows(seam, `SELECT "value" FROM "audited"`, relColumns.audited!, relColumnTypes.audited!),
-    reading: selectRows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value" FROM "reading"`, relColumns.reading!, relColumnTypes.reading!),
-    watched: selectRows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor" FROM "watched"`, relColumns.watched!, relColumnTypes.watched!),
+    audit_trail: select_rows(seam, `SELECT "value" FROM "audit_trail"`, rel_columns.audit_trail!, rel_column_types.audit_trail!),
+    audited: select_rows(seam, `SELECT "value" FROM "audited"`, rel_columns.audited!, rel_column_types.audited!),
+    reading: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
+    watched: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor" FROM "watched"`, rel_columns.watched!, rel_column_types.watched!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   audit_trail: `SELECT "value" FROM "audit_trail"`,
   audited: `SELECT "value" FROM "audited"`,
   reading: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value" FROM "reading"`,
   watched: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor" FROM "watched"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  reading: { kind: "set", addSql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") VALUES (?, ?)`, delSql: `DELETE FROM "reading" WHERE "sensor" = ? AND "value" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  reading: { kind: "set", add_sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") VALUES (?, ?)`, del_sql: `DELETE FROM "reading" WHERE "sensor" = ? AND "value" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -261,39 +261,39 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "audit_trail", kind: "set", tableName: "audit_trail", deltaTableName: "__delta_audit_trail", frontierTableName: "__frontier_audit_trail", nextFrontierTableName: "__next_frontier_audit_trail", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit_trail" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: [] },
-  { rel: "audited", kind: "set", tableName: "audited", deltaTableName: "__delta_audited", frontierTableName: "__frontier_audited", nextFrontierTableName: "__next_frontier_audited", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audited" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: ["audit_trail/1"] },
-  { rel: "reading", kind: "set", tableName: "reading", deltaTableName: "__delta_reading", frontierTableName: "__frontier_reading", nextFrontierTableName: "__next_frontier_reading", columns: ["sensor", "value"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "sensor", "value"`, arrivalDelSql: `DELETE FROM "reading" WHERE ("sensor", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "value"`, boundarySql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "value", "_sign"`, ruleObservers: ["audited/1", "watched/1"] },
-  { rel: "watched", kind: "set", tableName: "watched", deltaTableName: "__delta_watched", frontierTableName: "__frontier_watched", nextFrontierTableName: "__next_frontier_watched", columns: ["sensor"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_watched" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "_sign"`, ruleObservers: [] },
+  { rel: "audit_trail", kind: "set", table_name: "audit_trail", delta_table_name: "__delta_audit_trail", frontier_table_name: "__frontier_audit_trail", next_frontier_table_name: "__next_frontier_audit_trail", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit_trail" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
+  { rel: "audited", kind: "set", table_name: "audited", delta_table_name: "__delta_audited", frontier_table_name: "__frontier_audited", next_frontier_table_name: "__next_frontier_audited", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audited" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["audit_trail/1"] },
+  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["sensor", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "sensor", "value"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("sensor", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "value", "_sign"`, rule_observers: ["audited/1", "watched/1"] },
+  { rel: "watched", kind: "set", table_name: "watched", delta_table_name: "__delta_watched", frontier_table_name: "__frontier_watched", next_frontier_table_name: "__next_frontier_watched", columns: ["sensor"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_watched" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "audited", ruleId: "host_free_query_leaves_a_derived_rel_unsubscribed:audited/1#1", headDeltaTableName: "__delta_audited", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "audited" ("value") SELECT DISTINCT d0."value" FROM "__frontier_reading" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "audited"`, recomputeSql: `DELETE FROM "audited";
-INSERT OR IGNORE INTO "audited" ("value") SELECT b0."value" FROM "reading" b0`, supportSql: [`DELETE FROM "__support_next_audited"`, `INSERT INTO "__support_next_audited" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "reading" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "audited" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_audited" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_audited" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "audited" WHERE "__refcount" <= 0`, `DELETE FROM "audited" WHERE "__refcount" <= 0`, `DELETE FROM "__new_audited"`, `INSERT INTO "__new_audited" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audited" n LEFT JOIN "audited" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_audited" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT INTO "__frontier_audited" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT INTO "__next_frontier_audited" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT OR IGNORE INTO "audited" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audited" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "audit_trail", ruleId: "host_free_query_leaves_a_derived_rel_unsubscribed:audit_trail/1#1", headDeltaTableName: "__delta_audit_trail", headColumns: ["value"], insertSql: `INSERT OR IGNORE INTO "audit_trail" ("value") SELECT DISTINCT d0."value" FROM "__frontier_audited" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, selectSql: `SELECT "value" FROM "audit_trail"`, recomputeSql: `DELETE FROM "audit_trail";
-INSERT OR IGNORE INTO "audit_trail" ("value") SELECT b0."value" FROM "audited" b0`, supportSql: [`DELETE FROM "__support_next_audit_trail"`, `INSERT INTO "__support_next_audit_trail" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "audited" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "audit_trail" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_audit_trail" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_audit_trail" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "audit_trail" WHERE "__refcount" <= 0`, `DELETE FROM "audit_trail" WHERE "__refcount" <= 0`, `DELETE FROM "__new_audit_trail"`, `INSERT INTO "__new_audit_trail" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audit_trail" n LEFT JOIN "audit_trail" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_audit_trail" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT INTO "__frontier_audit_trail" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT INTO "__next_frontier_audit_trail" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT OR IGNORE INTO "audit_trail" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audit_trail" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "watched", ruleId: "host_free_query_leaves_a_derived_rel_unsubscribed:watched/1#1", headDeltaTableName: "__delta_watched", headColumns: ["sensor"], insertSql: `INSERT OR IGNORE INTO "watched" ("sensor") SELECT DISTINCT d0."sensor" FROM "__frontier_reading" d0 WHERE d0."_phase" >= 0 RETURNING "sensor"`, selectSql: `SELECT "sensor" FROM "watched"`, recomputeSql: `DELETE FROM "watched";
-INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`, supportSql: [`DELETE FROM "__support_next_watched"`, `INSERT INTO "__support_next_watched" ("sensor", "__refcount") SELECT "sensor", sum("__refcount") FROM (SELECT b0."sensor" AS "sensor", count(*) AS "__refcount" FROM "reading" b0 GROUP BY b0."sensor") GROUP BY "sensor"`, `UPDATE "watched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_watched" n WHERE n."sensor" = h."sensor"), 0)`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT -1, row_number() OVER () - 1, "sensor" FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_watched"`, `INSERT INTO "__new_watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n LEFT JOIN "watched" h ON n."sensor" = h."sensor" WHERE h."sensor" IS NULL`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT 1, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__next_frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT OR IGNORE INTO "watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "audited", rule_id: "host_free_query_leaves_a_derived_rel_unsubscribed:audited/1#1", head_delta_table_name: "__delta_audited", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "audited" ("value") SELECT DISTINCT d0."value" FROM "__frontier_reading" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "audited"`, recompute_sql: `DELETE FROM "audited";
+INSERT OR IGNORE INTO "audited" ("value") SELECT b0."value" FROM "reading" b0`, support_sql: [`DELETE FROM "__support_next_audited"`, `INSERT INTO "__support_next_audited" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "reading" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "audited" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_audited" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_audited" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "audited" WHERE "__refcount" <= 0`, `DELETE FROM "audited" WHERE "__refcount" <= 0`, `DELETE FROM "__new_audited"`, `INSERT INTO "__new_audited" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audited" n LEFT JOIN "audited" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_audited" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT INTO "__frontier_audited" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT INTO "__next_frontier_audited" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audited"`, `INSERT OR IGNORE INTO "audited" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audited" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "audit_trail", rule_id: "host_free_query_leaves_a_derived_rel_unsubscribed:audit_trail/1#1", head_delta_table_name: "__delta_audit_trail", head_columns: ["value"], insert_sql: `INSERT OR IGNORE INTO "audit_trail" ("value") SELECT DISTINCT d0."value" FROM "__frontier_audited" d0 WHERE d0."_phase" >= 0 RETURNING "value"`, select_sql: `SELECT "value" FROM "audit_trail"`, recompute_sql: `DELETE FROM "audit_trail";
+INSERT OR IGNORE INTO "audit_trail" ("value") SELECT b0."value" FROM "audited" b0`, support_sql: [`DELETE FROM "__support_next_audit_trail"`, `INSERT INTO "__support_next_audit_trail" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "audited" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "audit_trail" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_audit_trail" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_audit_trail" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "audit_trail" WHERE "__refcount" <= 0`, `DELETE FROM "audit_trail" WHERE "__refcount" <= 0`, `DELETE FROM "__new_audit_trail"`, `INSERT INTO "__new_audit_trail" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audit_trail" n LEFT JOIN "audit_trail" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_audit_trail" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT INTO "__frontier_audit_trail" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT INTO "__next_frontier_audit_trail" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_audit_trail"`, `INSERT OR IGNORE INTO "audit_trail" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_audit_trail" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "watched", rule_id: "host_free_query_leaves_a_derived_rel_unsubscribed:watched/1#1", head_delta_table_name: "__delta_watched", head_columns: ["sensor"], insert_sql: `INSERT OR IGNORE INTO "watched" ("sensor") SELECT DISTINCT d0."sensor" FROM "__frontier_reading" d0 WHERE d0."_phase" >= 0 RETURNING "sensor"`, select_sql: `SELECT "sensor" FROM "watched"`, recompute_sql: `DELETE FROM "watched";
+INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`, support_sql: [`DELETE FROM "__support_next_watched"`, `INSERT INTO "__support_next_watched" ("sensor", "__refcount") SELECT "sensor", sum("__refcount") FROM (SELECT b0."sensor" AS "sensor", count(*) AS "__refcount" FROM "reading" b0 GROUP BY b0."sensor") GROUP BY "sensor"`, `UPDATE "watched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_watched" n WHERE n."sensor" = h."sensor"), 0)`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT -1, row_number() OVER () - 1, "sensor" FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_watched"`, `INSERT INTO "__new_watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n LEFT JOIN "watched" h ON n."sensor" = h."sensor" WHERE h."sensor" IS NULL`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT 1, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__next_frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT OR IGNORE INTO "watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "audited";
 INSERT OR IGNORE INTO "audited" ("value") SELECT b0."value" FROM "reading" b0;
 DELETE FROM "audit_trail";
@@ -303,11 +303,11 @@ INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const audit_trail = multisetDiff(before.audit_trail, after.audit_trail);
-  const audited = multisetDiff(before.audited, after.audited);
-  const reading = multisetDiff(before.reading, after.reading);
-  const watched = multisetDiff(before.watched, after.watched);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const audit_trail = multiset_diff(before.audit_trail, after.audit_trail);
+  const audited = multiset_diff(before.audited, after.audited);
+  const reading = multiset_diff(before.reading, after.reading);
+  const watched = multiset_diff(before.watched, after.watched);
   return {
     rels: [
       { rel: "audit_trail", add: audit_trail.add, del: audit_trail.del },
@@ -315,15 +315,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "reading", add: reading.add, del: reading.del },
       { rel: "watched", add: watched.add, del: watched.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // host_free_query_leaves_a_derived_rel_unsubscribed: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -337,38 +337,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -377,16 +377,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "host_free_query_leaves_a_derived_rel_unsubscribed",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

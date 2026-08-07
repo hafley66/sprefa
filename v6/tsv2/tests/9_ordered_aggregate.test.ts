@@ -21,9 +21,9 @@ import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import type { IArrivalBatch, ISqlSeam } from "../runtime/types.ts";
-import { incrementalPlan, program } from "../gen_emitted/ordered_aggregate_retraction_rebuild.ts";
+import { incremental_plan, program } from "../gen_emitted/ordered_aggregate_retraction_rebuild.ts";
 
-function countingSeam(seam: ISqlSeam): { readonly seam: ISqlSeam; readonly statements: string[] } {
+function counting_seam(seam: ISqlSeam): { readonly seam: ISqlSeam; readonly statements: string[] } {
   const statements: string[] = [];
   const record = (statement: { readonly sql: string } | string): void => {
     statements.push(typeof statement === "string" ? statement : statement.sql);
@@ -46,39 +46,39 @@ function countingSeam(seam: ISqlSeam): { readonly seam: ISqlSeam; readonly state
   return { seam: { db: seam.db, runner }, statements };
 }
 
-function groupBatch(groupCount: number): IArrivalBatch {
-  return Array.from({ length: groupCount }, (_unused, index) => ({
+function group_batch(group_count: number): IArrivalBatch {
+  return Array.from({ length: group_count }, (_unused, index) => ({
     rel: "item",
     sign: "add" as const,
     row: [`group_${index}`, 1, `value_${index}`],
   }));
 }
 
-async function aggregateTickStatementCount(groupCount: number): Promise<number> {
+async function aggregate_tick_statement_count(group_count: number): Promise<number> {
   const base = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(base, program.ddl));
   await firstValueFrom(BootRunner.run(base, program.boot));
-  const counted = countingSeam(base);
-  await firstValueFrom(TickFold.run(program, counted.seam, [groupBatch(groupCount)]).pipe(toArray()));
+  const counted = counting_seam(base);
+  await firstValueFrom(TickFold.run(program, counted.seam, [group_batch(group_count)]).pipe(toArray()));
   return counted.statements.length;
 }
 
 test("ordered aggregate maintenance statement count is flat in group count", async () => {
-  const ten = await aggregateTickStatementCount(10);
-  const thousand = await aggregateTickStatementCount(1000);
+  const ten = await aggregate_tick_statement_count(10);
+  const thousand = await aggregate_tick_statement_count(1000);
   assert.equal(thousand, ten, `1000 groups cost ${thousand} statements versus ${ten} for 10 groups`);
 });
 
 test("ordered aggregate scoped INSERT uses SEARCH on the source group key", async () => {
-  const aggregate = incrementalPlan.levels.find((level) => level.headRel === "ordered_values")?.aggregateSql;
+  const aggregate = incremental_plan.levels.find((level) => level.head_rel === "ordered_values")?.aggregate_sql;
   assert.ok(aggregate);
-  const scopedInsert = aggregate.insertScopedSql[0];
-  assert.ok(scopedInsert);
+  const scoped_insert = aggregate.insert_scoped_sql[0];
+  assert.ok(scoped_insert);
 
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   const explain = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${scopedInsert}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${scoped_insert}`),
   );
   const details = explain.rows.map((row) => Object.values(row).join(" ")).join("\n");
   assert.match(details, /SEARCH b0/i, details);

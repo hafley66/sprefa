@@ -42,8 +42,8 @@ import type {
   IWatchSource,
 } from "../runtime/types.ts";
 import { ProgramCompiler } from "../serve/0_compile.ts";
-import { WatchBindRunner, bindPlansFor } from "../serve/2_binds.ts";
-import { LiveEngine, bootServedProgram } from "../serve/3_engine.ts";
+import { WatchBindRunner, bind_plans_for } from "../serve/2_binds.ts";
+import { LiveEngine, boot_served_program } from "../serve/3_engine.ts";
 
 const WATCH_RAIL_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-watch-rail.dl6", import.meta.url));
 const GLOB = "**/*.ts";
@@ -51,48 +51,48 @@ const COALESCE_MS = 50;
 
 export interface FileWatchScaleConfig {
   readonly files: number;
-  readonly eventsPerFile: number;
-  readonly editRatio: number;
-  readonly deleteRatio: number;
-  readonly identicalResaveRatio: number;
+  readonly events_per_file: number;
+  readonly edit_ratio: number;
+  readonly delete_ratio: number;
+  readonly identical_resave_ratio: number;
 }
 
 interface FinalRelationReceipt {
   readonly expected: number;
   readonly actual: number;
   readonly sha256: string;
-  readonly expectedSha256: string;
+  readonly expected_sha256: string;
 }
 
 export interface FileWatchScaleResult {
   readonly benchmark: "v6.2_file_watch";
   readonly files: number;
-  readonly editFiles: number;
-  readonly deleteFiles: number;
-  readonly identicalResaveFiles: number;
-  readonly eventsPerFile: number;
+  readonly edit_files: number;
+  readonly delete_files: number;
+  readonly identical_resave_files: number;
+  readonly events_per_file: number;
   readonly events: number;
-  readonly uniqueNotifiedPaths: number;
+  readonly unique_notified_paths: number;
   readonly subscriptions: number;
-  readonly watchRoots: readonly string[];
+  readonly watch_roots: readonly string[];
   readonly arrivals: number;
-  readonly extractionDemands: null;
+  readonly extraction_demands: null;
   readonly ticks: number;
-  readonly watchBatches: number;
-  readonly logicalMutations: number;
-  readonly writeAmplification: number;
-  readonly sqlStatements: number;
-  readonly wallMs: number;
-  readonly peakRssBytes: number;
-  readonly sqliteBytes: number;
-  readonly sqliteBytesPerLiveByte: number;
-  readonly exactFinalRows: {
+  readonly watch_batches: number;
+  readonly logical_mutations: number;
+  readonly write_amplification: number;
+  readonly sql_statements: number;
+  readonly wall_ms: number;
+  readonly peak_rss_bytes: number;
+  readonly sqlite_bytes: number;
+  readonly sqlite_bytes_per_live_byte: number;
+  readonly exact_final_rows: {
     readonly watch: FinalRelationReceipt;
     readonly seen: FinalRelationReceipt;
   };
-  readonly duplicateCount: number;
-  readonly staleCount: number;
-  readonly missingCount: number;
+  readonly duplicate_count: number;
+  readonly stale_count: number;
+  readonly missing_count: number;
   readonly correct: boolean;
 }
 
@@ -129,56 +129,56 @@ function content(index: number, revision: number): string {
   return `export const file_${index} = ${revision};\n`;
 }
 
-function rowText(row: IRow): string {
+function row_text(row: IRow): string {
   return JSON.stringify(row);
 }
 
-function sortedRows(rows: readonly IRow[]): readonly IRow[] {
-  return [...rows].sort((left, right) => rowText(left).localeCompare(rowText(right)));
+function sorted_rows(rows: readonly IRow[]): readonly IRow[] {
+  return [...rows].sort((left, right) => row_text(left).localeCompare(row_text(right)));
 }
 
-function rowHash(rows: readonly IRow[]): string {
-  return bytesToHex(sha256(Buffer.from(JSON.stringify(sortedRows(rows)))));
+function row_hash(rows: readonly IRow[]): string {
+  return bytesToHex(sha256(Buffer.from(JSON.stringify(sorted_rows(rows)))));
 }
 
-function duplicatePaths(rows: readonly IRow[], pathIndex: number): number {
-  return rows.length - new Set(rows.map((row) => String(row[pathIndex] ?? ""))).size;
+function duplicate_paths(rows: readonly IRow[], path_index: number): number {
+  return rows.length - new Set(rows.map((row) => String(row[path_index] ?? ""))).size;
 }
 
-function staleRows(
+function stale_rows(
   rows: readonly IRow[],
   expected: ReadonlyMap<string, string>,
-  pathIndex: number,
-  digestIndex: number,
+  path_index: number,
+  digest_index: number,
 ): number {
   return rows.filter(
-    (row) => expected.get(String(row[pathIndex] ?? "")) !== String(row[digestIndex] ?? ""),
+    (row) => expected.get(String(row[path_index] ?? "")) !== String(row[digest_index] ?? ""),
   ).length;
 }
 
-function missingRows(
+function missing_rows(
   rows: readonly IRow[],
   expected: ReadonlyMap<string, string>,
-  pathIndex: number,
-  digestIndex: number,
+  path_index: number,
+  digest_index: number,
 ): number {
   const actual = new Map(
-    rows.map((row) => [String(row[pathIndex] ?? ""), String(row[digestIndex] ?? "")]),
+    rows.map((row) => [String(row[path_index] ?? ""), String(row[digest_index] ?? "")]),
   );
-  return [...expected].filter(([path, expectedDigest]) => actual.get(path) !== expectedDigest).length;
+  return [...expected].filter(([path, expected_digest]) => actual.get(path) !== expected_digest).length;
 }
 
-function validateConfig(config: FileWatchScaleConfig): void {
+function validate_config(config: FileWatchScaleConfig): void {
   if (!Number.isInteger(config.files) || config.files < 1) {
     throw new Error("5_file-watch-scale: files must be a positive integer");
   }
-  if (!Number.isInteger(config.eventsPerFile) || config.eventsPerFile < 1) {
+  if (!Number.isInteger(config.events_per_file) || config.events_per_file < 1) {
     throw new Error("5_file-watch-scale: events-per-file must be a positive integer");
   }
   for (const [name, ratio] of [
-    ["edit-ratio", config.editRatio],
-    ["delete-ratio", config.deleteRatio],
-    ["identical-resave-ratio", config.identicalResaveRatio],
+    ["edit-ratio", config.edit_ratio],
+    ["delete-ratio", config.delete_ratio],
+    ["identical-resave-ratio", config.identical_resave_ratio],
   ] as const) {
     if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
       throw new Error(`5_file-watch-scale: ${name} must be between 0 and 1`);
@@ -186,254 +186,254 @@ function validateConfig(config: FileWatchScaleConfig): void {
   }
 }
 
-export async function compileFileWatchScaleProgram(): Promise<IServedProgram> {
+export async function compile_file_watch_scale_program(): Promise<IServedProgram> {
   return firstValueFrom(ProgramCompiler.compile(readFileSync(WATCH_RAIL_DL6, "utf8")));
 }
 
-export async function runFileWatchScaleCell(
+export async function run_file_watch_scale_cell(
   config: FileWatchScaleConfig,
-  compiledProgram?: IServedProgram,
+  compiled_program?: IServedProgram,
 ): Promise<FileWatchScaleResult> {
-  validateConfig(config);
-  const program = compiledProgram ?? (await compileFileWatchScaleProgram());
-  const workDir = mkdtempSync(join(tmpdir(), "tsv2-file-watch-scale-"));
-  const sourceRoot = join(workDir, "repo");
-  const sourceDir = join(sourceRoot, "src");
-  const dbPath = join(workDir, "watch.sqlite");
-  mkdirSync(sourceDir, { recursive: true });
+  validate_config(config);
+  const program = compiled_program ?? (await compile_file_watch_scale_program());
+  const work_dir = mkdtempSync(join(tmpdir(), "tsv2-file-watch-scale-"));
+  const source_root = join(work_dir, "repo");
+  const source_dir = join(source_root, "src");
+  const db_path = join(work_dir, "watch.sqlite");
+  mkdirSync(source_dir, { recursive: true });
 
   const expected = new Map<string, string>();
-  const absolutePaths = Array.from({ length: config.files }, (_, index) => {
-    const relativePath = `src/file_${String(index).padStart(8, "0")}.ts`;
-    const absolutePath = join(sourceRoot, relativePath);
+  const absolute_paths = Array.from({ length: config.files }, (_, index) => {
+    const relative_path = `src/file_${String(index).padStart(8, "0")}.ts`;
+    const absolute_path = join(source_root, relative_path);
     const text = content(index, 0);
-    writeFileSync(absolutePath, text);
-    expected.set(relativePath, digest(text));
-    return absolutePath;
+    writeFileSync(absolute_path, text);
+    expected.set(relative_path, digest(text));
+    return absolute_path;
   });
 
-  const editFiles = Math.floor(config.files * config.editRatio);
-  const deleteFiles = Math.floor(config.files * config.deleteRatio);
-  const identicalResaveFiles = Math.floor(config.files * config.identicalResaveRatio);
-  const seam = ScratchStore.open(`file:${dbPath}`);
+  const edit_files = Math.floor(config.files * config.edit_ratio);
+  const delete_files = Math.floor(config.files * config.delete_ratio);
+  const identical_resave_files = Math.floor(config.files * config.identical_resave_ratio);
+  const seam = ScratchStore.open(`file:${db_path}`);
   const ticks: ITickOutcome[] = [];
   const source = new SyntheticWatchSource();
   const scheduler = new VirtualTimeScheduler();
-  let peakRssBytes = process.memoryUsage().rss;
+  let peak_rss_bytes = process.memoryUsage().rss;
   let arrivals = 0;
-  let watchBatches = 0;
-  let bootReadResolved = false;
-  let resolveBootRead!: () => void;
-  const bootRead = new Promise<void>((resolve) => {
-    resolveBootRead = resolve;
+  let watch_batches = 0;
+  let boot_read_resolved = false;
+  let resolve_boot_read!: () => void;
+  const boot_read = new Promise<void>((resolve) => {
+    resolve_boot_read = resolve;
   });
-  let runnerFailure: unknown;
-  const firingWaiters: Array<{
+  let runner_failure: unknown;
+  const firing_waiters: Array<{
     readonly count: number;
     readonly resolve: () => void;
     readonly reject: (failure: unknown) => void;
   }> = [];
   const firings: IWatchFired[] = [];
 
-  const sampleRss = (): void => {
-    peakRssBytes = Math.max(peakRssBytes, process.memoryUsage().rss);
+  const sample_rss = (): void => {
+    peak_rss_bytes = Math.max(peak_rss_bytes, process.memoryUsage().rss);
   };
 
   try {
-    await firstValueFrom(bootServedProgram(seam, program));
+    await firstValueFrom(boot_served_program(seam, program));
     const engine = new LiveEngine(program, seam);
-    const observedEngine: ILiveEngine = {
+    const observed_engine: ILiveEngine = {
       program: engine.program,
       ticks$: engine.ticks$,
       rows(rel: string): Observable<readonly IRow[]> {
         return engine.rows(rel).pipe(
           finalize(() => {
-            if (!bootReadResolved) {
-              bootReadResolved = true;
-              resolveBootRead();
+            if (!boot_read_resolved) {
+              boot_read_resolved = true;
+              resolve_boot_read();
             }
           }),
         );
       },
       submit(batch: IArrivalBatch): Observable<ITickOutcome> {
         arrivals += batch.length;
-        watchBatches += 1;
-        sampleRss();
-        return engine.submit(batch).pipe(tap(sampleRss));
+        watch_batches += 1;
+        sample_rss();
+        return engine.submit(batch).pipe(tap(sample_rss));
       },
     };
 
-    const tickSubscription = engine.ticks$.subscribe({
+    const tick_subscription = engine.ticks$.subscribe({
       next: (tick) => {
         ticks.push(tick);
-        sampleRss();
+        sample_rss();
       },
       error: (failure: unknown) => {
-        runnerFailure = failure;
-        for (const waiter of firingWaiters.splice(0)) waiter.reject(failure);
+        runner_failure = failure;
+        for (const waiter of firing_waiters.splice(0)) waiter.reject(failure);
       },
     });
-    const watchSubscription = new WatchBindRunner(
-      observedEngine,
-      bindPlansFor(program.bindPlans, "live_watch"),
+    const watch_subscription = new WatchBindRunner(
+      observed_engine,
+      bind_plans_for(program.bind_plans, "live_watch"),
       {
-        root: sourceRoot,
-        coalesceMs: COALESCE_MS,
+        root: source_root,
+        coalesce_ms: COALESCE_MS,
         scheduler,
         source,
       },
     ).firings$.subscribe({
       next: (firing) => {
         firings.push(firing);
-        for (let index = firingWaiters.length - 1; index >= 0; index -= 1) {
-          const waiter = firingWaiters[index];
+        for (let index = firing_waiters.length - 1; index >= 0; index -= 1) {
+          const waiter = firing_waiters[index];
           if (waiter !== undefined && firings.length >= waiter.count) {
-            firingWaiters.splice(index, 1);
+            firing_waiters.splice(index, 1);
             waiter.resolve();
           }
         }
       },
       error: (failure: unknown) => {
-        runnerFailure = failure;
-        for (const waiter of firingWaiters.splice(0)) waiter.reject(failure);
+        runner_failure = failure;
+        for (const waiter of firing_waiters.splice(0)) waiter.reject(failure);
       },
     });
 
     try {
-      await bootRead;
+      await boot_read;
       stmt_counter.reset();
-      let wallNs = 0n;
-      let uniqueNotifiedPaths = 0;
+      let wall_ns = 0n;
+      let unique_notified_paths = 0;
 
-      const waitForFiring = (count: number): Promise<void> => {
-        if (runnerFailure !== undefined) return Promise.reject(runnerFailure);
+      const wait_for_firing = (count: number): Promise<void> => {
+        if (runner_failure !== undefined) return Promise.reject(runner_failure);
         if (firings.length >= count) return Promise.resolve();
         return new Promise<void>((resolve, reject) => {
-          firingWaiters.push({ count, resolve, reject });
+          firing_waiters.push({ count, resolve, reject });
         });
       };
 
-      const drive = async (paths: readonly string[], expectsBatch: boolean): Promise<void> => {
+      const drive = async (paths: readonly string[], expects_batch: boolean): Promise<void> => {
         if (paths.length === 0) return;
-        uniqueNotifiedPaths += paths.length;
-        const completion = expectsBatch ? waitForFiring(firings.length + 1) : Promise.resolve();
+        unique_notified_paths += paths.length;
+        const completion = expects_batch ? wait_for_firing(firings.length + 1) : Promise.resolve();
         const started = process.hrtime.bigint();
-        source.notify(paths, config.eventsPerFile);
+        source.notify(paths, config.events_per_file);
         scheduler.maxFrames = scheduler.frame + COALESCE_MS * 2;
         scheduler.flush();
-        sampleRss();
+        sample_rss();
         await completion;
-        wallNs += process.hrtime.bigint() - started;
+        wall_ns += process.hrtime.bigint() - started;
       };
 
-      await drive(absolutePaths, true);
+      await drive(absolute_paths, true);
 
-      const editedPaths = absolutePaths.slice(0, editFiles);
-      for (let index = 0; index < editedPaths.length; index += 1) {
-        const absolutePath = editedPaths[index]!;
-        const fileIndex = index;
-        const text = content(fileIndex, 1);
-        writeFileSync(absolutePath, text);
-        expected.set(relative(sourceRoot, absolutePath), digest(text));
+      const edited_paths = absolute_paths.slice(0, edit_files);
+      for (let index = 0; index < edited_paths.length; index += 1) {
+        const absolute_path = edited_paths[index]!;
+        const file_index = index;
+        const text = content(file_index, 1);
+        writeFileSync(absolute_path, text);
+        expected.set(relative(source_root, absolute_path), digest(text));
       }
-      await drive(editedPaths, editedPaths.length > 0);
+      await drive(edited_paths, edited_paths.length > 0);
 
-      const identicalPaths = absolutePaths.slice(0, identicalResaveFiles);
-      for (const absolutePath of identicalPaths) {
-        const relativePath = relative(sourceRoot, absolutePath);
-        const fileIndex = Number(relativePath.match(/file_(\d+)\.ts$/)?.[1] ?? 0);
-        const revision = fileIndex < editFiles ? 1 : 0;
-        writeFileSync(absolutePath, content(fileIndex, revision));
+      const identical_paths = absolute_paths.slice(0, identical_resave_files);
+      for (const absolute_path of identical_paths) {
+        const relative_path = relative(source_root, absolute_path);
+        const file_index = Number(relative_path.match(/file_(\d+)\.ts$/)?.[1] ?? 0);
+        const revision = file_index < edit_files ? 1 : 0;
+        writeFileSync(absolute_path, content(file_index, revision));
       }
-      await drive(identicalPaths, false);
+      await drive(identical_paths, false);
 
-      const deletedPaths = absolutePaths.slice(config.files - deleteFiles);
-      for (const absolutePath of deletedPaths) {
-        rmSync(absolutePath);
-        expected.delete(relative(sourceRoot, absolutePath));
+      const deleted_paths = absolute_paths.slice(config.files - delete_files);
+      for (const absolute_path of deleted_paths) {
+        rmSync(absolute_path);
+        expected.delete(relative(source_root, absolute_path));
       }
-      await drive(deletedPaths, deletedPaths.length > 0);
+      await drive(deleted_paths, deleted_paths.length > 0);
 
-      if (runnerFailure !== undefined) throw runnerFailure;
-      const sqlStatements = stmt_counter.get();
-      const watchRows = await firstValueFrom(engine.rows("watch"));
-      const seenRows = await firstValueFrom(engine.rows("seen"));
-      const expectedWatchRows: readonly IRow[] = [...expected]
+      if (runner_failure !== undefined) throw runner_failure;
+      const sql_statements = stmt_counter.get();
+      const watch_rows = await firstValueFrom(engine.rows("watch"));
+      const seen_rows = await firstValueFrom(engine.rows("seen"));
+      const expected_watch_rows: readonly IRow[] = [...expected]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([path, pathDigest]) => [GLOB, path, pathDigest]);
-      const expectedSeenRows: readonly IRow[] = [...expected]
+        .map(([path, path_digest]) => [GLOB, path, path_digest]);
+      const expected_seen_rows: readonly IRow[] = [...expected]
         .sort(([left], [right]) => left.localeCompare(right))
-        .map(([path, pathDigest]) => [path, pathDigest]);
-      const sqlite = await firstValueFrom(ServeStats.sqliteSnapshot(seam, ["watch", "seen"]));
-      const duplicateCount = duplicatePaths(watchRows, 1) + duplicatePaths(seenRows, 0);
-      const staleCount =
-        staleRows(watchRows, expected, 1, 2) + staleRows(seenRows, expected, 0, 1);
-      const missingCount =
-        missingRows(watchRows, expected, 1, 2) + missingRows(seenRows, expected, 0, 1);
-      const logicalMutations = config.files + editFiles + deleteFiles;
-      const liveBytes = [...expected].reduce(
+        .map(([path, path_digest]) => [path, path_digest]);
+      const sqlite = await firstValueFrom(ServeStats.sqlite_snapshot(seam, ["watch", "seen"]));
+      const duplicate_count = duplicate_paths(watch_rows, 1) + duplicate_paths(seen_rows, 0);
+      const stale_count =
+        stale_rows(watch_rows, expected, 1, 2) + stale_rows(seen_rows, expected, 0, 1);
+      const missing_count =
+        missing_rows(watch_rows, expected, 1, 2) + missing_rows(seen_rows, expected, 0, 1);
+      const logical_mutations = config.files + edit_files + delete_files;
+      const live_bytes = [...expected].reduce(
         (total, [path]) => {
-          const fileIndex = Number(path.match(/file_(\d+)\.ts$/)?.[1] ?? 0);
-          return total + Buffer.byteLength(content(fileIndex, fileIndex < editFiles ? 1 : 0));
+          const file_index = Number(path.match(/file_(\d+)\.ts$/)?.[1] ?? 0);
+          return total + Buffer.byteLength(content(file_index, file_index < edit_files ? 1 : 0));
         },
         0,
       );
-      const exactFinalRows = {
+      const exact_final_rows = {
         watch: {
-          expected: expectedWatchRows.length,
-          actual: watchRows.length,
-          sha256: rowHash(watchRows),
-          expectedSha256: rowHash(expectedWatchRows),
+          expected: expected_watch_rows.length,
+          actual: watch_rows.length,
+          sha256: row_hash(watch_rows),
+          expected_sha256: row_hash(expected_watch_rows),
         },
         seen: {
-          expected: expectedSeenRows.length,
-          actual: seenRows.length,
-          sha256: rowHash(seenRows),
-          expectedSha256: rowHash(expectedSeenRows),
+          expected: expected_seen_rows.length,
+          actual: seen_rows.length,
+          sha256: row_hash(seen_rows),
+          expected_sha256: row_hash(expected_seen_rows),
         },
       };
       const correct =
-        duplicateCount === 0 &&
-        staleCount === 0 &&
-        missingCount === 0 &&
-        exactFinalRows.watch.sha256 === exactFinalRows.watch.expectedSha256 &&
-        exactFinalRows.seen.sha256 === exactFinalRows.seen.expectedSha256;
+        duplicate_count === 0 &&
+        stale_count === 0 &&
+        missing_count === 0 &&
+        exact_final_rows.watch.sha256 === exact_final_rows.watch.expected_sha256 &&
+        exact_final_rows.seen.sha256 === exact_final_rows.seen.expected_sha256;
 
       return {
         benchmark: "v6.2_file_watch",
         files: config.files,
-        editFiles,
-        deleteFiles,
-        identicalResaveFiles,
-        eventsPerFile: config.eventsPerFile,
+        edit_files,
+        delete_files,
+        identical_resave_files,
+        events_per_file: config.events_per_file,
         events: source.events,
-        uniqueNotifiedPaths,
+        unique_notified_paths,
         subscriptions: source.subscriptions,
-        watchRoots: [...new Set(source.roots.map((root) => relative(sourceRoot, root) || "."))],
+        watch_roots: [...new Set(source.roots.map((root) => relative(source_root, root) || "."))],
         arrivals,
-        extractionDemands: null,
+        extraction_demands: null,
         ticks: ticks.length,
-        watchBatches,
-        logicalMutations,
-        writeAmplification: arrivals / logicalMutations,
-        sqlStatements,
-        wallMs: Number(wallNs) / 1_000_000,
-        peakRssBytes,
-        sqliteBytes: sqlite.dbBytes,
-        sqliteBytesPerLiveByte: liveBytes === 0 ? 0 : sqlite.dbBytes / liveBytes,
-        exactFinalRows,
-        duplicateCount,
-        staleCount,
-        missingCount,
+        watch_batches,
+        logical_mutations,
+        write_amplification: arrivals / logical_mutations,
+        sql_statements,
+        wall_ms: Number(wall_ns) / 1_000_000,
+        peak_rss_bytes,
+        sqlite_bytes: sqlite.db_bytes,
+        sqlite_bytes_per_live_byte: live_bytes === 0 ? 0 : sqlite.db_bytes / live_bytes,
+        exact_final_rows,
+        duplicate_count,
+        stale_count,
+        missing_count,
         correct,
       };
     } finally {
-      watchSubscription.unsubscribe();
-      tickSubscription.unsubscribe();
+      watch_subscription.unsubscribe();
+      tick_subscription.unsubscribe();
     }
   } finally {
     seam.db.close();
-    rmSync(workDir, { recursive: true, force: true });
+    rmSync(work_dir, { recursive: true, force: true });
   }
 }
 
@@ -445,7 +445,7 @@ function option(args: readonly string[], name: string, fallback: string): string
   return value;
 }
 
-function ratioOption(args: readonly string[], name: string, fallback: string): number {
+function ratio_option(args: readonly string[], name: string, fallback: string): number {
   return Number(option(args, name, fallback));
 }
 
@@ -457,25 +457,25 @@ async function main(): Promise<void> {
   if (files.some((count) => !Number.isInteger(count) || count < 1)) {
     throw new Error("5_file-watch-scale: --files must be comma-separated positive integers");
   }
-  const outputPath = option(args, "--jsonl", "-");
+  const output_path = option(args, "--jsonl", "-");
   const common = {
-    eventsPerFile: Number(option(args, "--events-per-file", "3")),
-    editRatio: ratioOption(args, "--edit-ratio", "0.25"),
-    deleteRatio: ratioOption(args, "--delete-ratio", "0.10"),
-    identicalResaveRatio: ratioOption(args, "--identical-resave-ratio", "0.25"),
+    events_per_file: Number(option(args, "--events-per-file", "3")),
+    edit_ratio: ratio_option(args, "--edit-ratio", "0.25"),
+    delete_ratio: ratio_option(args, "--delete-ratio", "0.10"),
+    identical_resave_ratio: ratio_option(args, "--identical-resave-ratio", "0.25"),
   };
-  const program = await compileFileWatchScaleProgram();
-  for (const fileCount of files) {
-    const result = await runFileWatchScaleCell({ files: fileCount, ...common }, program);
+  const program = await compile_file_watch_scale_program();
+  for (const file_count of files) {
+    const result = await run_file_watch_scale_cell({ files: file_count, ...common }, program);
     const line = `${JSON.stringify(result)}\n`;
-    if (outputPath === "-") process.stdout.write(line);
-    else appendFileSync(outputPath, line);
+    if (output_path === "-") process.stdout.write(line);
+    else appendFileSync(output_path, line);
     if (!result.correct) process.exitCode = 1;
   }
 }
 
-const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+const invoked_path = process.argv[1];
+if (invoked_path !== undefined && import.meta.url === pathToFileURL(invoked_path).href) {
   void main().catch((failure: unknown) => {
     process.stderr.write(`${failure instanceof Error ? failure.stack : String(failure)}\n`);
     process.exitCode = 1;

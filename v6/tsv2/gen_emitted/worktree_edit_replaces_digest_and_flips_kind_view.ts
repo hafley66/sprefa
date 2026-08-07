@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: worktree_edit_replaces_digest_and_flips_kind_view.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -180,41 +180,41 @@ const ddl: readonly string[] = [
   `CREATE INDEX "rust_file_zero" ON "rust_file" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   rust_file: ["path"],
   worktree_edit: ["path", "digest", "kind"],
   worktree_file: ["path", "digest", "kind"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   rust_file: ["text"],
   worktree_edit: ["text", "text", "text"],
   worktree_file: ["text", "text", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "worktree_edit_replaces_digest_and_flips_kind_view", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "1888c33af6259fd1", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "rust_file", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "7dae5d04b6e8317a", hSchema: "8596fa45d0ad8be0", hRule: "d5def9ce085df7a6" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fd3bd0c4f9f97098", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 6, ordinal: 0, localName: "worktree_edit", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "dc27051d3ee88c70", hSchema: "fd7593a578bb46b5", hRule: "" },
-  { relId: 10, parentId: 9, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b705f5d0947c17dc", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 9, ordinal: 2, localName: "digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d83f4f8293c059b5", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 9, ordinal: 3, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "cca1133cce46826f", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "worktree_file", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "9e755b9e36421fb8", hSchema: "32030e3ee0cf668b", hRule: "fe1da2ef2b3d6f10" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a7d32b933f0cf673", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 13, ordinal: 2, localName: "digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1f95b761eb37a874", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 13, ordinal: 3, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9d25b445d2f7b54b", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "worktree_edit_replaces_digest_and_flips_kind_view", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "1888c33af6259fd1", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "rust_file", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "7dae5d04b6e8317a", h_schema: "8596fa45d0ad8be0", h_rule: "d5def9ce085df7a6" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fd3bd0c4f9f97098", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "worktree_edit", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "dc27051d3ee88c70", h_schema: "fd7593a578bb46b5", h_rule: "" },
+  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b705f5d0947c17dc", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "digest", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d83f4f8293c059b5", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 9, ordinal: 3, local_name: "kind", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "cca1133cce46826f", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "worktree_file", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "9e755b9e36421fb8", h_schema: "32030e3ee0cf668b", h_rule: "fe1da2ef2b3d6f10" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a7d32b933f0cf673", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "digest", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1f95b761eb37a874", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 13, ordinal: 3, local_name: "kind", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "9d25b445d2f7b54b", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["worktree_edit"];
+const arrival_targets: readonly string[] = ["worktree_edit"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "rust_file", sql: `DELETE FROM "rust_file"`, params: [] },
@@ -227,25 +227,25 @@ type Snapshot = {
   readonly worktree_file: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    rust_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "rust_file"`, relColumns.rust_file!, relColumnTypes.rust_file!),
-    worktree_edit: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_edit"`, relColumns.worktree_edit!, relColumnTypes.worktree_edit!),
-    worktree_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`, relColumns.worktree_file!, relColumnTypes.worktree_file!),
+    rust_file: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "rust_file"`, rel_columns.rust_file!, rel_column_types.rust_file!),
+    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
+    worktree_file: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   rust_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "rust_file"`,
   worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_edit"`,
   worktree_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "worktree_file"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  worktree_edit: { kind: "log", addSql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") VALUES (?, ?, ?)`, delSql: null },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  worktree_edit: { kind: "log", add_sql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") VALUES (?, ?, ?)`, del_sql: null },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`worktree_edit_replaces_digest_and_flips_kind_view: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -254,32 +254,32 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`worktree_edit_replaces_digest_and_flips_kind_view: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`worktree_edit_replaces_digest_and_flips_kind_view: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "rust_file", kind: "set", tableName: "rust_file", deltaTableName: "__delta_rust_file", frontierTableName: "__frontier_rust_file", nextFrontierTableName: "__next_frontier_rust_file", columns: ["path"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rust_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, ruleObservers: [] },
-  { rel: "worktree_edit", kind: "log", tableName: "worktree_edit", deltaTableName: "__delta_worktree_edit", frontierTableName: "__frontier_worktree_edit", nextFrontierTableName: "__next_frontier_worktree_edit", columns: ["path", "digest", "kind"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "digest", "kind"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "kind", "_sign"`, ruleObservers: ["worktree_file/3"] },
-  { rel: "worktree_file", kind: "set", tableName: "worktree_file", deltaTableName: "__delta_worktree_file", frontierTableName: "__frontier_worktree_file", nextFrontierTableName: "__next_frontier_worktree_file", columns: ["path", "digest", "kind"], columnTypes: ["text", "text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "kind", "_sign"`, ruleObservers: ["rust_file/1"] },
+  { rel: "rust_file", kind: "set", table_name: "rust_file", delta_table_name: "__delta_rust_file", frontier_table_name: "__frontier_rust_file", next_frontier_table_name: "__next_frontier_rust_file", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rust_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, rule_observers: [] },
+  { rel: "worktree_edit", kind: "log", table_name: "worktree_edit", delta_table_name: "__delta_worktree_edit", frontier_table_name: "__frontier_worktree_edit", next_frontier_table_name: "__next_frontier_worktree_edit", columns: ["path", "digest", "kind"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "worktree_edit" ("path", "digest", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "digest", "kind"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "kind", "_sign"`, rule_observers: ["worktree_file/3"] },
+  { rel: "worktree_file", kind: "set", table_name: "worktree_file", delta_table_name: "__delta_worktree_file", frontier_table_name: "__frontier_worktree_file", next_frontier_table_name: "__next_frontier_worktree_file", columns: ["path", "digest", "kind"], column_types: ["text", "text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "kind", "_sign"`, rule_observers: ["rust_file/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "worktree_file", ruleId: "worktree_edit_replaces_digest_and_flips_kind_view:worktree_file/3#1", headKind: "set", headTableName: "worktree_file", headDeltaTableName: "__delta_worktree_file", headColumns: ["path", "digest", "kind"], keyIndices: [0], projectSql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "worktree_file", rule_id: "worktree_edit_replaces_digest_and_flips_kind_view:worktree_file/3#1", head_kind: "set", head_table_name: "worktree_file", head_delta_table_name: "__delta_worktree_file", head_columns: ["path", "digest", "kind"], key_indices: [0], project_sql: `SELECT d0."path" AS "path", d0."digest" AS "digest", d0."kind" AS "kind" FROM "__frontier_worktree_edit" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "rust_file", ruleId: "worktree_edit_replaces_digest_and_flips_kind_view:rust_file/1#1", headDeltaTableName: "__delta_rust_file", headColumns: ["path"], insertSql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, selectSql: `SELECT "path" FROM "rust_file"`, recomputeSql: `DELETE FROM "rust_file";
-INSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`, supportSql: [`DELETE FROM "__support_next_rust_file"`, `INSERT INTO "__support_next_rust_file" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "worktree_file" b0 WHERE b0."kind" = 'rust' GROUP BY b0."path") GROUP BY "path"`, `UPDATE "rust_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_rust_file" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_rust_file" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "rust_file" WHERE "__refcount" <= 0`, `DELETE FROM "rust_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_rust_file"`, `INSERT INTO "__new_rust_file" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_rust_file" n LEFT JOIN "rust_file" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_rust_file" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT INTO "__frontier_rust_file" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT INTO "__next_frontier_rust_file" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT OR IGNORE INTO "rust_file" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_rust_file" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "rust_file", rule_id: "worktree_edit_replaces_digest_and_flips_kind_view:rust_file/1#1", head_delta_table_name: "__delta_rust_file", head_columns: ["path"], insert_sql: `INSERT OR IGNORE INTO "rust_file" ("path") SELECT DISTINCT d0."path" FROM "__frontier_worktree_file" d0 WHERE d0."_phase" >= 0 AND d0."kind" = 'rust' RETURNING "path"`, select_sql: `SELECT "path" FROM "rust_file"`, recompute_sql: `DELETE FROM "rust_file";
+INSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`, support_sql: [`DELETE FROM "__support_next_rust_file"`, `INSERT INTO "__support_next_rust_file" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "worktree_file" b0 WHERE b0."kind" = 'rust' GROUP BY b0."path") GROUP BY "path"`, `UPDATE "rust_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_rust_file" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_rust_file" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "rust_file" WHERE "__refcount" <= 0`, `DELETE FROM "rust_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_rust_file"`, `INSERT INTO "__new_rust_file" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_rust_file" n LEFT JOIN "rust_file" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_rust_file" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT INTO "__frontier_rust_file" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT INTO "__next_frontier_rust_file" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_rust_file"`, `INSERT OR IGNORE INTO "rust_file" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_rust_file" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const EDGE_WORKTREE_FILE_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest", ?3 AS "kind"`;
@@ -288,55 +288,55 @@ const EDGE_WORKTREE_FILE_0_HEAD_COLUMNS: readonly string[] = ["path", "digest", 
 const EDGE_WORKTREE_FILE_0_KEY_INDICES: readonly number[] = [0];
 
 function resolveWorktreeFile_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "worktree_edit", before.worktree_edit, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_WORKTREE_FILE_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "worktree_edit", before.worktree_edit, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_WORKTREE_FILE_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_WORKTREE_FILE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_WORKTREE_FILE_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_WORKTREE_FILE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_WORKTREE_FILE_0_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_WORKTREE_FILE_0_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_WORKTREE_FILE_0_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "rust_file";
 INSERT OR IGNORE INTO "rust_file" ("path") SELECT b0."path" FROM "worktree_file" b0 WHERE b0."kind" = 'rust'`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const rust_file = multisetDiff(before.rust_file, after.rust_file);
-  const worktree_edit = multisetDiff(before.worktree_edit, after.worktree_edit);
-  const worktree_file = multisetDiff(before.worktree_file, after.worktree_file);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const rust_file = multiset_diff(before.rust_file, after.rust_file);
+  const worktree_edit = multiset_diff(before.worktree_edit, after.worktree_edit);
+  const worktree_file = multiset_diff(before.worktree_file, after.worktree_file);
   return {
     rels: [
       { rel: "rust_file", add: rust_file.add, del: rust_file.del },
       { rel: "worktree_edit", add: worktree_edit.add, del: worktree_edit.del },
       { rel: "worktree_file", add: worktree_file.add, del: worktree_file.del },
     ],
-    carryPending: worktree_file.add.length > 0 || worktree_file.del.length > 0,
+    carry_pending: worktree_file.add.length > 0 || worktree_file.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveWorktreeFile_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // worktree_edit_replaces_digest_and_flips_kind_view: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -350,40 +350,40 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -392,16 +392,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "worktree_edit_replaces_digest_and_flips_kind_view",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

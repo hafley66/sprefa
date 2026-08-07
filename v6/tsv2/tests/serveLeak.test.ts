@@ -35,7 +35,7 @@ import { fileURLToPath } from "node:url";
 
 import { VirtualTimeScheduler } from "rxjs";
 
-import { postArrivals, postProgram, request, startServed } from "./serveHelpers.ts";
+import { post_arrivals, post_program, request, start_served } from "./serveHelpers.ts";
 
 const HOST_CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
 const PLAIN_PROGRAM = `rel event(id: int, kind: text) log keep(all).
@@ -55,25 +55,25 @@ interface ResourceCounts {
   readonly resources: Readonly<Record<string, number>>;
 }
 
-function countNames(names: readonly string[]): Readonly<Record<string, number>> {
+function count_names(names: readonly string[]): Readonly<Record<string, number>> {
   const counts: Record<string, number> = {};
   for (const name of names) counts[name] = (counts[name] ?? 0) + 1;
   return counts;
 }
 
-function resourceCounts(): ResourceCounts {
-  const activeHandles = (process as NodeJS.Process & { _getActiveHandles(): unknown[] })._getActiveHandles();
+function resource_counts(): ResourceCounts {
+  const active_handles = (process as NodeJS.Process & { _getActiveHandles(): unknown[] })._getActiveHandles();
   return {
-    handles: countNames(
-      activeHandles.map(
+    handles: count_names(
+      active_handles.map(
         (handle: unknown) => (handle as { readonly constructor?: { readonly name?: string } }).constructor?.name ?? "unknown",
       ),
     ),
-    resources: countNames(process.getActiveResourcesInfo()),
+    resources: count_names(process.getActiveResourcesInfo()),
   };
 }
 
-function namesWithGrowth(
+function names_with_growth(
   before: Readonly<Record<string, number>>,
   after: Readonly<Record<string, number>>,
 ): readonly string[] {
@@ -85,7 +85,7 @@ function namesWithGrowth(
 }
 
 /** One SSE client: connect, read one event, drop the socket. */
-function sseOnce(port: number): Promise<string> {
+function sse_once(port: number): Promise<string> {
   return new Promise((resolve, reject) => {
     const outgoing = http.request({ hostname: "127.0.0.1", port, path: "/ticks", method: "GET", agent: false }, (response) => {
       response.on("data", (chunk: Buffer) => {
@@ -102,8 +102,8 @@ function sseOnce(port: number): Promise<string> {
   });
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 15_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => boolean | Promise<boolean>, what: string, timeout_ms = 15_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(`timeout waiting for ${what}`);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -111,58 +111,58 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, what: stri
 }
 
 test("receipt (c): 20 program-swap cycles leave no handle, timer, or subscription behind", { skip: SOAK_ENABLED ? false : "set DL_PERF_LOG (scripts/leak-soak.sh)" }, async () => {
-  const hostClockSource = readFileSync(HOST_CLOCK_DL6, "utf8");
+  const host_clock_source = readFileSync(HOST_CLOCK_DL6, "utf8");
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(PORT, scheduler);
+  const served = await start_served(PORT, scheduler);
   let baseline: ResourceCounts | null = null;
-  let baselineRss = 0;
+  let baseline_rss = 0;
 
   try {
     for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
-      assert.equal((await postProgram(served.port, PLAIN_PROGRAM)).statusCode, 200);
-      await postArrivals(served.port, [{ rel: "event", sign: "add", row: [iteration, "cycle"] }]);
+      assert.equal((await post_program(served.port, PLAIN_PROGRAM)).statusCode, 200);
+      await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [iteration, "cycle"] }]);
 
-      const ssePromise = sseOnce(served.port);
-      await waitUntil(() => served.activeSubscribeCount() === 1, `SSE client to register (iteration ${iteration})`);
-      await postArrivals(served.port, [{ rel: "event", sign: "add", row: [iteration, "sse"] }]);
-      await ssePromise;
-      await waitUntil(() => served.activeSubscribeCount() === 0, `SSE teardown (iteration ${iteration})`);
+      const sse_promise = sse_once(served.port);
+      await wait_until(() => served.active_subscribe_count() === 1, `SSE client to register (iteration ${iteration})`);
+      await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [iteration, "sse"] }]);
+      await sse_promise;
+      await wait_until(() => served.active_subscribe_count() === 0, `SSE teardown (iteration ${iteration})`);
 
-      assert.equal((await postProgram(served.port, hostClockSource)).statusCode, 200);
-      await postArrivals(served.port, [{ rel: "seed", sign: "add", row: [`alpha${iteration}`] }]);
+      assert.equal((await post_program(served.port, host_clock_source)).statusCode, 200);
+      await post_arrivals(served.port, [{ rel: "seed", sign: "add", row: [`alpha${iteration}`] }]);
       // ASSERTION 4, every iteration: one program, one interval timer. A swap
       // that failed to tear the previous program's timer down would grow this.
-      await waitUntil(() => scheduler.actions.length === 1, `the interval timer to be the only one (iteration ${iteration})`);
+      await wait_until(() => scheduler.actions.length === 1, `the interval timer to be the only one (iteration ${iteration})`);
 
       // Two warmup iterations before the baseline: the first swap pays for
       // pino's file handle, node's module cache, and libsql's own lazy setup.
       if (iteration === 1) {
-        baseline = resourceCounts();
-        baselineRss = process.memoryUsage().rss;
+        baseline = resource_counts();
+        baseline_rss = process.memoryUsage().rss;
       }
     }
 
     assert.ok(baseline, "baseline sampled");
-    const after = resourceCounts();
+    const after = resource_counts();
     // ASSERTION 1+2: nothing grew, by resource type and by handle type.
-    assert.deepEqual(namesWithGrowth(baseline.resources, after.resources), []);
-    assert.deepEqual(namesWithGrowth(baseline.handles, after.handles), []);
+    assert.deepEqual(names_with_growth(baseline.resources, after.resources), []);
+    assert.deepEqual(names_with_growth(baseline.handles, after.handles), []);
     // ASSERTION 3: every SSE inner is gone.
-    assert.equal(served.activeSubscribeCount(), 0);
+    assert.equal(served.active_subscribe_count(), 0);
     // ASSERTION 5: RSS bounded past warmup.
-    const grownRss = process.memoryUsage().rss;
-    assert.ok(grownRss < baselineRss * 1.25, `rss ${baselineRss} -> ${grownRss}`);
+    const grown_rss = process.memoryUsage().rss;
+    assert.ok(grown_rss < baseline_rss * 1.25, `rss ${baseline_rss} -> ${grown_rss}`);
 
     // ASSERTION 6 (the count-test law): statements per tick do not grow with
     // the number of swaps. The plain program's ticks are the comparable ones.
     const lines = readFileSync(PERF_LOG_PATH!, "utf8").split("\n").filter((line) => line.trim().length > 0);
-    const statementCounts = lines
+    const statement_counts = lines
       .map((line) => JSON.parse(line) as { readonly statements: number; readonly rows: number })
       .filter((entry) => entry.rows > 0)
       .map((entry) => entry.statements);
-    assert.ok(statementCounts.length >= ITERATIONS, `perf log has ${statementCounts.length} data ticks`);
-    const first = statementCounts.slice(0, 5);
-    const last = statementCounts.slice(-5);
+    assert.ok(statement_counts.length >= ITERATIONS, `perf log has ${statement_counts.length} data ticks`);
+    const first = statement_counts.slice(0, 5);
+    const last = statement_counts.slice(-5);
     assert.ok(
       Math.max(...last) <= Math.max(...first),
       `statements per tick grew across swaps: first ${JSON.stringify(first)} last ${JSON.stringify(last)}`,

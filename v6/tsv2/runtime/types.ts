@@ -19,7 +19,7 @@ export type IRowValue = string | number | boolean;
 /** Storage type emitted for each public relation column. Relation references
  * still cross the boundary as their canonical text value.
  *
- * `json` and `text` are the SAME storage (TEXT, and `rowValueFromSql` hands
+ * `json` and `text` are the SAME storage (TEXT, and `row_value_from_sql` hands
  * both back untouched) and differ only at the tick-log encoder, which is the
  * one place the difference is observable: a `json` column's value IS a json
  * value at any top level, a `text` column's value is a string even when its
@@ -27,14 +27,14 @@ export type IRowValue = string | number | boolean;
  * looking at the first character and got both cases wrong (json_flex lab). */
 export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json";
 
-/** One relation row, columns in the rel's declared order (relColumns). */
+/** One relation row, columns in the rel's declared order (rel_columns). */
 export type IRow = readonly IRowValue[];
 
 export type IArrivalSign = "add" | "del";
 
 /**
  * One signed outside-arrival row for one tick, addressed by rel name (must
- * be one of the program's `arrivalTargets`). Mirrors engine.pl's
+ * be one of the program's `arrival_targets`). Mirrors engine.pl's
  * `absorb_arrivals`: `+Row` into a Log rel appends with an engine stamp,
  * `+Row` into a Set rel is membership add, `-Row` is exact-row removal
  * (never valid against a Log rel).
@@ -62,8 +62,8 @@ export interface ISqlSeam {
   readonly db: SqliteDb;
   readonly runner: ISqlRunner;
   /** Rels no caller reads at the boundary; absent means every rel is observed.
-   *  With `ruleObservers` empty too, the rel's event copies are skipped. */
-  readonly unobservedRels?: ReadonlySet<string>;
+   *  With `rule_observers` empty too, the rel's event copies are skipped. */
+  readonly unobserved_rels?: ReadonlySet<string>;
 }
 
 /**
@@ -79,31 +79,31 @@ export interface IRelDelta {
 }
 
 /**
- * One tick's full delta set plus the drain signal. `carryPending` is true
+ * One tick's full delta set plus the drain signal. `carry_pending` is true
  * when this tick either wrote a row via an edge rule, or grew a level rel in
  * a way that itself surfaces as a +delta this tick (engine.pl q4/R2: writes
  * and post-write level growth are next-tick trigger occurrences). The
- * runtime keeps ticking with an empty arrival batch while `carryPending`
+ * runtime keeps ticking with an empty arrival batch while `carry_pending`
  * holds (engine.pl `drain_cap(100)`).
  */
 export interface ITickDeltas {
   readonly rels: readonly IRelDelta[];
-  readonly carryPending: boolean;
+  readonly carry_pending: boolean;
 }
 
 export interface IIncrementalRelationPlan {
   readonly rel: string;
   readonly kind: "log" | "set";
-  readonly tableName: string;
-  readonly deltaTableName: string;
-  readonly frontierTableName: string;
-  readonly nextFrontierTableName: string;
+  readonly table_name: string;
+  readonly delta_table_name: string;
+  readonly frontier_table_name: string;
+  readonly next_frontier_table_name: string;
   readonly columns: readonly string[];
-  readonly columnTypes?: readonly IRowColumnType[];
-  readonly keyIndices?: readonly number[];
-  readonly arrivalAddSql: string | null;
-  readonly arrivalDelSql: string | null;
-  readonly boundarySql: string;
+  readonly column_types?: readonly IRowColumnType[];
+  readonly key_indices?: readonly number[];
+  readonly arrival_add_sql: string | null;
+  readonly arrival_del_sql: string | null;
+  readonly boundary_sql: string;
   /**
    * The DEPARTURE frontier: last tick's net -delta rows of this rel, waiting
    * to fire the arms that bind it with `finalize/1` (engine.pl:tick/7's
@@ -112,33 +112,33 @@ export interface IIncrementalRelationPlan {
    * actually listens to that way, which is what keeps every other relation's
    * DDL and statement text byte-identical to a program with no `finalize` in
    * it at all. Its own DDL and SELECT shape are the same `_phase` / `_sequence`
-   * / columns the arrival frontier uses, so the arm's projectSql is the same
+   * / columns the arrival frontier uses, so the arm's project_sql is the same
    * text with one table name swapped.
    */
-  readonly departureFrontierTableName?: string;
+  readonly departure_frontier_table_name?: string;
   /** Rule readers of this rel's delta/frontier, "name/arity" each; absent
    *  means unknown-so-observed, so a pre-field module is never skipped. */
-  readonly ruleObservers?: readonly string[];
+  readonly rule_observers?: readonly string[];
 }
 
 export interface IIncrementalEdgeStatement {
-  readonly headRel: string;
+  readonly head_rel: string;
   /** "<program>:<name>/<arity>#<ordinal>", lower.pl:statement_rule_ids/3. What
    *  a trace line names instead of counting statements. */
-  readonly ruleId: string;
-  readonly headKind: "log" | "set";
-  readonly headTableName: string;
-  readonly headDeltaTableName: string;
-  readonly headColumns: readonly string[];
-  readonly keyIndices: readonly number[];
-  readonly projectSql: string;
+  readonly rule_id: string;
+  readonly head_kind: "log" | "set";
+  readonly head_table_name: string;
+  readonly head_delta_table_name: string;
+  readonly head_columns: readonly string[];
+  readonly key_indices: readonly number[];
+  readonly project_sql: string;
 }
 
 /**
  * The group-scoped maintenance plan for an AGGREGATE level head
  * (count/sum/min/max). An aggregate row CHANGES rather than only arriving,
  * so neither the monotone delta-join insert nor refCount reconciliation
- * applies; `insertSql` and `supportSql` are null on such a statement and this
+ * applies; `insert_sql` and `support_sql` are null on such a statement and this
  * runs instead.
  *
  * Four steps, all SQL-side: clear the scope table, seed it with the group
@@ -150,104 +150,104 @@ export interface IIncrementalEdgeStatement {
  * under-approximating would be wrong.
  */
 export interface IAggregateLevelPlan {
-  readonly scopeClearSql: string;
-  readonly scopeSeedSql: readonly string[];
-  readonly deleteScopedSql: string;
-  readonly insertScopedSql: readonly string[];
-  readonly deltaMaintained?: boolean;
+  readonly scope_clear_sql: string;
+  readonly scope_seed_sql: readonly string[];
+  readonly delete_scoped_sql: string;
+  readonly insert_scoped_sql: readonly string[];
+  readonly delta_maintained?: boolean;
 }
 
 export interface IIncrementalLevelStatement {
-  readonly headRel: string;
+  readonly head_rel: string;
   /** "<program>:<name>/<arity>#<ordinal>", lower.pl:statement_rule_ids/3. */
-  readonly ruleId: string;
-  readonly headDeltaTableName: string;
-  readonly headColumns: readonly string[];
-  /** null exactly when `aggregateSql` is present. */
-  readonly insertSql: string | null;
-  readonly selectSql: string;
-  readonly recomputeSql: string;
-  /** null exactly when `aggregateSql` is present. */
-  readonly supportSql: readonly [
+  readonly rule_id: string;
+  readonly head_delta_table_name: string;
+  readonly head_columns: readonly string[];
+  /** null exactly when `aggregate_sql` is present. */
+  readonly insert_sql: string | null;
+  readonly select_sql: string;
+  readonly recompute_sql: string;
+  /** null exactly when `aggregate_sql` is present. */
+  readonly support_sql: readonly [
     clear: string,
     seed: string,
     update: string,
-    stageRetract: string,
-    collectZero: string,
-    clearNew: string,
-    fillNew: string,
-    stageAdd: string,
-    stageFrontier: string,
-    stageNextFrontier: string,
-    insertNew: string,
+    stage_retract: string,
+    collect_zero: string,
+    clear_new: string,
+    fill_new: string,
+    stage_add: string,
+    stage_frontier: string,
+    stage_next_frontier: string,
+    insert_new: string,
   ] | null;
-  /** rx `expand` spelling of supportSql[1] for a RECURSIVE head; optional so
+  /** rx `expand` spelling of support_sql[1] for a RECURSIVE head; optional so
    *  pre-expand emitted modules (gen_served) stay loadable. */
-  readonly expandSql?: IExpandSeedPlan | null;
+  readonly expand_sql?: IExpandSeedPlan | null;
   /** In-place maintenance of the same RECURSIVE head; optional for the same
    *  reason. Present only when every rule of the head is monotone. */
-  readonly dredSql?: IDredPlan | null;
+  readonly dred_sql?: IDredPlan | null;
   /** Backend-neutral spelling of the same walks, §2.4 of
    *  plans/2026-08-07-plan-ir-offload-contract.md. P1-B types it as IFixpointIr. */
-  readonly fixpointIr?: unknown;
-  readonly aggregateSql: IAggregateLevelPlan | null;
+  readonly fixpoint_ir?: unknown;
+  readonly aggregate_sql: IAggregateLevelPlan | null;
 }
 
 export interface IExpandSeedPlan {
-  readonly clearASql: string;
-  readonly clearBSql: string;
-  readonly seedSqls: readonly string[];
-  readonly hopABSql: string;
-  readonly hopBASql: string;
-  readonly absorbASql: string;
-  readonly absorbBSql: string;
+  readonly clear_a_sql: string;
+  readonly clear_b_sql: string;
+  readonly seed_sqls: readonly string[];
+  readonly hop_ab_sql: string;
+  readonly hop_ba_sql: string;
+  readonly absorb_a_sql: string;
+  readonly absorb_b_sql: string;
 }
 
 /** Head maintenance with no beside-table: head-row presence IS the truth
  *  `sprefa-store` keeps in `cx_row.weight` (engine.rs:407, :454). */
 export interface IDredPlan {
-  readonly clearPingSql: string;
-  readonly clearPongSql: string;
-  readonly clearConeSql: string;
-  readonly assertSeedSqls: readonly string[];
-  readonly assertHopABSql: string;
-  readonly assertHopBASql: string;
-  readonly commitASql: string;
-  readonly commitBSql: string;
-  readonly arrivalASql: string;
-  readonly arrivalBSql: string;
+  readonly clear_ping_sql: string;
+  readonly clear_pong_sql: string;
+  readonly clear_cone_sql: string;
+  readonly assert_seed_sqls: readonly string[];
+  readonly assert_hop_ab_sql: string;
+  readonly assert_hop_ba_sql: string;
+  readonly commit_a_sql: string;
+  readonly commit_b_sql: string;
+  readonly arrival_a_sql: string;
+  readonly arrival_b_sql: string;
   /** DRed runs BEFORE assert on a mixed tick: a rederived row must not
    *  double-stage. Seeds read `_sign = -1`. */
-  readonly dredSeedSqls: readonly string[];
-  readonly dredHopABSql: string;
-  readonly dredHopBASql: string;
-  readonly coneAbsorbASql: string;
-  readonly coneAbsorbBSql: string;
-  readonly coneTrimSql: string;
-  readonly headDeleteSql: string;
-  readonly rederiveSeedSqls: readonly string[];
-  readonly reviveHopABSql: string;
-  readonly reviveHopBASql: string;
-  readonly coneDropASql: string;
-  readonly coneDropBSql: string;
+  readonly dred_seed_sqls: readonly string[];
+  readonly dred_hop_ab_sql: string;
+  readonly dred_hop_ba_sql: string;
+  readonly cone_absorb_a_sql: string;
+  readonly cone_absorb_b_sql: string;
+  readonly cone_trim_sql: string;
+  readonly head_delete_sql: string;
+  readonly rederive_seed_sqls: readonly string[];
+  readonly revive_hop_ab_sql: string;
+  readonly revive_hop_ba_sql: string;
+  readonly cone_drop_a_sql: string;
+  readonly cone_drop_b_sql: string;
   /** What is left in the cone once the revive walk stops IS the retraction
    *  set; a dead cycle has no surviving anchor and therefore dies. */
-  readonly stageRetractSql: string;
+  readonly stage_retract_sql: string;
   /** Prices the mid-walk bail at cone > head/4. The bail fires before the
    *  head delete, so nothing outside the TEMP tables has moved. */
-  readonly headCountSql: string;
+  readonly head_count_sql: string;
 }
 
 export interface IIncrementalRetentionStatement {
   readonly rel: string;
   readonly count: number;
-  readonly deleteSql: string;
+  readonly delete_sql: string;
 }
 
 export interface IIncrementalProgramPlan {
   readonly safe: boolean;
-  readonly reconcileEveryTick: boolean;
-  readonly retractionGuard: "plain-count-acyclic" | "recursive-cte-reseed";
+  readonly reconcile_every_tick: boolean;
+  readonly retraction_guard: "plain-count-acyclic" | "recursive-cte-reseed";
   readonly relations: readonly IIncrementalRelationPlan[];
   readonly edges: readonly IIncrementalEdgeStatement[];
   readonly levels: readonly IIncrementalLevelStatement[];
@@ -255,59 +255,59 @@ export interface IIncrementalProgramPlan {
 }
 
 export interface IIncrementalRuntime {
-  prepareTick(seam: ISqlSeam, relations: readonly IIncrementalRelationPlan[]): Observable<void>;
-  applyArrivals(
+  prepare_tick(seam: ISqlSeam, relations: readonly IIncrementalRelationPlan[]): Observable<void>;
+  apply_arrivals(
     seam: ISqlSeam,
     arrivals: IArrivalBatch,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  applyEdges(
+  apply_edges(
     seam: ISqlSeam,
     statements: readonly IIncrementalEdgeStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  applyLevelsBeforeEdges(
+  apply_levels_before_edges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  recomputeLevelsBeforeEdges(
+  recompute_levels_before_edges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
-    reconcileEveryTick: boolean,
+    reconcile_every_tick: boolean,
     arrivals: IArrivalBatch,
   ): Observable<void>;
-  mergeNextIntoCurrent(
+  merge_next_into_current(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  applyLevelsAfterEdges(
+  apply_levels_after_edges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  applyRetention(
+  apply_retention(
     seam: ISqlSeam,
     statements: readonly IIncrementalRetentionStatement[],
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void>;
-  recomputeLevelsAfterEdges(
+  recompute_levels_after_edges(
     seam: ISqlSeam,
     statements: readonly IIncrementalLevelStatement[],
     relations: readonly IIncrementalRelationPlan[],
-    reconcileEveryTick: boolean,
+    reconcile_every_tick: boolean,
   ): Observable<void>;
-  readBoundary(
+  read_boundary(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<readonly IRelDelta[]>;
-  stageDepartures(
+  stage_departures(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
     deltas: readonly IRelDelta[],
   ): Observable<void>;
-  promoteFrontiers(
+  promote_frontiers(
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<boolean>;
@@ -328,13 +328,13 @@ export interface IStructTypePlan {
   readonly name: string;
   readonly columns: readonly string[];
   readonly refs: readonly (string | null)[];
-  readonly keyIndices: readonly number[];
+  readonly key_indices: readonly number[];
   /** Reports a requested row whose key exists with different non-key fields. */
-  readonly conflictSql: string;
+  readonly conflict_sql: string;
   /** Batched insertion of target rows absent at their declared key. */
-  readonly internSql: string;
+  readonly intern_sql: string;
   /** Batched dense-ID lookup by declared key. */
-  readonly lookupSql: string;
+  readonly lookup_sql: string;
 }
 
 /** Per parent rel name, the target rel of each column position (`null` for
@@ -351,38 +351,38 @@ export interface IStructPlane {
   intern(
     seam: ISqlSeam,
     types: readonly IStructTypePlan[],
-    refColumns: IStructRefColumns,
+    ref_columns: IStructRefColumns,
     arrivals: IArrivalBatch,
-    applyTargets?: (arrivals: IArrivalBatch) => Observable<unknown>,
+    apply_targets?: (arrivals: IArrivalBatch) => Observable<unknown>,
   ): Observable<IArrivalBatch>;
   /** Canonical JSON: sorted object keys, no whitespace. Transient wire and
    * boundary comparison encoding; never a stored relation payload. */
-  canonicalText(value: unknown): string;
+  canonical_text(value: unknown): string;
 }
 
-/** A `column` row is a child of its rel (parentId = the rel's relId, ordinal =
+/** A `column` row is a child of its rel (parent_id = the rel's rel_id, ordinal =
  *  1-based argument position); a `rel` row carries both as 0. */
 export interface IRelCatalogRow {
-  readonly relId: number;
-  readonly parentId: number;
+  readonly rel_id: number;
+  readonly parent_id: number;
   readonly ordinal: number;
-  readonly localName: string;
+  readonly local_name: string;
   readonly kind: "primitive" | "module" | "rel" | "column";
-  readonly typeId: number;
+  readonly type_id: number;
   readonly arity: number;
-  readonly moduleId: number;
-  readonly hId: string;
-  readonly hSchema: string;
-  readonly hRule: string;
+  readonly module_id: number;
+  readonly h_id: string;
+  readonly h_schema: string;
+  readonly h_rule: string;
 }
 
 /** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
   readonly ddl: readonly string[];
-  readonly relColumns: Readonly<Record<string, readonly string[]>>;
-  readonly relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>;
-  readonly arrivalTargets: readonly string[];
+  readonly rel_columns: Readonly<Record<string, readonly string[]>>;
+  readonly rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>;
+  readonly arrival_targets: readonly string[];
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas>;
 }
 
@@ -430,11 +430,11 @@ export type ITickLogLine = string;
 export interface ITickFold {
   /**
    * Run `program` over `schedule` (one arrival batch per tick), then keep
-   * ticking with an empty batch while the program reports `carryPending`,
+   * ticking with an empty batch while the program reports `carry_pending`,
    * capped at `drainCap` extra ticks (engine.pl `drain_cap(100)`). Emits one
    * formatted log line per tick, schedule ticks first, drain ticks after.
    */
-  run(program: IGenProgram, seam: ISqlSeam, schedule: readonly IArrivalBatch[], drainCap?: number): Observable<ITickLogLine>;
+  run(program: IGenProgram, seam: ISqlSeam, schedule: readonly IArrivalBatch[], drain_cap?: number): Observable<ITickLogLine>;
 }
 
 export interface ITickLogEmitter {
@@ -442,7 +442,7 @@ export interface ITickLogEmitter {
    *  ascending, only nonempty rels, rows sorted by their JSON text, no
    *  spaces, LF terminated by the caller (this returns the line WITHOUT a
    *  trailing newline). */
-  line(tick: number, deltas: ITickDeltas, relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>): ITickLogLine;
+  line(tick: number, deltas: ITickDeltas, rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>): ITickLogLine;
   /** ONE column value as the log encodes it: an integer as a JSON number, a
    *  `json`-typed column as a json VALUE (any top level, canonicalized with
    *  sorted keys and no whitespace), anything else as a JSON string.
@@ -454,7 +454,7 @@ export interface ITickLogEmitter {
    *  `type` is the column's declared type. Omitting it means "not a json
    *  column", which is what every non-json caller wants and what a `ref`
    *  column (already canonical text, rendered as a string) wants too. */
-  valueText(value: IRowValue, type?: IRowColumnType): string;
+  value_text(value: IRowValue, type?: IRowColumnType): string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -484,8 +484,8 @@ export interface IHostPlan {
   readonly inputs: readonly IHostColumnPlan[];
   readonly outputs: readonly IHostColumnPlan[];
   readonly template: string;
-  readonly demandRel: string;
-  readonly responseRel: string;
+  readonly demand_rel: string;
+  readonly response_rel: string;
   readonly execution: string;
 }
 
@@ -537,7 +537,7 @@ export type ISubscribePruneMode = "off" | "on";
  *
  * Ingestion is never pruned (ruling edge_before_first_subscribe: an edge rel
  * ingests eagerly into storage, evaluation is what goes lazy), so every filter
- * that touches storage takes `arrivalTargets` and keeps those rels whether or
+ * that touches storage takes `arrival_targets` and keeps those rels whether or
  * not a query reaches them. Only derivation -- level statements, edge
  * statements and the boot-time level recompute -- is prunable.
  */
@@ -547,30 +547,30 @@ export interface ISubscribeCone {
   relations(
     mode: ISubscribePruneMode,
     relations: readonly IIncrementalRelationPlan[],
-    subscribedRels: readonly ISubscribedRel[],
-    arrivalTargets: readonly string[],
+    subscribed_rels: readonly ISubscribedRel[],
+    arrival_targets: readonly string[],
   ): readonly IIncrementalRelationPlan[];
   levels(
     mode: ISubscribePruneMode,
     statements: readonly IIncrementalLevelStatement[],
-    subscribedRels: readonly ISubscribedRel[],
+    subscribed_rels: readonly ISubscribedRel[],
   ): readonly IIncrementalLevelStatement[];
   edges(
     mode: ISubscribePruneMode,
     statements: readonly IIncrementalEdgeStatement[],
-    subscribedRels: readonly ISubscribedRel[],
+    subscribed_rels: readonly ISubscribedRel[],
   ): readonly IIncrementalEdgeStatement[];
   retention(
     mode: ISubscribePruneMode,
     statements: readonly IIncrementalRetentionStatement[],
-    subscribedRels: readonly ISubscribedRel[],
-    arrivalTargets: readonly string[],
+    subscribed_rels: readonly ISubscribedRel[],
+    arrival_targets: readonly string[],
   ): readonly IIncrementalRetentionStatement[];
   boot(
     mode: ISubscribePruneMode,
     statements: readonly IBootStatement[],
-    subscribedRels: readonly ISubscribedRel[],
-    arrivalTargets: readonly string[],
+    subscribed_rels: readonly ISubscribedRel[],
+    arrival_targets: readonly string[],
   ): readonly IBootStatement[];
 }
 
@@ -582,15 +582,15 @@ export interface ISubscribeCone {
  */
 export interface IServedProgram extends IGenProgram {
   readonly boot: readonly IBootStatement[];
-  readonly finalSelect: Readonly<Record<string, string>>;
-  readonly hostPlans: readonly IHostPlan[];
-  readonly bindPlans: readonly IBindPlan[];
-  readonly queryPlans: readonly IQueryPlan[];
-  readonly subscribedRels: readonly ISubscribedRel[];
-  readonly unsupportedExecution: readonly string[];
+  readonly final_select: Readonly<Record<string, string>>;
+  readonly host_plans: readonly IHostPlan[];
+  readonly bind_plans: readonly IBindPlan[];
+  readonly query_plans: readonly IQueryPlan[];
+  readonly subscribed_rels: readonly ISubscribedRel[];
+  readonly unsupported_execution: readonly string[];
   /** The rows the program's own `INSERT OR IGNORE INTO "__rel"` carries; the
    *  reload plan reads them against what the database already holds. */
-  readonly relCatalog: readonly IRelCatalogRow[];
+  readonly rel_catalog: readonly IRelCatalogRow[];
 }
 
 export interface IProgramCompiler {
@@ -623,7 +623,7 @@ export interface ILiveEngine {
   readonly ticks$: Observable<ITickOutcome>;
   submit(arrivals: IArrivalBatch): Observable<ITickOutcome>;
   /** Current rows of one rel, through the program's own emitted decode SELECT
-   *  (`finalSelect`). Unknown rel names fail loudly. */
+   *  (`final_select`). Unknown rel names fail loudly. */
   rows(rel: string): Observable<readonly IRow[]>;
 }
 
@@ -636,18 +636,18 @@ export interface IWitnessCache {
   /** Drop rows left in 'pending' by a process that died mid-run: the cache row
    *  IS the in-flight lock, and at subscribe time this single-process runner
    *  cannot have anything in flight. */
-  clearDeadLocks(seam: ISqlSeam): Observable<void>;
+  clear_dead_locks(seam: ISqlSeam): Observable<void>;
   /** Witness digests already answered ('done') for one host. */
   answered(seam: ISqlSeam, host: string): Observable<ReadonlySet<string>>;
-  claim(seam: ISqlSeam, host: string, witnessDigest: string): Observable<void>;
-  settle(seam: ISqlSeam, host: string, witnessDigest: string, state: "done" | "error", rows: number): Observable<void>;
+  claim(seam: ISqlSeam, host: string, witness_digest: string): Observable<void>;
+  settle(seam: ISqlSeam, host: string, witness_digest: string, state: "done" | "error", rows: number): Observable<void>;
 }
 
 /** One finished host run, as the app graph carries it. */
 export interface IHostEffectDone {
   readonly host: string;
-  readonly witnessDigest: string;
-  readonly responseRows: number;
+  readonly witness_digest: string;
+  readonly response_rows: number;
   readonly outcome: "done" | "cache_hit" | "error";
 }
 
@@ -720,7 +720,7 @@ export type IServeEvent =
       readonly kind: "listening";
       readonly port: number;
       /** Live SSE client count; the leak receipt asserts it returns to zero. */
-      readonly activeSubscribeCount: () => number;
+      readonly active_subscribe_count: () => number;
       readonly close: () => Observable<void>;
     }
   | { readonly kind: "loaded"; readonly program: string }
@@ -731,7 +731,7 @@ export type IServeEvent =
   | { readonly kind: "served"; readonly method: string; readonly path: string };
 
 export interface IServeConfig {
-  readonly dbUrl: string;
+  readonly db_url: string;
   readonly port: number;
   /** rxjs's own scheduler seam (the F3 precedent in v6/dl's BindConfig): real
    *  serving defaults to `asyncScheduler`, a test injects a `TestScheduler` so
@@ -740,14 +740,14 @@ export interface IServeConfig {
   /** Directory every `watch` glob and every emitted path is relative to.
    *  Defaults to `process.cwd()`. Rows carry ROOT-RELATIVE paths so a program's
    *  findings do not move when the server does. */
-  readonly watchRoot?: string;
+  readonly watch_root?: string;
   /** Watcher coalesce window in milliseconds (default 100). One window is one
    *  arrival batch and therefore one tick; see serve/2_binds.ts. */
-  readonly watchCoalesceMs?: number;
+  readonly watch_coalesce_ms?: number;
   /** The swappable watcher backend (default `NodeWatchSource`). Injected by
    *  the watcher receipt so the seam can be driven without touching a real
    *  filesystem, and the seam a future `@parcel/watcher` adapter replaces. */
-  readonly watchSource?: IWatchSource;
+  readonly watch_source?: IWatchSource;
 }
 
 export interface IServeTsv2 {
@@ -811,30 +811,30 @@ export interface IServeTickLine extends IServeTickEvent {
 /** The runtime half of the trace spine. Publishes; never sinks. */
 export interface IRuntimeTrace {
   readonly enabled: boolean;
-  rule(ruleId: string, rows: number, wallMs: number): void;
+  rule(rule_id: string, rows: number, wall_ms: number): void;
 }
 
 export interface IServeTrace {
-  tick(tick: number, rels: number, rows: number, statements: number, wallMs: number): void;
+  tick(tick: number, rels: number, rows: number, statements: number, wall_ms: number): void;
   effect(
     host: string,
-    witnessDigest: string,
+    witness_digest: string,
     outcome: "done" | "cache_hit" | "error",
     rows: number,
-    wallMs: number,
+    wall_ms: number,
     failure?: unknown,
   ): void;
   bind(rel: string, period: number, bucket: number): void;
   watch(rel: string, glob: string, added: number, removed: number): void;
   /** Idempotent. Installs the one subscriber per channel when DL_PERF_LOG names
    *  a file; a second call with the same env is a no-op. */
-  installFromEnv(): void;
+  install_from_env(): void;
 }
 
 export interface IProcessMemorySnapshot {
-  readonly rssBytes: number;
-  readonly heapUsedBytes: number;
-  readonly externalBytes: number;
+  readonly rss_bytes: number;
+  readonly heap_used_bytes: number;
+  readonly external_bytes: number;
 }
 
 export interface ISqliteObjectBytes {
@@ -843,13 +843,13 @@ export interface ISqliteObjectBytes {
 }
 
 export interface ISqliteStatsSnapshot {
-  readonly pageCount: number;
-  readonly pageSize: number;
-  readonly freelistCount: number;
-  readonly dbBytes: number;
-  readonly freelistBytes: number;
-  readonly dbstatAvailable: boolean;
-  readonly objectBytes: readonly ISqliteObjectBytes[];
+  readonly page_count: number;
+  readonly page_size: number;
+  readonly freelist_count: number;
+  readonly db_bytes: number;
+  readonly freelist_bytes: number;
+  readonly dbstat_available: boolean;
+  readonly object_bytes: readonly ISqliteObjectBytes[];
 }
 
 export interface IServeStatsSnapshot {
@@ -863,11 +863,11 @@ export interface IServeStats {
    *  the vtab (`dbstatAvailable` states which; `objectBytes` is empty when
    *  false, never a guess). One dbstat statement regardless of table count
    *  (the N+1 law applies to stats reads too). */
-  sqliteSnapshot(seam: ISqlSeam, tableNames: readonly string[]): Observable<ISqliteStatsSnapshot>;
+  sqlite_snapshot(seam: ISqlSeam, table_names: readonly string[]): Observable<ISqliteStatsSnapshot>;
   /** `process.memoryUsage()`'s rss/heapUsed/external, read in whatever
    *  process calls this -- the served engine's own process when invoked from
    *  serve/4_http.ts's `GET /stats` handler. */
-  processMemory(): IProcessMemorySnapshot;
+  process_memory(): IProcessMemorySnapshot;
 }
 
 /** Interfaces for standalone exports whose names are fixed by emitted imports. */
@@ -883,7 +883,7 @@ export interface IRowDiff {
  *  `prevRows`/`nextRows` are the FULL row lists (duplicates allowed) for one
  *  rel, read before and after one tick's writes. */
 export interface IMultisetDiff {
-  (prevRows: readonly IRow[], nextRows: readonly IRow[]): IRowDiff;
+  (prev_rows: readonly IRow[], next_rows: readonly IRow[]): IRowDiff;
 }
 
 /** One SQLite value coming back across the driver seam, converted by the
@@ -900,7 +900,7 @@ export interface ISelectRows {
     seam: ISqlSeam,
     sql: string,
     columns: readonly string[],
-    columnTypes?: readonly IRowColumnType[],
+    column_types?: readonly IRowColumnType[],
   ): Observable<IRow[]>;
 }
 
@@ -942,7 +942,7 @@ export interface IWatchRootOf {
  *  bound to one contract: git pathspec used to answer this question at boot and
  *  disagreed with the live answer on 170 of 242 corpus globs. */
 export interface IMatchesWatchGlob {
-  (relativePath: string, glob: string): boolean;
+  (relative_path: string, glob: string): boolean;
 }
 
 /** The bind plans one executor owns, refusing any plan naming an executor that

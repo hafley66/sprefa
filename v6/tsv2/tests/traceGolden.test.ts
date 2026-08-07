@@ -59,18 +59,18 @@ merged(Id) <+ event_a(Id).
 merged(Id) <+ event_b(Id).
 `;
 
-function schemaFields(eventName: string): readonly { readonly key: string; readonly stability: string }[] {
-  const event = TRACE_SCHEMA.find((candidate) => candidate.name === eventName);
-  assert.ok(event, `no trace_event row named ${eventName}`);
+function schema_fields(event_name: string): readonly { readonly key: string; readonly stability: string }[] {
+  const event = TRACE_SCHEMA.find((candidate) => candidate.name === event_name);
+  assert.ok(event, `no trace_event row named ${event_name}`);
   return event.fields;
 }
 
 /** The declared record, in declared order, with the unportable marks dropped.
  *  A field the sink failed to write is named rather than silently absent. */
-function project(line: Record<string, unknown>, eventName: string): Record<string, unknown> {
+function project(line: Record<string, unknown>, event_name: string): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const field of schemaFields(eventName)) {
-    assert.ok(field.key in line, `the sink dropped "${field.key}", which trace_event(${eventName}) declares`);
+  for (const field of schema_fields(event_name)) {
+    assert.ok(field.key in line, `the sink dropped "${field.key}", which trace_event(${event_name}) declares`);
     if (field.stability !== "stable") continue;
     const value = line[field.key];
     if (field.key === "rules" && Array.isArray(value)) {
@@ -86,27 +86,27 @@ function project(line: Record<string, unknown>, eventName: string): Record<strin
 }
 
 test("the declared half of the trace matches the pinned golden", async () => {
-  const logPath = join(mkdtempSync(join(tmpdir(), "trace-golden-")), "perf.jsonl");
+  const log_path = join(mkdtempSync(join(tmpdir(), "trace-golden-")), "perf.jsonl");
   // Read by ServeTrace.installFromEnv() when serve/0_trace.ts first loads, so
   // the import has to happen after this line -- hence the dynamic import.
-  process.env.DL_PERF_LOG = logPath;
-  const { startServed, postProgram, postArrivals } = await import("./serveHelpers.ts");
+  process.env.DL_PERF_LOG = log_path;
+  const { start_served, post_program, post_arrivals } = await import("./serveHelpers.ts");
 
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, PROGRAM);
+    const loaded = await post_program(served.port, PROGRAM);
     assert.equal(loaded.statusCode, 200, loaded.body);
-    await postArrivals(served.port, [
+    await post_arrivals(served.port, [
       { rel: "event_a", sign: "add", row: ["a1"] },
       { rel: "event_a", sign: "add", row: ["a2"] },
       { rel: "event_b", sign: "add", row: ["b1"] },
     ]);
-    await postArrivals(served.port, [{ rel: "event_b", sign: "add", row: ["b2"] }]);
+    await post_arrivals(served.port, [{ rel: "event_b", sign: "add", row: ["b2"] }]);
   } finally {
     await served.stop();
   }
 
-  const actual = `${readFileSync(logPath, "utf8")
+  const actual = `${readFileSync(log_path, "utf8")
     .trim()
     .split("\n")
     .map((line) => JSON.stringify(project(JSON.parse(line) as Record<string, unknown>, "tick_line")))

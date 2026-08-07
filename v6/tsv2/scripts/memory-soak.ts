@@ -91,17 +91,17 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
-import { serveTsv2 } from "../serve/4_http.ts";
-import { postArrivals, postProgram, request } from "../tests/serveHelpers.ts";
+import { serve_tsv2 } from "../serve/4_http.ts";
+import { post_arrivals, post_program, request } from "../tests/serveHelpers.ts";
 
 interface ChurnConfig {
   readonly keys: number;
-  readonly retentionCap: number;
-  readonly sabotageKeepAll: boolean;
+  readonly retention_cap: number;
+  readonly sabotage_keep_all: boolean;
 }
 
-function churnProgram(config: ChurnConfig): string {
-  const retention = config.sabotageKeepAll ? "keep(all)" : `keep(count(${config.retentionCap}))`;
+function churn_program(config: ChurnConfig): string {
+  const retention = config.sabotage_keep_all ? "keep(all)" : `keep(count(${config.retention_cap}))`;
   return [
     "rel session(id: int, tag: text) key(1).",
     `rel activity(id: int, tag: text) log ${retention}.`,
@@ -117,10 +117,10 @@ interface RunningServer {
 }
 
 /** The private, non-retaining subscribe this file's header explains. */
-function startServer(port: number): Promise<RunningServer> {
+function start_server(port: number): Promise<RunningServer> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const running = serveTsv2({ dbUrl: ":memory:", port }).subscribe({
+    const running = serve_tsv2({ db_url: ":memory:", port }).subscribe({
       next: (event) => {
         if (event.kind === "listening" && !settled) {
           settled = true;
@@ -135,38 +135,38 @@ function startServer(port: number): Promise<RunningServer> {
 }
 
 interface Sample {
-  readonly atMs: number;
+  readonly at_ms: number;
   readonly tick: number;
-  readonly rssBytes: number;
-  readonly heapUsedBytes: number;
-  readonly externalBytes: number;
-  readonly pageCount: number;
-  readonly freelistCount: number;
-  readonly dbBytes: number;
-  readonly dbstatAvailable: boolean;
+  readonly rss_bytes: number;
+  readonly heap_used_bytes: number;
+  readonly external_bytes: number;
+  readonly page_count: number;
+  readonly freelist_count: number;
+  readonly db_bytes: number;
+  readonly dbstat_available: boolean;
 }
 
 interface StatsBody {
-  readonly memory: { readonly rssBytes: number; readonly heapUsedBytes: number; readonly externalBytes: number };
-  readonly sqlite: { readonly pageCount: number; readonly freelistCount: number; readonly dbBytes: number; readonly dbstatAvailable: boolean };
+  readonly memory: { readonly rss_bytes: number; readonly heap_used_bytes: number; readonly external_bytes: number };
+  readonly sqlite: { readonly page_count: number; readonly freelist_count: number; readonly db_bytes: number; readonly dbstat_available: boolean };
 }
 
-async function sample(port: number, startedAtMs: number, tick: number): Promise<Sample> {
-  const gcFn = (global as { readonly gc?: () => void }).gc;
-  if (gcFn) gcFn();
+async function sample(port: number, started_at_ms: number, tick: number): Promise<Sample> {
+  const gc_fn = (global as { readonly gc?: () => void }).gc;
+  if (gc_fn) gc_fn();
   const result = await request(port, "/stats?tables=session,activity,session_activity", "GET");
   if (result.statusCode !== 200) throw new Error(`GET /stats -> ${result.statusCode} ${result.body}`);
   const body = JSON.parse(result.body) as StatsBody;
   return {
-    atMs: Date.now() - startedAtMs,
+    at_ms: Date.now() - started_at_ms,
     tick,
-    rssBytes: body.memory.rssBytes,
-    heapUsedBytes: body.memory.heapUsedBytes,
-    externalBytes: body.memory.externalBytes,
-    pageCount: body.sqlite.pageCount,
-    freelistCount: body.sqlite.freelistCount,
-    dbBytes: body.sqlite.dbBytes,
-    dbstatAvailable: body.sqlite.dbstatAvailable,
+    rss_bytes: body.memory.rss_bytes,
+    heap_used_bytes: body.memory.heap_used_bytes,
+    external_bytes: body.memory.external_bytes,
+    page_count: body.sqlite.page_count,
+    freelist_count: body.sqlite.freelist_count,
+    db_bytes: body.sqlite.db_bytes,
+    dbstat_available: body.sqlite.dbstat_available,
   };
 }
 
@@ -200,13 +200,13 @@ interface Finding {
   readonly detail: string;
 }
 
-function checkFlatMean(name: string, secondQuarterMean: number, finalQuarterMean: number, tolerance: number): Finding {
-  const ceiling = secondQuarterMean * (1 + tolerance);
-  const ok = finalQuarterMean <= ceiling;
+function check_flat_mean(name: string, second_quarter_mean: number, final_quarter_mean: number, tolerance: number): Finding {
+  const ceiling = second_quarter_mean * (1 + tolerance);
+  const ok = final_quarter_mean <= ceiling;
   return {
     name,
     ok,
-    detail: `second-quarter mean ${secondQuarterMean.toFixed(1)}, final-quarter mean ${finalQuarterMean.toFixed(1)}, ceiling ${ceiling.toFixed(1)} (tolerance +${(tolerance * 100).toFixed(0)}%)`,
+    detail: `second-quarter mean ${second_quarter_mean.toFixed(1)}, final-quarter mean ${final_quarter_mean.toFixed(1)}, ceiling ${ceiling.toFixed(1)} (tolerance +${(tolerance * 100).toFixed(0)}%)`,
   };
 }
 
@@ -215,9 +215,9 @@ interface PerfLine {
   readonly statements: number;
 }
 
-function readStatementCounts(perfLogPath: string): readonly number[] {
-  if (!existsSync(perfLogPath)) return [];
-  return readFileSync(perfLogPath, "utf8")
+function read_statement_counts(perf_log_path: string): readonly number[] {
+  if (!existsSync(perf_log_path)) return [];
+  return readFileSync(perf_log_path, "utf8")
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as PerfLine)
@@ -234,117 +234,117 @@ function readStatementCounts(perfLogPath: string): readonly number[] {
  * Comparing quarter 2 to quarter 4 -- both fully inside the post-warmup
  * steady state at this soak's default cadence (cap reached well inside
  * quarter 1) -- is the honest form of the same count-test law check). */
-function checkStatementsFlat(statementCounts: readonly number[]): Finding {
-  if (statementCounts.length < 8) {
-    return { name: "statements_per_tick_flat", ok: false, detail: `perf log has only ${statementCounts.length} data ticks, need >= 8` };
+function check_statements_flat(statement_counts: readonly number[]): Finding {
+  if (statement_counts.length < 8) {
+    return { name: "statements_per_tick_flat", ok: false, detail: `perf log has only ${statement_counts.length} data ticks, need >= 8` };
   }
-  const quartered = quarters(statementCounts);
-  const secondQuarterMax = Math.max(...quartered[1]);
-  const finalQuarterMax = Math.max(...quartered[3]);
+  const quartered = quarters(statement_counts);
+  const second_quarter_max = Math.max(...quartered[1]);
+  const final_quarter_max = Math.max(...quartered[3]);
   return {
     name: "statements_per_tick_flat",
-    ok: finalQuarterMax <= secondQuarterMax,
-    detail: `second-quarter max ${secondQuarterMax}, final-quarter max ${finalQuarterMax} (${statementCounts.length} data ticks total)`,
+    ok: final_quarter_max <= second_quarter_max,
+    detail: `second-quarter max ${second_quarter_max}, final-quarter max ${final_quarter_max} (${statement_counts.length} data ticks total)`,
   };
 }
 
 async function main(): Promise<void> {
   const port = Number(process.env.TSV2_SOAK_PORT ?? "17571");
-  const durationS = Number(process.env.TSV2_SOAK_DURATION_S ?? "100");
-  const arrivalIntervalMs = Number(process.env.TSV2_SOAK_ARRIVAL_MS ?? "40");
-  const sampleIntervalMs = Number(process.env.TSV2_SOAK_SAMPLE_MS ?? "1000");
+  const duration_s = Number(process.env.TSV2_SOAK_DURATION_S ?? "100");
+  const arrival_interval_ms = Number(process.env.TSV2_SOAK_ARRIVAL_MS ?? "40");
+  const sample_interval_ms = Number(process.env.TSV2_SOAK_SAMPLE_MS ?? "1000");
   const keys = Number(process.env.TSV2_SOAK_KEYS ?? "25");
-  const retentionCap = Number(process.env.TSV2_SOAK_RETENTION_CAP ?? "200");
+  const retention_cap = Number(process.env.TSV2_SOAK_RETENTION_CAP ?? "200");
   const tolerance = Number(process.env.TSV2_SOAK_TOLERANCE ?? "0.10");
-  const sabotageKeepAll = process.env.TSV2_SOAK_SABOTAGE === "keep_all";
-  const perfLogPath = process.env.DL_PERF_LOG;
-  const receiptPath = process.env.TSV2_SOAK_RECEIPT;
-  if (perfLogPath === undefined) {
+  const sabotage_keep_all = process.env.TSV2_SOAK_SABOTAGE === "keep_all";
+  const perf_log_path = process.env.DL_PERF_LOG;
+  const receipt_path = process.env.TSV2_SOAK_RECEIPT;
+  if (perf_log_path === undefined) {
     process.stderr.write("TSV2_SOAK_FAIL: DL_PERF_LOG must be set (scripts/memory-soak.sh sets it)\n");
     process.exitCode = 1;
     return;
   }
-  if (receiptPath === undefined) {
+  if (receipt_path === undefined) {
     process.stderr.write("TSV2_SOAK_FAIL: TSV2_SOAK_RECEIPT must be set (scripts/memory-soak.sh sets it)\n");
     process.exitCode = 1;
     return;
   }
 
-  const totalTicks = Math.max(1, Math.round((durationS * 1000) / arrivalIntervalMs));
-  const sampleEveryNTicks = Math.max(1, Math.round(sampleIntervalMs / arrivalIntervalMs));
+  const total_ticks = Math.max(1, Math.round((duration_s * 1000) / arrival_interval_ms));
+  const sample_every_n_ticks = Math.max(1, Math.round(sample_interval_ms / arrival_interval_ms));
 
   process.stdout.write(
-    `memory-soak: port=${port} duration=${durationS}s ticks=${totalTicks} arrival_interval=${arrivalIntervalMs}ms ` +
-      `sample_interval=${sampleIntervalMs}ms keys=${keys} retention_cap=${retentionCap} tolerance=${tolerance} ` +
-      `sabotage=${sabotageKeepAll ? "keep_all" : "none"}\n`,
+    `memory-soak: port=${port} duration=${duration_s}s ticks=${total_ticks} arrival_interval=${arrival_interval_ms}ms ` +
+      `sample_interval=${sample_interval_ms}ms keys=${keys} retention_cap=${retention_cap} tolerance=${tolerance} ` +
+      `sabotage=${sabotage_keep_all ? "keep_all" : "none"}\n`,
   );
 
-  const server = await startServer(port);
-  const startedAtMs = Date.now();
+  const server = await start_server(port);
+  const started_at_ms = Date.now();
   const samples: Sample[] = [];
 
   try {
-    const loaded = await postProgram(server.port, churnProgram({ keys, retentionCap, sabotageKeepAll }));
+    const loaded = await post_program(server.port, churn_program({ keys, retention_cap, sabotage_keep_all }));
     if (loaded.statusCode !== 200) throw new Error(`POST /program -> ${loaded.statusCode} ${loaded.body}`);
 
     // Warmup: every key gets a session row once, so the first churn tick that
     // touches a key already has a `latest(session(...))` match (module header).
-    const warmupBatch = Array.from({ length: keys }, (_unused, key) => ({
+    const warmup_batch = Array.from({ length: keys }, (_unused, key) => ({
       rel: "session" as const,
       sign: "add" as const,
       row: [key, `warmup-${key}`] as readonly (string | number)[],
     }));
-    await postArrivals(server.port, warmupBatch);
+    await post_arrivals(server.port, warmup_batch);
 
-    samples.push(await sample(server.port, startedAtMs, 0));
+    samples.push(await sample(server.port, started_at_ms, 0));
 
-    for (let tick = 1; tick <= totalTicks; tick += 1) {
+    for (let tick = 1; tick <= total_ticks; tick += 1) {
       const key = tick % keys;
-      await postArrivals(server.port, [
+      await post_arrivals(server.port, [
         { rel: "session", sign: "add", row: [key, `tag-${tick}`] },
         { rel: "activity", sign: "add", row: [key, `activity-${tick}`] },
       ]);
-      if (tick % sampleEveryNTicks === 0 || tick === totalTicks) {
-        samples.push(await sample(server.port, startedAtMs, tick));
+      if (tick % sample_every_n_ticks === 0 || tick === total_ticks) {
+        samples.push(await sample(server.port, started_at_ms, tick));
       }
-      await sleep(arrivalIntervalMs);
+      await sleep(arrival_interval_ms);
     }
   } finally {
     server.stop();
   }
 
-  writeFileSync(receiptPath, samples.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+  writeFileSync(receipt_path, samples.map((entry) => JSON.stringify(entry)).join("\n") + "\n", "utf8");
 
   const findings: Finding[] = [];
   const quartered = quarters(samples);
   if (quartered[0].length < 2) {
     findings.push({ name: "enough_samples", ok: false, detail: `only ${samples.length} samples total, need enough for 4 quarters of >= 2 each` });
   } else {
-    const secondQuarter = quartered[1];
-    const finalQuarter = quartered[3];
-    findings.push(checkFlatMean("rss_flat", mean(secondQuarter.map((entry) => entry.rssBytes)), mean(finalQuarter.map((entry) => entry.rssBytes)), tolerance));
-    findings.push(checkFlatMean("heap_used_flat", mean(secondQuarter.map((entry) => entry.heapUsedBytes)), mean(finalQuarter.map((entry) => entry.heapUsedBytes)), tolerance));
-    findings.push(checkFlatMean("sqlite_page_count_flat", mean(secondQuarter.map((entry) => entry.pageCount)), mean(finalQuarter.map((entry) => entry.pageCount)), tolerance));
-    const dbstatAvailable = samples[samples.length - 1]?.dbstatAvailable ?? false;
-    findings.push({ name: "dbstat_available", ok: dbstatAvailable, detail: dbstatAvailable ? "dbstat vtab answered through this driver" : "dbstat unavailable -- PRAGMA-only fallback in effect" });
+    const second_quarter = quartered[1];
+    const final_quarter = quartered[3];
+    findings.push(check_flat_mean("rss_flat", mean(second_quarter.map((entry) => entry.rss_bytes)), mean(final_quarter.map((entry) => entry.rss_bytes)), tolerance));
+    findings.push(check_flat_mean("heap_used_flat", mean(second_quarter.map((entry) => entry.heap_used_bytes)), mean(final_quarter.map((entry) => entry.heap_used_bytes)), tolerance));
+    findings.push(check_flat_mean("sqlite_page_count_flat", mean(second_quarter.map((entry) => entry.page_count)), mean(final_quarter.map((entry) => entry.page_count)), tolerance));
+    const dbstat_available = samples[samples.length - 1]?.dbstat_available ?? false;
+    findings.push({ name: "dbstat_available", ok: dbstat_available, detail: dbstat_available ? "dbstat vtab answered through this driver" : "dbstat unavailable -- PRAGMA-only fallback in effect" });
   }
-  findings.push(checkStatementsFlat(readStatementCounts(perfLogPath)));
+  findings.push(check_statements_flat(read_statement_counts(perf_log_path)));
 
   for (const finding of findings) {
     process.stdout.write(`${finding.ok ? "PASS" : "FAIL"}  ${finding.name}: ${finding.detail}\n`);
   }
-  process.stdout.write(`receipt: ${receiptPath} (${samples.length} samples)\n`);
+  process.stdout.write(`receipt: ${receipt_path} (${samples.length} samples)\n`);
 
   // dbstat_available is informational (a fallback exists and is documented,
   // module header); it does not gate PASS/FAIL on its own.
   const gating = findings.filter((finding) => finding.name !== "dbstat_available");
-  const allOk = gating.every((finding) => finding.ok);
-  if (allOk) {
+  const all_ok = gating.every((finding) => finding.ok);
+  if (all_ok) {
     process.stdout.write("MEMORY SOAK HOLDS: node memory pressure stayed flat under sustained churn.\n");
     process.exitCode = 0;
   } else {
-    const failedNames = gating.filter((finding) => !finding.ok).map((finding) => finding.name);
-    process.stderr.write(`TSV2_SOAK_FAIL: ${failedNames.join(", ")}\n`);
+    const failed_names = gating.filter((finding) => !finding.ok).map((finding) => finding.name);
+    process.stderr.write(`TSV2_SOAK_FAIL: ${failed_names.join(", ")}\n`);
     process.exitCode = 1;
   }
 }

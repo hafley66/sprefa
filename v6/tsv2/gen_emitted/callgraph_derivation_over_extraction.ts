@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: callgraph_derivation_over_extraction.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -171,52 +171,52 @@ const ddl: readonly string[] = [
   `CREATE INDEX "calls_zero" ON "calls" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   call: ["path", "callee"],
   calls: ["caller", "callee"],
   def: ["path", "name", "kind"],
   node_fact: ["path", "record", "kind", "name"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   call: ["text", "text"],
   calls: ["text", "text"],
   def: ["text", "text", "text"],
   node_fact: ["text", "text", "text", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "callgraph_derivation_over_extraction", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "7790409de92ee063", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "call", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "3d61a222cd4d2d4d", hSchema: "b69e9451aa3f3569", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ec8418ff705a0779", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "callee", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8b39cb2d22982ad3", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "calls", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "9992a499eebfe7c5", hSchema: "8451450d74eefcb3", hRule: "6587841ed29173aa" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "caller", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b703d42f5f789e27", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "callee", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "efc5930d0e4185d0", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "def", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "a90f11058c3b2e8a", hSchema: "f55880ff19517ca8", hRule: "fd949436867474fa" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "888a417c55624316", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 13, ordinal: 2, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "acdbb5a781dcac8e", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 13, ordinal: 3, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2e4e6037a3c831aa", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 6, ordinal: 0, localName: "node_fact", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "0c511d71e3d6626f", hSchema: "611d85d232905b0f", hRule: "" },
-  { relId: 18, parentId: 17, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "01f907109bb6a5f3", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 17, ordinal: 2, localName: "record", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b93aa678b52c7902", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 17, ordinal: 3, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "cc6b42e2e5323963", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 17, ordinal: 4, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "042ca949cb4bc4f4", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "callgraph_derivation_over_extraction", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "7790409de92ee063", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "call", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "3d61a222cd4d2d4d", h_schema: "b69e9451aa3f3569", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ec8418ff705a0779", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "callee", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8b39cb2d22982ad3", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "calls", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "9992a499eebfe7c5", h_schema: "8451450d74eefcb3", h_rule: "6587841ed29173aa" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "caller", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b703d42f5f789e27", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "callee", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "efc5930d0e4185d0", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "def", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "a90f11058c3b2e8a", h_schema: "f55880ff19517ca8", h_rule: "fd949436867474fa" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "888a417c55624316", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "acdbb5a781dcac8e", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 13, ordinal: 3, local_name: "kind", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "2e4e6037a3c831aa", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 6, ordinal: 0, local_name: "node_fact", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "0c511d71e3d6626f", h_schema: "611d85d232905b0f", h_rule: "" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "01f907109bb6a5f3", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 17, ordinal: 2, local_name: "record", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b93aa678b52c7902", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 17, ordinal: 3, local_name: "kind", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "cc6b42e2e5323963", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 17, ordinal: 4, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "042ca949cb4bc4f4", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   call: ["text", "text"],
   calls: ["text", "text"],
   def: ["text", "text", "text"],
   node_fact: ["text", "text", "text", "text"],
 };
 
-const arrivalTargets: readonly string[] = ["call", "node_fact"];
+const arrival_targets: readonly string[] = ["call", "node_fact"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "def", sql: `DELETE FROM "def"`, params: [] },
@@ -232,28 +232,28 @@ type Snapshot = {
   readonly node_fact: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    call: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "call"`, relColumns.call!, relColumnTypes.call!),
-    calls: selectRows(seam, `SELECT CASE WHEN json_valid("caller") AND json_type("caller") = 'object' AND json_type("caller", '$.fn') = 'text' AND json_type("caller", '$.args') = 'array' THEN json_extract("caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller", '$.args')), '') || ')' ELSE "caller" END AS "caller", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "calls"`, relColumns.calls!, relColumnTypes.calls!),
-    def: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "def"`, relColumns.def!, relColumnTypes.def!),
-    node_fact: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' AND json_type("record", '$.fn') = 'text' AND json_type("record", '$.args') = 'array' THEN json_extract("record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("record", '$.args')), '') || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "node_fact"`, relColumns.node_fact!, relColumnTypes.node_fact!),
+    call: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "call"`, rel_columns.call!, rel_column_types.call!),
+    calls: select_rows(seam, `SELECT CASE WHEN json_valid("caller") AND json_type("caller") = 'object' AND json_type("caller", '$.fn') = 'text' AND json_type("caller", '$.args') = 'array' THEN json_extract("caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller", '$.args')), '') || ')' ELSE "caller" END AS "caller", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "calls"`, rel_columns.calls!, rel_column_types.calls!),
+    def: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "def"`, rel_columns.def!, rel_column_types.def!),
+    node_fact: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' AND json_type("record", '$.fn') = 'text' AND json_type("record", '$.args') = 'array' THEN json_extract("record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("record", '$.args')), '') || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "node_fact"`, rel_columns.node_fact!, rel_column_types.node_fact!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   call: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "call"`,
   calls: `SELECT CASE WHEN json_valid("caller") AND json_type("caller") = 'object' AND json_type("caller", '$.fn') = 'text' AND json_type("caller", '$.args') = 'array' THEN json_extract("caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller", '$.args')), '') || ')' ELSE "caller" END AS "caller", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee" FROM "calls"`,
   def: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "def"`,
   node_fact: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' AND json_type("record", '$.fn') = 'text' AND json_type("record", '$.args') = 'array' THEN json_extract("record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("record", '$.args')), '') || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "node_fact"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  call: { kind: "set", addSql: `INSERT OR IGNORE INTO "call" ("path", "callee") VALUES (?, ?)`, delSql: `DELETE FROM "call" WHERE "path" = ? AND "callee" = ?` },
-  node_fact: { kind: "set", addSql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") VALUES (?, ?, ?, ?)`, delSql: `DELETE FROM "node_fact" WHERE "path" = ? AND "record" = ? AND "kind" = ? AND "name" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  call: { kind: "set", add_sql: `INSERT OR IGNORE INTO "call" ("path", "callee") VALUES (?, ?)`, del_sql: `DELETE FROM "call" WHERE "path" = ? AND "callee" = ?` },
+  node_fact: { kind: "set", add_sql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "node_fact" WHERE "path" = ? AND "record" = ? AND "kind" = ? AND "name" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`callgraph_derivation_over_extraction: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -262,37 +262,37 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`callgraph_derivation_over_extraction: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`callgraph_derivation_over_extraction: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "call", kind: "set", tableName: "call", deltaTableName: "__delta_call", frontierTableName: "__frontier_call", nextFrontierTableName: "__next_frontier_call", columns: ["path", "callee"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "call" ("path", "callee") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "callee"`, arrivalDelSql: `DELETE FROM "call" WHERE ("path", "callee") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "callee"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_call" WHERE "_sign" IN (-1, 1) GROUP BY "path", "callee", "_sign"`, ruleObservers: ["calls/2"] },
-  { rel: "calls", kind: "set", tableName: "calls", deltaTableName: "__delta_calls", frontierTableName: "__frontier_calls", nextFrontierTableName: "__next_frontier_calls", columns: ["caller", "callee"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("caller") AND json_type("caller") = 'object' AND json_type("caller", '$.fn') = 'text' AND json_type("caller", '$.args') = 'array' THEN json_extract("caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller", '$.args')), '') || ')' ELSE "caller" END AS "caller", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_calls" WHERE "_sign" IN (-1, 1) GROUP BY "caller", "callee", "_sign"`, ruleObservers: [] },
-  { rel: "def", kind: "set", tableName: "def", deltaTableName: "__delta_def", frontierTableName: "__frontier_def", nextFrontierTableName: "__next_frontier_def", columns: ["path", "name", "kind"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "kind", "_sign"`, ruleObservers: ["calls/2"] },
-  { rel: "node_fact", kind: "set", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "record", "kind", "name"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "record", "kind", "name"`, arrivalDelSql: `DELETE FROM "node_fact" WHERE ("path", "record", "kind", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "record", "kind", "name"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' AND json_type("record", '$.fn') = 'text' AND json_type("record", '$.args') = 'array' THEN json_extract("record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("record", '$.args')), '') || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "record", "kind", "name", "_sign"`, ruleObservers: ["def/3"] },
+  { rel: "call", kind: "set", table_name: "call", delta_table_name: "__delta_call", frontier_table_name: "__frontier_call", next_frontier_table_name: "__next_frontier_call", columns: ["path", "callee"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "call" ("path", "callee") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "callee"`, arrival_del_sql: `DELETE FROM "call" WHERE ("path", "callee") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "callee"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_call" WHERE "_sign" IN (-1, 1) GROUP BY "path", "callee", "_sign"`, rule_observers: ["calls/2"] },
+  { rel: "calls", kind: "set", table_name: "calls", delta_table_name: "__delta_calls", frontier_table_name: "__frontier_calls", next_frontier_table_name: "__next_frontier_calls", columns: ["caller", "callee"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("caller") AND json_type("caller") = 'object' AND json_type("caller", '$.fn') = 'text' AND json_type("caller", '$.args') = 'array' THEN json_extract("caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller", '$.args')), '') || ')' ELSE "caller" END AS "caller", CASE WHEN json_valid("callee") AND json_type("callee") = 'object' AND json_type("callee", '$.fn') = 'text' AND json_type("callee", '$.args') = 'array' THEN json_extract("callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee", '$.args')), '') || ')' ELSE "callee" END AS "callee", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_calls" WHERE "_sign" IN (-1, 1) GROUP BY "caller", "callee", "_sign"`, rule_observers: [] },
+  { rel: "def", kind: "set", table_name: "def", delta_table_name: "__delta_def", frontier_table_name: "__frontier_def", next_frontier_table_name: "__next_frontier_def", columns: ["path", "name", "kind"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "kind", "_sign"`, rule_observers: ["calls/2"] },
+  { rel: "node_fact", kind: "set", table_name: "node_fact", delta_table_name: "__delta_node_fact", frontier_table_name: "__frontier_node_fact", next_frontier_table_name: "__next_frontier_node_fact", columns: ["path", "record", "kind", "name"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "record", "kind", "name"`, arrival_del_sql: `DELETE FROM "node_fact" WHERE ("path", "record", "kind", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "record", "kind", "name"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("record") AND json_type("record") = 'object' AND json_type("record", '$.fn') = 'text' AND json_type("record", '$.args') = 'array' THEN json_extract("record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("record", '$.args')), '') || ')' ELSE "record" END AS "record", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "record", "kind", "name", "_sign"`, rule_observers: ["def/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "def", ruleId: "callgraph_derivation_over_extraction:def/3#1", headDeltaTableName: "__delta_def", headColumns: ["path", "name", "kind"], insertSql: `INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT DISTINCT d0."path", d0."name", d0."kind" FROM "__frontier_node_fact" d0 WHERE d0."_phase" >= 0 AND d0."record" = 'node' RETURNING "path", "name", "kind"`, selectSql: `SELECT "path", "name", "kind" FROM "def"`, recomputeSql: `DELETE FROM "def";
-INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT b0."path", b0."name", b0."kind" FROM "node_fact" b0 WHERE b0."record" = 'node'`, supportSql: [`DELETE FROM "__support_next_def"`, `INSERT INTO "__support_next_def" ("path", "name", "kind", "__refcount") SELECT "path", "name", "kind", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."name" AS "name", b0."kind" AS "kind", count(*) AS "__refcount" FROM "node_fact" b0 WHERE b0."record" = 'node' GROUP BY b0."path", b0."name", b0."kind") GROUP BY "path", "name", "kind"`, `UPDATE "def" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_def" n WHERE n."path" = h."path" AND n."name" = h."name" AND n."kind" = h."kind"), 0)`, `INSERT INTO "__delta_def" ("_sign", "_sequence", "path", "name", "kind") SELECT -1, row_number() OVER () - 1, "path", "name", "kind" FROM "def" WHERE "__refcount" <= 0`, `DELETE FROM "def" WHERE "__refcount" <= 0`, `DELETE FROM "__new_def"`, `INSERT INTO "__new_def" ("path", "name", "kind", "__refcount") SELECT n."path", n."name", n."kind", n."__refcount" FROM "__support_next_def" n LEFT JOIN "def" h ON n."path" = h."path" AND n."name" = h."name" AND n."kind" = h."kind" WHERE h."path" IS NULL`, `INSERT INTO "__delta_def" ("_sign", "_sequence", "path", "name", "kind") SELECT 1, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT INTO "__frontier_def" ("_phase", "_sequence", "path", "name", "kind") SELECT ?, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT INTO "__next_frontier_def" ("_phase", "_sequence", "path", "name", "kind") SELECT ?, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT OR IGNORE INTO "def" ("path", "name", "kind", "__refcount") SELECT n."path", n."name", n."kind", n."__refcount" FROM "__support_next_def" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "calls", ruleId: "callgraph_derivation_over_extraction:calls/2#1", headDeltaTableName: "__delta_calls", headColumns: ["caller", "callee"], insertSql: `INSERT OR IGNORE INTO "calls" ("caller", "callee") SELECT DISTINCT d0."name", b0."callee" FROM "__frontier_def" d0, "call" b0, "def" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."name" = b0."callee" AND (d0."name" <> b0."callee") UNION ALL SELECT DISTINCT b0."name", d0."callee" FROM "__frontier_call" d0, "def" b0, "def" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."name" = d0."callee" AND (b0."name" <> d0."callee") UNION ALL SELECT DISTINCT b0."name", d0."name" FROM "__frontier_def" d0, "def" b0, "call" b1 WHERE d0."_phase" >= 0 AND b1."path" = b0."path" AND b1."callee" = d0."name" AND (b0."name" <> d0."name") RETURNING "caller", "callee"`, selectSql: `SELECT "caller", "callee" FROM "calls"`, recomputeSql: `DELETE FROM "calls";
-INSERT OR IGNORE INTO "calls" ("caller", "callee") SELECT b0."name", b1."callee" FROM "def" b0, "call" b1, "def" b2 WHERE b1."path" = b0."path" AND b2."name" = b1."callee" AND (b0."name" <> b1."callee")`, supportSql: [`DELETE FROM "__support_next_calls"`, `INSERT INTO "__support_next_calls" ("caller", "callee", "__refcount") SELECT "caller", "callee", sum("__refcount") FROM (SELECT b0."name" AS "caller", b1."callee" AS "callee", count(*) AS "__refcount" FROM "def" b0, "call" b1, "def" b2 WHERE b1."path" = b0."path" AND b2."name" = b1."callee" AND (b0."name" <> b1."callee") GROUP BY b0."name", b1."callee") GROUP BY "caller", "callee"`, `UPDATE "calls" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_calls" n WHERE n."caller" = h."caller" AND n."callee" = h."callee"), 0)`, `INSERT INTO "__delta_calls" ("_sign", "_sequence", "caller", "callee") SELECT -1, row_number() OVER () - 1, "caller", "callee" FROM "calls" WHERE "__refcount" <= 0`, `DELETE FROM "calls" WHERE "__refcount" <= 0`, `DELETE FROM "__new_calls"`, `INSERT INTO "__new_calls" ("caller", "callee", "__refcount") SELECT n."caller", n."callee", n."__refcount" FROM "__support_next_calls" n LEFT JOIN "calls" h ON n."caller" = h."caller" AND n."callee" = h."callee" WHERE h."caller" IS NULL`, `INSERT INTO "__delta_calls" ("_sign", "_sequence", "caller", "callee") SELECT 1, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT INTO "__frontier_calls" ("_phase", "_sequence", "caller", "callee") SELECT ?, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT INTO "__next_frontier_calls" ("_phase", "_sequence", "caller", "callee") SELECT ?, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT OR IGNORE INTO "calls" ("caller", "callee", "__refcount") SELECT n."caller", n."callee", n."__refcount" FROM "__support_next_calls" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "def", rule_id: "callgraph_derivation_over_extraction:def/3#1", head_delta_table_name: "__delta_def", head_columns: ["path", "name", "kind"], insert_sql: `INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT DISTINCT d0."path", d0."name", d0."kind" FROM "__frontier_node_fact" d0 WHERE d0."_phase" >= 0 AND d0."record" = 'node' RETURNING "path", "name", "kind"`, select_sql: `SELECT "path", "name", "kind" FROM "def"`, recompute_sql: `DELETE FROM "def";
+INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT b0."path", b0."name", b0."kind" FROM "node_fact" b0 WHERE b0."record" = 'node'`, support_sql: [`DELETE FROM "__support_next_def"`, `INSERT INTO "__support_next_def" ("path", "name", "kind", "__refcount") SELECT "path", "name", "kind", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."name" AS "name", b0."kind" AS "kind", count(*) AS "__refcount" FROM "node_fact" b0 WHERE b0."record" = 'node' GROUP BY b0."path", b0."name", b0."kind") GROUP BY "path", "name", "kind"`, `UPDATE "def" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_def" n WHERE n."path" = h."path" AND n."name" = h."name" AND n."kind" = h."kind"), 0)`, `INSERT INTO "__delta_def" ("_sign", "_sequence", "path", "name", "kind") SELECT -1, row_number() OVER () - 1, "path", "name", "kind" FROM "def" WHERE "__refcount" <= 0`, `DELETE FROM "def" WHERE "__refcount" <= 0`, `DELETE FROM "__new_def"`, `INSERT INTO "__new_def" ("path", "name", "kind", "__refcount") SELECT n."path", n."name", n."kind", n."__refcount" FROM "__support_next_def" n LEFT JOIN "def" h ON n."path" = h."path" AND n."name" = h."name" AND n."kind" = h."kind" WHERE h."path" IS NULL`, `INSERT INTO "__delta_def" ("_sign", "_sequence", "path", "name", "kind") SELECT 1, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT INTO "__frontier_def" ("_phase", "_sequence", "path", "name", "kind") SELECT ?, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT INTO "__next_frontier_def" ("_phase", "_sequence", "path", "name", "kind") SELECT ?, "rowid" - 1, "path", "name", "kind" FROM "__new_def"`, `INSERT OR IGNORE INTO "def" ("path", "name", "kind", "__refcount") SELECT n."path", n."name", n."kind", n."__refcount" FROM "__support_next_def" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "calls", rule_id: "callgraph_derivation_over_extraction:calls/2#1", head_delta_table_name: "__delta_calls", head_columns: ["caller", "callee"], insert_sql: `INSERT OR IGNORE INTO "calls" ("caller", "callee") SELECT DISTINCT d0."name", b0."callee" FROM "__frontier_def" d0, "call" b0, "def" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."name" = b0."callee" AND (d0."name" <> b0."callee") UNION ALL SELECT DISTINCT b0."name", d0."callee" FROM "__frontier_call" d0, "def" b0, "def" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."name" = d0."callee" AND (b0."name" <> d0."callee") UNION ALL SELECT DISTINCT b0."name", d0."name" FROM "__frontier_def" d0, "def" b0, "call" b1 WHERE d0."_phase" >= 0 AND b1."path" = b0."path" AND b1."callee" = d0."name" AND (b0."name" <> d0."name") RETURNING "caller", "callee"`, select_sql: `SELECT "caller", "callee" FROM "calls"`, recompute_sql: `DELETE FROM "calls";
+INSERT OR IGNORE INTO "calls" ("caller", "callee") SELECT b0."name", b1."callee" FROM "def" b0, "call" b1, "def" b2 WHERE b1."path" = b0."path" AND b2."name" = b1."callee" AND (b0."name" <> b1."callee")`, support_sql: [`DELETE FROM "__support_next_calls"`, `INSERT INTO "__support_next_calls" ("caller", "callee", "__refcount") SELECT "caller", "callee", sum("__refcount") FROM (SELECT b0."name" AS "caller", b1."callee" AS "callee", count(*) AS "__refcount" FROM "def" b0, "call" b1, "def" b2 WHERE b1."path" = b0."path" AND b2."name" = b1."callee" AND (b0."name" <> b1."callee") GROUP BY b0."name", b1."callee") GROUP BY "caller", "callee"`, `UPDATE "calls" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_calls" n WHERE n."caller" = h."caller" AND n."callee" = h."callee"), 0)`, `INSERT INTO "__delta_calls" ("_sign", "_sequence", "caller", "callee") SELECT -1, row_number() OVER () - 1, "caller", "callee" FROM "calls" WHERE "__refcount" <= 0`, `DELETE FROM "calls" WHERE "__refcount" <= 0`, `DELETE FROM "__new_calls"`, `INSERT INTO "__new_calls" ("caller", "callee", "__refcount") SELECT n."caller", n."callee", n."__refcount" FROM "__support_next_calls" n LEFT JOIN "calls" h ON n."caller" = h."caller" AND n."callee" = h."callee" WHERE h."caller" IS NULL`, `INSERT INTO "__delta_calls" ("_sign", "_sequence", "caller", "callee") SELECT 1, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT INTO "__frontier_calls" ("_phase", "_sequence", "caller", "callee") SELECT ?, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT INTO "__next_frontier_calls" ("_phase", "_sequence", "caller", "callee") SELECT ?, "rowid" - 1, "caller", "callee" FROM "__new_calls"`, `INSERT OR IGNORE INTO "calls" ("caller", "callee", "__refcount") SELECT n."caller", n."callee", n."__refcount" FROM "__support_next_calls" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "def";
 INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT b0."path", b0."name", b0."kind" FROM "node_fact" b0 WHERE b0."record" = 'node';
 DELETE FROM "calls";
@@ -300,11 +300,11 @@ INSERT OR IGNORE INTO "calls" ("caller", "callee") SELECT b0."name", b1."callee"
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const call = multisetDiff(before.call, after.call);
-  const calls = multisetDiff(before.calls, after.calls);
-  const def = multisetDiff(before.def, after.def);
-  const node_fact = multisetDiff(before.node_fact, after.node_fact);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const call = multiset_diff(before.call, after.call);
+  const calls = multiset_diff(before.calls, after.calls);
+  const def = multiset_diff(before.def, after.def);
+  const node_fact = multiset_diff(before.node_fact, after.node_fact);
   return {
     rels: [
       { rel: "call", add: call.add, del: call.del },
@@ -312,15 +312,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "def", add: def.add, del: def.del },
       { rel: "node_fact", add: node_fact.add, del: node_fact.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // callgraph_derivation_over_extraction: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -334,38 +334,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -374,16 +374,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "callgraph_derivation_over_extraction",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

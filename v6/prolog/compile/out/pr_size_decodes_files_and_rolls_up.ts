@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: pr_size_decodes_files_and_rolls_up.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -179,7 +179,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__agg_scope_dir_size" ("dir" TEXT NOT NULL, PRIMARY KEY ("dir")) WITHOUT ROWID`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   dir_file: ["dir", "path", "adds", "dels"],
   dir_size: ["dir", "adds", "dels", "files"],
   files_resp: ["body"],
@@ -187,7 +187,7 @@ const relColumns: Record<string, readonly string[]> = {
   pr_file: ["path", "adds", "dels"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   dir_file: ["text", "text", "int", "int"],
   dir_size: ["text", "int", "int", "int"],
   files_resp: ["json"],
@@ -195,35 +195,35 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   pr_file: ["text", "int", "int"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "pr_size_decodes_files_and_rolls_up", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "452db39ea164d320", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "dir_file", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "b27a5bc1196e95f6", hSchema: "b17ad8f2231776b0", hRule: "ae28562a876753a5" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "dir", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7893274afd66fad8", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "08531cfa463e03e1", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 7, ordinal: 3, localName: "adds", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c915a5e95ecabb4d", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 7, ordinal: 4, localName: "dels", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0a3352971f174532", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 6, ordinal: 0, localName: "dir_size", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "fd5e8398a25c01b9", hSchema: "1ab5d3f7ab0cc76f", hRule: "b0ad9795f71747b0" },
-  { relId: 13, parentId: 12, ordinal: 1, localName: "dir", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "be1432b27781a7eb", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 12, ordinal: 2, localName: "adds", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0caf95ba2258c6e3", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 12, ordinal: 3, localName: "dels", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "67ba6ec64d3d2386", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 12, ordinal: 4, localName: "files", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "29a6320f2b2f3300", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 6, ordinal: 0, localName: "files_resp", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "505108729b4a7cce", hSchema: "d12f7c978de0f0d7", hRule: "" },
-  { relId: 18, parentId: 17, ordinal: 1, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "566f26a4b358038a", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 6, ordinal: 0, localName: "in_dir", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "dffd8ddb45eddd8a", hSchema: "f3cd4e528726f55e", hRule: "" },
-  { relId: 20, parentId: 19, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5f13adfa7e398e94", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 19, ordinal: 2, localName: "dir", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1dd389dcec0fc400", hSchema: "", hRule: "" },
-  { relId: 22, parentId: 6, ordinal: 0, localName: "pr_file", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "e610f96e3976a68b", hSchema: "baeeff0972f49b3b", hRule: "b3a6f33a426a8d1d" },
-  { relId: 23, parentId: 22, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "cdb15b07a011e492", hSchema: "", hRule: "" },
-  { relId: 24, parentId: 22, ordinal: 2, localName: "adds", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "54c654c8a1384a03", hSchema: "", hRule: "" },
-  { relId: 25, parentId: 22, ordinal: 3, localName: "dels", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "34951e8ffd094752", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "pr_size_decodes_files_and_rolls_up", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "452db39ea164d320", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "dir_file", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "b27a5bc1196e95f6", h_schema: "b17ad8f2231776b0", h_rule: "ae28562a876753a5" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "dir", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "7893274afd66fad8", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "08531cfa463e03e1", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "adds", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "c915a5e95ecabb4d", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 4, local_name: "dels", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0a3352971f174532", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "dir_size", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "fd5e8398a25c01b9", h_schema: "1ab5d3f7ab0cc76f", h_rule: "b0ad9795f71747b0" },
+  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "dir", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "be1432b27781a7eb", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "adds", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0caf95ba2258c6e3", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 12, ordinal: 3, local_name: "dels", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "67ba6ec64d3d2386", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 4, local_name: "files", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "29a6320f2b2f3300", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 6, ordinal: 0, local_name: "files_resp", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "505108729b4a7cce", h_schema: "d12f7c978de0f0d7", h_rule: "" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "body", kind: "column", type_id: 5, arity: 0, module_id: 6, h_id: "566f26a4b358038a", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 6, ordinal: 0, local_name: "in_dir", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "dffd8ddb45eddd8a", h_schema: "f3cd4e528726f55e", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "5f13adfa7e398e94", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 19, ordinal: 2, local_name: "dir", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1dd389dcec0fc400", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 6, ordinal: 0, local_name: "pr_file", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "e610f96e3976a68b", h_schema: "baeeff0972f49b3b", h_rule: "b3a6f33a426a8d1d" },
+  { rel_id: 23, parent_id: 22, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "cdb15b07a011e492", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 22, ordinal: 2, local_name: "adds", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "54c654c8a1384a03", h_schema: "", h_rule: "" },
+  { rel_id: 25, parent_id: 22, ordinal: 3, local_name: "dels", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "34951e8ffd094752", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   dir_file: ["text", "text", "int", "int"],
   dir_size: ["text", "int", "int", "int"],
   files_resp: ["json"],
@@ -231,7 +231,7 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   pr_file: ["text", "int", "int"],
 };
 
-const arrivalTargets: readonly string[] = ["files_resp", "in_dir"];
+const arrival_targets: readonly string[] = ["files_resp", "in_dir"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "files_resp", sql: `INSERT OR IGNORE INTO "files_resp" ("body") VALUES (?)`, params: ["[{\"additions\":10,\"deletions\":2,\"filename\":\"src/a.ts\"},{\"additions\":5,\"deletions\":1,\"filename\":\"src/b.ts\"},{\"additions\":3,\"deletions\":0,\"filename\":\"README.md\"}]"] },
@@ -253,17 +253,17 @@ type Snapshot = {
   readonly pr_file: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dir_file: selectRows(seam, `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "dir_file"`, relColumns.dir_file!, relColumnTypes.dir_file!),
-    dir_size: selectRows(seam, `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "adds", "dels", "files" FROM "dir_size"`, relColumns.dir_size!, relColumnTypes.dir_size!),
-    files_resp: selectRows(seam, `SELECT "body" FROM "files_resp"`, relColumns.files_resp!, relColumnTypes.files_resp!),
-    in_dir: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir" FROM "in_dir"`, relColumns.in_dir!, relColumnTypes.in_dir!),
-    pr_file: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "pr_file"`, relColumns.pr_file!, relColumnTypes.pr_file!),
+    dir_file: select_rows(seam, `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "dir_file"`, rel_columns.dir_file!, rel_column_types.dir_file!),
+    dir_size: select_rows(seam, `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "adds", "dels", "files" FROM "dir_size"`, rel_columns.dir_size!, rel_column_types.dir_size!),
+    files_resp: select_rows(seam, `SELECT "body" FROM "files_resp"`, rel_columns.files_resp!, rel_column_types.files_resp!),
+    in_dir: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir" FROM "in_dir"`, rel_columns.in_dir!, rel_column_types.in_dir!),
+    pr_file: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "pr_file"`, rel_columns.pr_file!, rel_column_types.pr_file!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   dir_file: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "dir_file"`,
   dir_size: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "adds", "dels", "files" FROM "dir_size"`,
   files_resp: `SELECT "body" FROM "files_resp"`,
@@ -271,12 +271,12 @@ const finalSelect: Record<string, string> = {
   pr_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels" FROM "pr_file"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  files_resp: { kind: "set", addSql: `INSERT OR IGNORE INTO "files_resp" ("body") VALUES (?)`, delSql: `DELETE FROM "files_resp" WHERE "body" = ?` },
-  in_dir: { kind: "set", addSql: `INSERT OR IGNORE INTO "in_dir" ("path", "dir") VALUES (?, ?)`, delSql: `DELETE FROM "in_dir" WHERE "path" = ? AND "dir" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  files_resp: { kind: "set", add_sql: `INSERT OR IGNORE INTO "files_resp" ("body") VALUES (?)`, del_sql: `DELETE FROM "files_resp" WHERE "body" = ?` },
+  in_dir: { kind: "set", add_sql: `INSERT OR IGNORE INTO "in_dir" ("path", "dir") VALUES (?, ?)`, del_sql: `DELETE FROM "in_dir" WHERE "path" = ? AND "dir" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`pr_size_decodes_files_and_rolls_up: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -285,40 +285,40 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`pr_size_decodes_files_and_rolls_up: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`pr_size_decodes_files_and_rolls_up: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dir_file", kind: "set", tableName: "dir_file", deltaTableName: "__delta_dir_file", frontierTableName: "__frontier_dir_file", nextFrontierTableName: "__next_frontier_dir_file", columns: ["dir", "path", "adds", "dels"], columnTypes: ["text", "text", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dir_file" WHERE "_sign" IN (-1, 1) GROUP BY "dir", "path", "adds", "dels", "_sign"`, ruleObservers: ["dir_size/4"] },
-  { rel: "dir_size", kind: "set", tableName: "dir_size", deltaTableName: "__delta_dir_size", frontierTableName: "__frontier_dir_size", nextFrontierTableName: "__next_frontier_dir_size", columns: ["dir", "adds", "dels", "files"], columnTypes: ["text", "int", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "adds", "dels", "files", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dir_size" WHERE "_sign" IN (-1, 1) GROUP BY "dir", "adds", "dels", "files", "_sign"`, ruleObservers: [] },
-  { rel: "files_resp", kind: "set", tableName: "files_resp", deltaTableName: "__delta_files_resp", frontierTableName: "__frontier_files_resp", nextFrontierTableName: "__next_frontier_files_resp", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "files_resp" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "files_resp" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_files_resp" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, ruleObservers: ["pr_file/3"] },
-  { rel: "in_dir", kind: "set", tableName: "in_dir", deltaTableName: "__delta_in_dir", frontierTableName: "__frontier_in_dir", nextFrontierTableName: "__next_frontier_in_dir", columns: ["path", "dir"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "in_dir" ("path", "dir") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "dir"`, arrivalDelSql: `DELETE FROM "in_dir" WHERE ("path", "dir") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "dir"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_in_dir" WHERE "_sign" IN (-1, 1) GROUP BY "path", "dir", "_sign"`, ruleObservers: ["dir_file/4"] },
-  { rel: "pr_file", kind: "set", tableName: "pr_file", deltaTableName: "__delta_pr_file", frontierTableName: "__frontier_pr_file", nextFrontierTableName: "__next_frontier_pr_file", columns: ["path", "adds", "dels"], columnTypes: ["text", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pr_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "adds", "dels", "_sign"`, ruleObservers: ["dir_file/4"] },
+  { rel: "dir_file", kind: "set", table_name: "dir_file", delta_table_name: "__delta_dir_file", frontier_table_name: "__frontier_dir_file", next_frontier_table_name: "__next_frontier_dir_file", columns: ["dir", "path", "adds", "dels"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dir_file" WHERE "_sign" IN (-1, 1) GROUP BY "dir", "path", "adds", "dels", "_sign"`, rule_observers: ["dir_size/4"] },
+  { rel: "dir_size", kind: "set", table_name: "dir_size", delta_table_name: "__delta_dir_size", frontier_table_name: "__frontier_dir_size", next_frontier_table_name: "__next_frontier_dir_size", columns: ["dir", "adds", "dels", "files"], column_types: ["text", "int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "adds", "dels", "files", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dir_size" WHERE "_sign" IN (-1, 1) GROUP BY "dir", "adds", "dels", "files", "_sign"`, rule_observers: [] },
+  { rel: "files_resp", kind: "set", table_name: "files_resp", delta_table_name: "__delta_files_resp", frontier_table_name: "__frontier_files_resp", next_frontier_table_name: "__next_frontier_files_resp", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "files_resp" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "files_resp" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_files_resp" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["pr_file/3"] },
+  { rel: "in_dir", kind: "set", table_name: "in_dir", delta_table_name: "__delta_in_dir", frontier_table_name: "__frontier_in_dir", next_frontier_table_name: "__next_frontier_in_dir", columns: ["path", "dir"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "in_dir" ("path", "dir") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "dir"`, arrival_del_sql: `DELETE FROM "in_dir" WHERE ("path", "dir") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "dir"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_in_dir" WHERE "_sign" IN (-1, 1) GROUP BY "path", "dir", "_sign"`, rule_observers: ["dir_file/4"] },
+  { rel: "pr_file", kind: "set", table_name: "pr_file", delta_table_name: "__delta_pr_file", frontier_table_name: "__frontier_pr_file", next_frontier_table_name: "__next_frontier_pr_file", columns: ["path", "adds", "dels"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "adds", "dels", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pr_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "adds", "dels", "_sign"`, rule_observers: ["dir_file/4"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "pr_file", ruleId: "pr_size_decodes_files_and_rolls_up:pr_file/3#1", headDeltaTableName: "__delta_pr_file", headColumns: ["path", "adds", "dels"], insertSql: `INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT DISTINCT json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "__frontier_files_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer' RETURNING "path", "adds", "dels"`, selectSql: `SELECT "path", "adds", "dels" FROM "pr_file"`, recomputeSql: `DELETE FROM "pr_file";
-INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer'`, supportSql: [`DELETE FROM "__support_next_pr_file"`, `INSERT INTO "__support_next_pr_file" ("path", "adds", "dels", "__refcount") SELECT "path", "adds", "dels", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."filename"') AS "path", json_extract(j0.value, '$."additions"') AS "adds", json_extract(j0.value, '$."deletions"') AS "dels", count(*) AS "__refcount" FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer' GROUP BY json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"')) GROUP BY "path", "adds", "dels"`, `UPDATE "pr_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pr_file" n WHERE n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels"), 0)`, `INSERT INTO "__delta_pr_file" ("_sign", "_sequence", "path", "adds", "dels") SELECT -1, row_number() OVER () - 1, "path", "adds", "dels" FROM "pr_file" WHERE "__refcount" <= 0`, `DELETE FROM "pr_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pr_file"`, `INSERT INTO "__new_pr_file" ("path", "adds", "dels", "__refcount") SELECT n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_pr_file" n LEFT JOIN "pr_file" h ON n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels" WHERE h."path" IS NULL`, `INSERT INTO "__delta_pr_file" ("_sign", "_sequence", "path", "adds", "dels") SELECT 1, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT INTO "__frontier_pr_file" ("_phase", "_sequence", "path", "adds", "dels") SELECT ?, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT INTO "__next_frontier_pr_file" ("_phase", "_sequence", "path", "adds", "dels") SELECT ?, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels", "__refcount") SELECT n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_pr_file" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "dir_file", ruleId: "pr_size_decodes_files_and_rolls_up:dir_file/4#1", headDeltaTableName: "__delta_dir_file", headColumns: ["dir", "path", "adds", "dels"], insertSql: `INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT DISTINCT b0."dir", d0."path", d0."adds", d0."dels" FROM "__frontier_pr_file" d0, "in_dir" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" UNION ALL SELECT DISTINCT d0."dir", d0."path", b0."adds", b0."dels" FROM "__frontier_in_dir" d0, "pr_file" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" RETURNING "dir", "path", "adds", "dels"`, selectSql: `SELECT "dir", "path", "adds", "dels" FROM "dir_file"`, recomputeSql: `DELETE FROM "dir_file";
-INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT b1."dir", b0."path", b0."adds", b0."dels" FROM "pr_file" b0, "in_dir" b1 WHERE b1."path" = b0."path"`, supportSql: [`DELETE FROM "__support_next_dir_file"`, `INSERT INTO "__support_next_dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT "dir", "path", "adds", "dels", sum("__refcount") FROM (SELECT b1."dir" AS "dir", b0."path" AS "path", b0."adds" AS "adds", b0."dels" AS "dels", count(*) AS "__refcount" FROM "pr_file" b0, "in_dir" b1 WHERE b1."path" = b0."path" GROUP BY b1."dir", b0."path", b0."adds", b0."dels") GROUP BY "dir", "path", "adds", "dels"`, `UPDATE "dir_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_dir_file" n WHERE n."dir" = h."dir" AND n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels"), 0)`, `INSERT INTO "__delta_dir_file" ("_sign", "_sequence", "dir", "path", "adds", "dels") SELECT -1, row_number() OVER () - 1, "dir", "path", "adds", "dels" FROM "dir_file" WHERE "__refcount" <= 0`, `DELETE FROM "dir_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_dir_file"`, `INSERT INTO "__new_dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT n."dir", n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_dir_file" n LEFT JOIN "dir_file" h ON n."dir" = h."dir" AND n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels" WHERE h."dir" IS NULL`, `INSERT INTO "__delta_dir_file" ("_sign", "_sequence", "dir", "path", "adds", "dels") SELECT 1, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT INTO "__frontier_dir_file" ("_phase", "_sequence", "dir", "path", "adds", "dels") SELECT ?, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT INTO "__next_frontier_dir_file" ("_phase", "_sequence", "dir", "path", "adds", "dels") SELECT ?, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT n."dir", n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_dir_file" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "dir_size", ruleId: "pr_size_decodes_files_and_rolls_up:dir_size/4#1", headDeltaTableName: "__delta_dir_size", headColumns: ["dir", "adds", "dels", "files"], insertSql: null, selectSql: `SELECT "dir", "adds", "dels", "files" FROM "dir_size"`, recomputeSql: `DELETE FROM "dir_size";
-INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 GROUP BY b0."dir" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_dir_size"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_dir_size" ("dir") SELECT DISTINCT d0."dir" FROM "__delta_dir_file" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "dir_size" WHERE ("dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") RETURNING "dir", "adds", "dels", "files"`, insertScopedSql: [`INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 WHERE (b0."dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") GROUP BY b0."dir" HAVING count(*) > 0 RETURNING "dir", "adds", "dels", "files"`], deltaMaintained: false } },
+  { head_rel: "pr_file", rule_id: "pr_size_decodes_files_and_rolls_up:pr_file/3#1", head_delta_table_name: "__delta_pr_file", head_columns: ["path", "adds", "dels"], insert_sql: `INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT DISTINCT json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "__frontier_files_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer' RETURNING "path", "adds", "dels"`, select_sql: `SELECT "path", "adds", "dels" FROM "pr_file"`, recompute_sql: `DELETE FROM "pr_file";
+INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer'`, support_sql: [`DELETE FROM "__support_next_pr_file"`, `INSERT INTO "__support_next_pr_file" ("path", "adds", "dels", "__refcount") SELECT "path", "adds", "dels", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."filename"') AS "path", json_extract(j0.value, '$."additions"') AS "adds", json_extract(j0.value, '$."deletions"') AS "dels", count(*) AS "__refcount" FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer' GROUP BY json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"')) GROUP BY "path", "adds", "dels"`, `UPDATE "pr_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pr_file" n WHERE n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels"), 0)`, `INSERT INTO "__delta_pr_file" ("_sign", "_sequence", "path", "adds", "dels") SELECT -1, row_number() OVER () - 1, "path", "adds", "dels" FROM "pr_file" WHERE "__refcount" <= 0`, `DELETE FROM "pr_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pr_file"`, `INSERT INTO "__new_pr_file" ("path", "adds", "dels", "__refcount") SELECT n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_pr_file" n LEFT JOIN "pr_file" h ON n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels" WHERE h."path" IS NULL`, `INSERT INTO "__delta_pr_file" ("_sign", "_sequence", "path", "adds", "dels") SELECT 1, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT INTO "__frontier_pr_file" ("_phase", "_sequence", "path", "adds", "dels") SELECT ?, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT INTO "__next_frontier_pr_file" ("_phase", "_sequence", "path", "adds", "dels") SELECT ?, "rowid" - 1, "path", "adds", "dels" FROM "__new_pr_file"`, `INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels", "__refcount") SELECT n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_pr_file" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "dir_file", rule_id: "pr_size_decodes_files_and_rolls_up:dir_file/4#1", head_delta_table_name: "__delta_dir_file", head_columns: ["dir", "path", "adds", "dels"], insert_sql: `INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT DISTINCT b0."dir", d0."path", d0."adds", d0."dels" FROM "__frontier_pr_file" d0, "in_dir" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" UNION ALL SELECT DISTINCT d0."dir", d0."path", b0."adds", b0."dels" FROM "__frontier_in_dir" d0, "pr_file" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" RETURNING "dir", "path", "adds", "dels"`, select_sql: `SELECT "dir", "path", "adds", "dels" FROM "dir_file"`, recompute_sql: `DELETE FROM "dir_file";
+INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT b1."dir", b0."path", b0."adds", b0."dels" FROM "pr_file" b0, "in_dir" b1 WHERE b1."path" = b0."path"`, support_sql: [`DELETE FROM "__support_next_dir_file"`, `INSERT INTO "__support_next_dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT "dir", "path", "adds", "dels", sum("__refcount") FROM (SELECT b1."dir" AS "dir", b0."path" AS "path", b0."adds" AS "adds", b0."dels" AS "dels", count(*) AS "__refcount" FROM "pr_file" b0, "in_dir" b1 WHERE b1."path" = b0."path" GROUP BY b1."dir", b0."path", b0."adds", b0."dels") GROUP BY "dir", "path", "adds", "dels"`, `UPDATE "dir_file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_dir_file" n WHERE n."dir" = h."dir" AND n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels"), 0)`, `INSERT INTO "__delta_dir_file" ("_sign", "_sequence", "dir", "path", "adds", "dels") SELECT -1, row_number() OVER () - 1, "dir", "path", "adds", "dels" FROM "dir_file" WHERE "__refcount" <= 0`, `DELETE FROM "dir_file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_dir_file"`, `INSERT INTO "__new_dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT n."dir", n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_dir_file" n LEFT JOIN "dir_file" h ON n."dir" = h."dir" AND n."path" = h."path" AND n."adds" = h."adds" AND n."dels" = h."dels" WHERE h."dir" IS NULL`, `INSERT INTO "__delta_dir_file" ("_sign", "_sequence", "dir", "path", "adds", "dels") SELECT 1, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT INTO "__frontier_dir_file" ("_phase", "_sequence", "dir", "path", "adds", "dels") SELECT ?, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT INTO "__next_frontier_dir_file" ("_phase", "_sequence", "dir", "path", "adds", "dels") SELECT ?, "rowid" - 1, "dir", "path", "adds", "dels" FROM "__new_dir_file"`, `INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels", "__refcount") SELECT n."dir", n."path", n."adds", n."dels", n."__refcount" FROM "__support_next_dir_file" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "dir_size", rule_id: "pr_size_decodes_files_and_rolls_up:dir_size/4#1", head_delta_table_name: "__delta_dir_size", head_columns: ["dir", "adds", "dels", "files"], insert_sql: null, select_sql: `SELECT "dir", "adds", "dels", "files" FROM "dir_size"`, recompute_sql: `DELETE FROM "dir_size";
+INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 GROUP BY b0."dir" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_dir_size"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_dir_size" ("dir") SELECT DISTINCT d0."dir" FROM "__delta_dir_file" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "dir_size" WHERE ("dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") RETURNING "dir", "adds", "dels", "files"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 WHERE (b0."dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") GROUP BY b0."dir" HAVING count(*) > 0 RETURNING "dir", "adds", "dels", "files"`], delta_maintained: false } },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "pr_file";
 INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT json_extract(j0.value, '$."filename"'), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer';
 DELETE FROM "dir_file";
@@ -328,12 +328,12 @@ INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const dir_file = multisetDiff(before.dir_file, after.dir_file);
-  const dir_size = multisetDiff(before.dir_size, after.dir_size);
-  const files_resp = multisetDiff(before.files_resp, after.files_resp);
-  const in_dir = multisetDiff(before.in_dir, after.in_dir);
-  const pr_file = multisetDiff(before.pr_file, after.pr_file);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const dir_file = multiset_diff(before.dir_file, after.dir_file);
+  const dir_size = multiset_diff(before.dir_size, after.dir_size);
+  const files_resp = multiset_diff(before.files_resp, after.files_resp);
+  const in_dir = multiset_diff(before.in_dir, after.in_dir);
+  const pr_file = multiset_diff(before.pr_file, after.pr_file);
   return {
     rels: [
       { rel: "dir_file", add: dir_file.add, del: dir_file.del },
@@ -342,15 +342,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "in_dir", add: in_dir.add, del: in_dir.del },
       { rel: "pr_file", add: pr_file.add, del: pr_file.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // pr_size_decodes_files_and_rolls_up: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -364,38 +364,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -404,16 +404,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "pr_size_decodes_files_and_rolls_up",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: concat_program_queue.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -19,10 +19,10 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime, stageOrderedFrontiers } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -153,7 +153,7 @@ function triggerOccurrences(
   return occurrences;
 }
 
-function departureOccurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
+function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
   return seam.runner.execute(seam.db, sql).pipe(
     map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),
   );
@@ -270,7 +270,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__pre_queue_next" ("session_id" TEXT NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   close_request: ["session_id", "tab_id"],
   closed: ["session_id", "tab_id"],
   demanded: ["col1", "session_id"],
@@ -286,7 +286,7 @@ const relColumns: Record<string, readonly string[]> = {
   tab_view: ["tab_id", "body"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   close_request: ["text", "text"],
   closed: ["text", "text"],
   demanded: ["text", "text"],
@@ -302,59 +302,59 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   tab_view: ["text", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "concat_program_queue", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e2fa95715b289556", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "close_request", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "b8204a71c2f3d6d7", hSchema: "74e0c7ce68576772", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d4a6b75632ac676a", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "787f84b08aea4167", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "closed", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "68d7eab096c0f353", hSchema: "74e0c7ce68576772", hRule: "7a41a24a5e13e8c2" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c4bde95717c7ca73", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ab51def39b9ded85", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "demanded", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "c2c69d5e43c12523", hSchema: "92e406c4ea2147d3", hRule: "05a98bc91c7bef85" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "col1", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2dfa7fc398a8d75d", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 13, ordinal: 2, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "01855d4b3cda6f76", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 6, ordinal: 0, localName: "drained", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "46c2e3a55ef96c4d", hSchema: "7f2a11cf9f09f700", hRule: "7b8a1a53199a6f8e" },
-  { relId: 17, parentId: 16, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "182f37b2a1121598", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 16, ordinal: 2, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7fafb3de6d17c1ce", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 6, ordinal: 0, localName: "live_tab", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "f6bc1b6bd4c3a8b3", hSchema: "74e0c7ce68576772", hRule: "8bc0b34d1acfd416" },
-  { relId: 20, parentId: 19, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a8b1ac47a1c48515", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 19, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d106f5eebda9bc31", hSchema: "", hRule: "" },
-  { relId: 22, parentId: 6, ordinal: 0, localName: "open_request", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "35a3a3fe2a9d3fcb", hSchema: "74e0c7ce68576772", hRule: "" },
-  { relId: 23, parentId: 22, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fa14a1ba043eace1", hSchema: "", hRule: "" },
-  { relId: 24, parentId: 22, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9b731a1b9b3b6c18", hSchema: "", hRule: "" },
-  { relId: 25, parentId: 6, ordinal: 0, localName: "open_tab", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "cd71b168fbc5af0b", hSchema: "69d8a28f2cd6e7d9", hRule: "dee1e3fe2a3a7c15" },
-  { relId: 26, parentId: 25, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "766f3d776fdd4852", hSchema: "", hRule: "" },
-  { relId: 27, parentId: 25, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "99c08ea36c47cadd", hSchema: "", hRule: "" },
-  { relId: 28, parentId: 6, ordinal: 0, localName: "queue_head", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "224e222d5b2965ac", hSchema: "7f2a11cf9f09f700", hRule: "c10ba53efe783750" },
-  { relId: 29, parentId: 28, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b5fe274925e9e9bd", hSchema: "", hRule: "" },
-  { relId: 30, parentId: 28, ordinal: 2, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "8c99a1de5577e1ec", hSchema: "", hRule: "" },
-  { relId: 31, parentId: 6, ordinal: 0, localName: "queue_head_tab", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4a836305b26befa8", hSchema: "74e0c7ce68576772", hRule: "4a9ca0bcce67bb51" },
-  { relId: 32, parentId: 31, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fe526dd22af3ae0d", hSchema: "", hRule: "" },
-  { relId: 33, parentId: 31, ordinal: 2, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "21f5dfce65cafb8e", hSchema: "", hRule: "" },
-  { relId: 34, parentId: 6, ordinal: 0, localName: "queue_next", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "e616303fe2d6f345", hSchema: "ba9256a44356e164", hRule: "1ec4d2917c263d58" },
-  { relId: 35, parentId: 34, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f320ca6877e3e4b1", hSchema: "", hRule: "" },
-  { relId: 36, parentId: 34, ordinal: 2, localName: "next", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "3a5ae01abf2eab4b", hSchema: "", hRule: "" },
-  { relId: 37, parentId: 6, ordinal: 0, localName: "queue_slot", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "5470ddc57ecc0d24", hSchema: "473fc9a47f064711", hRule: "1ec4d2917c263d58" },
-  { relId: 38, parentId: 37, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f060051bdfc66afa", hSchema: "", hRule: "" },
-  { relId: 39, parentId: 37, ordinal: 2, localName: "next", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ff4ad936bffd1124", hSchema: "", hRule: "" },
-  { relId: 40, parentId: 37, ordinal: 3, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8e45048a0051566e", hSchema: "", hRule: "" },
-  { relId: 41, parentId: 6, ordinal: 0, localName: "tab_row", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "414e6e4b91d042b9", hSchema: "3fae7281d9849bfb", hRule: "" },
-  { relId: 42, parentId: 41, ordinal: 1, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ad53cbf8136faf05", hSchema: "", hRule: "" },
-  { relId: 43, parentId: 41, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7613bebed7ccbc32", hSchema: "", hRule: "" },
-  { relId: 44, parentId: 6, ordinal: 0, localName: "tab_view", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "262bc33f8c9e289a", hSchema: "3fae7281d9849bfb", hRule: "357a0367e5dec89b" },
-  { relId: 45, parentId: 44, ordinal: 1, localName: "tab_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e46983a603e8eeaf", hSchema: "", hRule: "" },
-  { relId: 46, parentId: 44, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4ca9a79f036e0123", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "concat_program_queue", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "e2fa95715b289556", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "close_request", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "b8204a71c2f3d6d7", h_schema: "74e0c7ce68576772", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d4a6b75632ac676a", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "787f84b08aea4167", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "closed", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "68d7eab096c0f353", h_schema: "74e0c7ce68576772", h_rule: "7a41a24a5e13e8c2" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c4bde95717c7ca73", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ab51def39b9ded85", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "demanded", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "c2c69d5e43c12523", h_schema: "92e406c4ea2147d3", h_rule: "05a98bc91c7bef85" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "col1", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "2dfa7fc398a8d75d", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "01855d4b3cda6f76", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "drained", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "46c2e3a55ef96c4d", h_schema: "7f2a11cf9f09f700", h_rule: "7b8a1a53199a6f8e" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "182f37b2a1121598", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 16, ordinal: 2, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "7fafb3de6d17c1ce", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 6, ordinal: 0, local_name: "live_tab", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "f6bc1b6bd4c3a8b3", h_schema: "74e0c7ce68576772", h_rule: "8bc0b34d1acfd416" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a8b1ac47a1c48515", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 19, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d106f5eebda9bc31", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 6, ordinal: 0, local_name: "open_request", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "35a3a3fe2a9d3fcb", h_schema: "74e0c7ce68576772", h_rule: "" },
+  { rel_id: 23, parent_id: 22, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fa14a1ba043eace1", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 22, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "9b731a1b9b3b6c18", h_schema: "", h_rule: "" },
+  { rel_id: 25, parent_id: 6, ordinal: 0, local_name: "open_tab", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "cd71b168fbc5af0b", h_schema: "69d8a28f2cd6e7d9", h_rule: "dee1e3fe2a3a7c15" },
+  { rel_id: 26, parent_id: 25, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "766f3d776fdd4852", h_schema: "", h_rule: "" },
+  { rel_id: 27, parent_id: 25, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "99c08ea36c47cadd", h_schema: "", h_rule: "" },
+  { rel_id: 28, parent_id: 6, ordinal: 0, local_name: "queue_head", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "224e222d5b2965ac", h_schema: "7f2a11cf9f09f700", h_rule: "c10ba53efe783750" },
+  { rel_id: 29, parent_id: 28, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b5fe274925e9e9bd", h_schema: "", h_rule: "" },
+  { rel_id: 30, parent_id: 28, ordinal: 2, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "8c99a1de5577e1ec", h_schema: "", h_rule: "" },
+  { rel_id: 31, parent_id: 6, ordinal: 0, local_name: "queue_head_tab", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4a836305b26befa8", h_schema: "74e0c7ce68576772", h_rule: "4a9ca0bcce67bb51" },
+  { rel_id: 32, parent_id: 31, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fe526dd22af3ae0d", h_schema: "", h_rule: "" },
+  { rel_id: 33, parent_id: 31, ordinal: 2, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "21f5dfce65cafb8e", h_schema: "", h_rule: "" },
+  { rel_id: 34, parent_id: 6, ordinal: 0, local_name: "queue_next", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "e616303fe2d6f345", h_schema: "ba9256a44356e164", h_rule: "1ec4d2917c263d58" },
+  { rel_id: 35, parent_id: 34, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f320ca6877e3e4b1", h_schema: "", h_rule: "" },
+  { rel_id: 36, parent_id: 34, ordinal: 2, local_name: "next", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "3a5ae01abf2eab4b", h_schema: "", h_rule: "" },
+  { rel_id: 37, parent_id: 6, ordinal: 0, local_name: "queue_slot", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "5470ddc57ecc0d24", h_schema: "473fc9a47f064711", h_rule: "1ec4d2917c263d58" },
+  { rel_id: 38, parent_id: 37, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f060051bdfc66afa", h_schema: "", h_rule: "" },
+  { rel_id: 39, parent_id: 37, ordinal: 2, local_name: "next", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ff4ad936bffd1124", h_schema: "", h_rule: "" },
+  { rel_id: 40, parent_id: 37, ordinal: 3, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8e45048a0051566e", h_schema: "", h_rule: "" },
+  { rel_id: 41, parent_id: 6, ordinal: 0, local_name: "tab_row", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "414e6e4b91d042b9", h_schema: "3fae7281d9849bfb", h_rule: "" },
+  { rel_id: 42, parent_id: 41, ordinal: 1, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ad53cbf8136faf05", h_schema: "", h_rule: "" },
+  { rel_id: 43, parent_id: 41, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "7613bebed7ccbc32", h_schema: "", h_rule: "" },
+  { rel_id: 44, parent_id: 6, ordinal: 0, local_name: "tab_view", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "262bc33f8c9e289a", h_schema: "3fae7281d9849bfb", h_rule: "357a0367e5dec89b" },
+  { rel_id: 45, parent_id: 44, ordinal: 1, local_name: "tab_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "e46983a603e8eeaf", h_schema: "", h_rule: "" },
+  { rel_id: 46, parent_id: 44, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "4ca9a79f036e0123", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["close_request", "open_request", "tab_row"];
+const arrival_targets: readonly string[] = ["close_request", "open_request", "tab_row"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "queue_next", sql: `INSERT OR IGNORE INTO "queue_next" ("session_id", "next") VALUES (?, ?)`, params: ["session_one", 0] },
@@ -389,25 +389,25 @@ type Snapshot = {
   readonly tab_view: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    close_request: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "close_request"`, relColumns.close_request!, relColumnTypes.close_request!),
-    closed: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "closed"`, relColumns.closed!, relColumnTypes.closed!),
-    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!, relColumnTypes.demanded!),
-    drained: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal" FROM "drained"`, relColumns.drained!, relColumnTypes.drained!),
-    live_tab: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "live_tab"`, relColumns.live_tab!, relColumnTypes.live_tab!),
-    open_request: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "open_request"`, relColumns.open_request!, relColumnTypes.open_request!),
-    open_tab: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "open_tab"`, relColumns.open_tab!, relColumnTypes.open_tab!),
-    queue_head: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal" FROM "queue_head"`, relColumns.queue_head!, relColumnTypes.queue_head!),
-    queue_head_tab: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "queue_head_tab"`, relColumns.queue_head_tab!, relColumnTypes.queue_head_tab!),
-    queue_next: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next" FROM "queue_next"`, relColumns.queue_next!, relColumnTypes.queue_next!),
-    queue_slot: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "queue_slot"`, relColumns.queue_slot!, relColumnTypes.queue_slot!),
-    tab_row: selectRows(seam, `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "tab_row"`, relColumns.tab_row!, relColumnTypes.tab_row!),
-    tab_view: selectRows(seam, `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "tab_view"`, relColumns.tab_view!, relColumnTypes.tab_view!),
+    close_request: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "close_request"`, rel_columns.close_request!, rel_column_types.close_request!),
+    closed: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "closed"`, rel_columns.closed!, rel_column_types.closed!),
+    demanded: select_rows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
+    drained: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal" FROM "drained"`, rel_columns.drained!, rel_column_types.drained!),
+    live_tab: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "live_tab"`, rel_columns.live_tab!, rel_column_types.live_tab!),
+    open_request: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "open_request"`, rel_columns.open_request!, rel_column_types.open_request!),
+    open_tab: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "open_tab"`, rel_columns.open_tab!, rel_column_types.open_tab!),
+    queue_head: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal" FROM "queue_head"`, rel_columns.queue_head!, rel_column_types.queue_head!),
+    queue_head_tab: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "queue_head_tab"`, rel_columns.queue_head_tab!, rel_column_types.queue_head_tab!),
+    queue_next: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next" FROM "queue_next"`, rel_columns.queue_next!, rel_column_types.queue_next!),
+    queue_slot: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "queue_slot"`, rel_columns.queue_slot!, rel_column_types.queue_slot!),
+    tab_row: select_rows(seam, `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "tab_row"`, rel_columns.tab_row!, rel_column_types.tab_row!),
+    tab_view: select_rows(seam, `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "tab_view"`, rel_columns.tab_view!, rel_column_types.tab_view!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   close_request: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "close_request"`,
   closed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id" FROM "closed"`,
   demanded: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
@@ -423,13 +423,13 @@ const finalSelect: Record<string, string> = {
   tab_view: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "tab_view"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  close_request: { kind: "log", addSql: `INSERT INTO "close_request" ("session_id", "tab_id") VALUES (?, ?)`, delSql: null },
-  open_request: { kind: "log", addSql: `INSERT INTO "open_request" ("session_id", "tab_id") VALUES (?, ?)`, delSql: null },
-  tab_row: { kind: "set", addSql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, delSql: `DELETE FROM "tab_row" WHERE "tab_id" = ? AND "body" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  close_request: { kind: "log", add_sql: `INSERT INTO "close_request" ("session_id", "tab_id") VALUES (?, ?)`, del_sql: null },
+  open_request: { kind: "log", add_sql: `INSERT INTO "open_request" ("session_id", "tab_id") VALUES (?, ?)`, del_sql: null },
+  tab_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "tab_row" WHERE "tab_id" = ? AND "body" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`concat_program_queue: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -438,55 +438,55 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`concat_program_queue: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`concat_program_queue: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "close_request", kind: "log", tableName: "close_request", deltaTableName: "__delta_close_request", frontierTableName: "__frontier_close_request", nextFrontierTableName: "__next_frontier_close_request", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "close_request" ("session_id", "tab_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "tab_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_close_request" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, ruleObservers: ["closed/2"] },
-  { rel: "closed", kind: "log", tableName: "closed", deltaTableName: "__delta_closed", frontierTableName: "__frontier_closed", nextFrontierTableName: "__next_frontier_closed", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, ruleObservers: [] },
-  { rel: "demanded", kind: "set", tableName: "demanded", deltaTableName: "__delta_demanded", frontierTableName: "__frontier_demanded", nextFrontierTableName: "__next_frontier_demanded", columns: ["col1", "session_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "session_id", "_sign"`, ruleObservers: ["tab_view/2"] },
-  { rel: "drained", kind: "log", tableName: "drained", deltaTableName: "__delta_drained", frontierTableName: "__frontier_drained", nextFrontierTableName: "__next_frontier_drained", columns: ["session_id", "ordinal"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_drained" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "ordinal", "_sign"`, ruleObservers: [] },
-  { rel: "live_tab", kind: "set", tableName: "live_tab", deltaTableName: "__delta_live_tab", frontierTableName: "__frontier_live_tab", nextFrontierTableName: "__next_frontier_live_tab", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, departureFrontierTableName: "__departure_frontier_live_tab", ruleObservers: ["demanded/2", "drained/2", "open_tab/2"] },
-  { rel: "open_request", kind: "log", tableName: "open_request", deltaTableName: "__delta_open_request", frontierTableName: "__frontier_open_request", nextFrontierTableName: "__next_frontier_open_request", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "open_request" ("session_id", "tab_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "tab_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_request" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, ruleObservers: ["open_tab/2", "queue_next/2", "queue_slot/3"] },
-  { rel: "open_tab", kind: "set", tableName: "open_tab", deltaTableName: "__delta_open_tab", frontierTableName: "__frontier_open_tab", nextFrontierTableName: "__next_frontier_open_tab", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, ruleObservers: ["live_tab/2"] },
-  { rel: "queue_head", kind: "set", tableName: "queue_head", deltaTableName: "__delta_queue_head", frontierTableName: "__frontier_queue_head", nextFrontierTableName: "__next_frontier_queue_head", columns: ["session_id", "ordinal"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_head" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "ordinal", "_sign"`, ruleObservers: ["queue_head_tab/2"] },
-  { rel: "queue_head_tab", kind: "set", tableName: "queue_head_tab", deltaTableName: "__delta_queue_head_tab", frontierTableName: "__frontier_queue_head_tab", nextFrontierTableName: "__next_frontier_queue_head_tab", columns: ["session_id", "tab_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_head_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, ruleObservers: [] },
-  { rel: "queue_next", kind: "set", tableName: "queue_next", deltaTableName: "__delta_queue_next", frontierTableName: "__frontier_queue_next", nextFrontierTableName: "__next_frontier_queue_next", columns: ["session_id", "next"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_next" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "next", "_sign"`, ruleObservers: [] },
-  { rel: "queue_slot", kind: "set", tableName: "queue_slot", deltaTableName: "__delta_queue_slot", frontierTableName: "__frontier_queue_slot", nextFrontierTableName: "__next_frontier_queue_slot", columns: ["session_id", "next", "tab_id"], columnTypes: ["text", "int", "text"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_slot" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "next", "tab_id", "_sign"`, ruleObservers: ["queue_head/2", "queue_head_tab/2"] },
-  { rel: "tab_row", kind: "set", tableName: "tab_row", deltaTableName: "__delta_tab_row", frontierTableName: "__frontier_tab_row", nextFrontierTableName: "__next_frontier_tab_row", columns: ["tab_id", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tab_id", "body"`, arrivalDelSql: `DELETE FROM "tab_row" WHERE ("tab_id", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tab_id", "body"`, boundarySql: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tab_row" WHERE "_sign" IN (-1, 1) GROUP BY "tab_id", "body", "_sign"`, ruleObservers: ["tab_view/2"] },
-  { rel: "tab_view", kind: "set", tableName: "tab_view", deltaTableName: "__delta_tab_view", frontierTableName: "__frontier_tab_view", nextFrontierTableName: "__next_frontier_tab_view", columns: ["tab_id", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tab_view" WHERE "_sign" IN (-1, 1) GROUP BY "tab_id", "body", "_sign"`, ruleObservers: [] },
+  { rel: "close_request", kind: "log", table_name: "close_request", delta_table_name: "__delta_close_request", frontier_table_name: "__frontier_close_request", next_frontier_table_name: "__next_frontier_close_request", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "close_request" ("session_id", "tab_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "tab_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_close_request" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, rule_observers: ["closed/2"] },
+  { rel: "closed", kind: "log", table_name: "closed", delta_table_name: "__delta_closed", frontier_table_name: "__frontier_closed", next_frontier_table_name: "__next_frontier_closed", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, rule_observers: [] },
+  { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["col1", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "session_id", "_sign"`, rule_observers: ["tab_view/2"] },
+  { rel: "drained", kind: "log", table_name: "drained", delta_table_name: "__delta_drained", frontier_table_name: "__frontier_drained", next_frontier_table_name: "__next_frontier_drained", columns: ["session_id", "ordinal"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_drained" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "ordinal", "_sign"`, rule_observers: [] },
+  { rel: "live_tab", kind: "set", table_name: "live_tab", delta_table_name: "__delta_live_tab", frontier_table_name: "__frontier_live_tab", next_frontier_table_name: "__next_frontier_live_tab", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, departure_frontier_table_name: "__departure_frontier_live_tab", rule_observers: ["demanded/2", "drained/2", "open_tab/2"] },
+  { rel: "open_request", kind: "log", table_name: "open_request", delta_table_name: "__delta_open_request", frontier_table_name: "__frontier_open_request", next_frontier_table_name: "__next_frontier_open_request", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "open_request" ("session_id", "tab_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "tab_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_request" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, rule_observers: ["open_tab/2", "queue_next/2", "queue_slot/3"] },
+  { rel: "open_tab", kind: "set", table_name: "open_tab", delta_table_name: "__delta_open_tab", frontier_table_name: "__frontier_open_tab", next_frontier_table_name: "__next_frontier_open_tab", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, rule_observers: ["live_tab/2"] },
+  { rel: "queue_head", kind: "set", table_name: "queue_head", delta_table_name: "__delta_queue_head", frontier_table_name: "__frontier_queue_head", next_frontier_table_name: "__next_frontier_queue_head", columns: ["session_id", "ordinal"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "ordinal", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_head" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "ordinal", "_sign"`, rule_observers: ["queue_head_tab/2"] },
+  { rel: "queue_head_tab", kind: "set", table_name: "queue_head_tab", delta_table_name: "__delta_queue_head_tab", frontier_table_name: "__frontier_queue_head_tab", next_frontier_table_name: "__next_frontier_queue_head_tab", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_head_tab" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "tab_id", "_sign"`, rule_observers: [] },
+  { rel: "queue_next", kind: "set", table_name: "queue_next", delta_table_name: "__delta_queue_next", frontier_table_name: "__frontier_queue_next", next_frontier_table_name: "__next_frontier_queue_next", columns: ["session_id", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_next" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "next", "_sign"`, rule_observers: [] },
+  { rel: "queue_slot", kind: "set", table_name: "queue_slot", delta_table_name: "__delta_queue_slot", frontier_table_name: "__frontier_queue_slot", next_frontier_table_name: "__next_frontier_queue_slot", columns: ["session_id", "next", "tab_id"], column_types: ["text", "int", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "next", CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_queue_slot" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "next", "tab_id", "_sign"`, rule_observers: ["queue_head/2", "queue_head_tab/2"] },
+  { rel: "tab_row", kind: "set", table_name: "tab_row", delta_table_name: "__delta_tab_row", frontier_table_name: "__frontier_tab_row", next_frontier_table_name: "__next_frontier_tab_row", columns: ["tab_id", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tab_id", "body"`, arrival_del_sql: `DELETE FROM "tab_row" WHERE ("tab_id", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tab_id", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tab_row" WHERE "_sign" IN (-1, 1) GROUP BY "tab_id", "body", "_sign"`, rule_observers: ["tab_view/2"] },
+  { rel: "tab_view", kind: "set", table_name: "tab_view", delta_table_name: "__delta_tab_view", frontier_table_name: "__frontier_tab_view", next_frontier_table_name: "__next_frontier_tab_view", columns: ["tab_id", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("tab_id") AND json_type("tab_id") = 'object' AND json_type("tab_id", '$.fn') = 'text' AND json_type("tab_id", '$.args') = 'array' THEN json_extract("tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tab_id", '$.args')), '') || ')' ELSE "tab_id" END AS "tab_id", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tab_view" WHERE "_sign" IN (-1, 1) GROUP BY "tab_id", "body", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "open_tab", ruleId: "concat_program_queue:open_tab/2#1", headKind: "set", headTableName: "open_tab", headDeltaTableName: "__delta_open_tab", headColumns: ["session_id", "tab_id"], keyIndices: [0], projectSql: `SELECT d0."session_id" AS "session_id", d0."tab_id" AS "tab_id" FROM "__frontier_open_request" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = d0."session_id") ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "queue_next", ruleId: "concat_program_queue:queue_next/2#1", headKind: "set", headTableName: "queue_next", headDeltaTableName: "__delta_queue_next", headColumns: ["session_id", "next"], keyIndices: [0], projectSql: `SELECT d0."session_id" AS "session_id", (b1."next" + 1) AS "next" FROM "__frontier_open_request" d0, "live_tab" b0, "__pre_queue_next" b1 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b1."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "queue_slot", ruleId: "concat_program_queue:queue_slot/3#1", headKind: "set", headTableName: "queue_slot", headDeltaTableName: "__delta_queue_slot", headColumns: ["session_id", "next", "tab_id"], keyIndices: [0, 1], projectSql: `SELECT d0."session_id" AS "session_id", (b1."next" + 1) AS "next", d0."tab_id" AS "tab_id" FROM "__frontier_open_request" d0, "live_tab" b0, "__pre_queue_next" b1 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b1."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "closed", ruleId: "concat_program_queue:closed/2#1", headKind: "log", headTableName: "closed", headDeltaTableName: "__delta_closed", headColumns: ["session_id", "tab_id"], keyIndices: [], projectSql: `SELECT d0."session_id" AS "session_id", d0."tab_id" AS "tab_id" FROM "__frontier_close_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "drained", ruleId: "concat_program_queue:drained/2#1", headKind: "log", headTableName: "drained", headDeltaTableName: "__delta_drained", headColumns: ["session_id", "ordinal"], keyIndices: [], projectSql: `SELECT d0."session_id" AS "session_id", b0."ordinal" AS "ordinal" FROM "__departure_frontier_live_tab" d0, "__pre_queue_head" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "open_tab", ruleId: "concat_program_queue:open_tab/2#2", headKind: "set", headTableName: "open_tab", headDeltaTableName: "__delta_open_tab", headColumns: ["session_id", "tab_id"], keyIndices: [0], projectSql: `SELECT d0."session_id" AS "session_id", b0."tab_id" AS "tab_id" FROM "__departure_frontier_live_tab" d0, "__pre_queue_head_tab" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "open_tab", rule_id: "concat_program_queue:open_tab/2#1", head_kind: "set", head_table_name: "open_tab", head_delta_table_name: "__delta_open_tab", head_columns: ["session_id", "tab_id"], key_indices: [0], project_sql: `SELECT d0."session_id" AS "session_id", d0."tab_id" AS "tab_id" FROM "__frontier_open_request" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = d0."session_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "queue_next", rule_id: "concat_program_queue:queue_next/2#1", head_kind: "set", head_table_name: "queue_next", head_delta_table_name: "__delta_queue_next", head_columns: ["session_id", "next"], key_indices: [0], project_sql: `SELECT d0."session_id" AS "session_id", (b1."next" + 1) AS "next" FROM "__frontier_open_request" d0, "live_tab" b0, "__pre_queue_next" b1 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b1."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "queue_slot", rule_id: "concat_program_queue:queue_slot/3#1", head_kind: "set", head_table_name: "queue_slot", head_delta_table_name: "__delta_queue_slot", head_columns: ["session_id", "next", "tab_id"], key_indices: [0, 1], project_sql: `SELECT d0."session_id" AS "session_id", (b1."next" + 1) AS "next", d0."tab_id" AS "tab_id" FROM "__frontier_open_request" d0, "live_tab" b0, "__pre_queue_next" b1 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b1."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "closed", rule_id: "concat_program_queue:closed/2#1", head_kind: "log", head_table_name: "closed", head_delta_table_name: "__delta_closed", head_columns: ["session_id", "tab_id"], key_indices: [], project_sql: `SELECT d0."session_id" AS "session_id", d0."tab_id" AS "tab_id" FROM "__frontier_close_request" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "drained", rule_id: "concat_program_queue:drained/2#1", head_kind: "log", head_table_name: "drained", head_delta_table_name: "__delta_drained", head_columns: ["session_id", "ordinal"], key_indices: [], project_sql: `SELECT d0."session_id" AS "session_id", b0."ordinal" AS "ordinal" FROM "__departure_frontier_live_tab" d0, "__pre_queue_head" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "open_tab", rule_id: "concat_program_queue:open_tab/2#2", head_kind: "set", head_table_name: "open_tab", head_delta_table_name: "__delta_open_tab", head_columns: ["session_id", "tab_id"], key_indices: [0], project_sql: `SELECT d0."session_id" AS "session_id", b0."tab_id" AS "tab_id" FROM "__departure_frontier_live_tab" d0, "__pre_queue_head_tab" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "live_tab", ruleId: "concat_program_queue:live_tab/2#1", headDeltaTableName: "__delta_live_tab", headColumns: ["session_id", "tab_id"], insertSql: `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT DISTINCT d0."session_id", d0."tab_id" FROM "__frontier_open_tab" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = d0."session_id" AND n0."tab_id" = d0."tab_id") RETURNING "session_id", "tab_id"`, selectSql: `SELECT "session_id", "tab_id" FROM "live_tab"`, recomputeSql: `DELETE FROM "live_tab";
-INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id")`, supportSql: [`DELETE FROM "__support_next_live_tab"`, `INSERT INTO "__support_next_live_tab" ("session_id", "tab_id", "__refcount") SELECT "session_id", "tab_id", sum("__refcount") FROM (SELECT b0."session_id" AS "session_id", b0."tab_id" AS "tab_id", count(*) AS "__refcount" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id") GROUP BY b0."session_id", b0."tab_id") GROUP BY "session_id", "tab_id"`, `UPDATE "live_tab" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_tab" n WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id"), 0)`, `INSERT INTO "__delta_live_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT -1, row_number() OVER () - 1, "session_id", "tab_id" FROM "live_tab" WHERE "__refcount" <= 0`, `DELETE FROM "live_tab" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_tab"`, `INSERT INTO "__new_live_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_live_tab" n LEFT JOIN "live_tab" h ON n."session_id" = h."session_id" AND n."tab_id" = h."tab_id" WHERE h."session_id" IS NULL`, `INSERT INTO "__delta_live_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT 1, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT INTO "__frontier_live_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT INTO "__next_frontier_live_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_live_tab" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "demanded", ruleId: "concat_program_queue:demanded/2#1", headDeltaTableName: "__delta_demanded", headColumns: ["col1", "session_id"], insertSql: `INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT DISTINCT json_object('fn', 'tab', 'args', json_array(d0."tab_id")), d0."session_id" FROM "__frontier_live_tab" d0 WHERE d0."_phase" >= 0 RETURNING "col1", "session_id"`, selectSql: `SELECT "col1", "session_id" FROM "demanded"`, recomputeSql: `DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id" FROM "live_tab" b0`, supportSql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("col1", "session_id", "__refcount") SELECT "col1", "session_id", sum("__refcount") FROM (SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")) AS "col1", b0."session_id" AS "session_id", count(*) AS "__refcount" FROM "live_tab" b0 GROUP BY json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id") GROUP BY "col1", "session_id"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."col1" = h."col1" AND n."session_id" = h."session_id"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "session_id") SELECT -1, row_number() OVER () - 1, "col1", "session_id" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("col1", "session_id", "__refcount") SELECT n."col1", n."session_id", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."col1" = h."col1" AND n."session_id" = h."session_id" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "session_id") SELECT 1, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "col1", "session_id") SELECT ?, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "col1", "session_id") SELECT ?, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("col1", "session_id", "__refcount") SELECT n."col1", n."session_id", n."__refcount" FROM "__support_next_demanded" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "queue_head", ruleId: "concat_program_queue:queue_head/2#1", headDeltaTableName: "__delta_queue_head", headColumns: ["session_id", "ordinal"], insertSql: null, selectSql: `SELECT "session_id", "ordinal" FROM "queue_head"`, recomputeSql: `DELETE FROM "queue_head";
-INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_queue_head"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_queue_head" ("session_id") SELECT DISTINCT d0."session_id" FROM "__delta_queue_slot" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "queue_head" WHERE ("session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") RETURNING "session_id", "ordinal"`, insertScopedSql: [`INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") AND (b0."session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") GROUP BY b0."session_id" HAVING count(*) > 0 RETURNING "session_id", "ordinal"`], deltaMaintained: false } },
-  { headRel: "queue_head_tab", ruleId: "concat_program_queue:queue_head_tab/2#1", headDeltaTableName: "__delta_queue_head_tab", headColumns: ["session_id", "tab_id"], insertSql: `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT DISTINCT d0."session_id", b0."tab_id" FROM "__frontier_queue_head" d0, "queue_slot" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."next" = d0."ordinal" UNION ALL SELECT DISTINCT d0."session_id", d0."tab_id" FROM "__frontier_queue_slot" d0, "queue_head" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."ordinal" = d0."next" RETURNING "session_id", "tab_id"`, selectSql: `SELECT "session_id", "tab_id" FROM "queue_head_tab"`, recomputeSql: `DELETE FROM "queue_head_tab";
-INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT b0."session_id", b1."tab_id" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal"`, supportSql: [`DELETE FROM "__support_next_queue_head_tab"`, `INSERT INTO "__support_next_queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT "session_id", "tab_id", sum("__refcount") FROM (SELECT b0."session_id" AS "session_id", b1."tab_id" AS "tab_id", count(*) AS "__refcount" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal" GROUP BY b0."session_id", b1."tab_id") GROUP BY "session_id", "tab_id"`, `UPDATE "queue_head_tab" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_queue_head_tab" n WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id"), 0)`, `INSERT INTO "__delta_queue_head_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT -1, row_number() OVER () - 1, "session_id", "tab_id" FROM "queue_head_tab" WHERE "__refcount" <= 0`, `DELETE FROM "queue_head_tab" WHERE "__refcount" <= 0`, `DELETE FROM "__new_queue_head_tab"`, `INSERT INTO "__new_queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_queue_head_tab" n LEFT JOIN "queue_head_tab" h ON n."session_id" = h."session_id" AND n."tab_id" = h."tab_id" WHERE h."session_id" IS NULL`, `INSERT INTO "__delta_queue_head_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT 1, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT INTO "__frontier_queue_head_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT INTO "__next_frontier_queue_head_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_queue_head_tab" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
-  { headRel: "tab_view", ruleId: "concat_program_queue:tab_view/2#1", headDeltaTableName: "__delta_tab_view", headColumns: ["tab_id", "body"], insertSql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT DISTINCT json_extract(d0."col1", '$.args[0]'), b0."body" FROM "__frontier_demanded" d0, "tab_row" b0 WHERE d0."_phase" >= 0 AND json_extract(d0."col1", '$.fn') = 'tab' AND b0."tab_id" = json_extract(d0."col1", '$.args[0]') UNION ALL SELECT DISTINCT d0."tab_id", d0."body" FROM "__frontier_tab_row" d0, "demanded" b0 WHERE d0."_phase" >= 0 AND json_extract(b0."col1", '$.fn') = 'tab' AND json_extract(b0."col1", '$.args[0]') = d0."tab_id" RETURNING "tab_id", "body"`, selectSql: `SELECT "tab_id", "body" FROM "tab_view"`, recomputeSql: `DELETE FROM "tab_view";
-INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT json_extract(b0."col1", '$.args[0]'), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]')`, supportSql: [`DELETE FROM "__support_next_tab_view"`, `INSERT INTO "__support_next_tab_view" ("tab_id", "body", "__refcount") SELECT "tab_id", "body", sum("__refcount") FROM (SELECT json_extract(b0."col1", '$.args[0]') AS "tab_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]') GROUP BY json_extract(b0."col1", '$.args[0]'), b1."body") GROUP BY "tab_id", "body"`, `UPDATE "tab_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tab_view" n WHERE n."tab_id" = h."tab_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT -1, row_number() OVER () - 1, "tab_id", "body" FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tab_view"`, `INSERT INTO "__new_tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n LEFT JOIN "tab_view" h ON n."tab_id" = h."tab_id" AND n."body" = h."body" WHERE h."tab_id" IS NULL`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT 1, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__next_frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n`], expandSql: null, dredSql: null, fixpointIr: null, aggregateSql: null },
+  { head_rel: "live_tab", rule_id: "concat_program_queue:live_tab/2#1", head_delta_table_name: "__delta_live_tab", head_columns: ["session_id", "tab_id"], insert_sql: `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT DISTINCT d0."session_id", d0."tab_id" FROM "__frontier_open_tab" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = d0."session_id" AND n0."tab_id" = d0."tab_id") RETURNING "session_id", "tab_id"`, select_sql: `SELECT "session_id", "tab_id" FROM "live_tab"`, recompute_sql: `DELETE FROM "live_tab";
+INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id")`, support_sql: [`DELETE FROM "__support_next_live_tab"`, `INSERT INTO "__support_next_live_tab" ("session_id", "tab_id", "__refcount") SELECT "session_id", "tab_id", sum("__refcount") FROM (SELECT b0."session_id" AS "session_id", b0."tab_id" AS "tab_id", count(*) AS "__refcount" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id") GROUP BY b0."session_id", b0."tab_id") GROUP BY "session_id", "tab_id"`, `UPDATE "live_tab" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_tab" n WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id"), 0)`, `INSERT INTO "__delta_live_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT -1, row_number() OVER () - 1, "session_id", "tab_id" FROM "live_tab" WHERE "__refcount" <= 0`, `DELETE FROM "live_tab" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_tab"`, `INSERT INTO "__new_live_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_live_tab" n LEFT JOIN "live_tab" h ON n."session_id" = h."session_id" AND n."tab_id" = h."tab_id" WHERE h."session_id" IS NULL`, `INSERT INTO "__delta_live_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT 1, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT INTO "__frontier_live_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT INTO "__next_frontier_live_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_live_tab"`, `INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_live_tab" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "demanded", rule_id: "concat_program_queue:demanded/2#1", head_delta_table_name: "__delta_demanded", head_columns: ["col1", "session_id"], insert_sql: `INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT DISTINCT json_object('fn', 'tab', 'args', json_array(d0."tab_id")), d0."session_id" FROM "__frontier_live_tab" d0 WHERE d0."_phase" >= 0 RETURNING "col1", "session_id"`, select_sql: `SELECT "col1", "session_id" FROM "demanded"`, recompute_sql: `DELETE FROM "demanded";
+INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id" FROM "live_tab" b0`, support_sql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("col1", "session_id", "__refcount") SELECT "col1", "session_id", sum("__refcount") FROM (SELECT json_object('fn', 'tab', 'args', json_array(b0."tab_id")) AS "col1", b0."session_id" AS "session_id", count(*) AS "__refcount" FROM "live_tab" b0 GROUP BY json_object('fn', 'tab', 'args', json_array(b0."tab_id")), b0."session_id") GROUP BY "col1", "session_id"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."col1" = h."col1" AND n."session_id" = h."session_id"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "session_id") SELECT -1, row_number() OVER () - 1, "col1", "session_id" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("col1", "session_id", "__refcount") SELECT n."col1", n."session_id", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."col1" = h."col1" AND n."session_id" = h."session_id" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "col1", "session_id") SELECT 1, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "col1", "session_id") SELECT ?, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "col1", "session_id") SELECT ?, "rowid" - 1, "col1", "session_id" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("col1", "session_id", "__refcount") SELECT n."col1", n."session_id", n."__refcount" FROM "__support_next_demanded" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "queue_head", rule_id: "concat_program_queue:queue_head/2#1", head_delta_table_name: "__delta_queue_head", head_columns: ["session_id", "ordinal"], insert_sql: null, select_sql: `SELECT "session_id", "ordinal" FROM "queue_head"`, recompute_sql: `DELETE FROM "queue_head";
+INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") GROUP BY b0."session_id" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_queue_head"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_queue_head" ("session_id") SELECT DISTINCT d0."session_id" FROM "__delta_queue_slot" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "queue_head" WHERE ("session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") RETURNING "session_id", "ordinal"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "queue_head" ("session_id", "ordinal") SELECT b0."session_id", min(b0."next") FROM "queue_slot" b0 WHERE NOT EXISTS (SELECT 1 FROM "drained" n0 WHERE n0."session_id" = b0."session_id" AND n0."ordinal" = b0."next") AND (b0."session_id") IN (SELECT "session_id" FROM "__agg_scope_queue_head") GROUP BY b0."session_id" HAVING count(*) > 0 RETURNING "session_id", "ordinal"`], delta_maintained: false } },
+  { head_rel: "queue_head_tab", rule_id: "concat_program_queue:queue_head_tab/2#1", head_delta_table_name: "__delta_queue_head_tab", head_columns: ["session_id", "tab_id"], insert_sql: `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT DISTINCT d0."session_id", b0."tab_id" FROM "__frontier_queue_head" d0, "queue_slot" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."next" = d0."ordinal" UNION ALL SELECT DISTINCT d0."session_id", d0."tab_id" FROM "__frontier_queue_slot" d0, "queue_head" b0 WHERE d0."_phase" >= 0 AND b0."session_id" = d0."session_id" AND b0."ordinal" = d0."next" RETURNING "session_id", "tab_id"`, select_sql: `SELECT "session_id", "tab_id" FROM "queue_head_tab"`, recompute_sql: `DELETE FROM "queue_head_tab";
+INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id") SELECT b0."session_id", b1."tab_id" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal"`, support_sql: [`DELETE FROM "__support_next_queue_head_tab"`, `INSERT INTO "__support_next_queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT "session_id", "tab_id", sum("__refcount") FROM (SELECT b0."session_id" AS "session_id", b1."tab_id" AS "tab_id", count(*) AS "__refcount" FROM "queue_head" b0, "queue_slot" b1 WHERE b1."session_id" = b0."session_id" AND b1."next" = b0."ordinal" GROUP BY b0."session_id", b1."tab_id") GROUP BY "session_id", "tab_id"`, `UPDATE "queue_head_tab" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_queue_head_tab" n WHERE n."session_id" = h."session_id" AND n."tab_id" = h."tab_id"), 0)`, `INSERT INTO "__delta_queue_head_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT -1, row_number() OVER () - 1, "session_id", "tab_id" FROM "queue_head_tab" WHERE "__refcount" <= 0`, `DELETE FROM "queue_head_tab" WHERE "__refcount" <= 0`, `DELETE FROM "__new_queue_head_tab"`, `INSERT INTO "__new_queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_queue_head_tab" n LEFT JOIN "queue_head_tab" h ON n."session_id" = h."session_id" AND n."tab_id" = h."tab_id" WHERE h."session_id" IS NULL`, `INSERT INTO "__delta_queue_head_tab" ("_sign", "_sequence", "session_id", "tab_id") SELECT 1, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT INTO "__frontier_queue_head_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT INTO "__next_frontier_queue_head_tab" ("_phase", "_sequence", "session_id", "tab_id") SELECT ?, "rowid" - 1, "session_id", "tab_id" FROM "__new_queue_head_tab"`, `INSERT OR IGNORE INTO "queue_head_tab" ("session_id", "tab_id", "__refcount") SELECT n."session_id", n."tab_id", n."__refcount" FROM "__support_next_queue_head_tab" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "tab_view", rule_id: "concat_program_queue:tab_view/2#1", head_delta_table_name: "__delta_tab_view", head_columns: ["tab_id", "body"], insert_sql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT DISTINCT json_extract(d0."col1", '$.args[0]'), b0."body" FROM "__frontier_demanded" d0, "tab_row" b0 WHERE d0."_phase" >= 0 AND json_extract(d0."col1", '$.fn') = 'tab' AND b0."tab_id" = json_extract(d0."col1", '$.args[0]') UNION ALL SELECT DISTINCT d0."tab_id", d0."body" FROM "__frontier_tab_row" d0, "demanded" b0 WHERE d0."_phase" >= 0 AND json_extract(b0."col1", '$.fn') = 'tab' AND json_extract(b0."col1", '$.args[0]') = d0."tab_id" RETURNING "tab_id", "body"`, select_sql: `SELECT "tab_id", "body" FROM "tab_view"`, recompute_sql: `DELETE FROM "tab_view";
+INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT json_extract(b0."col1", '$.args[0]'), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]')`, support_sql: [`DELETE FROM "__support_next_tab_view"`, `INSERT INTO "__support_next_tab_view" ("tab_id", "body", "__refcount") SELECT "tab_id", "body", sum("__refcount") FROM (SELECT json_extract(b0."col1", '$.args[0]') AS "tab_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "tab_row" b1 WHERE json_extract(b0."col1", '$.fn') = 'tab' AND b1."tab_id" = json_extract(b0."col1", '$.args[0]') GROUP BY json_extract(b0."col1", '$.args[0]'), b1."body") GROUP BY "tab_id", "body"`, `UPDATE "tab_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tab_view" n WHERE n."tab_id" = h."tab_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT -1, row_number() OVER () - 1, "tab_id", "body" FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tab_view"`, `INSERT INTO "__new_tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n LEFT JOIN "tab_view" h ON n."tab_id" = h."tab_id" AND n."body" = h."body" WHERE h."tab_id" IS NULL`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT 1, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__next_frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const EDGE_OPEN_TAB_0_PROJECT_SQL = `SELECT ?1 AS "session_id", ?2 AS "tab_id" WHERE NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = ?1)`;
@@ -522,69 +522,69 @@ const EDGE_OPEN_TAB_5_DEPARTURE_SQL = `SELECT "session_id", "tab_id" FROM "__dep
 const EDGE_OPEN_TAB_5_TRIGGER_COLUMNS: readonly string[] = ["session_id", "tab_id"];
 
 function resolveOpenTab_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "open_request", before.open_request, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_OPEN_TAB_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_OPEN_TAB_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_OPEN_TAB_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_OPEN_TAB_0_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_0_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_0_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolveQueueNext_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "open_request", before.open_request, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_NEXT_1_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_NEXT_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_QUEUE_NEXT_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_QUEUE_NEXT_1_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_QUEUE_NEXT_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_QUEUE_NEXT_1_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_NEXT_1_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_NEXT_1_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolveQueueSlot_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "open_request", before.open_request, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_SLOT_2_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_SLOT_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_QUEUE_SLOT_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_QUEUE_SLOT_2_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_QUEUE_SLOT_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_QUEUE_SLOT_2_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_SLOT_2_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_SLOT_2_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
 function resolveClosed_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "close_request", before.close_request, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_3_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "close_request", before.close_request, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_3_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CLOSED_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_CLOSED_3_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_CLOSED_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_CLOSED_3_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -595,16 +595,16 @@ function resolveClosed_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArri
 function resolveDrained_4Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
   void before;
   void arrivals;
-  return departureOccurrences(seam, EDGE_DRAINED_4_DEPARTURE_SQL, EDGE_DRAINED_4_TRIGGER_COLUMNS).pipe(
-    concatMap((triggerRows) => {
-      if (triggerRows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(triggerRows.map((departedRow) => seam.runner.execute(seam.db, { sql: EDGE_DRAINED_4_PROJECT_SQL, args: bindArgs(departedRow) }))).pipe(
+  return departure_occurrences(seam, EDGE_DRAINED_4_DEPARTURE_SQL, EDGE_DRAINED_4_TRIGGER_COLUMNS).pipe(
+    concatMap((trigger_rows) => {
+      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
+      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_DRAINED_4_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
         map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_DRAINED_4_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_DRAINED_4_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_DRAINED_4_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_DRAINED_4_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -617,27 +617,27 @@ function resolveDrained_4Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArr
 function resolveOpenTab_5Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
   void before;
   void arrivals;
-  return departureOccurrences(seam, EDGE_OPEN_TAB_5_DEPARTURE_SQL, EDGE_OPEN_TAB_5_TRIGGER_COLUMNS).pipe(
-    concatMap((triggerRows) => {
-      if (triggerRows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(triggerRows.map((departedRow) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_5_PROJECT_SQL, args: bindArgs(departedRow) }))).pipe(
+  return departure_occurrences(seam, EDGE_OPEN_TAB_5_DEPARTURE_SQL, EDGE_OPEN_TAB_5_TRIGGER_COLUMNS).pipe(
+    concatMap((trigger_rows) => {
+      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
+      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_5_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
         map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_OPEN_TAB_5_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_OPEN_TAB_5_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_OPEN_TAB_5_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_OPEN_TAB_5_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_5_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_5_WRITE_SQL, args: bind_args(row) }));
         }),
       );
     }),
   );
 }
 
-function snapshotOrderedPre(seam: ISqlSeam): Observable<void> {
+function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_queue_head";
 INSERT INTO "__pre_queue_head" ("session_id", "ordinal") SELECT "session_id", "ordinal" FROM "queue_head";
 DELETE FROM "__pre_queue_head_tab";
@@ -646,39 +646,39 @@ DELETE FROM "__pre_queue_next";
 INSERT INTO "__pre_queue_next" ("session_id", "next") SELECT "session_id", "next" FROM "queue_next"`);
 }
 
-interface IOrderedEdgeArm { readonly triggerRel: string; readonly triggerKind: "arrival" | "departure"; readonly headRel: string; readonly headKind: "log" | "set"; readonly headColumns: readonly string[]; readonly keyIndices: readonly number[]; readonly projectSql: string; readonly writeSql: string; readonly evolvesPre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
-function quoteOrderedIdentifier(identifier: string): string {
+function quote_ordered_identifier(identifier: string): string {
   return '"' + identifier.replaceAll('"', '""') + '"';
 }
 
-function orderedPreWriteStatement(write: IOrderedWrite): SqlStatement | null {
+function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
-  if (!arm.evolvesPre) return null;
-  const table = quoteOrderedIdentifier("__pre_" + arm.headRel);
-  const columns = arm.headColumns.map(quoteOrderedIdentifier);
+  if (!arm.evolves_pre) return null;
+  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
-  if (arm.headKind === "log") {
-    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bindArgs(row) };
+  if (arm.head_kind === "log") {
+    return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ")", args: bind_args(row) };
   }
-  const keyIndices = new Set(arm.keyIndices);
-  const keyColumns = arm.keyIndices.map((index) => columns[index]!);
-  const nonKeyColumns = columns.filter((_column, index) => !keyIndices.has(index));
-  const conflict = nonKeyColumns.length === 0
-    ? "ON CONFLICT(" + keyColumns.join(", ") + ") DO NOTHING"
-    : "ON CONFLICT(" + keyColumns.join(", ") + ") DO UPDATE SET " + nonKeyColumns.map((column) => column + " = excluded." + column).join(", ");
-  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bindArgs(row) };
+  const key_indices = new Set(arm.key_indices);
+  const key_columns = arm.key_indices.map((index) => columns[index]!);
+  const non_key_columns = columns.filter((_column, index) => !key_indices.has(index));
+  const conflict = non_key_columns.length === 0
+    ? "ON CONFLICT(" + key_columns.join(", ") + ") DO NOTHING"
+    : "ON CONFLICT(" + key_columns.join(", ") + ") DO UPDATE SET " + non_key_columns.map((column) => column + " = excluded." + column).join(", ");
+  return { sql: "INSERT INTO " + table + " (" + columns.join(", ") + ") VALUES (" + placeholders + ") " + conflict, args: bind_args(row) };
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { triggerRel: "open_request", triggerKind: "arrival", headRel: "open_tab", headKind: "set", headColumns: ["session_id", "tab_id"], keyIndices: [0], projectSql: `SELECT ?1 AS "session_id", ?2 AS "tab_id" WHERE NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = ?1)`, writeSql: `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolvesPre: false },
-  { triggerRel: "open_request", triggerKind: "arrival", headRel: "queue_next", headKind: "set", headColumns: ["session_id", "next"], keyIndices: [0], projectSql: `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`, writeSql: `INSERT INTO "queue_next" ("session_id", "next") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "next" = excluded."next"`, evolvesPre: true },
-  { triggerRel: "open_request", triggerKind: "arrival", headRel: "queue_slot", headKind: "set", headColumns: ["session_id", "next", "tab_id"], keyIndices: [0, 1], projectSql: `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next", ?2 AS "tab_id" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`, writeSql: `INSERT INTO "queue_slot" ("session_id", "next", "tab_id") VALUES (?, ?, ?) ON CONFLICT("session_id", "next") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolvesPre: false },
-  { triggerRel: "close_request", triggerKind: "arrival", headRel: "closed", headKind: "log", headColumns: ["session_id", "tab_id"], keyIndices: [], projectSql: `SELECT ?1 AS "session_id", ?2 AS "tab_id"`, writeSql: `INSERT INTO "closed" ("session_id", "tab_id") VALUES (?, ?)`, evolvesPre: false },
-  { triggerRel: "live_tab", triggerKind: "departure", headRel: "drained", headKind: "log", headColumns: ["session_id", "ordinal"], keyIndices: [], projectSql: `SELECT ?1 AS "session_id", b0."ordinal" AS "ordinal" FROM "__pre_queue_head" b0 WHERE b0."session_id" = ?1`, writeSql: `INSERT INTO "drained" ("session_id", "ordinal") VALUES (?, ?)`, evolvesPre: false },
-  { triggerRel: "live_tab", triggerKind: "departure", headRel: "open_tab", headKind: "set", headColumns: ["session_id", "tab_id"], keyIndices: [0], projectSql: `SELECT ?1 AS "session_id", b0."tab_id" AS "tab_id" FROM "__pre_queue_head_tab" b0 WHERE b0."session_id" = ?1`, writeSql: `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolvesPre: false },
+  { trigger_rel: "open_request", trigger_kind: "arrival", head_rel: "open_tab", head_kind: "set", head_columns: ["session_id", "tab_id"], key_indices: [0], project_sql: `SELECT ?1 AS "session_id", ?2 AS "tab_id" WHERE NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = ?1)`, write_sql: `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolves_pre: false },
+  { trigger_rel: "open_request", trigger_kind: "arrival", head_rel: "queue_next", head_kind: "set", head_columns: ["session_id", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`, write_sql: `INSERT INTO "queue_next" ("session_id", "next") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true },
+  { trigger_rel: "open_request", trigger_kind: "arrival", head_rel: "queue_slot", head_kind: "set", head_columns: ["session_id", "next", "tab_id"], key_indices: [0, 1], project_sql: `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next", ?2 AS "tab_id" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`, write_sql: `INSERT INTO "queue_slot" ("session_id", "next", "tab_id") VALUES (?, ?, ?) ON CONFLICT("session_id", "next") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolves_pre: false },
+  { trigger_rel: "close_request", trigger_kind: "arrival", head_rel: "closed", head_kind: "log", head_columns: ["session_id", "tab_id"], key_indices: [], project_sql: `SELECT ?1 AS "session_id", ?2 AS "tab_id"`, write_sql: `INSERT INTO "closed" ("session_id", "tab_id") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "live_tab", trigger_kind: "departure", head_rel: "drained", head_kind: "log", head_columns: ["session_id", "ordinal"], key_indices: [], project_sql: `SELECT ?1 AS "session_id", b0."ordinal" AS "ordinal" FROM "__pre_queue_head" b0 WHERE b0."session_id" = ?1`, write_sql: `INSERT INTO "drained" ("session_id", "ordinal") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "live_tab", trigger_kind: "departure", head_rel: "open_tab", head_kind: "set", head_columns: ["session_id", "tab_id"], key_indices: [0], project_sql: `SELECT ?1 AS "session_id", b0."tab_id" AS "tab_id" FROM "__pre_queue_head_tab" b0 WHERE b0."session_id" = ?1`, write_sql: `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`, evolves_pre: false },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
@@ -691,15 +691,15 @@ const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string
   { rel: "open_request", sql: `SELECT "_sequence" AS "__sequence", "session_id", "tab_id" FROM "__frontier_open_request" ORDER BY "_phase", "_sequence"`, columns: ["session_id", "tab_id"] },
 ];
 
-function orderedOutsideOccurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
+function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {
   const accepted = new Set<IArrivalRow>();
-  for (const arrival of triggerOccurrences("log", "close_request", before["close_request"], arrivals)) accepted.add(arrival);
-  for (const arrival of triggerOccurrences("set", "live_tab", before["live_tab"], arrivals)) accepted.add(arrival);
-  for (const arrival of triggerOccurrences("log", "open_request", before["open_request"], arrivals)) accepted.add(arrival);
+  for (const arrival of trigger_occurrences("log", "close_request", before["close_request"], arrivals)) accepted.add(arrival);
+  for (const arrival of trigger_occurrences("set", "live_tab", before["live_tab"], arrivals)) accepted.add(arrival);
+  for (const arrival of trigger_occurrences("log", "open_request", before["open_request"], arrivals)) accepted.add(arrival);
   return arrivals.filter((arrival) => accepted.has(arrival)).map((arrival): IOrderedOccurrence => ({ rel: arrival.rel, kind: "arrival", row: arrival.row }));
 }
 
-function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+function read_ordered_departures(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
   return forkJoin(ORDERED_DEPARTURE_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(
     map((result) => result.rows.map((row): IOrderedOccurrence => ({
       rel: read.rel,
@@ -709,7 +709,7 @@ function readOrderedDepartures(seam: ISqlSeam): Observable<readonly IOrderedOccu
   ))).pipe(map((groups) => groups.flat()));
 }
 
-function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
+function read_ordered_carry(seam: ISqlSeam): Observable<readonly IOrderedOccurrence[]> {
   if (ORDERED_CARRY_READS.length === 0) return of([]);
   return forkJoin(ORDERED_CARRY_READS.map((read) => seam.runner.execute(seam.db, read.sql).pipe(
     map((result) => result.rows.map((row): IOrderedOccurrence => ({
@@ -721,17 +721,17 @@ function readOrderedCarry(seam: ISqlSeam): Observable<readonly IOrderedOccurrenc
   ))).pipe(map((groups) => groups.flat().sort((left, right) => (left.sequence ?? 0) - (right.sequence ?? 0))));
 }
 
-function orderedLevelOccurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {
+function ordered_level_occurrences(before: Snapshot, mid: Snapshot): readonly IOrderedOccurrence[] {
   const occurrences: IOrderedOccurrence[] = [];
-  for (const row of multisetDiff(before["live_tab"], mid["live_tab"]).add) occurrences.push({ rel: "live_tab", kind: "arrival", row });
+  for (const row of multiset_diff(before["live_tab"], mid["live_tab"]).add) occurrences.push({ rel: "live_tab", kind: "arrival", row });
   return occurrences;
 }
 
-function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {
-  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.triggerRel === occurrence.rel && arm.triggerKind === occurrence.kind);
+function apply_ordered_occurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {
+  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.trigger_rel === occurrence.rel && arm.trigger_kind === occurrence.kind);
   if (arms.length === 0) return of(undefined);
-  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.projectSql, args: bindArgs(occurrence.row) }).pipe(
-    map((result) => ({ arm, rows: result.rows.map((row) => arm.headColumns.map((column) => row[column] as IRowValue) as IRow) })),
+  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(
+    map((result) => ({ arm, rows: result.rows.map((row) => arm.head_columns.map((column) => row[column] as IRowValue) as IRow) })),
   ))).pipe(
     concatMap((groups) => {
       const writes: IOrderedWrite[] = [];
@@ -739,14 +739,14 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
       const keyed = new Map<string, IRow>();
       for (const group of groups) {
         for (const row of group.rows) {
-          const exactKey = JSON.stringify([group.arm.headRel, row]);
-          if (exact.has(exactKey)) continue;
-          exact.add(exactKey);
-          if (group.arm.headKind === "set") {
-            const key = JSON.stringify([group.arm.headRel, group.arm.keyIndices.map((index) => row[index])]);
+          const exact_key = JSON.stringify([group.arm.head_rel, row]);
+          if (exact.has(exact_key)) continue;
+          exact.add(exact_key);
+          if (group.arm.head_kind === "set") {
+            const key = JSON.stringify([group.arm.head_rel, group.arm.key_indices.map((index) => row[index])]);
             const prior = keyed.get(key);
             if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(row)) {
-              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.headRel}: ${key}`);
+              throw new Error(`keyed conflict in ordered occurrence for ${group.arm.head_rel}: ${key}`);
             }
             keyed.set(key, row);
           }
@@ -755,8 +755,8 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
       }
       if (writes.length === 0) return of(undefined);
       const statements = writes.flatMap((write): readonly SqlStatement[] => {
-        const base: SqlStatement = { sql: write.arm.writeSql, args: bindArgs(write.row) };
-        const pre = orderedPreWriteStatement(write);
+        const base: SqlStatement = { sql: write.arm.write_sql, args: bind_args(write.row) };
+        const pre = ordered_pre_write_statement(write);
         return pre === null ? [base] : [base, pre];
       });
       return seam.runner.batch(seam.db, statements).pipe(map(() => {
@@ -767,40 +767,40 @@ function applyOrderedOccurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, 
   );
 }
 
-function processOrderedOccurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {
-  return forkJoin([readOrderedCarry(seam), readOrderedDepartures(seam)]).pipe(
+function process_ordered_occurrences(seam: ISqlSeam, before: Snapshot, mid: Snapshot, arrivals: IArrivalBatch): Observable<readonly IOrderedWrite[]> {
+  return forkJoin([read_ordered_carry(seam), read_ordered_departures(seam)]).pipe(
     concatMap(([carry, departures]) => {
       const written: IOrderedWrite[] = [];
-      const occurrences = [...carry, ...departures, ...orderedOutsideOccurrences(before, arrivals), ...orderedLevelOccurrences(before, mid)];
+      const occurrences = [...carry, ...departures, ...ordered_outside_occurrences(before, arrivals), ...ordered_level_occurrences(before, mid)];
       return occurrences.reduce(
-        (work, occurrence) => work.pipe(concatMap(() => applyOrderedOccurrence(seam, occurrence, written))),
+        (work, occurrence) => work.pipe(concatMap(() => apply_ordered_occurrence(seam, occurrence, written))),
         of(undefined) as Observable<void>,
       ).pipe(map(() => written as readonly IOrderedWrite[]));
     }),
   );
 }
 
-function orderedCarryAdditions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {
-  const boundaryByRel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));
-  const boundaryAdds = new Map([...boundaryByRel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));
+function ordered_carry_additions(mid: Snapshot, after: Snapshot, boundary: ITickDeltas, written: readonly IOrderedWrite[]): readonly IRelDelta[] {
+  const boundary_by_rel = new Map(boundary.rels.map((delta) => [delta.rel, delta]));
+  const boundary_adds = new Map([...boundary_by_rel].map(([rel, delta]) => [rel, new Set(delta.add.map((row) => JSON.stringify(row)))]));
   const additions: IRelDelta[] = [];
   const seen = new Set<string>();
   for (const { arm, row } of written) {
-    const rowText = JSON.stringify(row);
-    const exact = JSON.stringify([arm.headRel, row]);
-    if (seen.has(exact) || !(boundaryAdds.get(arm.headRel)?.has(rowText) ?? false)) continue;
+    const row_text = JSON.stringify(row);
+    const exact = JSON.stringify([arm.head_rel, row]);
+    if (seen.has(exact) || !(boundary_adds.get(arm.head_rel)?.has(row_text) ?? false)) continue;
     seen.add(exact);
-    additions.push({ rel: arm.headRel, add: [row], del: [] });
+    additions.push({ rel: arm.head_rel, add: [row], del: [] });
   }
-  for (const row of multisetDiff(mid["demanded"], after["demanded"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["demanded", row]); if (seen.has(exact) || !(boundaryAdds.get("demanded")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "demanded", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["live_tab"], after["live_tab"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["live_tab", row]); if (seen.has(exact) || !(boundaryAdds.get("live_tab")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "live_tab", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["queue_head"], after["queue_head"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["queue_head", row]); if (seen.has(exact) || !(boundaryAdds.get("queue_head")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "queue_head", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["queue_head_tab"], after["queue_head_tab"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["queue_head_tab", row]); if (seen.has(exact) || !(boundaryAdds.get("queue_head_tab")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "queue_head_tab", add: [row], del: [] }); }
-  for (const row of multisetDiff(mid["tab_view"], after["tab_view"]).add) { const rowText = JSON.stringify(row); const exact = JSON.stringify(["tab_view", row]); if (seen.has(exact) || !(boundaryAdds.get("tab_view")?.has(rowText) ?? false)) continue; seen.add(exact); additions.push({ rel: "tab_view", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["demanded"], after["demanded"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["demanded", row]); if (seen.has(exact) || !(boundary_adds.get("demanded")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "demanded", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["live_tab"], after["live_tab"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["live_tab", row]); if (seen.has(exact) || !(boundary_adds.get("live_tab")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "live_tab", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["queue_head"], after["queue_head"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["queue_head", row]); if (seen.has(exact) || !(boundary_adds.get("queue_head")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "queue_head", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["queue_head_tab"], after["queue_head_tab"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["queue_head_tab", row]); if (seen.has(exact) || !(boundary_adds.get("queue_head_tab")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "queue_head_tab", add: [row], del: [] }); }
+  for (const row of multiset_diff(mid["tab_view"], after["tab_view"]).add) { const row_text = JSON.stringify(row); const exact = JSON.stringify(["tab_view", row]); if (seen.has(exact) || !(boundary_adds.get("tab_view")?.has(row_text) ?? false)) continue; seen.add(exact); additions.push({ rel: "tab_view", add: [row], del: [] }); }
   return additions.filter((delta) => delta.add.length > 0);
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "live_tab";
 INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id");
 DELETE FROM "demanded";
@@ -814,20 +814,20 @@ INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT json_extract(b0."col1
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const close_request = multisetDiff(before.close_request, after.close_request);
-  const closed = multisetDiff(before.closed, after.closed);
-  const demanded = multisetDiff(before.demanded, after.demanded);
-  const drained = multisetDiff(before.drained, after.drained);
-  const live_tab = multisetDiff(before.live_tab, after.live_tab);
-  const open_request = multisetDiff(before.open_request, after.open_request);
-  const open_tab = multisetDiff(before.open_tab, after.open_tab);
-  const queue_head = multisetDiff(before.queue_head, after.queue_head);
-  const queue_head_tab = multisetDiff(before.queue_head_tab, after.queue_head_tab);
-  const queue_next = multisetDiff(before.queue_next, after.queue_next);
-  const queue_slot = multisetDiff(before.queue_slot, after.queue_slot);
-  const tab_row = multisetDiff(before.tab_row, after.tab_row);
-  const tab_view = multisetDiff(before.tab_view, after.tab_view);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const close_request = multiset_diff(before.close_request, after.close_request);
+  const closed = multiset_diff(before.closed, after.closed);
+  const demanded = multiset_diff(before.demanded, after.demanded);
+  const drained = multiset_diff(before.drained, after.drained);
+  const live_tab = multiset_diff(before.live_tab, after.live_tab);
+  const open_request = multiset_diff(before.open_request, after.open_request);
+  const open_tab = multiset_diff(before.open_tab, after.open_tab);
+  const queue_head = multiset_diff(before.queue_head, after.queue_head);
+  const queue_head_tab = multiset_diff(before.queue_head_tab, after.queue_head_tab);
+  const queue_next = multiset_diff(before.queue_next, after.queue_next);
+  const queue_slot = multiset_diff(before.queue_slot, after.queue_slot);
+  const tab_row = multiset_diff(before.tab_row, after.tab_row);
+  const tab_view = multiset_diff(before.tab_view, after.tab_view);
   return {
     rels: [
       { rel: "close_request", add: close_request.add, del: close_request.del },
@@ -844,41 +844,41 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "tab_row", add: tab_row.add, del: tab_row.del },
       { rel: "tab_view", add: tab_view.add, del: tab_view.del },
     ],
-    carryPending: closed.add.length > 0 || closed.del.length > 0 || drained.add.length > 0 || drained.del.length > 0 || open_tab.add.length > 0 || open_tab.del.length > 0 || queue_next.add.length > 0 || queue_next.del.length > 0 || queue_slot.add.length > 0 || queue_slot.del.length > 0 || live_tab.del.length > 0,
+    carry_pending: closed.add.length > 0 || closed.del.length > 0 || drained.add.length > 0 || drained.del.length > 0 || open_tab.add.length > 0 || open_tab.del.length > 0 || queue_next.add.length > 0 || queue_next.del.length > 0 || queue_slot.add.length > 0 || queue_slot.del.length > 0 || live_tab.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       forkJoin([resolveOpenTab_0Writes(seam, before, arrivals), resolveQueueNext_1Writes(seam, before, arrivals), resolveQueueSlot_2Writes(seam, before, arrivals), resolveClosed_3Writes(seam, before, arrivals), resolveDrained_4Writes(seam, before, arrivals), resolveOpenTab_5Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
-    concatMap((deltas) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
   );
   // concat_program_queue: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
-function runOrderedTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => snapshotOrderedPre(seam).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((mid) => ({ before, mid })))),
-    concatMap(({ before, mid }) => processOrderedOccurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
-    concatMap(({ before, mid, written }) => recomputeLevels(seam).pipe(map(() => ({ before, mid, written })))),
+function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap(({ before, mid, written }) => recompute_levels(seam).pipe(map(() => ({ before, mid, written })))),
   ).pipe(
-    concatMap(({ before, mid, written }) => readSnapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: buildDeltas(before, after) })))),
-    concatMap(({ mid, after, written, deltas }) => stageOrderedFrontiers(seam, INCREMENTAL_RELATIONS, orderedCarryAdditions(mid, after, deltas, written)).pipe(
-      map((postWriteCarry): ITickDeltas => ({ rels: deltas.rels, carryPending: deltas.carryPending || postWriteCarry })),
+    concatMap(({ before, mid, written }) => read_snapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before, after) })))),
+    concatMap(({ mid, after, written, deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after, deltas, written)).pipe(
+      map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
-    concatMap((deltas) => IncrementalRuntime.stageDepartures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
+    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
   );
   // concat_program_queue: ordered process_occurrences with evolving pre snapshots.
 }
@@ -892,38 +892,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.stageDepartures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.stage_departures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
-  return runOrderedTick(seam, arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
+  return run_ordered_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -932,16 +932,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "concat_program_queue",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

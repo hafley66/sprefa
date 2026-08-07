@@ -46,12 +46,12 @@ const FIXTURE = "callgraph_unused_inverts_with_the_call_set";
 
 type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
-function readSchedule(): readonly IArrivalBatch[] {
+function read_schedule(): readonly IArrivalBatch[] {
   const text = readFileSync(join(COMPILE_OUT, `${FIXTURE}.schedule.json`), "utf8");
   return JSON.parse(text) as readonly IArrivalBatch[];
 }
 
-function runTicks(schedule: readonly IArrivalBatch[]): Promise<readonly string[]> {
+function run_ticks(schedule: readonly IArrivalBatch[]): Promise<readonly string[]> {
   const emitted = program as EmittedProgram;
   const seam = ScratchStore.open(":memory:");
   return firstValueFrom(
@@ -63,8 +63,8 @@ function runTicks(schedule: readonly IArrivalBatch[]): Promise<readonly string[]
 }
 
 test("a schedule ending on a retraction tick mints no extra empty drain tick", async () => {
-  const truncated = readSchedule().slice(0, 4);
-  const lines = await runTicks(truncated);
+  const truncated = read_schedule().slice(0, 4);
+  const lines = await run_ticks(truncated);
   assert.equal(
     lines.length,
     truncated.length,
@@ -76,6 +76,6 @@ test("the full schedule still matches the checked-in oracle log line for line", 
   const oracle = readFileSync(join(COMPILE_OUT, `${FIXTURE}.oracle.jsonl`), "utf8")
     .split("\n")
     .filter((line) => line.length > 0);
-  const lines = await runTicks(readSchedule());
+  const lines = await run_ticks(read_schedule());
   assert.deepEqual([...lines], oracle);
 });

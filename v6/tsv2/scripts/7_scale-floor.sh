@@ -156,10 +156,10 @@ control_receipt="$scratch/receipt-control.json"
 run_receipts "$rows" "$receipt"
 run_receipts "$control_rows" "$control_receipt"
 
-statements_per_tick_set="$(jq -c '.statementCounts' "$receipt")"
-control_statements_set="$(jq -c '.statementCounts' "$control_receipt")"
-tick_count="$(jq -r '.tickCount' "$receipt")"
-incremental_safe="$(jq -r '.incrementalSafe' "$receipt")"
+statements_per_tick_set="$(jq -c '.statement_counts' "$receipt")"
+control_statements_set="$(jq -c '.statement_counts' "$control_receipt")"
+tick_count="$(jq -r '.tick_count' "$receipt")"
+incremental_safe="$(jq -r '.incremental_safe' "$receipt")"
 
 # 3. wall leg: wall, RSS, final row counts, best of N.
 # The whole record travels with the winning sample, so the RSS and row counts

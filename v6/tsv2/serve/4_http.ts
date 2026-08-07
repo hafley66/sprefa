@@ -13,10 +13,10 @@
  *                    dbstat pass, omitted or empty means PRAGMA-only.
  *   anything else    -> 404 {error, routes}
  *
- * `serveTsv2` is one cold observable subscribed exactly once in serve/main.ts:
+ * `serve_tsv2` is one cold observable subscribed exactly once in serve/main.ts:
  *
  *   httpServer$ -> mergeMap(server =>
- *        merge( programExchanges$ -> switchMap(runProgram$)   the program's lifetime
+ *        merge( programExchanges$ -> switchMap(run_program$)   the program's lifetime
  *             , otherExchanges$   -> mergeMap(routeRequest)   one inner per request
  *             , of(listening) ))
  *
@@ -75,8 +75,8 @@ import type {
 } from "../runtime/types.ts";
 import { ProgramCompiler } from "./0_compile.ts";
 import { HostRunner } from "./1_hosts.ts";
-import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bindPlansFor } from "./2_binds.ts";
-import { LiveEngine, bootServedProgram } from "./3_engine.ts";
+import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bind_plans_for } from "./2_binds.ts";
+import { LiveEngine, boot_served_program } from "./3_engine.ts";
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /program",
@@ -97,11 +97,11 @@ interface ServerState {
   engine: LiveEngine | null;
 }
 
-function newServerState(): ServerState {
+function new_server_state(): ServerState {
   return { program: null, seam: null, engine: null };
 }
 
-function writeJson(response: http.ServerResponse, status: number, body: unknown): void {
+function write_json(response: http.ServerResponse, status: number, body: unknown): void {
   const text = JSON.stringify(body);
   response.writeHead(status, { "content-type": "application/json" });
   response.end(text);
@@ -110,7 +110,7 @@ function writeJson(response: http.ServerResponse, status: number, body: unknown)
 /** The one Promise wrapper above the driver seam, and the same one v6/dl still
  *  carries: node's request body is an event stream with no observable form that
  *  is shorter than this. Recorded as standing law debt, not invented here. */
-function readBody(request: http.IncomingMessage): Promise<string> {
+function read_body(request: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -126,18 +126,18 @@ interface ProgramLoad {
   readonly response: http.ServerResponse;
 }
 
-function loadProgram$(exchange: Exchange): Observable<ProgramLoad | null> {
-  return from(readBody(exchange.request)).pipe(
+function load_program$(exchange: Exchange): Observable<ProgramLoad | null> {
+  return from(read_body(exchange.request)).pipe(
     concatMap((source) => ProgramCompiler.compile(source)),
     map((program): ProgramLoad => ({ program, response: exchange.response })),
     catchError((failure: unknown) => {
-      writeJson(exchange.response, 400, { error: failure instanceof Error ? failure.message : String(failure) });
+      write_json(exchange.response, 400, { error: failure instanceof Error ? failure.message : String(failure) });
       return of(null);
     }),
   );
 }
 
-function disposeProgram(state: ServerState): void {
+function dispose_program(state: ServerState): void {
   state.seam?.db.close();
   state.seam = null;
   state.engine = null;
@@ -149,38 +149,38 @@ function disposeProgram(state: ServerState): void {
  *  all until the next accepted program swaps them out. The 200 is written LAST,
  *  from a `defer` merged after the three, so a client that reads `loaded:true`
  *  and immediately POSTs arrivals cannot beat the tick loop into existence. */
-function runProgram$(state: ServerState, config: IServeConfig, load: ProgramLoad): Observable<IServeEvent> {
+function run_program$(state: ServerState, config: IServeConfig, load: ProgramLoad): Observable<IServeEvent> {
   const scheduler: SchedulerLike = config.scheduler ?? asyncScheduler;
   return defer(() => {
-    disposeProgram(state);
-    const seam = ScratchStore.open(config.dbUrl);
+    dispose_program(state);
+    const seam = ScratchStore.open(config.db_url);
     const engine = new LiveEngine(load.program, seam);
     state.seam = seam;
     state.engine = engine;
     state.program = load.program;
-    return bootServedProgram(seam, load.program).pipe(
+    return boot_served_program(seam, load.program).pipe(
       concatMap(() =>
         merge(
           engine.ticks$.pipe(map((outcome): IServeEvent => ({ kind: "tick", outcome }))),
-          new HostRunner(engine, seam, load.program.hostPlans).effects$.pipe(
+          new HostRunner(engine, seam, load.program.host_plans).effects$.pipe(
             map((done): IServeEvent => ({ kind: "effect", done })),
           ),
-          new IntervalBindRunner(engine, bindPlansFor(load.program.bindPlans, "live_interval"), scheduler).firings$.pipe(
+          new IntervalBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_interval"), scheduler).firings$.pipe(
             map((fired): IServeEvent => ({ kind: "bind", fired })),
           ),
-          new WatchBindRunner(engine, bindPlansFor(load.program.bindPlans, "live_watch"), {
-            root: config.watchRoot ?? process.cwd(),
-            coalesceMs: config.watchCoalesceMs ?? 100,
+          new WatchBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_watch"), {
+            root: config.watch_root ?? process.cwd(),
+            coalesce_ms: config.watch_coalesce_ms ?? 100,
             scheduler,
-            source: config.watchSource ?? new NodeWatchSource(),
+            source: config.watch_source ?? new NodeWatchSource(),
           }).firings$.pipe(map((fired): IServeEvent => ({ kind: "watch", fired }))),
           defer(() => {
-            writeJson(load.response, 200, {
+            write_json(load.response, 200, {
               loaded: true,
-              rels: Object.keys(load.program.relColumns).sort(),
-              arrivalTargets: load.program.arrivalTargets,
-              hosts: load.program.hostPlans.map((plan) => plan.name),
-              binds: load.program.bindPlans.map((plan) => ({ name: plan.name, literals: plan.literals })),
+              rels: Object.keys(load.program.rel_columns).sort(),
+              arrival_targets: load.program.arrival_targets,
+              hosts: load.program.host_plans.map((plan) => plan.name),
+              binds: load.program.bind_plans.map((plan) => ({ name: plan.name, literals: plan.literals })),
             });
             return of<IServeEvent>({ kind: "loaded", program: load.program.name });
           }),
@@ -219,7 +219,7 @@ function runProgram$(state: ServerState, config: IServeConfig, load: ProgramLoad
  * empty delta line breaks it in silence. Receipt:
  * tests/serveArrivalValidation.test.ts.
  */
-function isRowValue(value: unknown): value is IRowValue {
+function is_row_value(value: unknown): value is IRowValue {
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
@@ -245,7 +245,7 @@ function isRowValue(value: unknown): value is IRowValue {
  * An UNDECLARED column type (a program carrying no `relColumnTypes`) is refused
  * nothing but absence, for the same reason: nothing here knows what it is.
  */
-function columnProblem(type: IRowColumnType | undefined, value: unknown): string | null {
+function column_problem(type: IRowColumnType | undefined, value: unknown): string | null {
   if (value === null || value === undefined) return "must not be null";
   if (type === "int") return Number.isInteger(value) ? null : "must be an int";
   if (type === "float") return typeof value === "number" && Number.isFinite(value) ? null : "must be a float";
@@ -254,7 +254,7 @@ function columnProblem(type: IRowColumnType | undefined, value: unknown): string
   // at this seam until the tick-log encoder needed the two separated, and
   // widening what the boundary accepts is a different decision from teaching
   // the log how to print it. A json document arrives as its text.
-  if (type === "text" || type === "json") return isRowValue(value) ? null : "must be a string, number or boolean";
+  if (type === "text" || type === "json") return is_row_value(value) ? null : "must be a string, number or boolean";
   return null;
 }
 
@@ -262,7 +262,7 @@ type BatchCheck =
   | { readonly kind: "ok"; readonly batch: IArrivalBatch }
   | { readonly kind: "bad"; readonly problem: string };
 
-function checkArrivalBody(program: IServedProgram, text: string): BatchCheck {
+function check_arrival_body(program: IServedProgram, text: string): BatchCheck {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -280,22 +280,22 @@ function checkArrivalBody(program: IServedProgram, text: string): BatchCheck {
       return { kind: "bad", problem: `arrival ${index} must be an object carrying rel, sign and row` };
     }
     const arrival = entry as { readonly rel?: unknown; readonly sign?: unknown; readonly row?: unknown };
-    if (typeof arrival.rel !== "string" || !program.arrivalTargets.includes(arrival.rel)) {
+    if (typeof arrival.rel !== "string" || !program.arrival_targets.includes(arrival.rel)) {
       return { kind: "bad", problem: `'${String(arrival.rel)}' is not an arrival target` };
     }
     if (arrival.sign !== "add" && arrival.sign !== "del") {
       return { kind: "bad", problem: `sign must be add or del, got '${String(arrival.sign)}'` };
     }
-    const columns = program.relColumns[arrival.rel] ?? [];
+    const columns = program.rel_columns[arrival.rel] ?? [];
     if (!Array.isArray(arrival.row)) {
       return { kind: "bad", problem: `'${arrival.rel}' row must be an array of ${columns.length} values` };
     }
     if (arrival.row.length !== columns.length) {
       return { kind: "bad", problem: `'${arrival.rel}' takes ${columns.length} columns, got ${arrival.row.length}` };
     }
-    const types = program.relColumnTypes?.[arrival.rel];
+    const types = program.rel_column_types?.[arrival.rel];
     for (const [column, value] of (arrival.row as readonly unknown[]).entries()) {
-      const problem = columnProblem(types?.[column], value);
+      const problem = column_problem(types?.[column], value);
       if (problem !== null) {
         return { kind: "bad", problem: `'${arrival.rel}' column '${columns[column]}' ${problem}` };
       }
@@ -306,23 +306,23 @@ function checkArrivalBody(program: IServedProgram, text: string): BatchCheck {
   return { kind: "ok", batch: batch as IArrivalBatch };
 }
 
-function handleArrivals$(state: ServerState, exchange: Exchange): Observable<IServeEvent> {
+function handle_arrivals$(state: ServerState, exchange: Exchange): Observable<IServeEvent> {
   const { engine, program } = state;
   if (!engine || !program) {
-    writeJson(exchange.response, 409, { error: "no program loaded" });
+    write_json(exchange.response, 409, { error: "no program loaded" });
     return of({ kind: "served", method: "POST", path: "/edb/events" });
   }
-  return from(readBody(exchange.request)).pipe(
+  return from(read_body(exchange.request)).pipe(
     concatMap((text) => {
-      const checked = checkArrivalBody(program, text);
+      const checked = check_arrival_body(program, text);
       if (checked.kind === "bad") {
-        writeJson(exchange.response, 400, { error: checked.problem });
+        write_json(exchange.response, 400, { error: checked.problem });
         return EMPTY;
       }
       return engine.submit(checked.batch).pipe(toArray());
     }),
     map((outcomes: readonly ITickOutcome[]): IServeEvent => {
-      writeJson(exchange.response, 200, {
+      write_json(exchange.response, 200, {
         ticks: outcomes.map((outcome) => ({ tick: outcome.tick, line: outcome.line })),
       });
       return { kind: "served", method: "POST", path: "/edb/events" };
@@ -330,15 +330,15 @@ function handleArrivals$(state: ServerState, exchange: Exchange): Observable<ISe
   );
 }
 
-function handleIdbRead$(state: ServerState, relName: string, response: http.ServerResponse): Observable<IServeEvent> {
+function handle_idb_read$(state: ServerState, rel_name: string, response: http.ServerResponse): Observable<IServeEvent> {
   if (!state.engine) {
-    writeJson(response, 404, { error: "no program loaded" });
-    return of({ kind: "served", method: "GET", path: `/idb/${relName}` });
+    write_json(response, 404, { error: "no program loaded" });
+    return of({ kind: "served", method: "GET", path: `/idb/${rel_name}` });
   }
-  return state.engine.rows(relName).pipe(
+  return state.engine.rows(rel_name).pipe(
     map((rows): IServeEvent => {
-      writeJson(response, 200, { rows });
-      return { kind: "served", method: "GET", path: `/idb/${relName}` };
+      write_json(response, 200, { rows });
+      return { kind: "served", method: "GET", path: `/idb/${rel_name}` };
     }),
   );
 }
@@ -346,18 +346,18 @@ function handleIdbRead$(state: ServerState, relName: string, response: http.Serv
 /** `GET /stats?tables=a,b` -- process memory plus storage stats for the
  *  running program's own seam (runtime/serveStats.ts). 404 with no program
  *  loaded, same convention as `/idb/:rel`: there is no connection to read. */
-function handleStats$(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Observable<IServeEvent> {
+function handle_stats$(state: ServerState, request: http.IncomingMessage, response: http.ServerResponse): Observable<IServeEvent> {
   if (!state.seam) {
-    writeJson(response, 404, { error: "no program loaded" });
+    write_json(response, 404, { error: "no program loaded" });
     return of({ kind: "served", method: "GET", path: "/stats" });
   }
-  const tableNames = (new URL(request.url ?? "/", "http://localhost").searchParams.get("tables") ?? "")
+  const table_names = (new URL(request.url ?? "/", "http://localhost").searchParams.get("tables") ?? "")
     .split(",")
     .map((name) => name.trim())
     .filter((name) => name.length > 0);
-  return ServeStats.sqliteSnapshot(state.seam, tableNames).pipe(
+  return ServeStats.sqlite_snapshot(state.seam, table_names).pipe(
     map((sqlite): IServeEvent => {
-      writeJson(response, 200, { memory: ServeStats.processMemory(), sqlite });
+      write_json(response, 200, { memory: ServeStats.process_memory(), sqlite });
       return { kind: "served", method: "GET", path: "/stats" };
     }),
   );
@@ -366,87 +366,87 @@ function handleStats$(state: ServerState, request: http.IncomingMessage, respons
 /** One SSE client as one inner under the app's single subscription. Teardown
  *  law (refCount honesty): a dropped curl closes its socket, `takeUntil` ends
  *  the inner, `finalize` decrements the active count exactly once. */
-function ticksClient$(
+function ticks_client$(
   state: ServerState,
   request: http.IncomingMessage,
   response: http.ServerResponse,
-  bumpActive: (delta: number) => void,
+  bump_active: (delta: number) => void,
 ): Observable<IServeEvent> {
   const engine = state.engine;
   if (!engine) {
-    writeJson(response, 404, { error: "no program loaded" });
+    write_json(response, 404, { error: "no program loaded" });
     return of({ kind: "served", method: "GET", path: "/ticks" });
   }
   response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
   response.flushHeaders();
-  bumpActive(1);
+  bump_active(1);
 
-  let endedBySocketClose = false;
-  const socketClosed$ = fromEvent(request.socket, "close").pipe(
+  let ended_by_socket_close = false;
+  const socket_closed$ = fromEvent(request.socket, "close").pipe(
     tap(() => {
-      endedBySocketClose = true;
+      ended_by_socket_close = true;
     }),
   );
 
   return engine.ticks$.pipe(
     tap((outcome) => response.write(`data: ${outcome.line}\n\n`)),
     map((outcome): IServeEvent => ({ kind: "tick", outcome })),
-    takeUntil(socketClosed$),
+    takeUntil(socket_closed$),
     finalize(() => {
-      bumpActive(-1);
-      if (!endedBySocketClose) response.end();
+      bump_active(-1);
+      if (!ended_by_socket_close) response.end();
     }),
   );
 }
 
-function pathSegments(request: http.IncomingMessage): readonly string[] {
+function path_segments(request: http.IncomingMessage): readonly string[] {
   return new URL(request.url ?? "/", "http://localhost").pathname.split("/").filter((segment) => segment.length > 0);
 }
 
-function isProgramLoad(request: http.IncomingMessage): boolean {
-  const segments = pathSegments(request);
+function is_program_load(request: http.IncomingMessage): boolean {
+  const segments = path_segments(request);
   return request.method === "POST" && segments.length === 1 && segments[0] === "program";
 }
 
 /** The 500 path, shared by every branch: answer if the response is still open,
  *  and report the request as served so one bad request cannot end the app. */
-function serveFailure(response: http.ServerResponse, method: string, route: string, failure: unknown): IServeEvent {
+function serve_failure(response: http.ServerResponse, method: string, route: string, failure: unknown): IServeEvent {
   if (response.headersSent) response.end();
-  else writeJson(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
+  else write_json(response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
   return { kind: "served", method, path: route };
 }
 
-function routeRequest$(state: ServerState, exchange: Exchange, bumpActive: (delta: number) => void): Observable<IServeEvent> {
+function route_request$(state: ServerState, exchange: Exchange, bump_active: (delta: number) => void): Observable<IServeEvent> {
   const { request, response } = exchange;
   const method = request.method ?? "GET";
-  const segments = pathSegments(request);
+  const segments = path_segments(request);
   const route = `/${segments.join("/")}`;
 
   const answered = ((): Observable<IServeEvent> => {
     if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "events") {
-      return handleArrivals$(state, exchange);
+      return handle_arrivals$(state, exchange);
     }
     if (method === "GET" && segments.length === 2 && segments[0] === "idb") {
-      return handleIdbRead$(state, segments[1]!, response);
+      return handle_idb_read$(state, segments[1]!, response);
     }
     if (method === "GET" && segments.length === 1 && segments[0] === "ticks") {
-      return ticksClient$(state, request, response, bumpActive);
+      return ticks_client$(state, request, response, bump_active);
     }
     if (method === "GET" && segments.length === 1 && segments[0] === "stats") {
-      return handleStats$(state, request, response);
+      return handle_stats$(state, request, response);
     }
-    writeJson(response, 404, { error: "not found", routes: ROUTE_LIST });
+    write_json(response, 404, { error: "not found", routes: ROUTE_LIST });
     return of({ kind: "served", method, path: route });
   })();
 
-  return answered.pipe(catchError((failure: unknown) => of(serveFailure(response, method, route, failure))));
+  return answered.pipe(catchError((failure: unknown) => of(serve_failure(response, method, route, failure))));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// serveTsv2: the app. Cold; one subscription (serve/main.ts) runs it.
+// serve_tsv2: the app. Cold; one subscription (serve/main.ts) runs it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function httpServer$(port: number): Observable<{ readonly server: http.Server; readonly port: number }> {
+function http_server$(port: number): Observable<{ readonly server: http.Server; readonly port: number }> {
   return new Observable<{ readonly server: http.Server; readonly port: number }>((subscriber) => {
     const server = http.createServer();
     server.once("error", (failure) => subscriber.error(failure));
@@ -473,45 +473,45 @@ function httpServer$(port: number): Observable<{ readonly server: http.Server; r
  * was needed: the program's rows are only reachable THROUGH a request, so there
  * is no reader left to protect once close's callback has fired.
  */
-function closeServer$(state: ServerState, server: http.Server): Observable<void> {
+function close_server$(state: ServerState, server: http.Server): Observable<void> {
   return new Observable<void>((subscriber) => {
     server.close(() => {
-      disposeProgram(state);
+      dispose_program(state);
       subscriber.next(undefined);
       subscriber.complete();
     });
   });
 }
 
-export const serveTsv2: IServeTsv2 = (config: IServeConfig): Observable<IServeEvent> =>
+export const serve_tsv2: IServeTsv2 = (config: IServeConfig): Observable<IServeEvent> =>
   defer(() => {
-    const state = newServerState();
-    let activeSubscriptions = 0;
-    const bumpActive = (delta: number): void => {
-      activeSubscriptions += delta;
+    const state = new_server_state();
+    let active_subscriptions = 0;
+    const bump_active = (delta: number): void => {
+      active_subscriptions += delta;
     };
 
-    return httpServer$(config.port).pipe(
+    return http_server$(config.port).pipe(
       mergeMap(({ server, port }) => {
         const exchanges$ = fromEvent(
           server,
           "request",
           (request: http.IncomingMessage, response: http.ServerResponse): Exchange => ({ request, response }),
         );
-        const [programExchanges$, otherExchanges$] = partition(exchanges$, (exchange) => isProgramLoad(exchange.request));
-        const accepted$ = programExchanges$.pipe(
-          mergeMap((exchange) => loadProgram$(exchange)),
+        const [program_exchanges$, other_exchanges$] = partition(exchanges$, (exchange) => is_program_load(exchange.request));
+        const accepted$ = program_exchanges$.pipe(
+          mergeMap((exchange) => load_program$(exchange)),
           filter((load): load is ProgramLoad => load !== null),
         );
 
         return merge(
-          accepted$.pipe(switchMap((load) => runProgram$(state, config, load))),
-          otherExchanges$.pipe(mergeMap((exchange) => routeRequest$(state, exchange, bumpActive))),
+          accepted$.pipe(switchMap((load) => run_program$(state, config, load))),
+          other_exchanges$.pipe(mergeMap((exchange) => route_request$(state, exchange, bump_active))),
           of<IServeEvent>({
             kind: "listening",
             port,
-            activeSubscribeCount: () => activeSubscriptions,
-            close: () => closeServer$(state, server),
+            active_subscribe_count: () => active_subscriptions,
+            close: () => close_server$(state, server),
           }),
         );
       }),

@@ -39,16 +39,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 const FIXTURE = "now_reads_the_tick";
 
-function emittedSource(): string {
+function emitted_source(): string {
   return readFileSync(join(COMPILE_OUT, `${FIXTURE}.ts`), "utf8");
 }
 
-function emittedDdl(source: string): string[] {
+function emitted_ddl(source: string): string[] {
   return [...source.matchAll(/^ {2}`((?:CREATE|INSERT) [\s\S]*?)`,$/gm)].map((match) => match[1]!);
 }
 
-function emittedAdvanceSql(source: string): string {
-  return source.match(/function advanceTick[\s\S]*?execute\(seam\.db, `([\s\S]*?)`\)/)![1]!;
+function emitted_advance_sql(source: string): string {
+  return source.match(/function advance_tick[\s\S]*?execute\(seam\.db, `([\s\S]*?)`\)/)![1]!;
 }
 
 function run(seam: ISqlSeam, sql: string) {
@@ -56,10 +56,10 @@ function run(seam: ISqlSeam, sql: string) {
 }
 
 test("the tick counter survives a re-run of the program DDL", async () => {
-  const ddl = emittedDdl(emittedSource());
+  const ddl = emitted_ddl(emitted_source());
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, ddl));
-  await run(seam, emittedAdvanceSql(emittedSource()));
+  await run(seam, emitted_advance_sql(emitted_source()));
 
   // What serve/3_engine.ts does on a program swap: replay the DDL, tolerate
   // "already exists" per statement.
@@ -78,34 +78,34 @@ test("the tick counter survives a re-run of the program DDL", async () => {
 });
 
 test("the tick advance is one statement per tick, flat in arrivals", async () => {
-  const source = emittedSource();
-  const advance = emittedAdvanceSql(source);
+  const source = emitted_source();
+  const advance = emitted_advance_sql(source);
   assert.equal(advance, `UPDATE "__tick" SET "n" = "n" + 1`);
   assert.ok(!advance.includes(";"), "the tick advance must be exactly one statement");
-  for (const pipeline of ["runNaiveTick", "runIncrementalTick"]) {
+  for (const pipeline of ["run_naive_tick", "run_incremental_tick"]) {
     const body = source.match(new RegExp(`function ${pipeline}[\\s\\S]*?\\n}`))![0];
-    const calls = body.match(/advanceTick\(seam\)/g) ?? [];
+    const calls = body.match(/advance_tick\(seam\)/g) ?? [];
     assert.equal(calls.length, 1, `${pipeline} must advance the tick exactly once`);
   }
 });
 
 test("now() reads the counter as a scalar subquery, never a joined row", async () => {
-  const source = emittedSource();
+  const source = emitted_source();
   const seam = ScratchStore.open(":memory:");
-  await firstValueFrom(ScratchStore.boot(seam, emittedDdl(source)));
-  await run(seam, emittedAdvanceSql(source));
+  await firstValueFrom(ScratchStore.boot(seam, emitted_ddl(source)));
+  await run(seam, emitted_advance_sql(source));
   await run(
     seam,
     `INSERT INTO "__frontier_ping" ("_phase","_sequence","name") VALUES (0,0,'alpha'), (0,1,'beta')`,
   );
 
-  const projectSql = source
+  const project_sql = source
     .split("\n")
-    .find((line) => line.includes('{ headRel: "seen_at"') && line.includes("projectSql:"))!
-    .match(/projectSql: `([\s\S]*?)` \}/)![1]!;
-  assert.ok(projectSql.includes(`(SELECT "n" FROM "__tick")`), `got: ${projectSql}`);
+    .find((line) => line.includes('{ head_rel: "seen_at"') && line.includes("project_sql:"))!
+    .match(/project_sql: `([\s\S]*?)` \}/)![1]!;
+  assert.ok(project_sql.includes(`(SELECT "n" FROM "__tick")`), `got: ${project_sql}`);
 
-  const derived = await run(seam, projectSql);
+  const derived = await run(seam, project_sql);
   assert.equal(derived.rows.length, 2, "the counter must not multiply the arrival rows");
   assert.deepEqual(
     derived.rows.map((row) => Number(row.tick)),

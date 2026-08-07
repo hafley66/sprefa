@@ -32,50 +32,50 @@ import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import { rowValueFromSql } from "../runtime/rows.ts";
+import { row_value_from_sql } from "../runtime/rows.ts";
 import type { IArrivalBatch, IBootStatement, IRowColumnType, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 type EmittedProgram = IGenProgram & {
   readonly boot: readonly IBootStatement[];
-  readonly finalSelect: Record<string, string>;
+  readonly final_select: Record<string, string>;
 };
 
-function finalValueJson(value: unknown, type?: IRowColumnType): string {
+function final_value_json(value: unknown, type?: IRowColumnType): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") {
-    return TickLogEmitter.valueText(value as IRowValue, type);
+    return TickLogEmitter.value_text(value as IRowValue, type);
   }
-  return TickLogEmitter.valueText(String(value), type);
+  return TickLogEmitter.value_text(String(value), type);
 }
 
-function finalStateLine(
-  rowsByRel: Record<string, readonly (readonly unknown[])[]>,
-  relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>,
+function final_state_line(
+  rows_by_rel: Record<string, readonly (readonly unknown[])[]>,
+  rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>,
 ): string {
   const parts: string[] = [];
-  for (const rel of Object.keys(rowsByRel).sort()) {
-    const rows = rowsByRel[rel]!;
+  for (const rel of Object.keys(rows_by_rel).sort()) {
+    const rows = rows_by_rel[rel]!;
     if (rows.length === 0) continue;
-    const types = relColumnTypes?.[rel];
-    const rowTexts = rows
-      .map((row) => `[${row.map((value, index) => finalValueJson(value, types?.[index])).join(",")}]`)
+    const types = rel_column_types?.[rel];
+    const row_texts = rows
+      .map((row) => `[${row.map((value, index) => final_value_json(value, types?.[index])).join(",")}]`)
       .sort();
-    parts.push(`${JSON.stringify(rel)}:[${rowTexts.join(",")}]`);
+    parts.push(`${JSON.stringify(rel)}:[${row_texts.join(",")}]`);
   }
   return `{"final":{${parts.join(",")}}}`;
 }
 
-function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
-  const relNames = Object.keys(program.finalSelect);
-  if (relNames.length === 0) return of(finalStateLine({}));
+function read_final_state(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
+  const rel_names = Object.keys(program.final_select);
+  if (rel_names.length === 0) return of(final_state_line({}));
   return forkJoin(
-    relNames.map((rel) =>
-      seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
+    rel_names.map((rel) =>
+      seam.runner.execute(seam.db, program.final_select[rel]!).pipe(
         map((result) => ({
           rel,
           rows: result.rows.map((row) =>
-            (program.relColumns[rel] ?? []).map((column, index) =>
-              rowValueFromSql(program.relColumnTypes?.[rel]?.[index], row[column]),
+            (program.rel_columns[rel] ?? []).map((column, index) =>
+              row_value_from_sql(program.rel_column_types?.[rel]?.[index], row[column]),
             ),
           ),
         })),
@@ -83,24 +83,24 @@ function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<str
     ),
   ).pipe(
     map((entries) => {
-      const rowsByRel: Record<string, readonly (readonly unknown[])[]> = {};
-      for (const entry of entries) rowsByRel[entry.rel] = entry.rows;
-      return finalStateLine(rowsByRel, program.relColumnTypes);
+      const rows_by_rel: Record<string, readonly (readonly unknown[])[]> = {};
+      for (const entry of entries) rows_by_rel[entry.rel] = entry.rows;
+      return final_state_line(rows_by_rel, program.rel_column_types);
     }),
   );
 }
 
 function main(): void {
-  const [moduleName, schedulePath, ...flags] = process.argv.slice(2);
-  if (moduleName === undefined || schedulePath === undefined) {
+  const [module_name, schedule_path, ...flags] = process.argv.slice(2);
+  if (module_name === undefined || schedule_path === undefined) {
     process.stderr.write("usage: golden-run.ts <module> <schedule.json> [--final]\n");
     process.exitCode = 2;
     return;
   }
-  const wantFinal = flags.includes("--final");
-  const schedule = JSON.parse(readFileSync(schedulePath, "utf8")) as readonly IArrivalBatch[];
+  const want_final = flags.includes("--final");
+  const schedule = JSON.parse(readFileSync(schedule_path, "utf8")) as readonly IArrivalBatch[];
 
-  void import(["..", "gen_emitted", `${moduleName}.ts`].join("/")).then((loaded: { program: EmittedProgram }) => {
+  void import(["..", "gen_emitted", `${module_name}.ts`].join("/")).then((loaded: { program: EmittedProgram }) => {
     const program = loaded.program;
     const seam = ScratchStore.open(":memory:");
     ScratchStore.boot(seam, program.ddl)
@@ -108,7 +108,7 @@ function main(): void {
         concatMap(() => BootRunner.run(seam, program.boot)),
         concatMap(() => TickFold.run(program, seam, schedule).pipe(toArray())),
         concatMap((lines) =>
-          wantFinal ? readFinalState(seam, program).pipe(map((line) => [...lines, line])) : of(lines),
+          want_final ? read_final_state(seam, program).pipe(map((line) => [...lines, line])) : of(lines),
         ),
       )
       .subscribe({
