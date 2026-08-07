@@ -622,7 +622,21 @@ test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
                                     FixpointIr),
                         _),
               LevelStatements),
-    FixpointIr = fixpointir(Assert, Dred, Revive, Expand),
+    FixpointIr = fixpointir(Storage, Assert, Dred, Revive, Expand),
+    % Every rel any src reads carries its comparator: storage class, collation,
+    % and the encoding slot the interning contract writes.
+    Storage == [
+        relstorage(ref(flow_edge, 4),
+                   [colclass(from_path, text, text, binary, direct),
+                    colclass(from_name, text, text, binary, direct),
+                    colclass(to_path, text, text, binary, direct),
+                    colclass(to_name, text, text, binary, direct)]),
+        relstorage(ref(flow_reach, 4),
+                   [colclass(from_path, text, text, binary, direct),
+                    colclass(from_name, text, text, binary, direct),
+                    colclass(to_path, text, text, binary, direct),
+                    colclass(to_name, text, text, binary, direct)])
+    ],
     Assert = fixplan(ref(flow_reach, 4),
                      [from_path, from_name, to_path, to_name],
                      [text, text, text, text], AssertSeeds, Hops,
@@ -675,11 +689,80 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
     once(sub_atom(Text, _, _, _,
                   'fixpointIr: { head: { rel: "flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], types: ["text", "text", "text", "text"] }')),
     once(sub_atom(Text, _, _, _,
+                  'storage: [{ rel: "flow_edge", arity: 4, columns: [{ name: "from_path", type: "text", storage: "text", collation: "binary", encoding: { kind: "direct" } }')),
+    once(sub_atom(Text, _, _, _,
                   'hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "flow_edge", arity: 4 } }]')),
     once(sub_atom(Text, _, _, _,
                   'stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major"')),
     once(sub_atom(Text, _, _, _, 'headRel: "flow_edge"')),
     once(sub_atom(Text, _, _, _, 'dredSql: null, fixpointIr: null')).
+
+% SABOTAGE RECEIPT: with arith/3 carrying no result type (the shape before this
+% test), both walks below emit the SAME `{ kind: "arith", op: "/" }` while the
+% SQL side emits `(a / b)` for one and `(CAST(a AS REAL) / b)` for the other,
+% so an executor reading the IR alone answers 2 where sqlite answers 2.5.
+test(fixpoint_ir_arith_carries_the_int_division_answer) :-
+    fixpoint_ir_share_walk(int, IntIr),
+    once(( fixpoint_ir_first_arith(IntIr, IntArith),
+           IntArith == arith(/, col(0, 1), col(1, 2), int) )),
+    fixpoint_ir_share_walk(float, FloatIr),
+    once(( fixpoint_ir_first_arith(FloatIr, FloatArith),
+           FloatArith == arith(/, col(0, 1), col(1, 2), float) )).
+
+% The same two rules over a `legs` column that is int in one plan, float in the
+% other; nothing else moves.
+fixpoint_ir_share_walk(LegsType, FixpointIr) :-
+    RelPlans = [
+        relplan(share_seed/2, set, [node, total], none, [int, int]),
+        relplan(hop/3, set, [parent, child, legs], none, [int, int, LegsType]),
+        relplan(share/2, set, [node, total], none, [int, int])
+    ],
+    Rules = [
+        (share(Node, Total) <- share_seed(Node, Total)),
+        (share(Child, Each) <-
+           ( share(Parent, Total), hop(Parent, Child, Legs),
+             Each := Total / Legs ))
+    ],
+    level_ref_count_sql(RelPlans, share/2, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)),
+    FixpointIr \== none.
+
+fixpoint_ir_first_arith(fixpointir(_, fixplan(_, _, _, _, Hops, _, _), _, _, _),
+                        Arith) :-
+    member(arm(_, _, _, Project, _), Hops),
+    member(Expr, Project),
+    Expr = arith(_, _, _, _),
+    Arith = Expr.
+
+% Storage class is not the declared type: bool and ref(_) both store INTEGER,
+% and only a text column carries a collation. The head's own types stay inside
+% fixpoint_ir_columns/4's {int,text,float,bool} fence; a SOURCE rel is where the
+% wider domain shows up, and the walk still joins on those columns.
+test(fixpoint_ir_storage_separates_class_from_declared_type) :-
+    RelPlans = [
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(walk/1, set, [node], none, [int])
+    ],
+    Rules = [
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
+    ],
+    level_ref_count_sql(RelPlans, walk/1, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)),
+    FixpointIr = fixpointir(Storage, _, _, _, _),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    ColumnClasses == [
+        colclass(parent, int, integer, none, direct),
+        colclass(child, int, integer, none, direct),
+        colclass(flag, bool, integer, none, direct),
+        colclass(owner, ref, integer, none, dict(node_rel)),
+        colclass(label, text, text, binary, direct)
+    ],
+    memberchk(relstorage(ref(walk, 1), [colclass(node, int, integer, none,
+                                                 direct)]), Storage).
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
     lowered_for(shared_demand_refcount, Lowered),

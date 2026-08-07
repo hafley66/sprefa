@@ -1106,16 +1106,41 @@ sql_template_array(Sqls, Text) :-
 % lower.pl:level_fixpoint_ir/4 printed as an object literal, additive beside
 % expandSql/dredSql (plans/2026-08-07-plan-ir-offload-contract.md §2.4).
 fixpoint_ir_text(none, null) :- !.
-fixpoint_ir_text(fixpointir(Assert, Dred, Revive, Expand), Text) :-
+fixpoint_ir_text(fixpointir(Storage, Assert, Dred, Revive, Expand), Text) :-
     Assert = fixplan(ref(HeadName, _), Columns, ColumnTypes, _, _, _, _),
     quoted_string_array_text(Columns, ColumnsText),
     quoted_string_array_text(ColumnTypes, TypesText),
+    fixpoint_term_array_text(fixpoint_storage_text, Storage, StorageText),
     maplist(fixpoint_walk_text, [Assert, Dred, Revive, Expand],
             [AssertText, DredText, ReviveText, ExpandText]),
     format(atom(Text),
-           '{ head: { rel: "~w", columns: ~w, types: ~w }, assert: ~w, dred: ~w, revive: ~w, expand: ~w }',
-           [HeadName, ColumnsText, TypesText, AssertText, DredText, ReviveText,
-            ExpandText]).
+           '{ head: { rel: "~w", columns: ~w, types: ~w }, storage: ~w, assert: ~w, dred: ~w, revive: ~w, expand: ~w }',
+           [HeadName, ColumnsText, TypesText, StorageText, AssertText, DredText,
+            ReviveText, ExpandText]).
+
+% lower.pl:ir_column_class/3. Named keys, so the interning contract adds one
+% without moving anything an executor already reads.
+fixpoint_storage_text(relstorage(ref(Name, Arity), ColumnClasses), Text) :-
+    fixpoint_term_array_text(fixpoint_column_class_text, ColumnClasses,
+                             ClassesText),
+    format(atom(Text), '{ rel: "~w", arity: ~w, columns: ~w }',
+           [Name, Arity, ClassesText]).
+
+fixpoint_column_class_text(colclass(Column, Type, StorageClass, Collation,
+                                    Encoding), Text) :-
+    js_string(Column, ColumnText),
+    fixpoint_collation_text(Collation, CollationText),
+    fixpoint_encoding_text(Encoding, EncodingText),
+    format(atom(Text),
+           '{ name: ~w, type: "~w", storage: "~w", collation: ~w, encoding: ~w }',
+           [ColumnText, Type, StorageClass, CollationText, EncodingText]).
+
+fixpoint_collation_text(none, null) :- !.
+fixpoint_collation_text(Collation, Text) :- js_string(Collation, Text).
+
+fixpoint_encoding_text(direct, '{ kind: "direct" }') :- !.
+fixpoint_encoding_text(dict(Target), Text) :-
+    format(atom(Text), '{ kind: "dict", rel: "~w" }', [Target]).
 
 % `stop` carries both admission tests: the seeds' and the hop's differ on the
 % over-delete and revive walks (lower.pl:level_dred_plan/4).
@@ -1207,12 +1232,15 @@ fixpoint_expr_text(col(Index, Ordinal), Text) :- !,
            [Index, Ordinal]).
 fixpoint_expr_text(lit(Literal), Text) :- !,
     fixpoint_literal_text(Literal, Text).
-fixpoint_expr_text(arith(Operator, Left, Right), Text) :- !,
+% `type` is compile_expr/4's result type: `/` over two ints is SQLite integer
+% division, over anything else a REAL divide (lower.pl:arithmetic_rendering/6).
+fixpoint_expr_text(arith(Operator, Left, Right, Type), Text) :- !,
     js_string(Operator, OperatorText),
     fixpoint_expr_text(Left, LeftText),
     fixpoint_expr_text(Right, RightText),
-    format(atom(Text), '{ kind: "arith", op: ~w, left: ~w, right: ~w }',
-           [OperatorText, LeftText, RightText]).
+    format(atom(Text),
+           '{ kind: "arith", op: ~w, type: "~w", left: ~w, right: ~w }',
+           [OperatorText, Type, LeftText, RightText]).
 fixpoint_expr_text(concat(Parts), Text) :-
     fixpoint_term_array_text(fixpoint_expr_text, Parts, PartsText),
     format(atom(Text), '{ kind: "concat", parts: ~w }', [PartsText]).

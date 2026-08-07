@@ -177,15 +177,27 @@ expand rounds are 60-75% of every case's fixpoint).
 
 ### 2.4 Phase-1 IR, written out
 
+AMENDED 2026-08-07 by lane P1-A-R against the landed
+`lower.pl:level_fixpoint_ir/4` + `emit_ts.pl:fixpoint_ir_text/2`. The pre-build
+draft of this section is in git; every change below is a place the draft was
+narrower than the SQL it has to mirror, or was missing a fact the executor
+cannot recover. Grep `v6/prolog/compile/test/plunit_tests.pl` for `fixpoint_ir_`
+for the pinned terms.
+
 Type signatures first, prolog side, then the JSON shape the emitter prints.
 
 ```prolog
-% fixplan(HeadRef, Columns, ColumnTypes, Seeds, Hop, Stop, Emit)
+% fixpointir(Storage, Assert, Dred, Revive, Expand)
+%   Storage   : list of relstorage/2, one row per rel any src reads, plus head
+%   the four walks are ONE term: the fence admits all four or none
+fixpointir( [relstorage(Ref, [colclass])], Assert, Dred, Revive, Expand ).
+
+% fixplan(HeadRef, Columns, ColumnTypes, Seeds, Hops, Stop, Emit)
 %   Seeds     : list of arm/5, each producing head rows from base rels
-%   Hop       : arm/5 whose SelfIndex source reads the frontier
-%   Stop      : probe/2, the walk's admission test
-%   Emit      : order(round_major | key_major), the _sequence contract
-fixplan(  ref(Name, Arity), [column(Name, Type)], [Seed], Hop, Stop, Emit).
+%   Hops      : list of arm/5, ONE PER RECURSIVE RULE, SelfIndex reads the wave
+%   Stop      : stop(SeedProbe, HopProbe), the two admission tests, either none
+%   Emit      : order(round_major | key_major) or none, the _sequence contract
+fixplan(  ref(Name, Arity), [Column], [Type], [Seed], [Hop], Stop, Emit).
 
 % arm(Sources, Equalities, Filters, Project, SelfIndex)
 %   Sources   : list of src/2, index-aligned with the b<index> aliases
@@ -194,40 +206,75 @@ arm( [src(Index, Source)], [eq(Expr, Expr)], [Filter], [Expr], SelfIndex ).
 
 % src(Index, Source)
 source( rel(Ref)                       ).  % lower.pl:343-362
-source( delta(Ref, Sign, liveness(Sign)) ). % lower.pl:2875-2890
-source( wave(Slot)                     ).  % lower.pl:2910-2925, Slot = a | b
-source( cone                           ).  % lower.pl:2935-2952
+source( rel_or_retracted(Ref)          ).  % lower.pl:dred_seed_from_part/9 cl.3
+source( delta(Ref, Sign, liveness(present | absent)) ). % :dred_delta_select/4
+source( wave(frontier)                 ).  % the a/b buffers are one IR slot
+source( cone                           ).  % lower.pl:dred_cone_table_name/2
+
+% relstorage(Ref, ColumnClasses): the comparator, which ColumnTypes is not
+%   Encoding is the interning slot task #4 writes; ref(_) already reads dict
+colclass( Column, Type, StorageClass, Collation, Encoding ).
+%   Type        : int | text | float | bool | json | ref
+%   StorageClass: integer | real | text        (lower.pl:column_def/3:939-964)
+%   Collation   : binary on text storage, none otherwise (no COLLATE is emitted)
+%   Encoding    : direct | dict(TargetRelName)
 
 % expr: the closed scalar grammar phase 1 admits
 expr( col(Index, Ordinal)              ).  % b<Index>."<column at Ordinal>"
 expr( lit(int(N)) ; lit(text(A)) ; lit(bool(B)) ; lit(float(F)) ).
-expr( arith(Op, Expr, Expr)            ).  % lower.pl:499-586, Op from registry
-expr( concat([Expr])                   ).  % lower.pl:591-612
+expr( arith(Op, Expr, Expr, ResultType) ). % ResultType = compile_expr/4's
+expr( concat([Expr])                   ).  % lower.pl:591-612, always text
 
 % filter: the closed predicate grammar phase 1 admits
-filter( cmp(Op, Expr, Expr)            ).  % lower.pl:829-847, Op in {<,<=,>,>=,==,\==}
+filter( cmp(Op, Expr, Expr)            ).  % lower.pl:829-847, Op in {<,=<,>,>=,==,\==}
 filter( eq_lit(Expr, Literal)          ).  % lower.pl:338
 
-% probe(Kind, Target): the walk's admission test
-probe( absent,  head | cone            ).  % lower.pl:2795-2799
-probe( present, head | cone            ).  % lower.pl:2801-2805
+% probe(Kind, Target): a walk's admission test
+probe( absent,  head | cone | ref_count ).  % lower.pl:2795-2799, :2686
+probe( present, head | cone             ).  % lower.pl:2801-2805
 ```
 
-Twelve ops, one arm shape, one closed expression grammar, one closed predicate
-grammar. Nothing in it names SQLite.
+One arm shape, one closed expression grammar, one closed predicate grammar,
+one storage table. Nothing in it names SQLite.
+
+Two facts the draft left out, both of which decide an ANSWER rather than a
+shape, and both closed in the build:
+
+| leak | what the executor got wrong without it | closed by |
+|---|---|---|
+| int division | `arith(/, a, b)` is `(a / b)` when both operands are INTEGER and `(CAST(a AS REAL) / b)` otherwise (`lower.pl:arithmetic_rendering/6`). Same IR node, two answers: 2 vs 2.5 | `arith/4`'s `ResultType`, taken from `arithmetic_result_type/4`, the same predicate `compile_expr/4` calls |
+| TEXT collation | `col(Index, Ordinal)` named a column with no comparator. bool and `ref(_)` both store INTEGER, json stores TEXT, and `lower.pl` emits no `COLLATE` anywhere, so every text column is BINARY | `relstorage/2` + `colclass/5`, one row per rel, resolved through the arm's `src` |
+
+The four walks are ONE term gated by `dred_plan_admissible/1`. A head with an
+`expandplan` but no `dredplan` (a negated body atom, a `pre` atom, a `__ref_`
+atom) emits `fixpointIr: null` even though its expand walk alone is expressible.
+Phase 2 splits them if the from-scratch path needs offloading on its own; phase
+1 does not, and `plunit_tests.pl:negated_body_refuses_the_in_place_plan` pins it.
 
 The emitted JSON, one field added beside `expandSql` and `dredSql` on
 `IIncrementalLevelStatement` (`types.ts:160-191`):
 
 ```
 fixpointIr?: {
-  head: { rel: string; columns: string[]; types: ("int"|"text"|"float"|"bool")[] };
-  assert: { seeds: Arm[]; hop: Arm; stop: Probe; emit: "round_major" };
-  dred?:  { seeds: Arm[]; hop: Arm; stop: Probe };
-  revive?:{ seeds: Arm[]; hop: Arm; stop: Probe };
-  expand?:{ seeds: Arm[]; hop: Arm; stop: Probe; emit: "key_major" };
+  head:    { rel: string; columns: string[]; types: ("int"|"text"|"float"|"bool")[] };
+  storage: { rel: string; arity: number; columns: ColumnClass[] }[];
+  assert:  Walk;   // emit: "round_major"
+  dred:    Walk;   // emit: null
+  revive:  Walk;   // emit: null
+  expand:  Walk;   // emit: "key_major"
 } | null
+
+// Walk = { seeds: Arm[]; hop: Arm[]; stop: { seed: Probe|null; hop: Probe|null };
+//          emit: "round_major" | "key_major" | null }
+// ColumnClass = { name: string; type: string; storage: "integer"|"real"|"text";
+//                 collation: "binary" | null;
+//                 encoding: { kind: "direct" } | { kind: "dict"; rel: string } }
 ```
+
+All four walks are always present when `fixpointIr` is non-null; the draft's `?`
+markers were wrong. `runtime/types.ts` declares the field `unknown` and P1-B
+replaces that with `IFixpointIr`; typing it in P1-A would have put a runtime
+interface in a lane that owns no runtime file.
 
 Additive. Every existing SQL field stays. A runtime that ignores `fixpointIr`
 behaves exactly as today, which is what makes the sweep's byte-identity gate

@@ -2962,7 +2962,7 @@ dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
 % Term grammar: plans/2026-08-07-plan-ir-offload-contract.md §2.4. The fence is
 % dred_plan_admissible/1, called rather than restated.
 level_fixpoint_ir(RelPlans, HeadRef, Rules,
-                  fixpointir(Assert, Dred, Revive, Expand)) :-
+                  fixpointir(Storage, Assert, Dred, Revive, Expand)) :-
     dred_plan_admissible(Rules),
     fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes),
     maplist(ir_rule_arm(RelPlans), Rules, AllParts),
@@ -2983,9 +2983,49 @@ level_fixpoint_ir(RelPlans, HeadRef, Rules,
     Revive = fixplan(Ref, Columns, ColumnTypes, ReviveSeeds, Hops,
                      stop(none, probe(present, cone)), none),
     Expand = fixplan(Ref, Columns, ColumnTypes, ExpandSeeds, Hops,
-                     stop(none, probe(absent, ref_count)), order(key_major)).
+                     stop(none, probe(absent, ref_count)), order(key_major)),
+    ir_storage(RelPlans, HeadRef, [Assert, Dred, Revive, Expand], Storage).
 
 ir_rel_ref(Name/Arity, ref(Name, Arity)).
+
+% Every rel any src reads, plus the head, which is what wave/1 and cone/0 carry.
+% col(Index, Ordinal) resolves through the arm's src to a row here.
+ir_storage(RelPlans, HeadRef, Walks, Storage) :-
+    findall(Ref,
+            ( member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
+              ( member(Arm, Seeds) ; member(Arm, Hops) ),
+              Arm = arm(Sources, _, _, _, _),
+              member(src(_, Source), Sources),
+              ir_source_ref(Source, Ref) ),
+            SourceRefs),
+    sort([HeadRef | SourceRefs], Refs),
+    maplist(ir_rel_storage(RelPlans), Refs, Storage).
+
+ir_source_ref(rel(ref(Name, Arity)), Name/Arity).
+ir_source_ref(rel_or_retracted(ref(Name, Arity)), Name/Arity).
+ir_source_ref(delta(ref(Name, Arity), _, _), Name/Arity).
+
+ir_rel_storage(RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
+    ir_rel_ref(Ref, IrRef),
+    relplan_columns(RelPlans, Ref, Columns),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    maplist(ir_column_class, Columns, ColumnTypes, ColumnClasses).
+
+% The comparator, which the declared type does not give: bool and ref(_) both
+% store INTEGER, json stores TEXT (column_def/3:939), and no COLLATE is emitted.
+ir_column_class(Column, Type, colclass(Column, TypeName, StorageClass,
+                                       Collation, Encoding)) :-
+    ir_column_storage(Type, TypeName, StorageClass, Encoding),
+    ( StorageClass == text -> Collation = binary ; Collation = none ).
+
+% Encoding is the interning slot: ref(Target) already stores a dense id into
+% Target's table rather than the value, which is dictionary encoding.
+ir_column_storage(ref(Target), ref, integer, dict(Target)) :- !.
+ir_column_storage(bool, bool, integer, direct) :- !.
+ir_column_storage(int, int, integer, direct) :- !.
+ir_column_storage(float, float, real, direct) :- !.
+ir_column_storage(json, json, text, direct) :- !.
+ir_column_storage(text, text, text, direct).
 
 % The executor's comparator is defined by these types, so a head column whose
 % storage class is a dictionary id or json has no phase-1 spelling.
@@ -3081,7 +3121,7 @@ ir_rule_arm(RelPlans, Rule, armparts(PosUses, Equalities, Filters, Project)) :-
     append(AtomEqualities, GuardEqualities, Equalities),
     append(AtomFilters, GuardFilters, Filters),
     Head =.. [_ | HeadArgs],
-    maplist(ir_expr(IrBound), HeadArgs, Project).
+    maplist(ir_untyped_expr(IrBound), HeadArgs, Project).
 
 ir_column_dict(_, [], _, []).
 ir_column_dict(RelPlans, [use(Ref, _, pos, _) | Rest], Index, Dict) :-
@@ -3099,11 +3139,11 @@ ir_dict_lookup([ircol(Key, Ir) | Rest], ColumnExpr, Found) :-
     ( Key == ColumnExpr -> Found = Ir ; ir_dict_lookup(Rest, ColumnExpr, Found) ).
 
 % A VARIABLE outside the expression grammar refuses the arm; a compound key is
-% the reference-identity slot, which nothing in the grammar reads, so it drops.
+% the reference-identity slot, and an arm that reads one refuses at ir_expr/4.
 ir_bound([], _, []).
-ir_bound([Key-typed(Sql, _) | Rest], Dict, IrBound) :-
+ir_bound([Key-typed(Sql, Type) | Rest], Dict, IrBound) :-
     (   ir_dict_lookup(Dict, Sql, Ir)
-    ->  IrBound = [Key-Ir | More]
+    ->  IrBound = [Key-irtyped(Ir, Type) | More]
     ;   nonvar(Key),
         IrBound = More
     ),
@@ -3126,27 +3166,44 @@ ir_literal(Value, lit(int(Value))) :- integer(Value), !.
 ir_literal(Value, lit(float(Value))) :- float(Value), !.
 ir_literal(Value, lit(text(Value))) :- atomic(Value).
 
-% Clause order mirrors compile_expr/4's, so a bound compound resolves before
-% the atomic branches exactly as the SQL side resolves it.
-ir_expr(IrBound, Expr, Ir) :-
+ir_literal_type(lit(Literal), Type) :- functor(Literal, Type, 1).
+
+ir_untyped_expr(IrBound, Expr, Ir) :- ir_expr(IrBound, Expr, Ir, _Type).
+
+% Clause order and the result type both mirror compile_expr/4's, so a bound
+% compound resolves first and `/` carries the int-vs-real answer SQLite gives.
+ir_expr(IrBound, Expr, Ir, Type) :-
     (   var(Expr)
-    ->  bound_lookup(IrBound, Expr, Ir)
+    ->  bound_lookup(IrBound, Expr, irtyped(Ir, Type))
     ;   Expr = bool_lit(_)
-    ->  ir_literal(Expr, Ir)
-    ;   compound(Expr), bound_lookup(IrBound, Expr, Bound)
-    ->  Ir = Bound
+    ->  ir_literal(Expr, Ir), Type = bool
+    ;   compound(Expr), bound_lookup(IrBound, Expr, irtyped(BoundIr, BoundType))
+    ->  Ir = BoundIr, Type = BoundType
     ;   atomic(Expr)
-    ->  ir_literal(Expr, Ir)
+    ->  ir_literal(Expr, Ir), ir_literal_type(Ir, Type)
     ;   Expr = concat(Parts)
     ->  is_list(Parts),
-        maplist(ir_expr(IrBound), Parts, PartIrs),
-        Ir = concat(PartIrs)
+        maplist(ir_concat_part(IrBound), Parts, PartIrs),
+        Ir = concat(PartIrs), Type = text
     ;   arithmetic_expr(Expr, Operator, Left, Right)
-    ->  ir_expr(IrBound, Left, IrLeft),
-        ir_expr(IrBound, Right, IrRight),
-        Ir = arith(Operator, IrLeft, IrRight)
+    ->  ir_expr(IrBound, Left, IrLeft, LeftType),
+        ir_expr(IrBound, Right, IrRight, RightType),
+        ir_arith_operand_type(Operator, LeftType),
+        ir_arith_operand_type(Operator, RightType),
+        arithmetic_result_type(Operator, LeftType, RightType, Type),
+        Ir = arith(Operator, IrLeft, IrRight, Type)
     ;   fail
     ).
+
+% compile_numeric_operand/6 and compile_concat_part/4: the same operand
+% admissions, so the IR never spells an expression the SQL side refuses.
+ir_arith_operand_type(mod, int) :- !.
+ir_arith_operand_type(Operator, Type) :-
+    Operator \== mod, memberchk(Type, [int, float]).
+
+ir_concat_part(IrBound, Part, Ir) :-
+    ir_expr(IrBound, Part, Ir, Type),
+    memberchk(Type, [int, text]).
 
 % The same left-to-right fold compile_guard_goal/3 runs, over the same goal
 % list: a bind introduces a binding once and is an equality every time after.
@@ -3157,11 +3214,11 @@ ir_guard_goal(Goal, ir(IrBound0, Equalities0, Filters0),
     ;   tick_goal(Goal, _)
     ->  fail
     ;   bind_goal(Goal, Variable, Expr)
-    ->  ir_expr(IrBound0, Expr, Ir),
+    ->  ir_expr(IrBound0, Expr, Ir, Type),
         (   var(Variable), \+ bound_lookup(IrBound0, Variable, _)
-        ->  IrBound = [Variable-Ir | IrBound0],
+        ->  IrBound = [Variable-irtyped(Ir, Type) | IrBound0],
             Equalities = Equalities0, Filters = Filters0
-        ;   ir_expr(IrBound0, Variable, VariableIr),
+        ;   ir_expr(IrBound0, Variable, VariableIr, _),
             IrBound = IrBound0, Filters = Filters0,
             Equalities = [eq(VariableIr, Ir) | Equalities0]
         )
@@ -3169,8 +3226,8 @@ ir_guard_goal(Goal, ir(IrBound0, Equalities0, Filters0),
     ->  Goal =.. [Operator, Left, Right],
         expression(Operator/2, Family, _, infix(_), _),
         memberchk(Family, [ordered_comparison, identity_comparison]),
-        ir_expr(IrBound0, Left, IrLeft),
-        ir_expr(IrBound0, Right, IrRight),
+        ir_expr(IrBound0, Left, IrLeft, _),
+        ir_expr(IrBound0, Right, IrRight, _),
         IrBound = IrBound0, Equalities = Equalities0,
         Filters = [cmp(Operator, IrLeft, IrRight) | Filters0]
     ;   fail
