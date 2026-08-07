@@ -1004,13 +1004,14 @@ incremental_level_statement_entry_line(RelPlans,
     % statement text is now the text sqlite receives, byte for byte.
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
-    ref_count_sql_text(RefCountSql, RefCountText, ExpandText, DredText),
+    ref_count_sql_text(RefCountSql, RefCountText, ExpandText, DredText,
+                       FixpointIrText),
     aggregate_sql_text(AggregateSql, AggregateText),
     format(atom(Line),
-           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, expandSql: ~w, dredSql: ~w, aggregateSql: ~w },',
+           '  { headRel: "~w", ruleId: "~w", headDeltaTableName: "~w", headColumns: ~w, insertSql: ~w, selectSql: ~w, recomputeSql: ~w, supportSql: ~w, expandSql: ~w, dredSql: ~w, fixpointIr: ~w, aggregateSql: ~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
-            DredText, AggregateText]).
+            DredText, FixpointIrText, AggregateText]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -1033,13 +1034,13 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-ref_count_sql_text(none, null, null, null) :- !.
+ref_count_sql_text(none, null, null, null, null) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                                CollectZeroSql, ClearNewSql, FillNewSql,
                                StageAddSql, StageFrontierSql,
                                StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                               DredPlan),
-                 Text, ExpandText, DredText) :-
+                               DredPlan, FixpointIr),
+                 Text, ExpandText, DredText, FixpointIrText) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
              ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
@@ -1048,7 +1049,8 @@ ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
     atomic_list_concat(Templates, ', ', Joined),
     format(atom(Text), '[~w]', [Joined]),
     expand_sql_text(ExpandPlan, ExpandText),
-    dred_sql_text(DredPlan, DredText).
+    dred_sql_text(DredPlan, DredText),
+    fixpoint_ir_text(FixpointIr, FixpointIrText).
 
 expand_sql_text(none, null) :- !.
 expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
@@ -1100,6 +1102,128 @@ sql_template_array(Sqls, Text) :-
     maplist(js_template, Sqls, Templates),
     atomic_list_concat(Templates, ', ', Joined),
     format(atom(Text), '[~w]', [Joined]).
+
+% lower.pl:level_fixpoint_ir/4 printed as an object literal, additive beside
+% expandSql/dredSql (plans/2026-08-07-plan-ir-offload-contract.md §2.4).
+fixpoint_ir_text(none, null) :- !.
+fixpoint_ir_text(fixpointir(Assert, Dred, Revive, Expand), Text) :-
+    Assert = fixplan(ref(HeadName, _), Columns, ColumnTypes, _, _, _, _),
+    quoted_string_array_text(Columns, ColumnsText),
+    quoted_string_array_text(ColumnTypes, TypesText),
+    maplist(fixpoint_walk_text, [Assert, Dred, Revive, Expand],
+            [AssertText, DredText, ReviveText, ExpandText]),
+    format(atom(Text),
+           '{ head: { rel: "~w", columns: ~w, types: ~w }, assert: ~w, dred: ~w, revive: ~w, expand: ~w }',
+           [HeadName, ColumnsText, TypesText, AssertText, DredText, ReviveText,
+            ExpandText]).
+
+% `stop` carries both admission tests: the seeds' and the hop's differ on the
+% over-delete and revive walks (lower.pl:level_dred_plan/4).
+fixpoint_walk_text(fixplan(_, _, _, Seeds, Hops, stop(SeedProbe, HopProbe),
+                           Emit), Text) :-
+    fixpoint_arm_array_text(Seeds, SeedsText),
+    fixpoint_arm_array_text(Hops, HopsText),
+    fixpoint_probe_text(SeedProbe, SeedProbeText),
+    fixpoint_probe_text(HopProbe, HopProbeText),
+    fixpoint_emit_text(Emit, EmitText),
+    format(atom(Text),
+           '{ seeds: ~w, hop: ~w, stop: { seed: ~w, hop: ~w }, emit: ~w }',
+           [SeedsText, HopsText, SeedProbeText, HopProbeText, EmitText]).
+
+fixpoint_arm_array_text(Arms, Text) :-
+    maplist(fixpoint_arm_text, Arms, ArmTexts),
+    atomic_list_concat(ArmTexts, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+fixpoint_emit_text(none, null) :- !.
+fixpoint_emit_text(order(Order), Text) :- js_string(Order, Text).
+
+fixpoint_probe_text(none, null) :- !.
+fixpoint_probe_text(probe(Kind, Target), Text) :-
+    fixpoint_probe_target(Target, TargetName),
+    format(atom(Text), '{ kind: "~w", target: "~w" }', [Kind, TargetName]).
+
+fixpoint_probe_target(ref_count, refCount) :- !.
+fixpoint_probe_target(Target, Target).
+
+fixpoint_arm_text(arm(Sources, Equalities, Filters, Project, SelfIndex),
+                  Text) :-
+    fixpoint_term_array_text(fixpoint_source_text, Sources, SourcesText),
+    fixpoint_term_array_text(fixpoint_equality_text, Equalities,
+                             EqualitiesText),
+    fixpoint_term_array_text(fixpoint_filter_text, Filters, FiltersText),
+    fixpoint_term_array_text(fixpoint_expr_text, Project, ProjectText),
+    fixpoint_self_index_text(SelfIndex, SelfIndexText),
+    format(atom(Text),
+           '{ sources: ~w, equalities: ~w, filters: ~w, project: ~w, selfIndex: ~w }',
+           [SourcesText, EqualitiesText, FiltersText, ProjectText,
+            SelfIndexText]).
+
+fixpoint_term_array_text(Renderer, Terms, Text) :-
+    maplist(Renderer, Terms, Texts),
+    atomic_list_concat(Texts, ', ', Joined),
+    format(atom(Text), '[~w]', [Joined]).
+
+fixpoint_self_index_text(none, null) :- !.
+fixpoint_self_index_text(Index, Index).
+
+fixpoint_source_text(src(Index, Source), Text) :-
+    fixpoint_source_kind_text(Source, KindText),
+    format(atom(Text), '{ index: ~w, source: ~w }', [Index, KindText]).
+
+fixpoint_source_kind_text(rel(ref(Name, Arity)), Text) :- !,
+    format(atom(Text), '{ kind: "rel", rel: "~w", arity: ~w }', [Name, Arity]).
+fixpoint_source_kind_text(rel_or_retracted(ref(Name, Arity)), Text) :- !,
+    format(atom(Text), '{ kind: "relOrRetracted", rel: "~w", arity: ~w }',
+           [Name, Arity]).
+fixpoint_source_kind_text(delta(ref(Name, Arity), Sign, liveness(Liveness)),
+                          Text) :- !,
+    format(atom(Text),
+           '{ kind: "delta", rel: "~w", arity: ~w, sign: ~w, liveness: "~w" }',
+           [Name, Arity, Sign, Liveness]).
+fixpoint_source_kind_text(wave(Slot), Text) :- !,
+    format(atom(Text), '{ kind: "wave", slot: "~w" }', [Slot]).
+fixpoint_source_kind_text(cone, '{ kind: "cone" }').
+
+fixpoint_equality_text(eq(Left, Right), Text) :-
+    fixpoint_expr_text(Left, LeftText),
+    fixpoint_expr_text(Right, RightText),
+    format(atom(Text), '{ left: ~w, right: ~w }', [LeftText, RightText]).
+
+fixpoint_filter_text(cmp(Operator, Left, Right), Text) :- !,
+    js_string(Operator, OperatorText),
+    fixpoint_expr_text(Left, LeftText),
+    fixpoint_expr_text(Right, RightText),
+    format(atom(Text), '{ kind: "cmp", op: ~w, left: ~w, right: ~w }',
+           [OperatorText, LeftText, RightText]).
+fixpoint_filter_text(eq_lit(Left, Literal), Text) :-
+    fixpoint_expr_text(Left, LeftText),
+    fixpoint_expr_text(Literal, LiteralText),
+    format(atom(Text), '{ kind: "eqLit", left: ~w, right: ~w }',
+           [LeftText, LiteralText]).
+
+fixpoint_expr_text(col(Index, Ordinal), Text) :- !,
+    format(atom(Text), '{ kind: "col", index: ~w, ordinal: ~w }',
+           [Index, Ordinal]).
+fixpoint_expr_text(lit(Literal), Text) :- !,
+    fixpoint_literal_text(Literal, Text).
+fixpoint_expr_text(arith(Operator, Left, Right), Text) :- !,
+    js_string(Operator, OperatorText),
+    fixpoint_expr_text(Left, LeftText),
+    fixpoint_expr_text(Right, RightText),
+    format(atom(Text), '{ kind: "arith", op: ~w, left: ~w, right: ~w }',
+           [OperatorText, LeftText, RightText]).
+fixpoint_expr_text(concat(Parts), Text) :-
+    fixpoint_term_array_text(fixpoint_expr_text, Parts, PartsText),
+    format(atom(Text), '{ kind: "concat", parts: ~w }', [PartsText]).
+
+fixpoint_literal_text(text(Value), Text) :- !,
+    js_string(Value, ValueText),
+    format(atom(Text), '{ kind: "lit", type: "text", value: ~w }', [ValueText]).
+fixpoint_literal_text(Literal, Text) :-
+    Literal =.. [TypeName, Value],
+    format(atom(Text), '{ kind: "lit", type: "~w", value: ~w }',
+           [TypeName, Value]).
 
 % The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
 % scope, seed it from this tick's staged deltas, delete the scoped groups
