@@ -6,6 +6,7 @@ Append-only. One entry per milestone.
 ## TOC
 
 - [Milestone 1 — I-A](#milestone-1--i-a-ddl--decode-view--the-gun)
+- [Milestone 2 — I-D](#milestone-2--i-d-the-ir-encoding-slot)
 - [Contract defects and ambiguities](#contract-defects-and-ambiguities)
 - [Summary table](#summary-table)
 
@@ -125,6 +126,69 @@ is pre-existing and unchanged by this milestone.
 
 ---
 
+## Milestone 2 — I-D: the IR encoding slot
+
+**2026-08-07T22:12Z.** Sequencing: §20.4's `I-A -> {I-B, I-C, I-D, I-F, I-J}`.
+I-D taken first of that set because it lives in `lower.pl`, which I-A had just
+finished with, and because §20.4 records it as the lane rev 3 SHRANK.
+
+### What landed
+
+| # | thing | where |
+|---|---|---|
+| 1 | `ir_column_storage/5`: one clause replaced by one clause. `text` reports `storage integer, encoding dict('__str')` under `intern(dict)`, `storage text, encoding direct` under `intern(direct)` | `lower.pl:ir_column_storage/5` |
+| 2 | `Collation` falls out with no edit: an interned column's storage class is `integer`, so the existing `StorageClass == text -> binary` test answers `none` | `lower.pl:ir_column_class/4` |
+| 3 | Mode threaded down the IR path: `level_statement_groups/4` -> `level_statement_group/4` -> `level_ref_count_sql/5` -> `level_fixpoint_ir/5` -> `ir_storage/5` -> `ir_rel_storage/4` -> `ir_column_class/4` -> `ir_column_storage/5` | `lower.pl` |
+| 4 | `interned_literals_absent/2`: the `eq_lit` fence. A walk carrying `eq_lit(_, lit(text(_)))` emits `fixpointIr: null` under `dict`, because phase 1's IR has no node for a literal that has to resolve through `__str` | `lower.pl:level_fixpoint_ir/5` |
+| 5 | `ir-encoding` class added to the G9 classifier, so the colclass flip is a NAMED class rather than an unexplained line | `v6/tsv2/scripts/intern-ab-classify.ts` |
+| 6 | 4 plunit pins, including the anti-drift one | `compile/test/plunit_tests.pl` |
+
+`ir_rel_storage/3`'s signature did NOT need `Decls` (§8's "No signature change
+in the IR path"). It needed the mode, which is a different thing and which the
+gun requires regardless.
+
+### The plunit pins, and what each would catch
+
+| test | catches |
+|---|---|
+| `fixpoint_ir_text_column_encodes_dict` | a text column reporting `storage: text` while its DDL says INTEGER |
+| `fixpoint_ir_text_column_stays_direct_at_direct` | the gun failing to reach the IR |
+| `fixpoint_ir_encoding_agrees_with_ddl` | drift between the two halves of one decision. It runs `column_def/4` and `ir_column_class/4` over the SAME relplans in ONE run and compares their answers, at both modes; it does not compare two hardcoded strings |
+| `text_literal_filter_fences_the_ir_at_dict` | the fence silently not firing: the same rules emit an IR at `direct` and `none` at `dict` |
+
+`column_def/4` and `ir_column_class/4` are exported from `lower.pl` for that
+third test alone; it is the only way one run can produce both outputs.
+
+### Gate outputs
+
+```
+$ cd v6/tsv2 && bash scripts/sweep.sh
+RUN total=211 identical=210 wrong=0 emitted_crash=0 rejection=1 no_oracle_log=0
+FINAL total=211 final_identical=210 final_wrong=0 no_oracle_final=1
+MANIFEST_REASON_DIFF restated=0 args=0 bucket_moved=0 added=0 removed=0 (informational)
+```
+
+```
+$ cd v6/prolog/compile && swipl -f none -g "load_files(['test/plunit_tests.pl'], []), run_tests." -t halt
+% All 383 (+46 sub-tests) tests passed in 0.996 seconds (0.962 cpu)
+```
+
+```
+$ cd v6/tsv2 && pnpm exec tsgo --noEmit          -> 0 errors
+$ cd v6/prolog && swipl -g go -t halt ARCH.pl    -> 7 PASS
+$ bash v6/tsv2/scripts/intern-ab.sh
+INTERN_AB modules=211 decode-read=1863 decode-subquery=23 decode-view=1242 \
+          dictionary-ddl=184 ir-encoding=32 mode-stamp=422 unexplained=0
+```
+
+`ir-encoding=32` is 16 text columns across the corpus's two `fixpointIr` heads,
+counted once per mode. The fence fired on ZERO corpus modules: both flagship
+`flow_reach` heads carry text columns but no text-literal filter, so no module
+lost its `fixpointIr`. That is the number to watch when I-C lands, because I-C
+is what makes the literal path real.
+
+---
+
 ## Contract defects and ambiguities
 
 | # | where | what | what I did |
@@ -149,4 +213,5 @@ is pre-existing and unchanged by this milestone.
 
 | milestone | lane | gates | commit |
 |---|---|---|---|
-| 1 | I-A | sweep wrong=0, plunit 379, tsgo 0, G9 unexplained=0, ARCH pass, tsv2 157/0, store 75/0 | `race: I-A ...` |
+| 1 | I-A | sweep wrong=0, plunit 379, tsgo 0, G9 unexplained=0, ARCH pass, tsv2 157/0, store 75/0 | `863fe1d5` |
+| 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `race: I-D ...` |

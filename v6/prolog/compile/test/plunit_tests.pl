@@ -21,7 +21,8 @@
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
-                canonical_column_expr/2, level_ref_count_sql/4,
+                canonical_column_expr/2, level_ref_count_sql/5,
+                column_def/4, ir_column_class/4,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
@@ -547,7 +548,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
     ],
-    level_ref_count_sql(
+    level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
                     DredPlan, _)),
@@ -605,7 +606,7 @@ test(negated_body_refuses_the_in_place_plan) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child), not(blocked(Child)))
     ],
-    level_ref_count_sql(
+    level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
                     FixpointIr)),
@@ -725,7 +726,7 @@ fixpoint_ir_share_walk(LegsType, FixpointIr) :-
            ( share(Parent, Total), hop(Parent, Child, Legs),
              Each := Total / Legs ))
     ],
-    level_ref_count_sql(RelPlans, share/2, Rules,
+    level_ref_count_sql(direct, RelPlans, share/2, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     FixpointIr)),
     FixpointIr \== none.
@@ -751,7 +752,7 @@ test(fixpoint_ir_storage_separates_class_from_declared_type) :-
         (walk(Parent) <- edge_row(Parent, _, _, _, _)),
         (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
     ],
-    level_ref_count_sql(RelPlans, walk/1, Rules,
+    level_ref_count_sql(direct, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     FixpointIr)),
     FixpointIr = fixpointir(Storage, _, _, _, _),
@@ -4792,6 +4793,73 @@ test(boundary_reads_name_the_table_at_direct) :-
              sub_atom(SelectSql, _, _, _, SnapshotFrom) )).
 
 % The mode is a compile INPUT carried by the plan, not a flag read at emit time.
+% One recursive head, one text column in a source rel, two modes.
+interning_walk_relplans([
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(walk/1, set, [node], none, [int])
+    ]).
+
+interning_walk_rules([
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
+    ]).
+
+interning_walk_ir(Mode, FixpointIr) :-
+    interning_walk_relplans(RelPlans),
+    interning_walk_rules(Rules),
+    level_ref_count_sql(Mode, RelPlans, walk/1, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)).
+
+test(fixpoint_ir_text_column_encodes_dict) :-
+    interning_walk_ir(dict, fixpointir(Storage, _, _, _, _)),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    memberchk(colclass(label, text, integer, none, dict('__str')), ColumnClasses).
+
+test(fixpoint_ir_text_column_stays_direct_at_direct) :-
+    interning_walk_ir(direct, fixpointir(Storage, _, _, _, _)),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    memberchk(colclass(label, text, text, binary, direct), ColumnClasses).
+
+% The anti-drift test: ONE run, two outputs of it, one comparison. The DDL's
+% storage keyword and the IR's storage class are the same decision twice.
+test(fixpoint_ir_encoding_agrees_with_ddl) :-
+    forall(member(Mode, [dict, direct]),
+           ( interning_lowered(Mode, switch_as_keyed_replace,
+                               lowered(_, _, _, _, _, _, RelPlans, _)),
+             forall(( member(relplan(_, _, Columns, _, ColumnTypes), RelPlans),
+                      nth1(Index, Columns, Column),
+                      nth1(Index, ColumnTypes, ColumnType) ),
+                    ( format(atom(QuotedColumn), '"~w"', [Column]),
+                      column_def(Mode, QuotedColumn, ColumnType, Def),
+                      ir_column_class(Mode, Column, ColumnType,
+                                      colclass(_, _, StorageClass, _, _)),
+                      storage_keyword(StorageClass, Keyword),
+                      format(atom(Needle), '~w ~w NOT NULL', [QuotedColumn, Keyword]),
+                      sub_atom(Def, _, _, _, Needle) ) ) )).
+
+storage_keyword(integer, 'INTEGER').
+storage_keyword(real, 'REAL').
+storage_keyword(text, 'TEXT').
+
+% Phase 1 has no IR node for `<interned column> = 'literal'`: the SQL resolves
+% the literal through __str and eq_lit/2 carries the bare text.
+test(text_literal_filter_fences_the_ir_at_dict) :-
+    interning_walk_relplans(RelPlans),
+    LiteralRules = [
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, rust) ))
+    ],
+    level_ref_count_sql(direct, RelPlans, walk/1, LiteralRules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    DirectIr)),
+    DirectIr \== none,
+    level_ref_count_sql(dict, RelPlans, walk/1, LiteralRules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    DictIr)),
+    DictIr == none.
+
 test(mode_travels_in_the_plan) :-
     once(( fixture_file(File),
            read_fixture_term(File, switch_as_keyed_replace, Term, Bindings),

@@ -123,8 +123,11 @@
             % The interning contract's mode vocabulary. compile.pl resolves
             % the compile option into the atom the plan term carries.
             intern_mode/2, interned_column/2, string_dictionary_table/1,
+            % Both halves of the storage decision, exported so one test can
+            % compare the DDL's answer against the IR's on ONE run.
+            column_def/4, ir_column_class/4,
             compile_expr/4, compile_comparison/3,
-            canonical_column_expr/2, level_ref_count_sql/4, level_dred_plan/4,
+            canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
@@ -2082,9 +2085,9 @@ nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Ele
 % is a singleton list, and emit_ts.pl's recompute_levels_fn_lines/2 flattens
 % [Delete, Insert] the same way whether the list has one entry or several.
 
-level_statement_groups(RelPlans, RuleOrder, LevelStatements) :-
+level_statement_groups(Mode, RelPlans, RuleOrder, LevelStatements) :-
     group_adjacent_by_head(RuleOrder, Groups),
-    maplist(level_statement_group(RelPlans), Groups, LevelStatements).
+    maplist(level_statement_group(Mode, RelPlans), Groups, LevelStatements).
 
 group_adjacent_by_head([], []).
 group_adjacent_by_head([Rule | Rest], [HeadRef-[Rule | SameHeadRest] | MoreGroups]) :-
@@ -2097,7 +2100,7 @@ take_same_head(HeadRef, [Rule | Rest], [Rule | SameRest], Remaining) :-
     take_same_head(HeadRef, Rest, SameRest, Remaining).
 take_same_head(_, Rules, [], Rules).
 
-level_statement_group(RelPlans, HeadRef-Rules,
+level_statement_group(Mode, RelPlans, HeadRef-Rules,
                       levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
                                 RefCountSql, AggregateSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
@@ -2106,7 +2109,7 @@ level_statement_group(RelPlans, HeadRef-Rules,
     partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
     ( AggregateRules == []
     -> level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
-       level_ref_count_sql(RelPlans, HeadRef, Rules, RefCountSql),
+       level_ref_count_sql(Mode, RelPlans, HeadRef, Rules, RefCountSql),
        AggregateSql = none
     ;  PlainRules \== []
     -> throw(unsupported_construct(aggregate_head_mixed_with_plain_clause(HeadRef)))
@@ -2641,7 +2644,7 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
 
 % The delta and both frontier copies are written by SQL that reads the same
 % predicates the head mutation reads, so no derived row crosses the JS seam.
-level_ref_count_sql(RelPlans, HeadRef, Rules,
+level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
                   refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
@@ -2680,7 +2683,7 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
     ),
     (   DredPlan == none
     ->  FixpointIr = none
-    ;   level_fixpoint_ir(RelPlans, HeadRef, Rules, FixpointIr0)
+    ;   level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules, FixpointIr0)
     ->  FixpointIr = FixpointIr0
     ;   FixpointIr = none
     ),
@@ -3087,7 +3090,7 @@ dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
 
 % Term grammar: plans/2026-08-07-plan-ir-offload-contract.md §2.4. The fence is
 % dred_plan_admissible/1, called rather than restated.
-level_fixpoint_ir(RelPlans, HeadRef, Rules,
+level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules,
                   fixpointir(Storage, Assert, Dred, Revive, Expand)) :-
     dred_plan_admissible(Rules),
     fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes),
@@ -3110,13 +3113,24 @@ level_fixpoint_ir(RelPlans, HeadRef, Rules,
                      stop(none, probe(present, cone)), none),
     Expand = fixplan(Ref, Columns, ColumnTypes, ExpandSeeds, Hops,
                      stop(none, probe(absent, ref_count)), order(key_major)),
-    ir_storage(RelPlans, HeadRef, [Assert, Dred, Revive, Expand], Storage).
+    interned_literals_absent(Mode, [Assert, Dred, Revive, Expand]),
+    ir_storage(Mode, RelPlans, HeadRef, [Assert, Dred, Revive, Expand],
+               Storage).
+
+% Phase 1 has no IR spelling for `<interned column> = 'literal'`: the SQL
+% resolves the literal through __str, and eq_lit/2 carries the bare text.
+interned_literals_absent(Mode, Walks) :-
+    \+ ( interned_column(Mode, text),
+         member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
+         ( member(Arm, Seeds) ; member(Arm, Hops) ),
+         Arm = arm(_, _, Filters, _, _),
+         member(eq_lit(_, lit(text(_))), Filters) ).
 
 ir_rel_ref(Name/Arity, ref(Name, Arity)).
 
 % Every rel any src reads, plus the head, which is what wave/1 and cone/0 carry.
 % col(Index, Ordinal) resolves through the arm's src to a row here.
-ir_storage(RelPlans, HeadRef, Walks, Storage) :-
+ir_storage(Mode, RelPlans, HeadRef, Walks, Storage) :-
     findall(Ref,
             ( member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
               ( member(Arm, Seeds) ; member(Arm, Hops) ),
@@ -3125,33 +3139,39 @@ ir_storage(RelPlans, HeadRef, Walks, Storage) :-
               ir_source_ref(Source, Ref) ),
             SourceRefs),
     sort([HeadRef | SourceRefs], Refs),
-    maplist(ir_rel_storage(RelPlans), Refs, Storage).
+    maplist(ir_rel_storage(Mode, RelPlans), Refs, Storage).
 
 ir_source_ref(rel(ref(Name, Arity)), Name/Arity).
 ir_source_ref(rel_or_retracted(ref(Name, Arity)), Name/Arity).
 ir_source_ref(delta(ref(Name, Arity), _, _), Name/Arity).
 
-ir_rel_storage(RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
+ir_rel_storage(Mode, RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
     ir_rel_ref(Ref, IrRef),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    maplist(ir_column_class, Columns, ColumnTypes, ColumnClasses).
+    maplist(ir_column_class(Mode), Columns, ColumnTypes, ColumnClasses).
 
 % The comparator, which the declared type does not give: bool and ref(_) both
 % store INTEGER, json stores TEXT (column_def/3:939), and no COLLATE is emitted.
-ir_column_class(Column, Type, colclass(Column, TypeName, StorageClass,
-                                       Collation, Encoding)) :-
-    ir_column_storage(Type, TypeName, StorageClass, Encoding),
+ir_column_class(Mode, Column, Type, colclass(Column, TypeName, StorageClass,
+                                             Collation, Encoding)) :-
+    ir_column_storage(Mode, Type, TypeName, StorageClass, Encoding),
     ( StorageClass == text -> Collation = binary ; Collation = none ).
 
 % Encoding is the interning slot: ref(Target) already stores a dense id into
 % Target's table rather than the value, which is dictionary encoding.
-ir_column_storage(ref(Target), ref, integer, dict(Target)) :- !.
-ir_column_storage(bool, bool, integer, direct) :- !.
-ir_column_storage(int, int, integer, direct) :- !.
-ir_column_storage(float, float, real, direct) :- !.
-ir_column_storage(json, json, text, direct) :- !.
-ir_column_storage(text, text, text, direct).
+ir_column_storage(_, ref(Target), ref, integer, dict(Target)) :- !.
+ir_column_storage(_, bool, bool, integer, direct) :- !.
+ir_column_storage(_, int, int, integer, direct) :- !.
+ir_column_storage(_, float, float, real, direct) :- !.
+ir_column_storage(_, json, json, text, direct) :- !.
+% An interned text column reports storage `integer`; without the encoding slot
+% the pair {type: text, storage: integer} is uninterpretable to an executor.
+ir_column_storage(Mode, text, text, integer, dict(Dictionary)) :-
+    interned_column(Mode, text),
+    !,
+    string_dictionary_table(Dictionary).
+ir_column_storage(_, text, text, text, direct).
 
 % The executor's comparator is defined by these types, so a head column whose
 % storage class is a dictionary id or json has no phase-1 spelling.
@@ -4475,7 +4495,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
                                   PatternedRuleOrder),
     expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
                         DecodedRuleOrder),
-    level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
+    level_statement_groups(Mode, BodyRelPlans, DecodedRuleOrder,
+                           RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
     maplist(ref_count_ddl(Mode, RelPlans), RuleLevelStatements, RefCountDdlGroups),

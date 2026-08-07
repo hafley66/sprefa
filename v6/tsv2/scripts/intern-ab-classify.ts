@@ -10,6 +10,7 @@ type IClassName =
   | "decode-read"
   | "decode-subquery"
   | "column-storage"
+  | "ir-encoding"
   | "mode-stamp";
 
 interface IInternClassCount {
@@ -46,6 +47,15 @@ function canonicalLine(line: string): string {
   const subqueries = out.match(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = t\."[^"]+"\)/g);
   if (subqueries !== null) count("decode-subquery", subqueries.length);
   out = out.replace(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = (t\."[^"]+")\)/g, "$1");
+
+  const IR_TEXT_DICT = /type: "text", storage: "integer", collation: null, encoding: \{ kind: "dict", rel: "__str" \}/g;
+  const IR_TEXT_DIRECT = /type: "text", storage: "text", collation: "binary", encoding: \{ kind: "direct" \}/g;
+  const IR_TEXT_CANONICAL = 'type: "text", storage: SCALAR, collation: COLLATION, encoding: ENCODING';
+  for (const pattern of [IR_TEXT_DICT, IR_TEXT_DIRECT]) {
+    const hits = out.match(pattern);
+    if (hits !== null) count("ir-encoding", hits.length);
+    out = out.replace(pattern, IR_TEXT_CANONICAL);
+  }
 
   if (/internMode: "(dict|direct)"/.test(out)) count("mode-stamp");
   out = out.replace(/internMode: "(dict|direct)"/, 'internMode: "MODE"');
