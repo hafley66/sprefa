@@ -43,6 +43,7 @@
 | [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
+| [labs/exec_shootout/intern_bench/REPORT-INTERN.md](labs/exec_shootout/intern_bench/REPORT-INTERN.md) | 146 | P0-A: TEXT-key interning cost, measured |
 | [labs/exec_shootout/sqlite_raw/REPORT-BATCH.md](labs/exec_shootout/sqlite_raw/REPORT-BATCH.md) | 147 | REPORT-BATCH: can batching or storage tricks beat the sqlite floor? |
 | [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
@@ -582,6 +583,21 @@
 24:## `grid_10000`: where the fixpoint went
 43:## `layered_10000`: where the fixpoint went
 62:## `chain_10000`: where the fixpoint went
+```
+
+### labs/exec_shootout/intern_bench/REPORT-INTERN.md
+```
+1:# P0-A: TEXT-key interning cost, measured
+8:## 1. The answer
+22:## 2. Full results, best of 3, one session
+52:## 3. SQLite: 4-column TEXT vs interned INTEGER
+73:## 4. Materialize, the cost the brief did not scope
+85:## 5. Memory (finding for P1-C)
+97:## 6. Generator design call
+106:## 7. The TEXT key shape
+120:## 8. Correctness
+128:## 9. Reproducing
+142:## 10. Notes
 ```
 
 ### labs/exec_shootout/sqlite_raw/REPORT-BATCH.md
