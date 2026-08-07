@@ -1,0 +1,153 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: down
+
+classes: {
+  word: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#6f5500" }
+  lane: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0a3069" }
+  gatebox: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#116329" }
+  prizebox: { style.fill: "#ffeff7"; style.stroke: "#bf3989"; style.font-color: "#99286e" }
+  side: { style.fill: "#eef1f4"; style.stroke: "#57606a"; style.font-color: "#1f2328" }
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+}
+
+legend: {
+  near: top-right
+  grid-rows: 4
+  grid-gap: 4
+  a: "your word" { class: word; width: 190 }
+  b: "lane / agent work" { class: lane; width: 190 }
+  c: "gate" { class: gatebox; width: 190 }
+  d: "measured payoff" { class: prizebox; width: 190 }
+}
+
+s1: "1. one word each" {
+  merge: "merge PR #17\n(interning phase 1,\nverified green)" { class: word }
+  cull: "cull race/ dir\n(logs salvaged first)" { class: word }
+}
+
+s2: "2. contract rev 3.1 (planner)" {
+  defects: "fold opus's 7 filed defects; re-scope I-F; record direct default" {
+    class: lane
+    ex: |`text
+      defect example: namespace check
+      placed AFTER expansion would
+      refuse the compiler's own
+      __host_demand_* heads
+    `| { class: code }
+  }
+}
+
+s3: "3. remaining interning lanes (two-pass each)" {
+  ic: "I-C literals: quoted strings intern at boot, reads + writes" {
+    class: lane
+    ex: |`sql
+      -- before: id = text, matches NOTHING
+      WHERE "kind" = 'warning'
+      -- after: boot interned 'warning' = 7
+      WHERE "kind" = 7
+    `| { class: code }
+  }
+  ik: "I-K built strings: intern on write" {
+    class: lane
+    ex: |`sql
+      -- Count || ' hits' built at runtime:
+      INSERT OR IGNORE INTO __str
+        SELECT DISTINCT (cnt || ' hits') ...;
+      -- head row then JOINs __str for the id
+    `| { class: code }
+  }
+  itel: "I-F/I-G telemetry: dictionary watched from in-language" {
+    class: lane
+    ex: |`text
+      __str_stats(tick, rows, bytes,
+                  interned, looked_up)
+      "did it stop growing when
+       ingest went quiet?" = a query
+    `| { class: code }
+  }
+}
+
+s4: "4. the flip" {
+  flip: "default_intern_mode -> dict" {
+    class: lane
+    ex: |`prolog
+      % the entire flip:
+      default_intern_mode(direct).
+      % becomes
+      default_intern_mode(dict).
+    `| { class: code }
+  }
+  referee: "final referee:\nfull 211-schedule sweep\nEXECUTING under dict,\nwrong=0" { class: gatebox }
+}
+
+s5: "5. collect the speed (tsv2 endgame)" {
+  heads: "I-E rowid+unique heads: sub-1,000 grid, chain-tail attack" {
+    class: lane
+    ex: |`sql
+      -- head today (deep key btree):
+      PRIMARY KEY (a,b,c) WITHOUT ROWID
+      -- after (append + range delta):
+      id INTEGER PRIMARY KEY, UNIQUE(a,b,c)
+    `| { class: code }
+  }
+  bench: "bench rerun: 1.7-2.0x\ncollected, FACTS updated\n(86% of keyed tables)" { class: prizebox }
+}
+
+s6: "6. rust track (opens after 5)" {
+  p1b: "P1-B: TS reference\ninterpreter (referee)" { class: lane }
+  p1c: "P1-C: rust executor + one-shot CLI" {
+    class: lane
+    ex: |`bash
+      # souffle mode, no server:
+      sprefa-fixpoint run \
+        --ir reach.fixpointIr.json \
+        --facts edges.jsonl
+    `| { class: code }
+  }
+  lab: "P1-D-T row transport lab:\naddon / pipes / shm / socket" { class: lane }
+  seam: "P1-D: runtime seam,\nfourth dispatch arm" { class: lane }
+  forced: "P1-E: forced-offload sweep,\n211 byte-identical" { class: gatebox }
+}
+
+s7: "7. endgame" {
+  codegen: "compiled mode: per-program rust from the same IR, retraction included" {
+    class: lane
+    ex: |`rust
+      // generated for THIS program only:
+      fn hop(wave: &FxHashSet<(i64,i64)>,
+             edge: &Edge) { /* ... */ }
+      // no interpreter, no 18% tax
+    `| { class: code }
+  }
+  dd: "vs differential-dataflow\non retraction schedules;\noracle referees" { class: prizebox }
+}
+
+anytime: "anytime, no dependency" {
+  ci: "release-workflow CI\n(tag-driven, checksum gate)" { class: side }
+  pack: "pack1 follow-ups: libexec\nlayout, module trim,\nbun:sqlite" { class: side }
+  debur: "debur: dead recompute code,\ngen-index flip" { class: side }
+  v5w: "v5 items on your word:\norphan roots, lazy tier,\nfilesize decision" { class: word }
+}
+
+s1.merge -> s2.defects
+s2.defects -> s3.ic
+s2.defects -> s3.itel
+s3.ic -> s4.flip
+s3.ik -> s4.flip
+s3.itel -> s4.flip
+s4.flip -> s4.referee
+s4.referee -> s5.heads
+s5.heads -> s5.bench
+s5.bench -> s6.p1b: "tsv2-first gate opens"
+s6.p1b -> s6.p1c
+s6.p1c -> s6.lab
+s6.lab -> s6.seam
+s6.seam -> s6.forced
+s6.forced -> s7.codegen
+s7.codegen -> s7.dd
