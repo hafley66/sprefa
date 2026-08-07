@@ -16,11 +16,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  postArrivals,
-  postProgram,
+  post_arrivals,
+  post_program,
   request,
-  startServed,
-  tickEvents,
+  start_served,
+  tick_events,
 } from "../../tests/serveHelpers.ts";
 
 function receipt(name: string, value: unknown): void {
@@ -72,15 +72,15 @@ async function runChain(stages: number, workDir: string, seeds = 1): Promise<voi
   process.env.LAB_SPAWNS = spawnLedger;
 
   const source = chainProgram(stages);
-  const served = await startServed(0);
+  const served = await start_served(0);
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     if (loaded.statusCode !== 200) throw new Error(`POST /program -> ${loaded.statusCode} ${loaded.body}`);
     const plans = JSON.parse(loaded.body) as { readonly hosts: readonly string[] };
     receipt(`chain_${stages}_hosts`, plans.hosts);
 
     const startedAt = performance.now();
-    const seeded = await postArrivals(
+    const seeded = await post_arrivals(
       served.port,
       Array.from({ length: seeds }, (_, index) => ({
         rel: "seed",
@@ -96,7 +96,7 @@ async function runChain(stages: number, workDir: string, seeds = 1): Promise<voi
       return rows.rows.length === seeds;
     }, `${last} to hold the chain's ${seeds} answers`);
 
-    const outcomes = tickEvents(served.events);
+    const outcomes = tick_events(served.events);
     receipt(`chain_${stages}_total_ticks`, outcomes.length);
     receipt(`chain_${stages}_spawns`, readFileSync(spawnLedger, "utf8").length);
     receipt(`chain_${stages}_wall_ms`, Math.round(performance.now() - startedAt));
@@ -137,9 +137,9 @@ async function main(): Promise<void> {
     for (const stages of [1, 2, 3, 4]) await runChain(stages, workDir);
 
     console.log("\nRECEIPT 1b: two host atoms in ONE rule body");
-    const served = await startServed(0);
+    const served = await start_served(0);
     try {
-      const refused = await postProgram(served.port, SAME_RULE_TWO_HOSTS);
+      const refused = await post_program(served.port, SAME_RULE_TWO_HOSTS);
       receipt("two_hosts_one_body_status", refused.statusCode);
       receipt(
         "two_hosts_one_body_refusal",

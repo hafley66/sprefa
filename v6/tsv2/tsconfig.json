@@ -14,6 +14,6 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["*.d.ts", "runtime/**/*.ts", "serve/**/*.ts", "gen/**/*.ts", "gen_emitted/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "cli/**/*.ts"],
+  "include": ["*.d.ts", "runtime/**/*.ts", "serve/**/*.ts", "gen/**/*.ts", "gen_emitted/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts", "cli/**/*.ts", "labs/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

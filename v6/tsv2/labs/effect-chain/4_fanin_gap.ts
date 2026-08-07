@@ -21,7 +21,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { postArrivals, postProgram, request, startServed } from "../../tests/serveHelpers.ts";
+import { post_arrivals, post_program, request, start_served } from "../../tests/serveHelpers.ts";
 
 function receipt(name: string, value: unknown): void {
   console.log(`  ${name} = ${JSON.stringify(value)}`);
@@ -74,9 +74,9 @@ async function main(): Promise<void> {
   try {
     console.log("RECEIPT 4a: a list-shaped aggregate head (the v5 collect shape)");
     {
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        const answer = await postProgram(served.port, LIST_AGGREGATE);
+        const answer = await post_program(served.port, LIST_AGGREGATE);
         receipt("list_aggregate_status", answer.statusCode);
         receipt(
           "list_aggregate_refusal",
@@ -92,9 +92,9 @@ async function main(): Promise<void> {
       const ledger = join(workDir, "scalar-aggregate");
       writeFileSync(ledger, "", "utf8");
       process.env.LAB_SPAWNS = ledger;
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        const loaded = await postProgram(served.port, SCALAR_AGGREGATE);
+        const loaded = await post_program(served.port, SCALAR_AGGREGATE);
         receipt("scalar_aggregate_status", loaded.statusCode);
         if (loaded.statusCode !== 200) throw new Error(loaded.body);
         const batch = Array.from({ length: 5 }, (_, index) => ({
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
           sign: "add" as const,
           row: [index],
         }));
-        await postArrivals(served.port, batch);
+        await post_arrivals(served.port, batch);
         await waitUntil(async () => {
           const rows = JSON.parse((await request(served.port, "/idb/gathered", "GET")).body) as {
             rows: unknown[];
@@ -124,9 +124,9 @@ async function main(): Promise<void> {
 
     console.log("\nRECEIPT 4b2: min/max over a TEXT column");
     {
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        const answer = await postProgram(
+        const answer = await post_program(
           served.port,
           "rel item(id: text).\nrel highest(id: text).\nhighest(max(id)) <- item(id).\n",
         );
@@ -142,9 +142,9 @@ async function main(): Promise<void> {
 
     console.log("\nRECEIPT 4c: the shipped aggregate inventory, as the compiler answers it");
     {
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        receipt("count_head_status", (await postProgram(served.port, COUNT_AGGREGATE)).statusCode);
+        receipt("count_head_status", (await post_program(served.port, COUNT_AGGREGATE)).statusCode);
         for (const [name, head] of [
           ["sum", "tally(sum(n))"],
           ["min", "tally(min(n))"],
@@ -155,7 +155,7 @@ async function main(): Promise<void> {
           ["group_concat", "tally(group_concat(n))"],
         ] as const) {
           const source = `rel item(n: int).\nrel tally(out: text).\n${head} <- item(n).\n`;
-          const answer = await postProgram(served.port, source);
+          const answer = await post_program(served.port, source);
           receipt(`aggregate_${name}_status`, answer.statusCode);
         }
       } finally {
@@ -164,11 +164,11 @@ async function main(): Promise<void> {
     }
     console.log("\nRECEIPT 4d: what `group_concat` actually compiled to");
     {
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
         const source = "rel item(n: int).\nrel tally(out: text).\ntally(group_concat(n)) <- item(n).\n";
-        receipt("group_concat_status", (await postProgram(served.port, source)).statusCode);
-        const replied = await postArrivals(
+        receipt("group_concat_status", (await post_program(served.port, source)).statusCode);
+        const replied = await post_arrivals(
           served.port,
           [1, 2, 3].map((n) => ({ rel: "item", sign: "add" as const, row: [n] })),
         );

@@ -17,11 +17,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  postArrivals,
-  postProgram,
+  post_arrivals,
+  post_program,
   request,
-  startServed,
-  tickEvents,
+  start_served,
+  tick_events,
 } from "../../tests/serveHelpers.ts";
 
 function receipt(name: string, value: unknown): void {
@@ -64,9 +64,9 @@ async function plainShellAt(count: number, workDir: string): Promise<void> {
   const ledger = join(workDir, `plain-${count}`);
   writeFileSync(ledger, "", "utf8");
   process.env.LAB_SPAWNS = ledger;
-  const served = await startServed(0);
+  const served = await start_served(0);
   try {
-    const loaded = await postProgram(served.port, PLAIN_SHELL);
+    const loaded = await post_program(served.port, PLAIN_SHELL);
     if (loaded.statusCode !== 200) throw new Error(loaded.body);
     const batch = Array.from({ length: count }, (_, index) => ({
       rel: "item",
@@ -74,10 +74,10 @@ async function plainShellAt(count: number, workDir: string): Promise<void> {
       row: [`id-${index}`],
     }));
     const startedAt = performance.now();
-    await postArrivals(served.port, batch);
+    await post_arrivals(served.port, batch);
     await waitUntil(async () => (await rowsOf(served.port, "seen")).length === count, `${count} seen rows`);
     receipt(`plain_shell_${count}_demands_spawns`, spawnCount(ledger));
-    receipt(`plain_shell_${count}_demands_ticks`, tickEvents(served.events).length);
+    receipt(`plain_shell_${count}_demands_ticks`, tick_events(served.events).length);
     receipt(`plain_shell_${count}_demands_wall_ms`, Math.round(performance.now() - startedAt));
   } finally {
     await served.stop();
@@ -157,16 +157,16 @@ async function extractGroupingAt(
   writeFileSync(ledger, "", "utf8");
   process.env.DL_EXTRACT_BIN = installExtractShim(workDir, ledger);
   const source = extractProgram(projections, distinctTemplates);
-  const served = await startServed(0);
+  const served = await start_served(0);
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     if (loaded.statusCode !== 200) throw new Error(loaded.body);
     const batch = Array.from({ length: paths }, (_, index) => ({
       rel: "file",
       sign: "add" as const,
       row: [`src/f${index}.ts`, `digest-${index}`],
     }));
-    await postArrivals(served.port, batch);
+    await post_arrivals(served.port, batch);
     // EVERY projection must have settled, not just the last one declared: with
     // distinct templates the invocations are separate and finish out of order,
     // so watching one rel undercounts the spawns still in flight.
@@ -179,7 +179,7 @@ async function extractGroupingAt(
     }, `${paths} rows in each of ${targets.length} projection rels`);
     receipt(`extract_${paths}x${projections}_${label}_demands`, paths * projections);
     receipt(`extract_${paths}x${projections}_${label}_spawns`, spawnCount(ledger));
-    receipt(`extract_${paths}x${projections}_${label}_ticks`, tickEvents(served.events).length);
+    receipt(`extract_${paths}x${projections}_${label}_ticks`, tick_events(served.events).length);
   } finally {
     await served.stop();
   }
@@ -225,11 +225,11 @@ async function main(): Promise<void> {
       const ledger = join(workDir, "identical-shells");
       writeFileSync(ledger, "", "utf8");
       process.env.LAB_SPAWNS = ledger;
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        const loaded = await postProgram(served.port, TWO_IDENTICAL_SHELLS);
+        const loaded = await post_program(served.port, TWO_IDENTICAL_SHELLS);
         if (loaded.statusCode !== 200) throw new Error(loaded.body);
-        await postArrivals(served.port, [{ rel: "item", sign: "add", row: ["only"] }]);
+        await post_arrivals(served.port, [{ rel: "item", sign: "add", row: ["only"] }]);
         await waitUntil(
           async () =>
             (await rowsOf(served.port, "left_seen")).length === 1 &&
@@ -248,15 +248,15 @@ async function main(): Promise<void> {
       const ledger = join(workDir, "reassert");
       writeFileSync(ledger, "", "utf8");
       process.env.LAB_SPAWNS = ledger;
-      const served = await startServed(0);
+      const served = await start_served(0);
       try {
-        const loaded = await postProgram(served.port, PLAIN_SHELL);
+        const loaded = await post_program(served.port, PLAIN_SHELL);
         if (loaded.statusCode !== 200) throw new Error(loaded.body);
-        await postArrivals(served.port, [{ rel: "item", sign: "add", row: ["repeat"] }]);
+        await post_arrivals(served.port, [{ rel: "item", sign: "add", row: ["repeat"] }]);
         await waitUntil(async () => (await rowsOf(served.port, "seen")).length === 1, "first answer");
         receipt("reassert_spawns_after_first_add", spawnCount(ledger));
-        await postArrivals(served.port, [{ rel: "item", sign: "del", row: ["repeat"] }]);
-        await postArrivals(served.port, [{ rel: "item", sign: "add", row: ["repeat"] }]);
+        await post_arrivals(served.port, [{ rel: "item", sign: "del", row: ["repeat"] }]);
+        await post_arrivals(served.port, [{ rel: "item", sign: "add", row: ["repeat"] }]);
         await waitUntil(async () => (await rowsOf(served.port, "seen")).length === 1, "answer back");
         await new Promise<void>((resolve) => setTimeout(resolve, 300));
         receipt("reassert_spawns_after_retract_and_readd", spawnCount(ledger));
