@@ -123,6 +123,7 @@
             % The interning contract's mode vocabulary. compile.pl resolves
             % the compile option into the atom the plan term carries.
             intern_mode/2, interned_column/2, string_dictionary_table/1,
+            program_text_intern_plan/3,
             % Both halves of the storage decision, exported so one test can
             % compare the DDL's answer against the IR's on ONE run.
             column_def/4, ir_column_class/4,
@@ -975,6 +976,37 @@ text_view_ddls(Mode, Table, Columns, ColumnTypes, PassThroughColumns, Ddls) :-
                       Ddl),
         Ddls = [Ddl]
     ;   Ddls = []
+    ).
+
+% ═══ the ingest door's intern plan (contract §6) ════════════════════════════
+% Two statements, both flat in the number of arriving distinct values. Where
+% StructPlane needs three, the third is a same-key/different-row preflight that
+% cannot exist here: `__str`'s key IS the whole value.
+text_intern_plan(Mode, RelPlans, textintern(InternSql, LookupSql, RelColumns)) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(InternSql),
+           'INSERT OR IGNORE INTO ~w ("content") SELECT i.value FROM json_each(?) i',
+           [QuotedDictionary]),
+    format(atom(LookupSql),
+           'SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN ~w s ON s."content" = i.value',
+           [QuotedDictionary]),
+    findall(Name-Flags,
+            ( member(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+              any_interned_column(Mode, ColumnTypes),
+              maplist(interned_column_flag(Mode), ColumnTypes, Flags) ),
+            RelColumns).
+
+interned_column_flag(Mode, ColumnType, Flag) :-
+    ( interned_column(Mode, ColumnType) -> Flag = true ; Flag = false ).
+
+% none when no column in the program is interned, so a direct-mode module
+% carries no plan, no import and no statement.
+program_text_intern_plan(Mode, RelPlans, Plan) :-
+    (   text_intern_plan(Mode, RelPlans, textintern(InternSql, LookupSql, RelColumns)),
+        RelColumns \== []
+    ->  Plan = textintern(InternSql, LookupSql, RelColumns)
+    ;   Plan = none
     ).
 
 % The table a boundary read names: the decode view when one exists.

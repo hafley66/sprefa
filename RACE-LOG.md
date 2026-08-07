@@ -8,6 +8,7 @@ Append-only. One entry per milestone.
 - [Milestone 1 — I-A](#milestone-1--i-a-ddl--decode-view--the-gun)
 - [Milestone 2 — I-D](#milestone-2--i-d-the-ir-encoding-slot)
 - [Milestone 3 — I-J](#milestone-3--i-j-the-reserved--namespace)
+- [Milestone 4 — I-B](#milestone-4--i-b-the-ingest-door)
 - [Contract defects and ambiguities](#contract-defects-and-ambiguities)
 - [Summary table](#summary-table)
 
@@ -264,6 +265,86 @@ oracle is not the referee. Recorded as defect 7 below.
 
 ---
 
+## Milestone 4 — I-B: the ingest door
+
+**2026-08-07T22:28Z.** The door is what makes a `dict` module able to accept a
+row at all: a stored text column is INTEGER, and SQLite stores a string in one
+without complaint.
+
+### What landed
+
+| # | thing | where |
+|---|---|---|
+| 1 | `text_intern_plan/3` + `program_text_intern_plan/3`, emitting §6.2's two statements verbatim and the per-rel column flags | `v6/prolog/lower.pl` |
+| 2 | `ITextInternPlan`, `ITextPlane` in the package's header types | `v6/tsv2/runtime/types.ts` |
+| 3 | `TextPlane`, interface-bound, one `defer` so a malformed row's refusal reaches the tick's error channel instead of the caller's stack | NEW `v6/tsv2/runtime/textPlane.ts` |
+| 4 | `TEXT_INTERN_PLAN` emitted per module, plus the `TextPlane.intern` stage in all THREE tick shapes (naive, ordered, incremental), placed before `StructPlane.intern` | `v6/prolog/emit_ts.pl` |
+| 5 | The COUNT rail, 11 tests, with three sabotage receipts in the file header | NEW `v6/tsv2/tests/textIntern.test.ts` |
+| 6 | 6 plunit pins, including the emitted-order one | `compile/test/plunit_tests.pl` |
+| 7 | `door-plan` and `door-call` classes in the G9 classifier | `scripts/intern-ab-classify.ts` |
+
+### Two statements, and the third one that is NOT copied
+
+`StructPlane` runs three per type: a same-key/different-row preflight, the
+insert, the lookup. `__str`'s key IS the whole value, so that conflict cannot
+exist and the preflight is deleted rather than copied. The COUNT rail asserts
+the number directly:
+
+| input | statements |
+|---|---|
+| 1 distinct value, 1 rel | 2 |
+| 3 distinct values, 1 rel | 2 |
+| 50 distinct values, 1 rel | 2 |
+| 1 / 3 / 50 distinct values across 4 rels | 2 |
+| empty batch | 0 |
+| a batch with no interned column | 0 |
+
+### Ordering, and why it is a compiler-side pin
+
+Text intern runs BEFORE struct intern, because a `__ref_<type>` target table
+carries text columns inside its own UNIQUE key. This file cannot see the
+wiring (it drives `TextPlane` directly), so the ordering receipt is a plunit
+test over the EMITTED module text:
+`text_intern_runs_before_struct_intern` asserts the `TextPlane.intern` offset
+is below the `StructPlane.intern` offset in `relation_depth2_dot_read`, the
+corpus fixture that carries both a struct type and a text column.
+
+### Gate outputs
+
+```
+$ cd v6/tsv2 && bash scripts/sweep.sh
+SWEEP total=308 compiled=211 unsupported=97 crash=0
+RUN total=211 identical=210 wrong=0 emitted_crash=0 rejection=1 no_oracle_log=0
+FINAL total=211 final_identical=210 final_wrong=0 no_oracle_final=1
+MANIFEST_REASON_DIFF restated=0 args=0 bucket_moved=0 added=0 removed=0
+
+$ cd v6/prolog/compile && swipl -f none -g "load_files(['test/plunit_tests.pl'], []), run_tests." -t halt
+% All 393 (+46 sub-tests) tests passed in 1.003 seconds
+
+$ cd v6/tsv2 && pnpm exec tsgo --noEmit          -> 0 errors
+$ cd v6/tsv2 && pnpm test
+ℹ tests 170  ℹ pass 169  ℹ fail 0  ℹ skipped 1   (6.5s)
+
+$ cd v6/prolog && swipl -g go -t halt ARCH.pl    -> 7 PASS
+$ bash v6/tsv2/scripts/intern-ab.sh
+INTERN_AB modules=211 decode-read=1863 decode-subquery=23 decode-view=1242 \
+  dictionary-ddl=184 door-call=772 door-plan=2093 ir-encoding=32 \
+  mode-stamp=422 unexplained=0
+```
+
+### What the door does NOT yet cover, named so it is not mistaken for done
+
+| gap | who owns it |
+|---|---|
+| text LITERALS in comparisons and head projections still lower to quoted text | I-C |
+| `boot_seed_statement/*` writes Initial rows as literal VALUES, outside the door | unowned; recorded below |
+| strings BUILT at run time (`concat`, `norm`) are not interned on write | I-K |
+| the `__str_stats` telemetry row and the door's third statement | I-F, I-G |
+
+Those four are exactly why `default_intern_mode` is still `direct`.
+
+---
+
 ## Contract defects and ambiguities
 
 | # | where | what | what I did |
@@ -292,4 +373,5 @@ oracle is not the referee. Recorded as defect 7 below.
 |---|---|---|---|
 | 1 | I-A | sweep wrong=0, plunit 379, tsgo 0, G9 unexplained=0, ARCH pass, tsv2 157/0, store 75/0 | `863fe1d5` |
 | 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `67a6af43` |
-| 3 | I-J | sweep 308/211 wrong=0 (added=2), plunit 388, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `race: I-J ...` |
+| 3 | I-J | sweep 308/211 wrong=0 (added=2), plunit 388, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `49b76b26` |
+| 4 | I-B | sweep wrong=0, plunit 393, tsgo 0, tsv2 169/0/1skip, G9 unexplained=0, ARCH 7 PASS | `race: I-B ...` |

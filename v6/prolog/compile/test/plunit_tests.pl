@@ -25,6 +25,7 @@
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4,
                 catalog_ddl_contract/2,
+                program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
@@ -4861,6 +4862,61 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     DictIr)),
     DictIr == none.
+
+% ── the ingest door (contract §6) ───────────────────────────────────────────
+
+interning_emitted(Mode, Base, Name, Text) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered),
+           Term = fixture(_, _, Initial, _, _),
+           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+           boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+           emit_program(Name, Plan, Lowered, Boot, Text) )).
+
+% A `__ref_<type>` target table carries text columns inside its own UNIQUE key,
+% so those columns must already be ids when StructPlane writes the target row.
+test(text_intern_runs_before_struct_intern) :-
+    interning_emitted(dict, '6_relation_depth.pl', relation_depth2_dot_read, Text),
+    once(sub_atom(Text, TextAt, _, _, 'TextPlane.intern(seam, TEXT_INTERN_PLAN')),
+    once(sub_atom(Text, StructAt, _, _, 'StructPlane.intern(seam, STRUCT_TYPES')),
+    TextAt < StructAt.
+
+test(the_door_is_absent_at_direct) :-
+    interning_emitted(direct, '6_relation_depth.pl', relation_depth2_dot_read, Text),
+    \+ sub_atom(Text, _, _, _, 'TextPlane'),
+    \+ sub_atom(Text, _, _, _, 'TEXT_INTERN_PLAN').
+
+% Two statements, not three: `__str`'s key IS the whole value, so StructPlane's
+% same-key/different-row preflight has no case here and is not copied.
+test(the_door_carries_exactly_two_statements) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(dict, RelPlans,
+                             textintern(InternSql, LookupSql, RelColumns)),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i',
+    LookupSql == 'SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value',
+    RelColumns \== [].
+
+% The runtime's rewrite map is one flag per column, in column order.
+test(the_door_flags_every_text_column) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(dict, RelPlans, textintern(_, _, RelColumns)),
+    forall(member(Name-Flags, RelColumns),
+           ( memberchk(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+             length(Flags, Arity),
+             length(ColumnTypes, Arity),
+             forall(( nth1(Index, ColumnTypes, ColumnType),
+                      nth1(Index, Flags, Flag) ),
+                    ( ColumnType == text -> Flag == true ; Flag == false )) )).
+
+test(no_door_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(direct, RelPlans, none).
 
 % ── the compiler-owned `__` namespace (contract §18) ────────────────────────
 

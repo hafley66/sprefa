@@ -11,6 +11,8 @@ type IClassName =
   | "decode-subquery"
   | "column-storage"
   | "ir-encoding"
+  | "door-plan"
+  | "door-call"
   | "mode-stamp";
 
 interface IInternClassCount {
@@ -23,10 +25,19 @@ interface IModuleVerdict {
   readonly unexplained: readonly string[];
 }
 
-const DROP_LINE = [
-  /CREATE TABLE "__str" \(/,
-  /CREATE TEMP VIEW "__txt_/,
+const DROP_LINE: readonly (readonly [RegExp, IClassName])[] = [
+  [/CREATE TABLE "__str" \(/, "dictionary-ddl"],
+  [/CREATE TEMP VIEW "__txt_/, "decode-view"],
+  [/^import \{ TextPlane \} from/, "door-plan"],
+  [/^ {2}ITextInternPlan,$/, "door-plan"],
+  [/TextPlane\.intern\(/, "door-call"],
+  [/^ +\.pipe\(map\(\(interned\) =>/, "door-call"],
 ];
+
+/** The emitted plan constant is a BLOCK, so it needs a state machine rather
+ *  than a line pattern: one class, however many lines it spans. */
+const DOOR_PLAN_OPEN = /^export const TEXT_INTERN_PLAN/;
+const DOOR_PLAN_CLOSE = /^\};$/;
 
 const counts = new Map<IClassName, IInternClassCount>();
 
@@ -67,14 +78,30 @@ function canonicalLine(line: string): string {
 }
 
 function canonicalText(text: string): readonly string[] {
-  return text
-    .split("\n")
-    .filter((line) => {
-      const dropped = DROP_LINE.some((pattern) => pattern.test(line));
-      if (dropped) count(line.includes('"__str"') && line.includes("CREATE TABLE") ? "dictionary-ddl" : "decode-view");
-      return !dropped;
-    })
-    .map(canonicalLine);
+  const kept: string[] = [];
+  let insideDoorPlan = false;
+  for (const line of text.split("\n")) {
+    if (insideDoorPlan) {
+      count("door-plan");
+      if (DOOR_PLAN_CLOSE.test(line)) insideDoorPlan = false;
+      continue;
+    }
+    if (DOOR_PLAN_OPEN.test(line)) {
+      count("door-plan");
+      insideDoorPlan = true;
+      continue;
+    }
+    const matched = DROP_LINE.find(([pattern]) => pattern.test(line));
+    if (matched !== undefined) {
+      count(matched[1]);
+      continue;
+    }
+    // Blank lines are section separators; dropping a whole section leaves one
+    // behind, and this gate reads content, not layout.
+    if (line.trim() === "") continue;
+    kept.push(canonicalLine(line));
+  }
+  return kept;
 }
 
 function verdictFor(module: string, dictText: string, directText: string): IModuleVerdict {
