@@ -43,6 +43,7 @@
 | [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
+| [labs/exec_shootout/dl6/REPORT-SUBSEC.md](labs/exec_shootout/dl6/REPORT-SUBSEC.md) | 110 | REPORT-SUBSEC: grid_10000 under 1,000 ms in the real engine |
 | [labs/exec_shootout/sqlite_raw/REPORT-BATCH.md](labs/exec_shootout/sqlite_raw/REPORT-BATCH.md) | 147 | REPORT-BATCH: can batching or storage tricks beat the sqlite floor? |
 | [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
@@ -582,6 +583,18 @@
 24:## `grid_10000`: where the fixpoint went
 43:## `layered_10000`: where the fixpoint went
 62:## `chain_10000`: where the fixpoint went
+```
+
+### labs/exec_shootout/dl6/REPORT-SUBSEC.md
+```
+1:# REPORT-SUBSEC: grid_10000 under 1,000 ms in the real engine
+9:## TOC
+17:## Opening profile (unbatched grid_10000, target list)
+35:## The wall: identical SQLite work, three extra structures
+53:## Race log
+62:## Final grid number with gate table
+78:## Why sub-1,000 requires a restructure (FINDING)
+101:## Reproducing
 ```
 
 ### labs/exec_shootout/sqlite_raw/REPORT-BATCH.md
