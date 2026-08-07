@@ -789,6 +789,18 @@ as JSON text (risk row 9), read the same way by the TS reference interpreter
 (P1-B), the rust executor (P1-C), and any later backend. Compile-time, cold,
 cheap.
 
+**Compiled mode has a named rival (user word 2026-08-08: "make it emit
+bespoke rust retraction code and see if we can rival dd").** The AOT phase
+emits per-program rust from the same fixpointIr, all four walks including
+dred/revive, cargo-built into a program-specific binary. Grading: identical
+retraction schedules run against differential-dataflow as the external bar
+and against the oracle as the correctness referee. The prize is priced: the
+rxgraph lab measured the rules-as-data interpretation tax at 18% of 56.2M
+rows/s; codegen's whole claim is deleting that tax while DD keeps its 215
+bytes/node and its own clock. Scheduled after P1-C proves the interpreted
+executor; the generator consumes the identical IR, so nothing in phase 1
+moves.
+
 **Row transport is NOT settled and gets a lab (P1-D-T).** `seam.fixpoint` in
 section 4.1(b) is an interface; how the rust executor is reached is a binding
 decision, and rows are the hot path. Candidates to price, each with the same
