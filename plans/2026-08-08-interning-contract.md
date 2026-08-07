@@ -23,6 +23,10 @@ Plain-words twin: `plans/2026-08-08-interning-contract.visual.human.unga.md`.
 - [12. Phase gates with numbers](#12-phase-gates-with-numbers)
 - [13. Known breaks](#13-known-breaks)
 - [14. Receipts index](#14-receipts-index)
+- [Amendment 2026-08-08 (user word)](#amendment-2026-08-08-user-word)
+  - [15. The gun](#15-the-gun)
+  - [16. Dictionary telemetry](#16-dictionary-telemetry)
+  - [17. Lane table extension](#17-lane-table-extension)
 
 ---
 
@@ -757,3 +761,369 @@ which `REPORT-INTERN.md` §7 mirrors deliberately.
 | the sub-1,000 target needs a head-storage restructure | `v6/labs/exec_shootout/dl6/REPORT-SUBSEC.md`, "Why sub-1,000 requires a restructure" |
 | five generations of interning, and the three deaths | `plans/2026-08-07-interning-archaeology.md` |
 | incremental tick numbers to hold | `v6/labs/exec_shootout/dl6/FACTS.dredland.md` §1 |
+
+---
+
+# Amendment 2026-08-08 (user word)
+
+Two requirements arrived after the seed landed (PR #12, main `f02ece47`):
+a one-move disable with a stated blast radius, and observability of `__str`
+over time correlated with SQLite activity.
+
+## 15. The gun
+
+User word: "i want a gun."
+
+### 15.1 The constraint, stated first
+
+Interning changes **emitted DDL**. A column is declared `INTEGER` or it is
+declared `TEXT`, and that declaration is baked into a database file the moment
+the program boots. A runtime toggle cannot undo a column type.
+
+Worse than "cannot": a runtime toggle would be actively destructive. SQLite
+applies type affinity rather than rejecting the write, so a runtime that starts
+putting strings into an `INTEGER` column **stores them without complaint**, and
+every subsequent key probe compares a string against a set of ids and finds
+nothing. Silent, total, and only recoverable by rebuilding the database.
+
+**Therefore: the gun is a compile-time switch, and a runtime toggle is a defect
+that this contract forbids in advance.**
+
+### 15.2 The four levels
+
+| level | the move | scope | what it changes | rebuild needed | cost of pulling |
+|---|---|---|---|---|---|
+| **0** | add `direct(col)` to a `rel` declaration (§9) | one column | that column's storage in that rel | that database | one source edit + recompile |
+| **1** | compile with `intern(off)` | one program | every text column in that program | that database | one flag |
+| **2** | compile the corpus with `intern(off)` | everything | all emitted output returns to pre-task-#4 bytes | every database built by an interned program | one flag + a sweep run |
+| **3** | flip a flag on a running database | n/a | **DOES NOT EXIST, AND MUST NOT** | n/a | §15.1 |
+
+### 15.3 Signature of the level-1/2 flag
+
+```prolog
+% program_plan(+Fixture-Bindings, +Options, -Plan)
+%   Options carries intern(dict) | intern(direct). Default dict.
+%   Threading, not a global: a global flag is unrecordable in the artifact,
+%   and §15.5 needs the artifact to say which mode built it.
+%
+%   interned_column/4 (§3.1) gains one leading guard:
+%     Options carries intern(dict),
+%     Type == text,
+%     \+ direct_waiver(Decls, Ref, Column).
+```
+
+CLI spelling on the sweep and the compile entry point: `--intern=direct`.
+Environment-variable spelling is refused: a compile input that does not appear
+in the artifact cannot be audited later.
+
+### 15.4 The gate that proves the gun works
+
+This is the strongest form a revert switch can take, and it is cheap:
+
+> Compiling the 306-fixture corpus with `intern(direct)` must produce emitted
+> modules **byte-identical to base `f650f2b7`'s `out/*.ts`**.
+
+Byte-identical to the commit before task #4, which is stronger than "equivalent"
+and stronger than "passes the sweep". It runs in the sweep's compile stage, which is 3.7s for the whole
+corpus, so the gun is checkable on every commit rather than on demand.
+
+That gate also makes §10.2's receipt 3 (the inverted byte-identity probe)
+redundant in one direction: whatever the interned mode changed, the direct mode
+changes back exactly.
+
+### 15.5 The artifact says which mode built it
+
+`IGenProgram` gains one field:
+
+```ts
+export interface IGenProgram {
+  // ... existing fields
+  /** Which lowering built this module. A database is only readable by a
+   *  module of the same mode; §15.6 is the crossing. */
+  readonly internMode: "dict" | "direct";
+}
+```
+
+Self-diagnosis law: a database plus its module answers "why does this column
+hold integers" without asking anyone. Serve refuses to attach a `dict` module
+to a database built by a `direct` module and vice versa, naming both modes in
+the error.
+
+### 15.6 What pulling the gun costs, measured where possible
+
+| step | cost | source |
+|---|---|---|
+| recompile the corpus | ~3.7 s for 306 fixtures | sweep stage 1 wall, `REPORT-P1AR.md` |
+| recompile one program | inside the compile budget the sweep already caps | `scripts/sweep.sh` budget section |
+| **re-ingest** | the real cost, and it is workload-shaped | see below |
+
+Re-ingest has two supported routes:
+
+**Route A, preferred: replay the source.** Extraction programs re-extract from
+the code on disk. Fixture programs re-run `<name>.schedule.json`. Serve
+databases replay their arrival trail. Nothing bespoke, and the result is the
+authoritative state rather than a translated one.
+
+**Route B, the one-statement dump, available only while the old schema is still
+mounted.** The decoder view is exactly the pre-intern row shape, so an
+un-intern is one statement per relation:
+
+```sql
+CREATE TABLE "rel_x__plain" AS SELECT * FROM "__txt_rel_x";
+```
+
+Run this **before** swapping to the reverted module, while the views still
+exist. This is the second payoff of §4's "the view ships with the table": the
+escape hatch is one statement per relation because the decoder was never
+optional.
+
+### 15.7 What the gun cannot do
+
+| cannot | why | what to do instead |
+|---|---|---|
+| un-intern a live database in place | the column types are declared, and affinity makes a wrong write silent (§15.1) | route A or route B of §15.6 |
+| survive a mixed database | half the tables interned, half not, is not a state the compiler can emit or the runtime can read | the mode is per-module, and §15.5's check refuses the crossing |
+| recover `__str` after it is dropped | ids in relation tables become meaningless integers | `__str` is dropped only together with the tables that reference it |
+| be pulled per-tick or per-request | see §15.1 | level 0 waiver, which is per-column and permanent for that program |
+
+### 15.8 Where the gun is built
+
+The gun is **lane I-A's third deliverable**, in the same lane and the same
+commit as the lowering it disables. A window where the interning lowering exists
+and its off switch does not is the exact shape of the four previous deaths: a
+thing that cannot be backed out does not get backed out, it gets lived with.
+I-A-R's review gains §15.4's byte-diff as a gate.
+
+---
+
+## 16. Dictionary telemetry
+
+User words: "we must observe and know its state over time so we can tell what
+happens with this technique", and "correlate sqlite events/log with its status".
+
+### 16.1 The spelling: a Log rel, declared through the catalog contract
+
+The compiler already has exactly one mechanism for a relation the compiler owns
+and the runtime writes, and it is not a magic string:
+
+| piece | site | what it does |
+|---|---|---|
+| `catalog_ddl_contract/2` | `lower.pl:639-643` | declares `__rel`'s columns and types |
+| `materialize_catalog_rel/2` | `compile.pl:131-143` | injects those `col_type` decls **only when the program mentions the rel** |
+| `program_uses_catalog/2` | `analyze.pl:199-204` | the mention test |
+| the ordinary `rel_ddl/6` path | `lower.pl:645` comment | the table itself comes from the normal path, so the rel is typed, planned and queryable like any other |
+| `ArrivalTargets` subtraction | `compile.pl:180-183` | the serve door cannot write a compiler-owned rel |
+
+`__str_stats` is a second `catalog_ddl_contract/2` row. Nothing in the engine
+looks up a relation by literal name; the mechanism that already carries `__rel`
+carries this too.
+
+```
+rel __str_stats(tick: int, rows: int, content_bytes: int,
+                interned: int, looked_up: int) log keep(count(4096)).
+```
+
+### 16.2 The five columns, and where each number comes from
+
+| column | meaning | source | cost |
+|---|---|---|---|
+| `tick` | the join key to everything else | `(SELECT "n" FROM "__tick")`, the counter the emitter already advances at the head of every tick (`lower.pl:620-633`, `emit_ts.pl:2255-2266`) | free, the read is already in the emitter's vocabulary |
+| `interned` | words added THIS tick | the intern statement's `RETURNING` row count, which is the `INSERT OR IGNORE`'s `rowsAffected` | free; `ISqlRunner.batch` already returns one `QueryResult` per statement with `rowsAffected` |
+| `looked_up` | distinct values presented this tick | the door's own batch size, already in memory | free |
+| `rows` | dictionary row count, running | previous row's `rows` + this tick's `interned` | one backward step on `__str_stats`'s rowid index |
+| `content_bytes` | logical bytes of stored text, running | previous row's `content_bytes` + `sum(length)` over the `RETURNING` rows | one backward step, plus a JS sum over the NEW words only |
+
+**The hit ratio is not stored.** It is `(looked_up - interned) / looked_up` and
+it is derived in-language (§16.5), which is the point: the engine answers
+questions about itself with its own rules.
+
+### 16.3 The statement, and why it does not scan
+
+The naive spelling is `SELECT count(*), sum(length(content)) FROM "__str"` once
+per tick. That is a **full scan of the dictionary on every tick**, which at a
+million strings is a per-tick beachball and breaks both the 10-second law and
+the nothing-seizes-the-machine law. It is refused here by name so nobody
+rediscovers it.
+
+The running-total spelling, one statement, appended to the door's existing
+batch:
+
+```sql
+INSERT INTO "__str_stats" ("tick","rows","content_bytes","interned","looked_up")
+SELECT (SELECT "n" FROM "__tick"),
+       coalesce((SELECT s."rows"          FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0) + ?,
+       coalesce((SELECT s."content_bytes" FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0) + ?,
+       ?, ?;
+```
+
+Both correlated subqueries are `ORDER BY rowid DESC LIMIT 1`: one backward step
+on the rowid index, O(1) in the log's length, and `keep(count(4096))` bounds
+that length anyway. Zero scans of `__str`.
+
+The intern statement grows a `RETURNING` clause and nothing else:
+
+```sql
+INSERT OR IGNORE INTO "__str" ("content")
+SELECT i.value FROM json_each(?) i
+RETURNING length("content");
+```
+
+`OR IGNORE` + `RETURNING` yields exactly the rows that were actually inserted,
+so `interned` is the row count and the new-bytes sum is a fold over that same
+result. No second statement, no scan.
+
+### 16.4 The statement budget, on and off
+
+| state | statements per tick at the door | how it is reached |
+|---|---|---|
+| program never mentions `__str_stats` | **2** (§6.2 unchanged) | `program_uses_*` gating: no `col_type` decls, no table, no INSERT, no `__tick` |
+| program mentions `__str_stats` | **3** at the door, plus **1** for `UPDATE "__tick"` if the program did not already read `now/1` | the contract row materializes |
+| empty arrival batch | **0** | the door already returns early on an empty batch; a quiet tick writes no stats row |
+| database cold, no arrivals ever | **0** | same |
+
+The `__tick` dependency is a real cost and is named rather than hidden:
+declaring `__str_stats` turns on the tick counter for programs that did not
+already read `now/1`, which is one `UPDATE` per tick
+(`emit_ts.pl:2260-2264`, "One statement per tick, flat").
+
+**A missing `__str_stats` row for tick N means the door did not run at tick N.**
+That is unambiguous rather than a gap, because the tick log records that tick N
+happened. The absence is itself the signal, and §16.6 is the reading.
+
+### 16.5 Dogfooding: the questions are .dl programs
+
+```
+rel __str_stats(tick: int, rows: int, content_bytes: int,
+                interned: int, looked_up: int) log keep(count(4096)).
+
+rel dict_hit_pct(tick: int, pct: int).
+dict_hit_pct(Tick, ((LookedUp - Interned) * 100) / LookedUp) <-
+  __str_stats(Tick, _Rows, _Bytes, Interned, LookedUp), LookedUp > 0.
+
+rel dict_converged(tick: int).
+dict_converged(Tick) <-
+  __str_stats(Tick, _Rows, _Bytes, 0, LookedUp), LookedUp > 0.
+
+rel dict_bytes_per_word(tick: int, avg: int).
+dict_bytes_per_word(Tick, ContentBytes / Rows) <-
+  __str_stats(Tick, Rows, ContentBytes, _Interned, _LookedUp), Rows > 0.
+```
+
+`(LookedUp - Interned) * 100 / LookedUp` multiplies before dividing on purpose:
+both operands are `int`, so `/` is integer division per the offload contract's
+`arith/4` result-type rule. The percentage is exact; a naive
+`(LookedUp - Interned) / LookedUp` would be 0 or 1.
+
+Its rx lowering (style law):
+
+```ts
+// keep(count(4096)) is a bounded replay window, not a Subject and not a field.
+const dictStats$ = tickResult$.pipe(
+  map((result) => result.dictionary),
+  shareReplay({ bufferSize: 4096, refCount: true }),
+);
+
+const dictHitPct$ = dictStats$.pipe(
+  filter((stat) => stat.lookedUp > 0),
+  map((stat) => ({
+    tick: stat.tick,
+    pct: Math.trunc(((stat.lookedUp - stat.interned) * 100) / stat.lookedUp),
+  })),
+);
+
+// the dictionary stopped learning: the door ran, and every word was already known
+const dictConverged$ = dictStats$.pipe(
+  filter((stat) => stat.lookedUp > 0 && stat.interned === 0),
+  map((stat) => ({ tick: stat.tick })),
+);
+```
+
+### 16.6 Correlation: the exact existing structures a reader joins to
+
+`tick` is the join key everywhere, because every one of these reads the same
+`__tick` counter.
+
+```mermaid
+flowchart LR
+  TK["__tick counter<br/>advanced at head of tick<br/>lower.pl:620-633"]
+  TK --> SS["__str_stats row<br/>tick, rows, content_bytes,<br/>interned, looked_up"]
+  TK --> TL["tick log line<br/>{tick:N, deltas:{...}}<br/>ticklog.ts:90-105"]
+  TK --> TE["tick_line trace event<br/>tick, rels, rows, statements, wall_ms<br/>0_traceSchema.ts:18"]
+  SS -.->|"same N"| TL
+  SS -.->|"same N"| TE
+  ST["ISqlRunner stmt_counter<br/>+ TraceStatement hook<br/>store engine/types.ts:50-67"] --> TE
+  DB["ServeStats.sqliteSnapshot<br/>dbstat pgsize for __str<br/>serveStats.ts:82-102"] -.->|"on demand,<br/>not per tick"| SS
+```
+
+| structure | site | what it gives, and how it joins |
+|---|---|---|
+| the tick log | `runtime/ticklog.ts:90-105`, envelope `{"tick":N,"deltas":{...}}` | which relations moved at tick N. Join on N: "the dictionary grew 400 words at the tick where `flow_reach` gained 90k rows" |
+| `tick_line` trace event | `runtime/0_traceSchema.ts:18`, fields `tick`, `rels`, `rows`, `statements`, `wall_ms` | statement count and wall time for tick N. Join on N: "the door's third statement cost nothing" is checkable rather than assumed |
+| statement counting | `sprefa-store/js/src/engine/types.ts:50-67`: every `ISqlRunner` method counts against `stmt_counter` and offers the same `TraceStatement` hook, so "a caller cannot run a statement that escapes the count or the trace" | the door's statements are ALREADY inside `tick_line.statements`. No new counting is built |
+| live channel | `runtime/trace.ts`, `node:diagnostics_channel`, channel `sprefa:rule`, off-path cost is one `hasSubscribers` boolean read | add channel `sprefa:dictionary` publishing the same five numbers per tick, for a subscriber that wants them live rather than by query |
+| physical bytes | `runtime/serveStats.ts:82-102`, `ServeStats.sqliteSnapshot` reads `dbstat` page bytes per object, guarded by `dbstatAvailable` | `__str`'s PHYSICAL size. **On demand at the serve boundary, never per tick**: dbstat walks pages. `content_bytes` is the cheap logical number; dbstat is the expensive true one. Both exist, and the split is deliberate |
+
+### 16.7 Laws checked, one line each
+
+| law | how this satisfies it |
+|---|---|
+| self-diagnosis from the on-disk trail, including after SIGKILL | `__str_stats` is a table in the database. The channel is live-only and additive; the durable answer survives a kill |
+| infra is bought, never built | `node:diagnostics_channel` is node stdlib, `dbstat` is a SQLite vtab, the tick counter and the statement counter already exist. The new code is one INSERT and one publish |
+| N+1: never a per-row write | one INSERT per tick, inside the batch the door already runs. The per-row shape is refused by name in §16.3 |
+| the engine dogfoods itself | §16.5: the growth and anomaly rules are ordinary .dl rules over an ordinary Log rel |
+| no magic rels | §16.1: `catalog_ddl_contract/2`, the same mechanism `__rel` uses. No literal-name lookup in the engine |
+| the 10-second law | zero scans of `__str`; two O(1) index steps per tick |
+| comment budget | the trace schema is GENERATED from `registry.pl` by `compile/3_emit_trace_schema.pl`. Hand-editing `0_traceSchema.ts` is a defect; add a registry row and regenerate |
+
+---
+
+## 17. Lane table extension
+
+§11's table gains three rows. `lower.pl` sequencing still holds: I-F opens after
+I-A merges, I-G after I-B.
+
+| lane | owns (exclusive) | task | gate | routing |
+|---|---|---|---|---|
+| **I-A** (amended) | as before | **plus the gun**: thread `intern(dict\|direct)` through `program_plan/2`, add `internMode` to `IGenProgram`, refuse the mode crossing at attach | as before, **plus §15.4's byte-diff** | **opus** |
+| **I-A-R** (amended) | review only | as before, plus: run the corpus at `intern(direct)` and diff `out/*.ts` against base `f650f2b7`. Any byte that differs is the finding | n/a | **flash4**: the added job is one diff command |
+| **I-F** | `v6/prolog/lower.pl` (`catalog_ddl_contract/2` second row), `v6/prolog/analyze.pl` (the mention test), `v6/prolog/compile/registry.pl` (one trace-schema row), regenerated `v6/tsv2/runtime/0_traceSchema.ts` | §16.1's contract row and its gating; the `dict` trace event | plunit, sweep buckets unchanged, and a fixture proving a program that never mentions `__str_stats` emits no trace of it | **flash4**: `__rel` is a line-for-line template and the columns are fixed by §16.2 |
+| **I-F-R** | review only | does a program without `__str_stats` emit byte-identical output to one compiled before I-F | n/a | **flash4** |
+| **I-G** | `v6/tsv2/runtime/textPlane.ts` (the third batch statement), `v6/tsv2/runtime/trace.ts` (one channel), `v6/tsv2/tests/textIntern.test.ts` (the 2-vs-3 assertion) | §16.3's statement, the `RETURNING` fold, the `sprefa:dictionary` publish | typecheck, `pnpm test`, and the COUNT rail asserting **2 statements off / 3 on / 0 empty** | **flash4**: the SQL is written out and `RuntimeTrace` is the channel template |
+| **I-G-R** | review only | **does any stats path scan `__str`.** Read the emitted SQL and the EXPLAIN, not the intent. Also: is the running total recoverable after a kill, or does it silently restart at zero | n/a | **opus**: a hidden scan is the one failure that turns telemetry into the incident |
+
+Updated flow:
+
+```mermaid
+flowchart TD
+  IA["I-A opus<br/>DDL + view + waiver + THE GUN"] --> IAR["I-A-R flash4<br/>incl. byte-diff at intern(direct)"]
+  IAR --> IB["I-B flash4<br/>the door"]
+  IAR --> IC["I-C opus<br/>text expressions"]
+  IAR --> ID["I-D flash4<br/>IR encoding"]
+  IAR --> IF["I-F flash4<br/>__str_stats contract row"]
+  IB --> IG["I-G flash4<br/>stats statement + channel"]
+  IF --> IG
+  IB --> IBR["I-B-R flash4"]
+  IC --> ICR["I-C-R opus"]
+  ID --> IDR["I-D-R flash4"]
+  IF --> IFR["I-F-R flash4"]
+  IG --> IGR["I-G-R opus<br/>no scan, survives a kill"]
+  IBR --> IE["I-E opus<br/>head shape"]
+  ICR --> IE
+  IDR --> IE
+  IE --> IER["I-E-R opus"]
+```
+
+### Amendment receipts
+
+| claim | receipt |
+|---|---|
+| `__rel` is declared by a contract and materialized only when mentioned | `v6/prolog/lower.pl:639-646`, `v6/prolog/compile.pl:131-143`, `v6/prolog/analyze.pl:199-209` |
+| a compiler-owned rel is not an arrival target | `v6/prolog/compile.pl:178-183` |
+| the tick counter advances at the head of every tick, one statement, only for programs that read it | `v6/prolog/lower.pl:620-633`, `v6/prolog/emit_ts.pl:2255-2266` |
+| every runner method counts its statement and offers the trace hook | `v6/sprefa-store/js/src/engine/types.ts:50-67` |
+| `batch` returns one `QueryResult` per statement with `rowsAffected` | `v6/sprefa-store/js/src/engine/types.ts:65-67`, used at `v6/tsv2/runtime/1_incremental.ts:630`, `:729` |
+| the live-trace channel and its off-path cost | `v6/tsv2/runtime/trace.ts:18-31` |
+| the trace schema is generated, not hand-written | `v6/tsv2/runtime/0_traceSchema.ts:1`, generator `v6/prolog/compile/3_emit_trace_schema.pl` |
+| dbstat gives per-object bytes, is guarded, and is one statement not N | `v6/tsv2/runtime/serveStats.ts:20-33`, `:58-80` |
+| the tick log envelope carries the tick number | `v6/tsv2/runtime/ticklog.ts:90-105` |
+| corpus recompile wall | sweep stage 1, 3.7s / 306 fixtures, `.agent/salvage-20260807/p1ar/REPORT-P1AR.md:17-19` |
