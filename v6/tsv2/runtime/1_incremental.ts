@@ -671,6 +671,7 @@ function reconcileRefCountStatement(
     relations,
     toStatements,
     {
+      skipped,
       clearNew: clearNew!,
       arrivalTail,
       stageRetract: skipped ? [] : toStatements([dredPlan.stageRetractSql]),
@@ -691,6 +692,7 @@ function maintainHeadInPlace(
   relations: readonly IIncrementalRelationPlan[],
   toStatements: (texts: readonly string[]) => SqlStatement[],
   staging: {
+    readonly skipped: boolean;
     readonly clearNew: string;
     readonly arrivalTail: readonly SqlStatement[];
     readonly stageRetract: readonly SqlStatement[];
@@ -705,19 +707,25 @@ function maintainHeadInPlace(
       expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
       last(),
     );
+  // A skipped rel's `arrivalA/B` fills `__new_<rel>` only to feed the carry via
+  // noteFill; with nothing reading it, commit's rowsAffected carries the same.
   const assertRound = (fillsB: boolean): Observable<number> =>
     seam.runner
       .batch(
         seam.db,
         toStatements(
           fillsB
-            ? [plan.clearPongSql, plan.assertHopABSql, plan.commitBSql, plan.arrivalBSql]
-            : [plan.clearPingSql, plan.assertHopBASql, plan.commitASql, plan.arrivalASql],
+            ? staging.skipped
+              ? [plan.clearPongSql, plan.assertHopABSql, plan.commitBSql]
+              : [plan.clearPongSql, plan.assertHopABSql, plan.commitBSql, plan.arrivalBSql]
+            : staging.skipped
+              ? [plan.clearPingSql, plan.assertHopBASql, plan.commitASql]
+              : [plan.clearPingSql, plan.assertHopBASql, plan.commitASql, plan.arrivalASql],
         ),
       )
       .pipe(
         map((results) => {
-          staging.noteFill(results[3]!.rowsAffected);
+          staging.noteFill(results[staging.skipped ? 2 : 3]!.rowsAffected);
           return results[1]!.rowsAffected;
         }),
       );
@@ -725,14 +733,24 @@ function maintainHeadInPlace(
     seam.runner
       .batch(
         seam.db,
-        toStatements([
-          staging.clearNew,
-          plan.clearPingSql,
-          plan.clearPongSql,
-          ...plan.assertSeedSqls,
-          plan.commitASql,
-          plan.arrivalASql,
-        ]),
+        toStatements(
+          staging.skipped
+            ? [
+                staging.clearNew,
+                plan.clearPingSql,
+                plan.clearPongSql,
+                ...plan.assertSeedSqls,
+                plan.commitASql,
+              ]
+            : [
+                staging.clearNew,
+                plan.clearPingSql,
+                plan.clearPongSql,
+                ...plan.assertSeedSqls,
+                plan.commitASql,
+                plan.arrivalASql,
+              ],
+        ),
       )
       .pipe(
         concatMap((results) => {

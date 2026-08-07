@@ -21,6 +21,7 @@
 | [TELEMETRY.md](TELEMETRY.md) | 118 | TELEMETRY |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
+| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 242 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -43,6 +44,7 @@
 | [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
+| [labs/exec_shootout/dl6/REPORT-SUBSEC.md](labs/exec_shootout/dl6/REPORT-SUBSEC.md) | 110 | REPORT-SUBSEC: grid_10000 under 1,000 ms in the real engine |
 | [labs/exec_shootout/intern_bench/REPORT-INTERN.md](labs/exec_shootout/intern_bench/REPORT-INTERN.md) | 146 | P0-A: TEXT-key interning cost, measured |
 | [labs/exec_shootout/sqlite_raw/REPORT-BATCH.md](labs/exec_shootout/sqlite_raw/REPORT-BATCH.md) | 147 | REPORT-BATCH: can batching or storage tricks beat the sqlite floor? |
 | [labs/exec_shootout/sqlite_raw/REPORT-TAIL.md](labs/exec_shootout/sqlite_raw/REPORT-TAIL.md) | 92 | REPORT-TAIL: phase-1 tail alone, measured on real data with no walk |
@@ -93,6 +95,7 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
+| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/comment_rail_golden/README.md](tsv2/goldens/comment_rail_golden/README.md) | 215 | Comment-budget rail golden |
@@ -294,6 +297,16 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
+```
+
+### bench-cli/out/STANDINGS.md
+```
+1:# bench-cli standings
+17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
+50:## Real programs
+52:### callgraph_derivation
+62:## Scale shapes
+65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -584,6 +597,18 @@
 24:## `grid_10000`: where the fixpoint went
 43:## `layered_10000`: where the fixpoint went
 62:## `chain_10000`: where the fixpoint went
+```
+
+### labs/exec_shootout/dl6/REPORT-SUBSEC.md
+```
+1:# REPORT-SUBSEC: grid_10000 under 1,000 ms in the real engine
+9:## TOC
+17:## Opening profile (unbatched grid_10000, target list)
+35:## The wall: identical SQLite work, three extra structures
+53:## Race log
+62:## Final grid number with gate table
+78:## Why sub-1,000 requires a restructure (FINDING)
+101:## Reproducing
 ```
 
 ### labs/exec_shootout/intern_bench/REPORT-INTERN.md
@@ -1372,6 +1397,14 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
+```
+
+### sprefa-store/bench/out/REPORT.md
+```
+1:# Z-set / IVM head-to-head — feasibility lab
+15:## Charts
+22:## Data
+43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
