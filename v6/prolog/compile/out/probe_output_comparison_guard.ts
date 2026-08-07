@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [{ name: "score", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "score", type: "int" }], template: "score {path}", demandRel: "__host_demand_score", responseRel: "__host_response_score", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -183,6 +184,29 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   accepted: ["text", "int"],
   input: ["text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "probe_output_comparison_guard", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "0bf7dbd89eb6c54d", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "__host_demand_score", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "a2051e325323b410", hSchema: "d7578c4861905528", hRule: "deac07903928f07c" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "identity_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "022f9cea9506ccef", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0082c0bb340f985d", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fdc402c3bc17d5ab", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "__host_response_score", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "9151d2a5e2e74d76", hSchema: "61e0ff0c3609bed5", hRule: "" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f74f8735813d26e5", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 11, ordinal: 2, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "6d4658a300879836", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 11, ordinal: 3, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9b6c5af120416981", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 11, ordinal: 4, localName: "score", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e401f4bfcf660bc6", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "accepted", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "b90bd45f631a2bd0", hSchema: "db0ab72429e7c72f", hRule: "bc5f4fb856866cac" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0437dc8888e9fa12", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 16, ordinal: 2, localName: "score", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "fb0a637851bfecd3", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 6, ordinal: 0, localName: "input", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "22f0276fbc685c7e", hSchema: "8596fa45d0ad8be0", hRule: "" },
+  { relId: 20, parentId: 19, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "bae36b39d30e6cb5", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   __host_demand_score: ["text", "text", "text"],
@@ -359,6 +383,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

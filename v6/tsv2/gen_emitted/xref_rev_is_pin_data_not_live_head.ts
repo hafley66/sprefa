@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -205,6 +206,36 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   pin_extracted: ["int", "int", "int", "text", "text"],
   xref: ["int", "int", "int", "text", "text", "text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "xref_rev_is_pin_data_not_live_head", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "d0f017e9f7ac8ea6", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "head", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "df10a242f69653cf", hSchema: "8cb497737c5383d9", hRule: "e22432c07cde4945" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "8318dbe84bdaf25e", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b79561e2d8850643", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "head_move", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "9de6f0d8fe57038d", hSchema: "d5a7cf9fdd74576f", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "d3dcebfb17e1b2ae", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "81fe8021ee8925f8", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "known_repo", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "9351589b88309db2", hSchema: "e0ef0f72f601e0f7", hRule: "" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "col1", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "33f70092adab2961", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 6, ordinal: 0, localName: "pin_extracted", kind: "rel", typeId: 0, arity: 5, moduleId: 6, hId: "9596cf9c1aaa7c17", hSchema: "c43a38e09b27b3c6", hRule: "" },
+  { relId: 16, parentId: 15, ordinal: 1, localName: "from_span_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "2b680d07582389ef", hSchema: "", hRule: "" },
+  { relId: 17, parentId: 15, ordinal: 2, localName: "to_repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "99437f49fc1323b7", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 15, ordinal: 3, localName: "to_rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "70a6cc2522a3120a", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 15, ordinal: 4, localName: "to_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a2261c3f4306505f", hSchema: "", hRule: "" },
+  { relId: 20, parentId: 15, ordinal: 5, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0fda7f09981c1d80", hSchema: "", hRule: "" },
+  { relId: 21, parentId: 6, ordinal: 0, localName: "xref", kind: "rel", typeId: 0, arity: 6, moduleId: 6, hId: "79921149c55ead81", hSchema: "2cde2ef5e4afa69f", hRule: "b237431bac80b640" },
+  { relId: 22, parentId: 21, ordinal: 1, localName: "from_span_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "97605fdd1e2d8b60", hSchema: "", hRule: "" },
+  { relId: 23, parentId: 21, ordinal: 2, localName: "to_repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "fa54d248ca99f3a0", hSchema: "", hRule: "" },
+  { relId: 24, parentId: 21, ordinal: 3, localName: "to_rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "37fdb45f29f634a3", hSchema: "", hRule: "" },
+  { relId: 25, parentId: 21, ordinal: 4, localName: "to_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "aa1299f7459bfcd6", hSchema: "", hRule: "" },
+  { relId: 26, parentId: 21, ordinal: 5, localName: "col5", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "973fc91a662b3542", hSchema: "", hRule: "" },
+  { relId: 27, parentId: 21, ordinal: 6, localName: "kind", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ff9fbf5da2c8c06b", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
@@ -431,6 +462,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

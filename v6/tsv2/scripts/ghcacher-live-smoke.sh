@@ -76,8 +76,8 @@ if [ -n "${GHCACHER_ORG:-}" ]; then
   ORG_ENDPOINT="orgs/${GHCACHER_ORG}/events"
   batch="$batch,{\"rel\":\"watch_endpoint\",\"sign\":\"add\",\"row\":[\"$ORG_ENDPOINT\"]}"
 fi
-capped_curl 3 -s -o /dev/null -X POST "$BASE/arrivals" -d "{\"batch\":[$batch]}" \
-  || fail "POST /arrivals failed"
+capped_curl 3 -s -o /dev/null -X POST "$BASE/edb/events" -d "{\"batch\":[$batch]}" \
+  || fail "POST /edb/events failed"
 
 calls_for() {
   capped_curl 2 -s "$BASE/idb/call_log" | jq -c --arg ep "$1" '[.rows[] | select(.[0] == $ep)]' 2>/dev/null

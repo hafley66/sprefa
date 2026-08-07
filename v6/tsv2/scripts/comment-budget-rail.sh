@@ -73,11 +73,11 @@ fi
 # witness and a restage is a new one.
 INDEX_DIGEST="$(git write-tree 2>/dev/null || printf 'index-unknown')"
 printf '{"batch":[{"rel":"max_run","sign":"add","row":[%d]},{"rel":"staged_probe","sign":"add","row":["%s"]}]}\n' \
-  "$MAX_RUN" "$INDEX_DIGEST" >"$WORK_DIR/arrivals.json"
-status="$(curl -s -o "$WORK_DIR/arrivals.out" -w '%{http_code}' -X POST --data-binary @"$WORK_DIR/arrivals.json" "$BASE/arrivals")"
+  "$MAX_RUN" "$INDEX_DIGEST" >"$WORK_DIR/events.json"
+status="$(curl -s -o "$WORK_DIR/events.out" -w '%{http_code}' -X POST --data-binary @"$WORK_DIR/events.json" "$BASE/edb/events")"
 if [ "$status" != 200 ]; then
   echo "comment-budget rail: arrivals returned $status" >&2
-  cat "$WORK_DIR/arrivals.out" >&2
+  cat "$WORK_DIR/events.out" >&2
   exit 1
 fi
 

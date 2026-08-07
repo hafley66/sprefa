@@ -101,10 +101,10 @@ test("a tick fault answers its own submitter and the lane keeps turning", async 
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
 
-    const first = await request(served.port, "/arrivals", "POST", goodBatch("settings"));
+    const first = await request(served.port, "/edb/events", "POST", goodBatch("settings"));
     assert.equal(first.statusCode, 200, first.body);
 
-    const faulted = await request(served.port, "/arrivals", "POST", FAULTING_BATCH);
+    const faulted = await request(served.port, "/edb/events", "POST", FAULTING_BATCH);
     assert.equal(faulted.statusCode, 500, `a tick fault is a 500, not a silent 200: ${faulted.body}`);
     assert.match(
       faulted.body,
@@ -112,12 +112,12 @@ test("a tick fault answers its own submitter and the lane keeps turning", async 
       `the fault must reach ITS OWN submitter naming the rel: ${faulted.body}`,
     );
 
-    const third = await request(served.port, "/arrivals", "POST", goodBatch("profile"));
-    assert.equal(third.statusCode, 200, `POST /arrivals after a faulting tick -> ${third.statusCode} ${third.body}`);
+    const third = await request(served.port, "/edb/events", "POST", goodBatch("profile"));
+    assert.equal(third.statusCode, 200, `POST /edb/events after a faulting tick -> ${third.statusCode} ${third.body}`);
     const ticks = (JSON.parse(third.body) as { readonly ticks: readonly unknown[] }).ticks;
     assert.ok(ticks.length > 0, `the third post must produce real ticks: ${third.body}`);
 
-    // The process is still serving every other route too, not just /arrivals.
+    // The process is still serving every other route too, not just /edb/events.
     const read = await request(served.port, "/idb/route_view", "GET");
     assert.equal(read.statusCode, 200, read.body);
   } finally {
@@ -183,10 +183,10 @@ test("a program swap after a tick fault still loads and ticks", async () => {
   const served = await startServed();
   try {
     assert.equal((await postProgram(served.port, source)).statusCode, 200);
-    assert.equal((await request(served.port, "/arrivals", "POST", FAULTING_BATCH)).statusCode, 500);
+    assert.equal((await request(served.port, "/edb/events", "POST", FAULTING_BATCH)).statusCode, 500);
 
     assert.equal((await postProgram(served.port, source)).statusCode, 200, "a swap after a fault must be accepted");
-    const afterSwap = await request(served.port, "/arrivals", "POST", goodBatch("settings"));
+    const afterSwap = await request(served.port, "/edb/events", "POST", goodBatch("settings"));
     assert.equal(afterSwap.statusCode, 200, afterSwap.body);
     assert.ok(tickEvents(served.events).length > 0, "the fresh program's ticks reach the app graph");
   } finally {

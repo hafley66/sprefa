@@ -4,7 +4,7 @@
 #   bash v6/prolog/labs/extract_t2/scale.sh
 #
 # Per schema document: input bytes, facts derived, reference-engine wall, and
-# served-engine wall. The served number is the wall of the ONE `POST /arrivals`
+# served-engine wall. The served number is the wall of the ONE `POST /edb/events`
 # that carries the document -- that request returns only after the tick has
 # settled and its log is written, so it is the tick, plus one loopback HTTP
 # round trip (measured separately below as the floor).
@@ -65,11 +65,11 @@ served_ms() {
   curl -s -X POST --data-binary @"$program" "$base/program" >/dev/null
   # the floor: an arrivals POST carrying nothing, so HTTP + drain with no work
   floor_start="$(millis)"
-  curl -s -X POST -d '{"batch":[]}' "$base/arrivals" >/dev/null
+  curl -s -X POST -d '{"batch":[]}' "$base/edb/events" >/dev/null
   floor_finish="$(millis)"
   batch="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))[0]))' "$schedule")"
   start="$(millis)"
-  curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null
+  curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events" >/dev/null
   finish="$(millis)"
   kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null
   rm -rf "$scratch"

@@ -1670,6 +1670,33 @@ sites but not against new code. **missing** = nothing.
   the tick-count cap with a work budget over the same durable worklist tables;
   the carry write is its enabling step, so the rail rides that arc.
 
+## 42. Receipt whose wait condition is already satisfied (asserted on a value the previous step produced)
+
+- WHAT IT LOOKS LIKE: a shell receipt posts a second demand, waits for the row
+  count it ALREADY had, sleeps a fixed few seconds, then asserts. The wait
+  returns instantly, the sleep is the entire budget for the host, and the
+  assertion passes only because an earlier step's rows happen to satisfy it.
+- HOW IT BIT US 2026-08-07: v6/tsv2/scripts/files.sh step 4 ran
+  `await_rows file "$before"` with `before` = the count step 1 had just
+  asserted, so `n >= want` held on the first poll. `sleep 3` then had to cover
+  a host spawning one `git rev-parse` per tracked path (316 here). On a CLEAN
+  tree the leg still passed, because `files` (working-tree `git hash-object`)
+  and `files_at` (the blob oid at the rev) answer the SAME (path, digest) pair
+  there, so the grep matched step 1's rows and `files_at` never had to answer
+  at all. The leg went red the first time it ran in a tree with edits, naming
+  files_at, and the host was correct: 534 rows and both digests present with a
+  longer wait.
+- LAW: a wait condition must name a value the step being tested produces, not
+  one already on the board; and an assertion must be unsatisfiable by the
+  previous step's output. Where two producers can answer identically, assert on
+  the input where they must differ.
+- RAIL: files.sh step 4 waits for `before + edited` rows (`git diff
+  --name-only <rev>` counts the paths whose pinned row is new, and identical
+  rows dedup away everywhere else) and pins its assertion to an EDITED path
+  when one exists. Fail-pre-fix receipt: red on the dirty
+  `dynamic-loading` tree naming `v6/tsv2/cli/0_inventory.ts` at
+  `1dc4f934`, green after, with the same server and the same host.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |

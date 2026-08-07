@@ -16,7 +16,7 @@
 #                   to the oracle (stated separately because a shared wrong
 #                   answer on both emitter paths would otherwise read as one
 #                   failure instead of two).
-#   5  E2E          the served HTTP engine: POST /program, POST /arrivals,
+#   5  E2E          the served HTTP engine: POST /program, POST /edb/events,
 #                   GET /idb, live subprocess host, tick log diffed against the
 #                   oracle replayed on the run's own consumed schedule
 #                   (tests/goldenFlexServed.test.ts).

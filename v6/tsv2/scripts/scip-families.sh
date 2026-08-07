@@ -142,7 +142,7 @@ except Exception: print(-1)'
 }
 demand() {
   curl -s -o /dev/null -X POST --data-binary \
-    "{\"batch\":[{\"rel\":\"$1\",\"sign\":\"add\",\"row\":[\"$CORPUS\"]}]}" "$BASE/arrivals"
+    "{\"batch\":[{\"rel\":\"$1\",\"sign\":\"add\",\"row\":[\"$CORPUS\"]}]}" "$BASE/edb/events"
 }
 # poll until `rows_of $1` contains $2
 await_rows() {
@@ -225,7 +225,7 @@ mtime_of() { python3 -c 'import os,sys; print(int(os.path.getmtime(sys.argv[1]))
 before="$(mtime_of "$index")"
 sleep 1
 curl -s -o /dev/null -X POST --data-binary \
-  "{\"batch\":[{\"rel\":\"want_scip\",\"sign\":\"add\",\"row\":[\"$CORPUS/\"]}]}" "$BASE/arrivals"
+  "{\"batch\":[{\"rel\":\"want_scip\",\"sign\":\"add\",\"row\":[\"$CORPUS/\"]}]}" "$BASE/edb/events"
 sleep 5
 after="$(mtime_of "$index")"
 [ "$before" = "$after" ] \

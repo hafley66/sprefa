@@ -131,7 +131,7 @@ EOF
   # one sqlite database and one program load PER REPOSITORY, driven by a shell
   # loop in run_v6_leg. Ruling repo_column_spelling = distinct_name_hosts made
   # the root an ordinary demand column on distinct-named hosts, so the loop is
-  # gone: the repository set arrives as `want_repo` rows in ONE /arrivals post
+  # gone: the repository set arrives as `want_repo` rows in ONE /edb/events post
   # and every fan-out below it is rows, not processes.
   #
   # Same hosts as v6/dl/fixtures/crawl_org.dl6, minus the `repos` host: the
@@ -317,7 +317,7 @@ stop_server() {
 
 # THE LEG THAT USED TO BE A LOOP.
 #
-# One server, one sqlite database, one program load, one /arrivals post. The
+# One server, one sqlite database, one program load, one /edb/events post. The
 # repository set is DATA -- one `want_repo(root, glob)` row per repository per
 # glob -- and every fan-out below it (per repository, then per file) is rows
 # through the incremental emitter, not processes through bash.
@@ -387,7 +387,7 @@ batch = [{"rel": "want_repo", "sign": "add", "row": [root, glob]}
 json.dump({"batch": batch}, sys.stdout)
 PY
   capped_curl "${CRAWL_HTTP_BUDGET_S:-60}" -fsS -X POST -H 'content-type: application/json' \
-    --data-binary @"$WORK/v6-arrivals.json" "$base/arrivals" >/dev/null
+    --data-binary @"$WORK/v6-arrivals.json" "$base/edb/events" >/dev/null
 
   if ! settled="$(wait_for_rows "$base" "$total_files")"; then
     tail -20 "$server_log" >&2

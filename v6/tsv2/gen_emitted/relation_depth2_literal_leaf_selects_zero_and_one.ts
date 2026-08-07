@@ -32,6 +32,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -54,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -239,6 +240,35 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   repo: ["text"],
   span: ["ref", "int", "int"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "relation_depth2_literal_leaf_selects_zero_and_one", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "cf5f89c5e3146ce3", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "file", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "7321dd555ae3622e", hSchema: "d130173b2faf3fc1", hRule: "7aa702995439f2d9" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "repo", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "568be754daaa6336", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "at", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "d6575656a3f0ae04", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "fpath", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "f1f7950b86720737", hSchema: "a30b139c04a632dd", hRule: "3147795d9d20c746" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "092f28052dab3c4d", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "hit", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "6ab35685e5dc0d77", hSchema: "1b09cce698f12005", hRule: "9d7c221c62dc4b80" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "79029a8a25ba4197", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 6, ordinal: 0, localName: "miss", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "fb8f88926061c4dc", hSchema: "1b09cce698f12005", hRule: "2afebcb4fe4ac385" },
+  { relId: 15, parentId: 14, ordinal: 1, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c899dd6d5075279c", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "raw", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "9c68fd11713cbeb2", hSchema: "b6d1b2befef96658", hRule: "" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "repo_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "17e65ff060b0039d", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 16, ordinal: 2, localName: "path_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5f9707776f332685", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 16, ordinal: 3, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "1ee88dc451e0277c", hSchema: "", hRule: "" },
+  { relId: 20, parentId: 16, ordinal: 4, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "47d1024c8554709c", hSchema: "", hRule: "" },
+  { relId: 21, parentId: 6, ordinal: 0, localName: "repo", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "8a717c8787d06c3b", hSchema: "a30b139c04a632dd", hRule: "3147795d9d20c746" },
+  { relId: 22, parentId: 21, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "35133bc31a875d77", hSchema: "", hRule: "" },
+  { relId: 23, parentId: 6, ordinal: 0, localName: "span", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "802550dd71ed87c7", hSchema: "a303a2f62477b0d8", hRule: "3b8996241a00f957" },
+  { relId: 24, parentId: 23, ordinal: 1, localName: "file", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "aa98d77974bbbc47", hSchema: "", hRule: "" },
+  { relId: 25, parentId: 23, ordinal: 2, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7f674c6ac43530fd", hSchema: "", hRule: "" },
+  { relId: 26, parentId: 23, ordinal: 3, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "2d0f1a03cd2a4966", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   file: ["other", "other"],
@@ -464,6 +494,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

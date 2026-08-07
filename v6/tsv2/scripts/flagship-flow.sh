@@ -103,7 +103,7 @@ done
 
 status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @"$V6_PROGRAM" "$BASE/program")"
 [ "$status" = 200 ] || fail "v6 program load returned $status: $(cat "$WORK/load.json")"
-curl -s -o /dev/null -X POST --data-binary "{\"batch\":[{\"rel\":\"want_at\",\"sign\":\"add\",\"row\":[\"$REV\",\"src/*.rs\"]}]}" "$BASE/arrivals"
+curl -s -o /dev/null -X POST --data-binary "{\"batch\":[{\"rel\":\"want_at\",\"sign\":\"add\",\"row\":[\"$REV\",\"src/*.rs\"]}]}" "$BASE/edb/events"
 
 settled=""; last=""; stable=0; deadline=$((SECONDS + 300))
 while [ "$SECONDS" -lt "$deadline" ]; do

@@ -132,7 +132,7 @@ run_leg_b() {
     batch="$(jq -c ".steps[$index].batch // []" "$manifest")"
     label="$(jq -r ".steps[$index].label // \"step $index\"" "$manifest")"
     if [ "$batch" != "[]" ]; then
-      curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null \
+      curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events" >/dev/null \
         || { say "  leg B: arrivals POST failed at step $index ($label)"; return 1; }
     fi
   done

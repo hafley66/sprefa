@@ -7,7 +7,7 @@
 #   memory-soak   compares its final quarter to its second. Alone: a load ramp
 #                 lands in the final quarter and reddens rss_flat.
 #   serial phase  writes gen_emitted/ or gen/scale_generated.ts; tsv2-test
-#                 belongs here because bopRun.test.ts:25 times a boot.
+#                 times a boot; getting-started sleeps 3 for a watcher tick.
 
 set -uo pipefail
 
@@ -19,7 +19,7 @@ trap 'rm -rf "$WORK"' EXIT
 PHASE_WALL=(scale-floor)
 
 PHASE_A=(conformance roundtrip text-door sweep import-gate
-         staleness-gate golden-flex tsv2-test)
+         staleness-gate golden-flex tsv2-test getting-started)
 
 # Each entry is "leg[:ENV=VALUE...]". Ordered longest-first: on a bounded pool
 # the makespan is set by the slowest job if it starts last.
@@ -29,7 +29,6 @@ PHASE_B=(
   "multirepo-golden:TSV2_MULTIREPO_PORT=17812"
   "precommit-changed:TSV2_GIT_DIAGS_PORT=17814"
   "endurance:TSV2_ENDURANCE_PORT=17802"
-  "getting-started"
   "flagship:TSV2_FLAGSHIP_PORT=17808 TSV2_FLAGSHIP_FLOW_PORT=17809"
   "store-test"
   "files:TSV2_FILES_PORT=17807"

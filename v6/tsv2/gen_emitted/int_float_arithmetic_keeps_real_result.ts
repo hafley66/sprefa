@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -162,6 +163,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   measure: ["text", "int", "float"],
   total: ["text", "float"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "int_float_arithmetic_keeps_real_result", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "cdccc2907df2bf8b", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "measure", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "8802809b985fb5f5", hSchema: "5c48fdc0e6db9753", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c85c15db9500606c", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "whole", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b1b4cbd2987031b7", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "fraction", kind: "column", typeId: 3, arity: 0, moduleId: 6, hId: "47db7227196b9a2d", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "total", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "3187b65d3baac841", hSchema: "0afc9e4df0350232", hRule: "fb4b41aea98741a0" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d1010a337e86a5e7", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 11, ordinal: 2, localName: "value", kind: "column", typeId: 3, arity: 0, moduleId: 6, hId: "87376b5353ac2fb6", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   measure: ["text", "int", "float"],
@@ -317,6 +334,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

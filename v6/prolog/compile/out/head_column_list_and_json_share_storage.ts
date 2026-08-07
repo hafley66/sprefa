@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -162,6 +163,19 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   copied: ["json"],
   source: ["json"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "head_column_list_and_json_share_storage", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "a2d734ca1e03a0c8", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "copied", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "f4585e3fb6a453f8", hSchema: "d7807d1b01d170b9", hRule: "5cf249b16ef729b3" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "items", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "1df97499bd20954f", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "source", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "99c65ded49e559a7", hSchema: "d7807d1b01d170b9", hRule: "" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "items", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "38f491f7fe6b8598", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   copied: ["json"],
@@ -317,6 +331,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };
