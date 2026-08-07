@@ -703,6 +703,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "fix_by_waiver_returns_to_clean",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

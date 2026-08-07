@@ -362,6 +362,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "next_edge_is_the_bare_atom_spelling",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -340,6 +340,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unordered_program_level_fold_reaches_three_links",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

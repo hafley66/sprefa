@@ -447,6 +447,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "waiver_range_join_exact_rows",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

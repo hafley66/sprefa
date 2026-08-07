@@ -372,6 +372,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "callgraph_unused_inverts_with_the_call_set",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -500,6 +500,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "clock_rel_join_storms",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

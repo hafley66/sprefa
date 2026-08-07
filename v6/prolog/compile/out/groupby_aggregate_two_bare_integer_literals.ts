@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "groupby_aggregate_two_bare_integer_literals",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

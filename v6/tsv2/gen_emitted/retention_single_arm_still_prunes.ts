@@ -374,6 +374,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retention_single_arm_still_prunes",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

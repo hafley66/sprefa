@@ -1,0 +1,113 @@
+/** The G9 classifier: canonicalize away the §10.2 interning classes, then
+ *  demand byte equality. What the canonicalizer cannot explain is the finding. */
+
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
+type IClassName =
+  | "dictionary-ddl"
+  | "decode-view"
+  | "decode-read"
+  | "decode-subquery"
+  | "column-storage"
+  | "mode-stamp";
+
+interface IInternClassCount {
+  readonly name: IClassName;
+  count: number;
+}
+
+interface IModuleVerdict {
+  readonly module: string;
+  readonly unexplained: readonly string[];
+}
+
+const DROP_LINE = [
+  /CREATE TABLE "__str" \(/,
+  /CREATE TEMP VIEW "__txt_/,
+];
+
+const counts = new Map<IClassName, IInternClassCount>();
+
+function count(name: IClassName, by = 1): void {
+  const row = counts.get(name) ?? { name, count: 0 };
+  row.count += by;
+  counts.set(name, row);
+}
+
+/** Every rewrite here is one named class; a line that still differs after all
+ *  of them is a change interning does not explain. */
+function canonicalLine(line: string): string {
+  let out = line;
+  const readSwaps = out.match(/FROM "__txt_/g);
+  if (readSwaps !== null) count("decode-read", readSwaps.length);
+  out = out.replace(/FROM "__txt_([^"]+)"/g, 'FROM "$1"');
+
+  const subqueries = out.match(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = t\."[^"]+"\)/g);
+  if (subqueries !== null) count("decode-subquery", subqueries.length);
+  out = out.replace(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = (t\."[^"]+")\)/g, "$1");
+
+  if (/internMode: "(dict|direct)"/.test(out)) count("mode-stamp");
+  out = out.replace(/internMode: "(dict|direct)"/, 'internMode: "MODE"');
+
+  // A stored column is INTEGER or TEXT; the flip IS the interning, so both
+  // collapse to one token and any OTHER storage change survives.
+  out = out.replace(/"([^"]+)" (INTEGER|TEXT) NOT NULL/g, '"$1" SCALAR NOT NULL');
+  return out;
+}
+
+function canonicalText(text: string): readonly string[] {
+  return text
+    .split("\n")
+    .filter((line) => {
+      const dropped = DROP_LINE.some((pattern) => pattern.test(line));
+      if (dropped) count(line.includes('"__str"') && line.includes("CREATE TABLE") ? "dictionary-ddl" : "decode-view");
+      return !dropped;
+    })
+    .map(canonicalLine);
+}
+
+function verdictFor(module: string, dictText: string, directText: string): IModuleVerdict {
+  const dictLines = canonicalText(dictText);
+  const directLines = canonicalText(directText);
+  const unexplained: string[] = [];
+  const rows = Math.max(dictLines.length, directLines.length);
+  for (let index = 0; index < rows; index += 1) {
+    const dictLine = dictLines[index] ?? "<missing>";
+    const directLine = directLines[index] ?? "<missing>";
+    if (dictLine !== directLine) unexplained.push(`${module}:${index + 1}\n  dict:   ${dictLine}\n  direct: ${directLine}`);
+  }
+  return { module, unexplained };
+}
+
+function main(): number {
+  const [dictDir, directDir] = process.argv.slice(2);
+  if (dictDir === undefined || directDir === undefined) {
+    process.stdout.write("usage: intern-ab-classify.ts <dictDir> <directDir>\n");
+    return 2;
+  }
+  const dictModules = readdirSync(dictDir).filter((name) => name.endsWith(".ts")).sort();
+  const directModules = readdirSync(directDir).filter((name) => name.endsWith(".ts")).sort();
+  const findings: string[] = [];
+  if (dictModules.join(",") !== directModules.join(",")) {
+    findings.push(`module SET differs: dict=${dictModules.length} direct=${directModules.length}`);
+  }
+  for (const module of dictModules) {
+    if (!directModules.includes(module)) continue;
+    const verdict = verdictFor(
+      module,
+      readFileSync(join(dictDir, module), "utf8"),
+      readFileSync(join(directDir, module), "utf8"),
+    );
+    findings.push(...verdict.unexplained);
+  }
+  const classLine = [...counts.values()]
+    .sort((left, right) => left.name.localeCompare(right.name))
+    .map((row) => `${row.name}=${row.count}`)
+    .join(" ");
+  process.stdout.write(`INTERN_AB modules=${dictModules.length} ${classLine} unexplained=${findings.length}\n`);
+  for (const finding of findings.slice(0, 20)) process.stdout.write(`  ${finding}\n`);
+  return findings.length === 0 ? 0 : 1;
+}
+
+process.exitCode = main();

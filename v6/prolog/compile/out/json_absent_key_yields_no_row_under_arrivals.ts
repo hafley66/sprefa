@@ -324,6 +324,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_absent_key_yields_no_row_under_arrivals",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

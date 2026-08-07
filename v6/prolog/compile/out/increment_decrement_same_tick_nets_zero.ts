@@ -564,6 +564,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "increment_decrement_same_tick_nets_zero",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

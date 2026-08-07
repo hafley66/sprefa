@@ -590,6 +590,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "counter_fold_matches_hand_computation",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

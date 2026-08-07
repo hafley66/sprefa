@@ -518,6 +518,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth3_chained_decode",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

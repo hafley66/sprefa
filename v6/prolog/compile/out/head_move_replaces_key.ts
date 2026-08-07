@@ -365,6 +365,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_move_replaces_key",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

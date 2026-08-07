@@ -405,6 +405,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_keyed_head_loses_the_first_arm_silently",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bool_identity_comparison_filters",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

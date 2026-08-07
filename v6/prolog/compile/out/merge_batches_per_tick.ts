@@ -400,6 +400,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "merge_batches_per_tick",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

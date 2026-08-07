@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_column_list_and_json_share_storage",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

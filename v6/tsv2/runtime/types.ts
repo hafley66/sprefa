@@ -376,9 +376,16 @@ export interface IRelCatalogRow {
   readonly hRule: string;
 }
 
+/** Which lowering built a module: `dict` stores every text column as an id
+ *  into `__str`, `direct` stores the text. */
+export type IInternMode = "dict" | "direct";
+
 /** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
+  /** A database is readable only by a module of its own mode; the crossing is
+   *  refused at boot because SQLite affinity would store the wrong shape. */
+  readonly internMode: IInternMode;
   readonly ddl: readonly string[];
   readonly relColumns: Readonly<Record<string, readonly string[]>>;
   readonly relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>;

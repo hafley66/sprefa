@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_column_int_widens_into_float",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

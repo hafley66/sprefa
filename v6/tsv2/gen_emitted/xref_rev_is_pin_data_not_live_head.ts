@@ -452,6 +452,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "xref_rev_is_pin_data_not_live_head",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

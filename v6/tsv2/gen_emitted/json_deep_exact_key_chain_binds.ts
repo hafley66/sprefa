@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_deep_exact_key_chain_binds",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

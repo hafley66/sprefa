@@ -555,6 +555,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_guard_by_negation_lands_one_unnamed_winner",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

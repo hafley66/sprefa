@@ -318,6 +318,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retraction_only_tick_retracts_level_view",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

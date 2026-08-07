@@ -359,6 +359,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_column_renders_canonical_json",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

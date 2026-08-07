@@ -347,6 +347,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_defaults_the_absent_row",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

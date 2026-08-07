@@ -294,6 +294,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "world_fed_keyed_arrival_replaces",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

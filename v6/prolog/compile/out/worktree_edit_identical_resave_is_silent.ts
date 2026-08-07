@@ -366,6 +366,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "worktree_edit_identical_resave_is_silent",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

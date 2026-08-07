@@ -295,6 +295,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "int_accepts_integral_float",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

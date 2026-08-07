@@ -455,6 +455,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "changed_since_spans_two_turns",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

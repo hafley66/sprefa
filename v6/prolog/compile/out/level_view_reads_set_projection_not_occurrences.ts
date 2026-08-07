@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "level_view_reads_set_projection_not_occurrences",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -324,6 +324,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "int_float_arithmetic_keeps_real_result",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

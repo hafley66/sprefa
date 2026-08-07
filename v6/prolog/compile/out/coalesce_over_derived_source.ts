@@ -377,6 +377,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_over_derived_source",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

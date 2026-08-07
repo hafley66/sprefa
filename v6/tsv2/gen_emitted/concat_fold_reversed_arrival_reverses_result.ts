@@ -518,6 +518,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "concat_fold_reversed_arrival_reverses_result",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

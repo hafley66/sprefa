@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_arithmetic_is_binary64",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

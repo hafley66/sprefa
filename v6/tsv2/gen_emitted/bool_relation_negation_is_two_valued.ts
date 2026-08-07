@@ -344,6 +344,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bool_relation_negation_is_two_valued",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

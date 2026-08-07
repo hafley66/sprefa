@@ -361,6 +361,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_span_columns_are_int_after_decode",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

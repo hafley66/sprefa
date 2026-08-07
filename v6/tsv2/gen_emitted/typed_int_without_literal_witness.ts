@@ -294,6 +294,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "typed_int_without_literal_witness",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -337,6 +337,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "fork_join_is_a_conjunctive_body",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

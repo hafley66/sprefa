@@ -773,6 +773,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "clean_state_gate_and_exit_zero",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

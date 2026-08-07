@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "count_is_bag_of_derivations",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -295,6 +295,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_integral_value_keeps_real_storage",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

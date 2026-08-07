@@ -608,6 +608,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "seq_wire_surface",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

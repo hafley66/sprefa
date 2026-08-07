@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_empty_containers_nest",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

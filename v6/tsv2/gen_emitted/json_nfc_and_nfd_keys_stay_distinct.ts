@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_nfc_and_nfd_keys_stay_distinct",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

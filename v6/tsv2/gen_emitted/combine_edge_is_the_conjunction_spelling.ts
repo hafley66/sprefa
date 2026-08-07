@@ -405,6 +405,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "combine_edge_is_the_conjunction_spelling",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

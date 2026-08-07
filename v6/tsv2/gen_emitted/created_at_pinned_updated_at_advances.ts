@@ -553,6 +553,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "created_at_pinned_updated_at_advances",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

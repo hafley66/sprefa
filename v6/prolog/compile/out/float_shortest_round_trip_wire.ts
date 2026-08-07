@@ -295,6 +295,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_shortest_round_trip_wire",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

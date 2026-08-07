@@ -307,6 +307,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retention_count_prunes_oldest",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

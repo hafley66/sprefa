@@ -342,6 +342,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "range_join_over_arithmetic",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

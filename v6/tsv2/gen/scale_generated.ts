@@ -338,6 +338,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "scale_bench",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

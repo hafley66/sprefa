@@ -360,6 +360,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "log_stacks_within_tick_and_across_ticks",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

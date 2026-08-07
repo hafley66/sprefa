@@ -346,6 +346,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "demand_laziness_effect_rows",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

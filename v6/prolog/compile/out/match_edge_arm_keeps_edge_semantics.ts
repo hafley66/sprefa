@@ -364,6 +364,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "match_edge_arm_keeps_edge_semantics",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

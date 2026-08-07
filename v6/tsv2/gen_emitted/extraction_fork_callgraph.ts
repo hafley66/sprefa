@@ -430,6 +430,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "extraction_fork_callgraph",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

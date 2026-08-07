@@ -450,6 +450,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "native_ts_query_term",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

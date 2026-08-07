@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_key_capture_nests_and_fans_out",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

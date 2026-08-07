@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "regexp_retraction_flip",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

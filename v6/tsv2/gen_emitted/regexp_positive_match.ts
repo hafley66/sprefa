@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "regexp_positive_match",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -191,6 +191,7 @@ function buildDeltas(before: Snapshot, after: Snapshot, writtenRows: readonly IR
 
 export const SwitchAsKeyedReplace: IGenProgram = {
   name: "switch_as_keyed_replace",
+  internMode: "direct",
   ddl: DDL,
   relColumns: REL_COLUMNS,
   arrivalTargets: ARRIVAL_TARGETS,

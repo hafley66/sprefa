@@ -346,6 +346,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "shared_demand_refcount",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

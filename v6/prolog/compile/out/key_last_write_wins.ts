@@ -407,6 +407,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "key_last_write_wins",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

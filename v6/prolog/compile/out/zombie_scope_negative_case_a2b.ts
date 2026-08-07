@@ -412,6 +412,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "zombie_scope_negative_case_a2b",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

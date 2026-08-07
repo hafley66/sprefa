@@ -371,6 +371,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "flow_arg_param_hop_is_positional_and_site_pinned",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

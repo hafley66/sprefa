@@ -405,6 +405,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "conjunction_edge_control_for_combine",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

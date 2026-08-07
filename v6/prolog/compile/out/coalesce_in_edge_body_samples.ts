@@ -406,6 +406,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_in_edge_body_samples",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

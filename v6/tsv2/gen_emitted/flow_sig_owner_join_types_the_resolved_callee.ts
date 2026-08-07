@@ -422,6 +422,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "flow_sig_owner_join_types_the_resolved_callee",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

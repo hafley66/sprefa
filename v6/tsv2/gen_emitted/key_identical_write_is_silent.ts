@@ -407,6 +407,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "key_identical_write_is_silent",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

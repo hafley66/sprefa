@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "sum_min_max_group_by_plain_columns",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

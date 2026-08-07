@@ -9,14 +9,19 @@
           [ read_fixture_term/4,
             compile_fixture/3,
             compile_fixture/4,
+            compile_fixture/5,
             compile_dl6/2,
+            compile_dl6/3,
             compile_program/6,
+            compile_program/7,
+            default_intern_mode/1,
             dl6_seeded_form/3,
             measure_phase/3,
             restore_phase_outcome/1,
             write_compile_trace/2,
             throw_text_door_error/2,
-            program_plan/2
+            program_plan/2,
+            program_plan/3
           ]).
 
 :- use_module(library(lists)).
@@ -142,7 +147,16 @@ materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
     ;   Decls = Decls0
     ).
 
-program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
+% THE BUILD DEFAULT, not the contract's. §15.3 asks for dict; a dict module
+% is only runnable once the door, the literal lowering and intern-on-write land.
+default_intern_mode(direct).
+
+program_plan(Term, Plan) :-
+    default_intern_mode(Mode),
+    program_plan(Term, [intern(Mode)], Plan).
+
+program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings,
+             Options, Plan) :-
     % The body-use table is keyed on body terms, so it belongs to ONE program.
     reset_body_use_cache,
     prepare_program_for_compiler(SugaredProg, HostProg),
@@ -209,8 +223,9 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % Decls for the same reason emit_ts.pl:world_plan_lines/2 reads them there.
     findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
     subscribed_rels(Decls, Rules, Queries, SubscribedRels),
+    intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-                SubscribedRels).
+                SubscribedRels, InternMode).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -218,9 +233,13 @@ compile_fixture(Name, FixtureFile, OutFile) :-
     compile_fixture(Name, FixtureFile, OutFile, emit_ts:emit_program).
 
 compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
+    default_intern_mode(Mode),
+    compile_fixture(Name, FixtureFile, OutFile, Emitter, [intern(Mode)]).
+
+compile_fixture(Name, FixtureFile, OutFile, Emitter, Options) :-
     read_fixture_term(FixtureFile, Name, Term, Bindings),
     Term = fixture(Name, _Prog, Initial, _Schedule, _Expectations),
-    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter).
+    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options).
 
 check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     append([Initial | Schedule], WorldRows),
@@ -245,6 +264,10 @@ check_single_arity_per_name([_ | Rest]) :-
     check_single_arity_per_name(Rest).
 
 compile_dl6(File, OutFile) :-
+    default_intern_mode(Mode),
+    compile_dl6(File, OutFile, [intern(Mode)]).
+
+compile_dl6(File, OutFile, Options) :-
     catch(
         ( run_compile_phase(parse,
                             parse_dl_file(File, Prog, Bindings, Findings),
@@ -263,7 +286,7 @@ compile_dl6(File, OutFile) :-
     catch(
         compile_program_phases(Name, fixture(Name, ProgOut, Initial, [], []),
                                Bindings, Initial, OutFile, emit_ts:emit_program,
-                               PhaseMeasurements),
+                               Options, PhaseMeasurements),
         Error,
         throw_text_door_error(File, Error)
     ),
@@ -331,21 +354,26 @@ throw_text_door_error(_File, Error) :-
     throw(Error).
 
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
+    default_intern_mode(Mode),
+    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter,
+                    [intern(Mode)]).
+
+compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options) :-
     compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
-                           PhaseMeasurements),
+                           Options, PhaseMeasurements),
     zero_phase_measurement(EmptyMeasurement),
     write_compile_trace(
         Name, [phase(parse, EmptyMeasurement) | PhaseMeasurements]).
 
 compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
-                       PhaseMeasurements) :-
+                       Options, PhaseMeasurements) :-
     run_compile_phase(plan,
-                      program_plan(Term-Bindings, Plan),
+                      program_plan(Term-Bindings, Options, Plan),
                       PlanMeasurement),
     run_compile_phase(lower,
                       lower_program(Plan, Lowered),
                       LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     run_compile_phase(
         boot,

@@ -440,6 +440,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_host_output_schedule_answer_interned",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

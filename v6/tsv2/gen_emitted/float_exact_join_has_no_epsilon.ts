@@ -345,6 +345,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_exact_join_has_no_epsilon",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -448,6 +448,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "over_baseline_count_row",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

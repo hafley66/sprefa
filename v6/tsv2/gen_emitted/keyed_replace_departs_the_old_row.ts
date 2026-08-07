@@ -418,6 +418,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "keyed_replace_departs_the_old_row",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

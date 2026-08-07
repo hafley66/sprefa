@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_descent_into_scalars_is_silent",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

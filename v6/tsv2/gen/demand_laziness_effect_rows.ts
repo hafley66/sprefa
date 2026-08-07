@@ -113,6 +113,7 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 export const DemandLazinessEffectRows: IGenProgram = {
   name: "demand_laziness_effect_rows",
+  internMode: "direct",
   ddl: DDL,
   relColumns: REL_COLUMNS,
   arrivalTargets: ARRIVAL_TARGETS,

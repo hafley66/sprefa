@@ -225,12 +225,48 @@ function isAlreadyExists(failure: unknown): boolean {
   return failure instanceof Error && /already exists/i.test(failure.message);
 }
 
+const DICTIONARY_TABLE = "__str";
+
+const USER_TABLES_SQL =
+  `SELECT "name" FROM "sqlite_master" WHERE "type" = 'table' AND "name" NOT LIKE 'sqlite_%'`;
+
+/** Whether this module's own DDL builds the string dictionary. A dict-mode
+ *  program with no text column builds none and reads either database. */
+function programBuildsDictionary(program: IServedProgram): boolean {
+  return program.ddl.some((sql) => sql.startsWith(`CREATE TABLE "${DICTIONARY_TABLE}" (`));
+}
+
+/**
+ * The mode crossing, refused before any DDL runs. SQLite applies affinity
+ * rather than rejecting the write, so attaching a `direct` module to an
+ * interned database stores strings in id columns and every later key probe
+ * finds nothing: silent, total, and only recoverable by rebuilding.
+ */
+function internCrossingFailure(program: IServedProgram, tableNames: readonly string[]): Error | null {
+  if (tableNames.length === 0) return null;
+  const databaseIsInterned = tableNames.includes(DICTIONARY_TABLE);
+  if (databaseIsInterned === programBuildsDictionary(program)) return null;
+  const databaseMode = databaseIsInterned ? "dict" : "direct";
+  return new Error(
+    `intern mode crossing: module "${program.name}" was built intern(${program.internMode}) ` +
+      `and this database was built intern(${databaseMode}). Recompile the module in the ` +
+      `database's mode, or rebuild the database from its source.`,
+  );
+}
+
 export const bootServedProgram: IBootServedProgram = (
   seam: ISqlSeam,
   program: IServedProgram,
 ): Observable<void> => {
   const statements = [...program.ddl, ...WitnessCache.ddl()];
-  return from(statements).pipe(
+  return selectRows(seam, USER_TABLES_SQL, ["name"], ["text"]).pipe(
+    map((rows) => rows.map((row) => String(row[0]))),
+    concatMap((tableNames) => {
+      const failure = internCrossingFailure(program, tableNames);
+      return failure === null ? of(undefined) : throwError(() => failure);
+    }),
+    concatMap(() => from(statements)),
+  ).pipe(
     concatMap((sql) =>
       seam.runner.execute(seam.db, sql).pipe(
         catchError((failure: unknown) => (isAlreadyExists(failure) ? of(undefined) : throwError(() => failure))),

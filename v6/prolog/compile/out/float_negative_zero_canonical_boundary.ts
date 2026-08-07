@@ -295,6 +295,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_negative_zero_canonical_boundary",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

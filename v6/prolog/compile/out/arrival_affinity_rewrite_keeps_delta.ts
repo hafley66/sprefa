@@ -318,6 +318,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "arrival_affinity_rewrite_keeps_delta",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -373,6 +373,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "flagship_flow_reach_over_resolved_edges",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

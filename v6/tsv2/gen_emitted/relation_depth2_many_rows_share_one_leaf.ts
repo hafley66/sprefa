@@ -459,6 +459,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth2_many_rows_share_one_leaf",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

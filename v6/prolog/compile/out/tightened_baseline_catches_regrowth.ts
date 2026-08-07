@@ -580,6 +580,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "tightened_baseline_catches_regrowth",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

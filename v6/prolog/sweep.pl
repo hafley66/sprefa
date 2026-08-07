@@ -5,12 +5,12 @@
 %
 % Run: swipl -q -l v6/prolog/compile/sweep.pl -g sweep -g halt
 
-:- module(sweep, [ sweep/0 ]).
+:- module(sweep, [ sweep/0, sweep/1 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
-:- use_module(compile, [ program_plan/2 ]).
+:- use_module(compile, [ program_plan/3, default_intern_mode/1 ]).
 :- use_module(lower, [ lower_program/2, boot_statements/5 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
@@ -67,11 +67,17 @@ scan_fixtures(Stream, Entries) :-
 % ═══ top level ═══════════════════════════════════════════════════════════
 
 sweep :-
+    default_intern_mode(Mode),
+    sweep([intern(Mode)]).
+
+% sweep(+Options): the A/B gate compiles the corpus twice at one commit, once
+% per intern mode, and every differing line must be an interning class.
+sweep(Options) :-
     out_dir(OutDir), make_directory_path(OutDir),
     clear_stale_compiled_outputs(OutDir),
     fixture_files(Files),
     findall(Result,
-            ( member(File, Files), sweep_file(File, FileResults), member(Result, FileResults) ),
+            ( member(File, Files), sweep_file(Options, File, FileResults), member(Result, FileResults) ),
             Results),
     write_manifest(Results),
     summarize(Results).
@@ -84,18 +90,18 @@ clear_stale_compiled_outputs(OutDir) :-
            ),
            ( atomic_list_concat([OutDir, '/', Entry], Path), delete_file(Path) )).
 
-sweep_file(File, Results) :-
+sweep_file(Options, File, Results) :-
     read_all_fixtures(File, Entries),
     findall(Result,
-            ( member(entry(Name, Term, Bindings), Entries), sweep_one(File, Name, Term, Bindings, Result) ),
+            ( member(entry(Name, Term, Bindings), Entries), sweep_one(Options, File, Name, Term, Bindings, Result) ),
             Results).
 
-sweep_one(File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
+sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason)) :-
     catch(
-        ( program_plan(Term-Bindings, Plan),
+        ( program_plan(Term-Bindings, Options, Plan),
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
-          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
           boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),

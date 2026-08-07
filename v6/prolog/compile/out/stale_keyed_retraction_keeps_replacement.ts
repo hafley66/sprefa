@@ -294,6 +294,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "stale_keyed_retraction_keeps_replacement",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

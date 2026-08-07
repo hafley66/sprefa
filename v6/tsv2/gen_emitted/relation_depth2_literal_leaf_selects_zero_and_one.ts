@@ -484,6 +484,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth2_literal_leaf_selects_zero_and_one",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

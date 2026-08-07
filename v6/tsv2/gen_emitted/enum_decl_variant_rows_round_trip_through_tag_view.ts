@@ -345,6 +345,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_decl_variant_rows_round_trip_through_tag_view",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "shuffled_arrival_reorders_log_deltas",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

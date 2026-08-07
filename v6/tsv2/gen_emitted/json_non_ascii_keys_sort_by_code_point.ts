@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_non_ascii_keys_sort_by_code_point",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

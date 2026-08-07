@@ -506,6 +506,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "over_baseline_diag_exact_rows",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

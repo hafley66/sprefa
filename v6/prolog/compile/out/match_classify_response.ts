@@ -377,6 +377,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "match_classify_response",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

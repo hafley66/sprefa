@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_group_rels_json_head",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

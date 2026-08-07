@@ -46,7 +46,7 @@ make_model(Name, SurfaceProgram, Initial, Schedule, Bindings,
     prepare_program(SurfaceProgram, _, HostPlans, _, _),
     program_plan(
         fixture(Name, SurfaceProgram, Initial, Schedule, [])-Bindings,
-        plan(_, Program, RelPlans, ArrivalTargets, _, _, _)).
+        plan(_, Program, RelPlans, ArrivalTargets, _, _, _, _)).
 
 fixture_model(File, Name, Model) :-
     read_fixture_term(File, Name, Term, Bindings),
@@ -634,7 +634,7 @@ lowered_payload_hash(ProgramName, Program, RawHash, AbstractHash,
     program_plan(
         fixture(ProgramName, Program, [], [], [])-[],
         Plan),
-    Plan = plan(_, Prog, RelPlans, ArrivalTargets, _, _, _),
+    Plan = plan(_, Prog, RelPlans, ArrivalTargets, _, _, _, _),
     lower_program(Plan, Lowered),
     Lowered =.. [lowered, _ | Fields],
     Payload =.. [lowered | Fields],

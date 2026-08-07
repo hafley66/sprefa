@@ -314,6 +314,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "live_nonzero_exit_keeps_rows",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

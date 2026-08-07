@@ -326,6 +326,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_avg_retracts_to_empty_group",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

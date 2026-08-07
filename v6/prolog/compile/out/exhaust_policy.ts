@@ -524,6 +524,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "exhaust_policy",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

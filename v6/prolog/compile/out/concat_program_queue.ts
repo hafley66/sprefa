@@ -931,6 +931,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "concat_program_queue",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

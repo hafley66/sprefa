@@ -517,6 +517,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "identical_increments_stack_as_log_deltas",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

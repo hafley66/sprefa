@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_key_capture_binds_key_and_value",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

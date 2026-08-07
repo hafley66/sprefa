@@ -403,6 +403,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "pr_size_decodes_files_and_rolls_up",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

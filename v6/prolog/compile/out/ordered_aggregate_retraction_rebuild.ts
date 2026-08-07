@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_aggregate_retraction_rebuild",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

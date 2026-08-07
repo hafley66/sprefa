@@ -517,6 +517,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "log_driver_fold_needs_no_id_column",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

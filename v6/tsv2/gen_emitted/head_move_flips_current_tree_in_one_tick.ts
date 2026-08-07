@@ -416,6 +416,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_move_flips_current_tree_in_one_tick",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

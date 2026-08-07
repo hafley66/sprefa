@@ -333,6 +333,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_arrival_key_order_canonicalized",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

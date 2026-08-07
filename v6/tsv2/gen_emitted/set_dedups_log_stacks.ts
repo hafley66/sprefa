@@ -417,6 +417,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "set_dedups_log_stacks",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

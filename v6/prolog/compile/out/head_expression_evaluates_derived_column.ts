@@ -346,6 +346,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_expression_evaluates_derived_column",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

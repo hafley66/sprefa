@@ -321,6 +321,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_descent_matches_at_any_depth",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

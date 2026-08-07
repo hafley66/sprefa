@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_array_spread_fans_out_correlated_siblings",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -395,6 +395,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unwrap_unchanged_file_silent",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

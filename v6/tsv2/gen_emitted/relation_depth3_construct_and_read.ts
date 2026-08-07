@@ -490,6 +490,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth3_construct_and_read",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

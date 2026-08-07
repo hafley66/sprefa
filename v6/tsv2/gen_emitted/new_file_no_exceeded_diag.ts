@@ -507,6 +507,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "new_file_no_exceeded_diag",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

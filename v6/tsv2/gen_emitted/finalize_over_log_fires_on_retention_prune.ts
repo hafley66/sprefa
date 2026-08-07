@@ -392,6 +392,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "finalize_over_log_fires_on_retention_prune",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

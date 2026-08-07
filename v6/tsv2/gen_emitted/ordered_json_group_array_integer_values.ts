@@ -320,6 +320,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_json_group_array_integer_values",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

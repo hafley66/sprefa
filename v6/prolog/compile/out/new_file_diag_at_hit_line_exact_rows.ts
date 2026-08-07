@@ -507,6 +507,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "new_file_diag_at_hit_line_exact_rows",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

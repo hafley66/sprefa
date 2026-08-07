@@ -322,6 +322,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_marker_shaped_keys_are_ordinary_data",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

@@ -393,6 +393,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "door-handwritten",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

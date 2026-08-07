@@ -407,6 +407,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "key_same_tick_ordered_not_conflict",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

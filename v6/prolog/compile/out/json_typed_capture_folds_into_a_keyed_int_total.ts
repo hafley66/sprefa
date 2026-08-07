@@ -571,6 +571,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_typed_capture_folds_into_a_keyed_int_total",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

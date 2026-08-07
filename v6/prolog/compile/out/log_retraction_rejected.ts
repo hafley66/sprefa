@@ -293,6 +293,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "log_retraction_rejected",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

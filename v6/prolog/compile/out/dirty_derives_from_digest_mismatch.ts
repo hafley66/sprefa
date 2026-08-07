@@ -431,6 +431,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "dirty_derives_from_digest_mismatch",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

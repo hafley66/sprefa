@@ -383,6 +383,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unwrap_aggregate_and_interpolation",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

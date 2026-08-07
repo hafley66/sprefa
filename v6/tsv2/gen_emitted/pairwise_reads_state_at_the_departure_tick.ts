@@ -379,6 +379,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "pairwise_reads_state_at_the_departure_tick",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

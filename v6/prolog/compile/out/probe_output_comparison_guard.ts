@@ -373,6 +373,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "probe_output_comparison_guard",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

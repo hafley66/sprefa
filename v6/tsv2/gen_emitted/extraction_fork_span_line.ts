@@ -395,6 +395,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "extraction_fork_span_line",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

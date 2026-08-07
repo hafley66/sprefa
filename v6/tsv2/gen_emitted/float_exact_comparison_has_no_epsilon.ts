@@ -323,6 +323,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_exact_comparison_has_no_epsilon",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,

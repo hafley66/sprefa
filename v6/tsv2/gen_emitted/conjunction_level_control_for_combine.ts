@@ -337,6 +337,7 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "conjunction_level_control_for_combine",
+  internMode: "direct",
   ddl,
   relColumns,
   relColumnTypes,
