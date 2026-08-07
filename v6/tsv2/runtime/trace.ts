@@ -1,6 +1,6 @@
 /** Runtime-side trace publisher: one record per emitted statement that ran.
  *
- * The runtime knows WHICH rule a statement came from (`ruleId`, assigned by
+ * The runtime knows WHICH rule a statement came from (`rule_id`, assigned by
  * lower.pl:statement_rule_ids/3) and how many rows it produced. It does not
  * know where those records should go, so it only publishes; serve/0_trace.ts
  * folds them into the tick line and chooses the sink. A library publishes, an

@@ -187,6 +187,9 @@ export interface IIncrementalLevelStatement {
   /** In-place maintenance of the same RECURSIVE head; optional for the same
    *  reason. Present only when every rule of the head is monotone. */
   readonly dred_sql?: IDredPlan | null;
+  /** Backend-neutral spelling of the same walks, §2.4 of
+   *  plans/2026-08-07-plan-ir-offload-contract.md. P1-B types it as IFixpointIr. */
+  readonly fixpoint_ir?: unknown;
   readonly aggregate_sql: IAggregateLevelPlan | null;
 }
 

@@ -4,7 +4,7 @@
  * equality alone").
  *
  * `not(Atom)`, comparisons and `:=` binds became legal in an EDGE body in the
- * phase-3 edge-body arc. Each one lands inside the arm's projectSql: the
+ * phase-3 edge-body arc. Each one lands inside the arm's project_sql: the
  * negation as `NOT EXISTS (SELECT 1 FROM <rel> n0 WHERE ...)`, the comparison
  * and the bind as WHERE / SELECT expressions. A `NOT EXISTS` correlated on a
  * NON-key column would still answer correctly and would still grade
@@ -61,7 +61,7 @@ function emitted_ddl(source: string): string[] {
 }
 
 /**
- * The incremental (delta-join) projectSql of the arm heading `headRel` and
+ * The incremental (delta-join) project_sql of the arm heading `head_rel` and
  * triggered off `frontierTable`. One rule can lower to several arms sharing a
  * head (one per candidate trigger atom), so the trigger's frontier table is
  * what names the arm.

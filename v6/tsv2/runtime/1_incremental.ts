@@ -462,7 +462,7 @@ function apply_level_statement(
     ).pipe(map(() => 0));
   }
   if (statement.insert_sql === null) {
-    throw new Error(`incremental level statement has neither insertSql nor aggregateSql: ${statement.head_rel}`);
+    throw new Error(`incremental level statement has neither insert_sql nor aggregate_sql: ${statement.head_rel}`);
   }
   const started_at = RuntimeTrace.enabled ? performance.now() : 0;
   return seam.runner.execute(seam.db, statement.insert_sql).pipe(
@@ -585,7 +585,7 @@ function reconcile_ref_count_statement(
 ): Observable<void> {
   if (statement.support_sql === null) {
     throw new Error(
-      `incremental level statement has neither supportSql nor aggregateSql: ${statement.head_rel}`,
+      `incremental level statement has neither support_sql nor aggregate_sql: ${statement.head_rel}`,
     );
   }
   const relation = relations.find((candidate) => candidate.rel === statement.head_rel);
@@ -1125,7 +1125,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       return current;
     };
     // The frontier admits every round it ever staged, so looping the delta
-    // insert costs rounds x |head|; supportSql closes the cycle in one pass.
+    // insert costs rounds x |head|; support_sql closes the cycle in one pass.
     const feeds_another_round = recursive_heads(statements, relations);
     const closes_in_one_pass = (statement: IIncrementalLevelStatement): boolean =>
       feeds_another_round.has(statement.head_rel) && statement.support_sql !== null;
@@ -1271,7 +1271,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
   ): Observable<void> {
     if (statements.length === 0) return of(undefined);
     const relation_by_name = new Map(relations.map((relation) => [relation.rel, relation]));
-    // Per-statement rather than one batch over every statement's supportSql:
+    // Per-statement rather than one batch over every statement's support_sql:
     // the list is in strat.pl's own stratum order, and an AGGREGATE statement
     // dispatches to the group-scoped plan instead of a refCount reconcile.
     // Running them in order is what lets an aggregate observe the refCount

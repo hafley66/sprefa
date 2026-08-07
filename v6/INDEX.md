@@ -41,7 +41,7 @@
 | [labs/exec_shootout/CONTRACT.md](labs/exec_shootout/CONTRACT.md) | 120 | exec_shootout CONTRACT — three rust execution strategies, one harness, one number each |
 | [labs/exec_shootout/STANDINGS.md](labs/exec_shootout/STANDINGS.md) | 70 | exec_shootout STANDINGS |
 | [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
-| [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
+| [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 79 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/REPORT-SUBSEC.md](labs/exec_shootout/dl6/REPORT-SUBSEC.md) | 110 | REPORT-SUBSEC: grid_10000 under 1,000 ms in the real engine |
 | [labs/exec_shootout/intern_bench/REPORT-INTERN.md](labs/exec_shootout/intern_bench/REPORT-INTERN.md) | 146 | P0-A: TEXT-key interning cost, measured |
@@ -572,10 +572,10 @@
 ### labs/exec_shootout/dl6/FACTS.md
 ```
 1:# dl6 core benchmark facts
-14:## Contract numbers
-22:## `grid_10000`: where the fixpoint went
-39:## `layered_10000`: where the fixpoint went
-56:## `chain_10000`: where the fixpoint went
+16:## Contract numbers
+24:## `grid_10000`: where the fixpoint went
+43:## `layered_10000`: where the fixpoint went
+62:## `chain_10000`: where the fixpoint went
 ```
 
 ### labs/exec_shootout/dl6/FACTS.unbatched.md

@@ -2,7 +2,7 @@
  * ruleTrace.test.ts — a tick line can name WHICH rule fired.
  *
  * Before this, the trace could say "tick 7 ran 18 statements" and nothing
- * more; `IIncrementalEdgeStatement` carried a `headRel` and no rule identity,
+ * more; `IIncrementalEdgeStatement` carried a `head_rel` and no rule identity,
  * so two arms of one relation were indistinguishable in the log. lower.pl
  * assigns "<program>:<name>/<arity>#<ordinal>" and the runtime publishes one
  * record per statement that ran.
@@ -17,11 +17,11 @@
  * as separate statements, which is a change to the plan, not to the trace.
  *
  * The receipt drives a REAL emitted module through a real tick rather than
- * asserting on the plan literal: a `ruleId` present in gen_emitted/*.ts and
+ * asserting on the plan literal: a `rule_id` present in gen_emitted/*.ts and
  * never published would pass any static check and leave the log exactly as
  * uninformative as before.
  *
- * SABOTAGE: publishing `statement.headRel` instead of `statement.ruleId` from
+ * SABOTAGE: publishing `statement.head_rel` instead of `statement.rule_id` from
  * runtime/1_incremental.ts turns ALL THREE red (measured, not predicted -- the
  * note here first claimed only the second would move):
  *   1  actual: 'out'  expected: /^[a-z0-9_]+:[a-z0-9_]+\/\d+#\d+$/

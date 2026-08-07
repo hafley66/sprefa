@@ -66,7 +66,7 @@
  *   assertion 1 catches. That is precisely the class end-state equality is
  *   blind to, and the reason the hop count is asserted at all.
  *
- * NAMED BLIND SPOT: `supportSql`, `recomputeSql` and the naive-mode arm of the
+ * NAMED BLIND SPOT: `support_sql`, `recomputeSql` and the naive-mode arm of the
  * SAME rules are not planned here. They are built from the same rewritten rule
  * body by the same compiler, and the sweep grades both modes for row equality,
  * but nothing in this file would notice if only the incremental insert kept
@@ -118,14 +118,14 @@ async function seam_with_rows(
 
 /** Reads one emitted level's insert statement. Typed against the header
  *  interface rather than a local structural shape: the local shape declared
- *  `insertSql: string` where `IIncrementalLevelStatement.insertSql` is
- *  `string | null` (null exactly when `aggregateSql` is present), and that one
+ *  `insert_sql: string` where `IIncrementalLevelStatement.insert_sql` is
+ *  `string | null` (null exactly when `aggregate_sql` is present), and that one
  *  disagreement was all four standing tsgo errors in this package. Every rel
  *  named below is a plain level, so the null is a named assertion, not a cast. */
 function insert_sql_for(plan: IIncrementalProgramPlan, rel: string): string {
   const level = plan.levels.find((entry) => entry.head_rel === rel);
   assert.ok(level, `no emitted level statement for ${rel}`);
-  assert.ok(level.insert_sql !== null, `level '${rel}' is an aggregate: it has no insertSql`);
+  assert.ok(level.insert_sql !== null, `level '${rel}' is an aggregate: it has no insert_sql`);
   return level.insert_sql;
 }
 

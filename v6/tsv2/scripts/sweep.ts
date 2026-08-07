@@ -30,7 +30,7 @@
  *
  * SABOTAGE RECEIPT for that gate (fork_join_malformed_json arc): splicing
  * `AND json_extract(d0."value_a", '$.fn') = 'x'` into
- * gen_emitted/fork_join_is_a_conjunctive_body.ts's insertSql -- the exact
+ * gen_emitted/fork_join_is_a_conjunctive_body.ts's insert_sql -- the exact
  * shape of the defect this split was written for -- moved that fixture
  * identical -> emitted_crash and turned the script red:
  *   RUN total=189 identical=187 wrong=0 emitted_crash=1 rejection=1 ...
