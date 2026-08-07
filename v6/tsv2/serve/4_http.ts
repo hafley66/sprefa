@@ -3,7 +3,7 @@
  *
  *   POST /program    text/plain .dl6 -> compile -> boot -> run
  *                    200 {loaded, rels, arrivalTargets, hosts, binds} | 400 {error}
- *   POST /arrivals   {batch:[{rel,sign,row}]} -> one tick (+ its drain ticks)
+ *   POST /edb/events   {batch:[{rel,sign,row}]} -> one tick (+ its drain ticks)
  *                    200 {ticks:[{tick,line}]} | 409 (no program) | 400 (bad batch)
  *   GET  /idb/:rel   -> {rows} | 404
  *   GET  /ticks      -> SSE, one `data: <tick log line>` per tick
@@ -80,7 +80,7 @@ import { LiveEngine, bootServedProgram } from "./3_engine.ts";
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /program",
-  "POST /arrivals",
+  "POST /edb/events",
   "GET /idb/:rel",
   "GET /ticks",
   "GET /stats",
@@ -236,7 +236,7 @@ function isRowValue(value: unknown): value is IRowValue {
  * into its own rel (golden-flex's `tree(tree_id, species, site: patch)` posts
  * `{label, at:{row, col}}`, two levels deep). A first draft of this function
  * required a scalar everywhere and golden-flex went red on exactly that row:
- *   Error: POST /arrivals -> 400 {"error":"'tree' column 'site' must be a
+ *   Error: POST /edb/events -> 400 {"error":"'tree' column 'site' must be a
  *   string, number or boolean"}
  * So a ref takes a scalar (its canonical text) or any JSON value, and the only
  * thing refused is the absent one. Whether the object MATCHES the declared
@@ -310,7 +310,7 @@ function handleArrivals$(state: ServerState, exchange: Exchange): Observable<ISe
   const { engine, program } = state;
   if (!engine || !program) {
     writeJson(exchange.response, 409, { error: "no program loaded" });
-    return of({ kind: "served", method: "POST", path: "/arrivals" });
+    return of({ kind: "served", method: "POST", path: "/edb/events" });
   }
   return from(readBody(exchange.request)).pipe(
     concatMap((text) => {
@@ -325,7 +325,7 @@ function handleArrivals$(state: ServerState, exchange: Exchange): Observable<ISe
       writeJson(exchange.response, 200, {
         ticks: outcomes.map((outcome) => ({ tick: outcome.tick, line: outcome.line })),
       });
-      return { kind: "served", method: "POST", path: "/arrivals" };
+      return { kind: "served", method: "POST", path: "/edb/events" };
     }),
   );
 }
@@ -423,7 +423,7 @@ function routeRequest$(state: ServerState, exchange: Exchange, bumpActive: (delt
   const route = `/${segments.join("/")}`;
 
   const answered = ((): Observable<IServeEvent> => {
-    if (method === "POST" && segments.length === 1 && segments[0] === "arrivals") {
+    if (method === "POST" && segments.length === 2 && segments[0] === "edb" && segments[1] === "events") {
       return handleArrivals$(state, exchange);
     }
     if (method === "GET" && segments.length === 2 && segments[0] === "idb") {

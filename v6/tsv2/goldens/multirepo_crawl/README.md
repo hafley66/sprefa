@@ -46,7 +46,7 @@ rows so the thing that is missing is visible rather than absent.
 the multi-repo set is ambient configuration loaded before the program runs. v6
 has no such file and should not grow one (ruling `spine_residency`: the git/fs
 spine is hosted *in the language*), so the repo set arrives as ordinary EDB
-rows posted to `/arrivals`. v5's repo set is configuration; v6's is data.
+rows posted to `/edb/events`. v5's repo set is configuration; v6's is data.
 
 **The regex dialect.** v5 uses the rust regex crate; the v6 leg uses python
 `re` inside `parity-grep.py` and cannot spell a backslash at all (one in a

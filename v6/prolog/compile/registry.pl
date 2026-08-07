@@ -550,7 +550,7 @@ cli_command(ticks, '[--port <port>]',
 % inventory. The TS route handlers remain explicit; generated metadata feeds
 % CLI clients and detects inventory drift.
 http_route('POST', '/program', 'compile and load a DL6 program.').
-http_route('POST', '/arrivals', 'submit signed EDB arrivals.').
+http_route('POST', '/edb/events', 'submit signed EDB events, one tick per call.').
 http_route('GET',  '/idb/:rel', 'read one relation snapshot.').
 http_route('GET',  '/ticks', 'stream tick events as SSE.').
 http_route('GET',  '/stats', 'read process memory and SQLite storage statistics.').

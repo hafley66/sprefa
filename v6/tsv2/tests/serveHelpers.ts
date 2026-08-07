@@ -186,8 +186,8 @@ export interface TickReply {
 }
 
 export async function postArrivals(port: number, batch: IArrivalBatch): Promise<TickReply> {
-  const result = await request(port, "/arrivals", "POST", JSON.stringify({ batch }));
-  if (result.statusCode !== 200) throw new Error(`POST /arrivals -> ${result.statusCode} ${result.body}`);
+  const result = await request(port, "/edb/events", "POST", JSON.stringify({ batch }));
+  if (result.statusCode !== 200) throw new Error(`POST /edb/events -> ${result.statusCode} ${result.body}`);
   return JSON.parse(result.body) as TickReply;
 }
 

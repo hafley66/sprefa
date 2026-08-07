@@ -80,7 +80,7 @@ api_server('http://127.0.0.1:17500', 'bop serve default port').
 
 http_operation(loadProgram, 'POST', '/program',
                'compile and load a DL6 program.').
-http_operation(postArrivals, 'POST', '/arrivals',
+http_operation(postArrivals, 'POST', '/edb/events',
                'submit signed EDB arrivals.').
 http_operation(readRelation, 'GET', '/idb/:rel',
                'read one relation snapshot.').
@@ -163,7 +163,7 @@ http_schema('Row', alias(list(schema('RowValue'))),
 http_schema('ProgramLoaded', object, 'The 200 body of POST /program.').
 http_schema_field('ProgramLoaded', loaded, bool, true, 'always true; a failure is a 400.').
 http_schema_field('ProgramLoaded', rels, list(text), true, 'every rel the program declares, sorted.').
-http_schema_field('ProgramLoaded', arrivalTargets, list(text), true, 'the rels POST /arrivals accepts.').
+http_schema_field('ProgramLoaded', arrivalTargets, list(text), true, 'the rels POST /edb/events accepts.').
 http_schema_field('ProgramLoaded', hosts, list(text), true, 'declared host names.').
 http_schema_field('ProgramLoaded', binds, list(schema('BindSummary')), true, 'declared binds and their literals.').
 
@@ -171,7 +171,7 @@ http_schema('BindSummary', object, 'One bind plan as the load response reports i
 http_schema_field('BindSummary', name, text, true, 'bind name.').
 http_schema_field('BindSummary', literals, list(schema('RowValue')), true, 'the bind decl''s literal arguments.').
 
-http_schema('ArrivalBatch', object, 'The POST /arrivals request body.').
+http_schema('ArrivalBatch', object, 'The POST /edb/events request body.').
 http_schema_field('ArrivalBatch', batch, list(schema('ArrivalRow')), true,
                   'ordered and duplicate-preserving (rulings q1); an absent batch is treated as empty.').
 
@@ -180,7 +180,7 @@ http_schema_field('ArrivalRow', rel, text, true, 'must be one of the program''s 
 http_schema_field('ArrivalRow', sign, enum([add, del]), true, '+row or -row; -row is never valid against a Log rel.').
 http_schema_field('ArrivalRow', row, schema('Row'), true, 'exactly as wide as the rel''s declared column list.').
 
-http_schema('TickBatch', object, 'The 200 body of POST /arrivals.').
+http_schema('TickBatch', object, 'The 200 body of POST /edb/events.').
 http_schema_field('TickBatch', ticks, list(schema('TickReport')), true, 'the ticks THAT batch caused.').
 
 http_schema('TickReport', object, 'One tick as the served engine reports it.').

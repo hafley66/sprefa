@@ -289,7 +289,7 @@ for slug in alpha beta gamma shared; do
   [ -n "$batch" ] && batch="$batch,"
   batch="$batch{\"rel\":\"want_repo\",\"sign\":\"add\",\"row\":[\"$slug\",\"$CORPUS/$slug\",\"$rev\"]}"
 done
-curl -s -o /dev/null -X POST --data-binary "{\"batch\":[$batch]}" "$BASE/arrivals"
+curl -s -o /dev/null -X POST --data-binary "{\"batch\":[$batch]}" "$BASE/edb/events"
 
 rows_of() { curl -s "$BASE/idb/$1"; }
 row_count() {

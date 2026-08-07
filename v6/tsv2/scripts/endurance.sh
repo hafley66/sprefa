@@ -66,7 +66,7 @@ load_program() {
 }
 
 post_seed() {
-  curl -s -o /dev/null -X POST "$BASE/arrivals" \
+  curl -s -o /dev/null -X POST "$BASE/edb/events" \
     -d "{\"batch\":[{\"rel\":\"seed\",\"sign\":\"add\",\"row\":[\"$1\"]}]}"
 }
 

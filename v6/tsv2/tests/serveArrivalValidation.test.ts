@@ -207,7 +207,7 @@ for (const probe of MALFORMED) {
   test(`${probe.what} is a 400 naming what is wrong`, async () => {
     const served = await servedWithProgram();
     try {
-      const answered = await request(served.port, "/arrivals", "POST", probe.body);
+      const answered = await request(served.port, "/edb/events", "POST", probe.body);
       assert.equal(answered.statusCode, 400, `${probe.what} is a client error: ${answered.body}`);
       const lowered = answered.body.toLowerCase();
       for (const name of probe.names) {
@@ -230,7 +230,7 @@ test("a rejected row is never stored, and never printed as an empty delta", asyn
   try {
     const rejected = await request(
       served.port,
-      "/arrivals",
+      "/edb/events",
       "POST",
       `{"batch":[{"rel":"note","sign":"add","row":[{"a":1},[2,3],${JSON.stringify(AT)}]}]}`,
     );
@@ -243,7 +243,7 @@ test("a rejected row is never stored, and never printed as an empty delta", asyn
     assert.equal(JSON.parse(stored.body).rows.length, 0, `a rejected row must not be stored: ${stored.body}`);
 
     // And the server is unpolluted for the next well-formed arrival.
-    const good = await request(served.port, "/arrivals", "POST", goodBody("x", 7));
+    const good = await request(served.port, "/edb/events", "POST", goodBody("x", 7));
     assert.equal(good.statusCode, 200, good.body);
     assert.deepEqual(JSON.parse((await request(served.port, "/idb/echoed", "GET")).body).rows, [["x", 7]]);
   } finally {
@@ -255,23 +255,23 @@ test("well-formed arrivals are untouched by the new checks", async () => {
   const served = await servedWithProgram();
   try {
     // A STRUCT VALUE IN A REF COLUMN IS ORDINARY TRAFFIC, not a malformed row.
-    assert.equal((await request(served.port, "/arrivals", "POST", goodBody("x", 7))).statusCode, 200);
-    assert.equal((await request(served.port, "/arrivals", "POST", goodBody("y", 8))).statusCode, 200);
+    assert.equal((await request(served.port, "/edb/events", "POST", goodBody("x", 7))).statusCode, 200);
+    assert.equal((await request(served.port, "/edb/events", "POST", goodBody("y", 8))).statusCode, 200);
     const echoed = await request(served.port, "/idb/echoed", "GET");
     assert.deepEqual(JSON.parse(echoed.body).rows, [["x", 7], ["y", 8]], echoed.body);
 
     // The three checks that already existed still answer 400, unchanged.
-    const wrongWidth = await request(served.port, "/arrivals", "POST", '{"batch":[{"rel":"note","sign":"add","row":["x"]}]}');
+    const wrongWidth = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"note","sign":"add","row":["x"]}]}');
     assert.equal(wrongWidth.statusCode, 400, wrongWidth.body);
     assert.match(wrongWidth.body, /takes 3 columns, got 1/, wrongWidth.body);
 
-    const wrongRel = await request(served.port, "/arrivals", "POST", '{"batch":[{"rel":"echoed","sign":"add","row":["x",7]}]}');
+    const wrongRel = await request(served.port, "/edb/events", "POST", '{"batch":[{"rel":"echoed","sign":"add","row":["x",7]}]}');
     assert.equal(wrongRel.statusCode, 400, wrongRel.body);
     assert.match(wrongRel.body, /not an arrival target/, wrongRel.body);
 
     const wrongSign = await request(
       served.port,
-      "/arrivals",
+      "/edb/events",
       "POST",
       `{"batch":[{"rel":"note","sign":"nope","row":["x",7,${JSON.stringify(AT)}]}]}`,
     );
@@ -279,7 +279,7 @@ test("well-formed arrivals are untouched by the new checks", async () => {
     assert.match(wrongSign.body, /sign must be add or del/, wrongSign.body);
 
     // An empty batch is legal and ticks, as before.
-    const empty = await request(served.port, "/arrivals", "POST", '{"batch":[]}');
+    const empty = await request(served.port, "/edb/events", "POST", '{"batch":[]}');
     assert.equal(empty.statusCode, 200, empty.body);
   } finally {
     await served.stop();

@@ -45,7 +45,7 @@ sleep 0.5
 count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$HERE/rendezvous.schedule.json")"
 for (( i = 0; i < count; i++ )); do
   batch="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))[int(sys.argv[2])]))' "$HERE/rendezvous.schedule.json" "$i")"
-  curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null
+  curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events" >/dev/null
   sleep 0.35
 done
 sleep 0.8

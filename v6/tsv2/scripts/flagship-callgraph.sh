@@ -339,7 +339,7 @@ status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @
 say "PASS  v6 program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"
 
 curl -s -o /dev/null -X POST --data-binary \
-  "{\"batch\":[{\"rel\":\"want_at\",\"sign\":\"add\",\"row\":[\"$REV\",\"src/*.rs\"]}]}" "$BASE/arrivals"
+  "{\"batch\":[{\"rel\":\"want_at\",\"sign\":\"add\",\"row\":[\"$REV\",\"src/*.rs\"]}]}" "$BASE/edb/events"
 
 # Settle = every corpus file present AND four consecutive identical count
 # vectors. Counting once would read a mid-extraction snapshot as the answer.

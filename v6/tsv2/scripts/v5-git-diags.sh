@@ -101,7 +101,7 @@ status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @
 [ "$status" = "200" ] || die "program load returned $status: $(cat "$WORK/load.json")"
 say "PASS  program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"
 
-post() { curl -s -o /dev/null -X POST --data-binary "$1" "$BASE/arrivals"; }
+post() { curl -s -o /dev/null -X POST --data-binary "$1" "$BASE/edb/events"; }
 
 # `sign: del` retracts the row that carried the old rev, so exactly one
 # `want_at` row is live at a time and the file set is never a union of revs.

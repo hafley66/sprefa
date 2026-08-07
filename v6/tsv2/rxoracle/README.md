@@ -47,7 +47,7 @@ clock that both legs can be driven by: the **step**.
 * An input batch for step `k` is delivered at `k*stepMs + stepMs/2`, the step's
   **midpoint**, on both legs. Leg A schedules it on a `VirtualTimeScheduler` at
   that exact frame. Leg B records `t0 = now - stepMs/2` immediately before its
-  first `POST /arrivals` and then sleeps `stepMs` between batches, so its POSTs
+  first `POST /edb/events` and then sleeps `stepMs` between batches, so its POSTs
   land on the same nominal midpoints.
 * An event's step is `floor(time / stepMs)`: virtual frame on leg A, milliseconds
   since `t0` on leg B.

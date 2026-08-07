@@ -90,7 +90,7 @@ grep -q 'files_at' "$WORK/load.json" || fail "both files hosts should be declare
 say "PASS  program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"
 
 post_arrival() {
-  capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o /dev/null -X POST --data-binary "$1" "$BASE/arrivals"
+  capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s -o /dev/null -X POST --data-binary "$1" "$BASE/edb/events"
 }
 rows_json() { capped_curl "${FILES_HTTP_BUDGET_S:-30}" -s "$BASE/idb/$1"; }
 await_rows() {
@@ -131,9 +131,12 @@ head_rev="$(git rev-parse HEAD)"
 before="$actual"
 post_arrival "{\"batch\":[{\"rel\":\"want_at\",\"sign\":\"add\",\"row\":[\"$head_rev\",\"$GLOB\"]}]}"
 tree_paths="$(git ls-files --with-tree="$head_rev" -- "$GLOB" | wc -l | tr -d ' ')"
-await_rows file "$before" || fail "files_at produced nothing"
-sleep 3
-pinned_path="$(git ls-files --with-tree="$head_rev" -- "$GLOB" | head -1)"
+# An edited path is the only one whose pinned row is NEW: everywhere else the
+# two hosts answer the same (path, digest) and the set rel dedups it away.
+edited="$(git diff --name-only "$head_rev" -- "$GLOB" | wc -l | tr -d ' ')"
+await_rows file "$((before + edited))" || fail "files_at produced nothing"
+pinned_path="$(git diff --name-only "$head_rev" -- "$GLOB" | head -1)"
+[ -n "$pinned_path" ] || pinned_path="$(git ls-files --with-tree="$head_rev" -- "$GLOB" | head -1)"
 pinned_oid="$(git rev-parse "$head_rev:$pinned_path")"
 rows_json file | grep -q "\"$pinned_path\",\"$pinned_oid\"" \
   || fail "files_at did not report $pinned_path at its blob oid $pinned_oid"
