@@ -3,6 +3,11 @@
 Same plan as `2026-08-08-interning-contract.md`, told without a single file
 reference. If you only read one, read this one.
 
+**Rev 2.** A red team attacked this plan and broke it in seven places. All seven
+are fixed in the sections below, and section 16 lists what each one was. Three
+of the seven were "answers wrong and says nothing", which is the category that
+matters.
+
 ## TOC
 
 - [1. The one-sentence version](#1-the-one-sentence-version)
@@ -20,6 +25,7 @@ reference. If you only read one, read this one.
 - [13. Things that will bite](#13-things-that-will-bite)
 - [14. The gun](#14-the-gun)
 - [15. Watching the word bag](#15-watching-the-word-bag)
+- [16. What the red team broke](#16-what-the-red-team-broke)
 
 ---
 
@@ -195,8 +201,9 @@ sort text already.
 | `norm(A)` | works | **breaks** without a decode |
 | joining two strings together | works | **breaks** without a decode |
 | `group_concat` and `json_group_array` sorted by value | works | **breaks** without a decode |
+| **`A == "some literal"`** | works | **breaks**, and this is the one rev 1 missed |
 
-Four breaks, all in the same family, all fixed by one rule:
+Rule one, covering the first four:
 
 > If an expression wants the WORD, hand it the word. If it only wants to know
 > whether two things are the same, hand it the number.
@@ -204,6 +211,81 @@ Four breaks, all in the same family, all fixed by one rule:
 One function decides which. Five call sites use it. A test walks the operator
 registry and fails if any text operator is missing its decode, so the next
 person to add a text operator finds out immediately.
+
+### The one the red team caught: comparing against a constant
+
+A rule that says `Value == "rust"` used to compile to exactly that. After
+interning, the column holds a number and the constant is still a word:
+
+```
+   before:   "kind" = 'rust'          ← word vs word, works
+   after:    7      = 'rust'          ← number vs word
+
+   SQLite does not complain. It looks at the column's declared type,
+   decides the literal should be a number, and:
+
+     'rust'   is not number-shaped  →  stays a word  →  matches NOTHING
+     '42'     IS number-shaped      →  becomes 42    →  matches whichever
+                                                        word happens to be #42
+```
+
+Both answers are silently wrong, and 12 programs in the test corpus do this
+today.
+
+Rule two fixes it, and it is simple because a constant is known at compile time:
+
+> Put every constant in the bag when the program boots. Then compare
+> number-to-number, like everything else.
+
+```
+   at boot, once:   add "rust", "warning", "acme", ... to the bag
+   in every rule:   "kind" = (look up 'rust' in the bag)
+```
+
+### Two more the red team did not name, found while fixing that one
+
+Constants do not only appear in comparisons. They appear on the OUTPUT side too,
+and that side is a write:
+
+```
+   a rule that produces:   diag(path, 'warning', 'eprintln-new-file')
+                                      ▲          ▲
+                                      └──────────┴─ words being written
+                                                    into columns that now
+                                                    hold numbers
+```
+
+26 programs do this. Same fix: the constant is in the bag, so the rule writes
+its number.
+
+The third case has no fix, so it gets a different answer. A rule that BUILDS a
+string, by gluing pieces together, produces a word nobody has seen before:
+
+```
+   diag_message(path, hits || ' counted hits; the baseline allows ' || cap)
+                              ▲
+                     a brand new string, made at run time,
+                     not in the bag and not lookupable in the
+                     same statement that computes it
+```
+
+For that column the compiler gives up on interning, automatically, and records
+why. Which is the right call anyway: a column full of unique built strings is
+exactly the case where interning loses (section 9).
+
+### Giving up automatically needs a guard
+
+If one column quietly falls back to holding words, and another relation holds
+the same thing as numbers, joining them compares a word to a number and returns
+nothing. Same silent-empty failure as before.
+
+So that comparison is now **refused by the compiler, by name**. You cannot
+compile a program that joins a word column to a number column. It stops, and it
+tells you which two columns.
+
+That refusal is also what makes the escape hatch in section 9 safe. Rev 1 left
+this to a code-review comment, which the red team correctly called not a
+guard at all.
 
 ### Why the tick log survives
 
@@ -372,7 +454,7 @@ Three checks, in order:
 2. demand no refusal message changed, except the two brand-new ones
 3. **classify every changed line of emitted code**
 
-Check 3 is the one that makes this reviewable. There are exactly four kinds of
+Check 3 is the one that makes this reviewable. There are exactly seven kinds of
 line that are allowed to change:
 
 ```
@@ -380,9 +462,16 @@ line that are allowed to change:
    ✓ a CREATE VIEW line appeared
    ✓ a read switched from the table to the view
    ✓ a decode subquery appeared in a text expression
+   ✓ a constant lookup appeared, or the boot statement that fills the bag
+   ✓ a table swapped one key shape for another  (section 8's separate change)
+   ✓ the stats relation and its statements       (section 15)
 
    ✗ anything else  ← that is the finding, go look at it
 ```
+
+The last three are new in rev 2. The red team caught the sixth: section 8's
+table-shape change is scheduled, correct, and has nothing to do with interning,
+and a checker that calls it a problem teaches everyone to ignore the checker.
 
 Write that classifier as a script. Nobody should read 167 diffs by hand.
 
@@ -393,6 +482,16 @@ New test programs to add, each one red before the fix and green after:
 - two relations joined on a text column, asserting the result is not empty
 - a text column holding non-ASCII bytes, round-tripped out through the view
 - a `direct` relation, asserting its column stayed TEXT
+- **a rule comparing against a constant containing a backslash.** This one is
+  already in the corpus and becomes the pinning test: if anything re-quotes a
+  word on its way through the bag, a backslash is where it shows
+- **a rule writing a constant into a column**, asserting the row is findable
+- **a rule building a string into a column**, asserting that column gave up on
+  interning and recorded why
+- **a word column joined to a number column**, asserting the compiler refuses
+- **a program naming a relation in the reserved namespace**, asserting refusal
+- **a program with constants**, asserting the bag's counter starts at the right
+  number rather than at zero
 
 ---
 
@@ -541,12 +640,34 @@ this plan says so in advance so nobody adds one later as a convenience.
 
 By diffing it, on every commit.
 
-> Compile all 306 test programs with the flag off. The generated code must come
-> out **byte for byte identical to the commit before any of this landed.**
+Rev 1 said: compile everything with the flag off, and demand the output match
+the commit before any of this landed, byte for byte. The red team killed that.
+Section 8's table-shape change is scheduled independently, so the day it lands,
+the flag-off output legitimately stops matching that old commit and the check
+goes red forever. A check that goes red for correct work gets switched off.
 
-Identical, which is a stronger bar than "close enough" and a stronger bar than
-"still passes the tests". It runs in four seconds, so it runs on every commit,
-so the gun cannot rust shut.
+The fix is to stop comparing against history:
+
+> Compile everything TWICE at today's code. Once with interning on, once with it
+> off. The only differences between those two outputs may be the interning
+> differences.
+
+```
+   today's compiler ──┬── intern ON  ──▶ output A ──┐
+                      │                             ├─▶ diff
+                      └── intern OFF ──▶ output B ──┘
+                                                     │
+                    every difference must be one of the
+                    interning kinds, and nothing else
+```
+
+This can never go stale. Anything else the compiler grows shows up in BOTH
+outputs and cancels. Eight seconds for the pair, so it still runs on every
+commit.
+
+The old historical check survives as a one-time thing: run it once, on the day
+interning first lands, to prove the off-switch really reproduces the old world.
+Then stop running it.
 
 ### The expensive part
 
@@ -559,19 +680,39 @@ Two ways out:
 code. Test programs re-run their schedule. A server replays its arrival trail.
 Nothing custom, and you end up with the real answer rather than a translation.
 
-**Way B, the shortcut, only while the old program is still attached.** The
-decoder view is already the old shape, so dumping a relation back to plain text
-is one line each:
+**Way B, getting the data out, only while the old program is still attached.**
+The decoder view is already the old shape, so dumping a relation back to plain
+text is one line each:
 
 ```
-   CREATE TABLE relx_plain AS SELECT * FROM __txt_relx;
+   CREATE TABLE relx_dump AS SELECT * FROM __txt_relx;
 ```
 
-That is the second time the "view ships with the table" rule pays for itself.
-The escape hatch is one statement per relation precisely because the decoder was
-never optional.
+Rev 1 called this "un-interning in one statement per relation". The red team was
+right that this oversells it. **That kind of copy makes a bare table: no primary
+key, no uniqueness, no declared column types, and a different name.** It carries
+the data and nothing that made it a relation.
 
-Do this BEFORE switching to the reverted program, while the views still exist.
+The actual round trip:
+
+```
+   1. dump each relation through its view      ← one statement each, on the
+                                                 old database, views still alive
+   2. boot the reverted program on a FRESH db  ← its own setup makes the
+                                                 properly shaped tables
+   3. attach the dump
+   4. copy rows in, naming columns explicitly
+   5. detach and delete the dump
+```
+
+Five steps and a boot. The "one statement" claim covers step 1 only.
+
+Way A is preferred for exactly this reason: it skips steps 3 to 5 and gives you
+the real answer instead of a translation.
+
+Do step 1 BEFORE switching to the reverted program, while the views still
+exist. That much of the "view ships with the table" payoff is real: without the
+view, step 1 would be a hand-written join per relation.
 
 ### Which mode built this?
 
@@ -639,16 +780,54 @@ At a million words that freezes the machine once per tick. Named here so nobody
 rediscovers it in three months.
 
 The real way: keep a running total. Each tick adds this tick's new words to last
-tick's number. Reading "last tick's number" is one backward step on an index,
-and the log is capped at 4096 rows anyway.
+tick's number. Reading "last tick's number" is one backward step from the end of
+the log, and the log is capped at 4096 rows anyway.
 
-Counting the new words is free too: the insert statement can hand back the rows
-it actually inserted, so the count and the byte total fall out of a statement
-that was already running.
+Rev 1 counted the new words by having the insert hand back what it inserted, and
+adding them up in JavaScript. **The red team broke that twice.**
+
+First, the driver reports "rows inserted" as ZERO whenever the statement is
+asked to hand rows back. So the counter would have read 0 every tick, forever,
+and the whole feature would have reported a dictionary that never learns.
+
+Second, and worse: adding up in JavaScript means the counting has to happen
+BETWEEN two database writes, which means they cannot be in the same transaction.
+Kill the process in that gap and the words are saved but the count is not, and
+nothing ever notices or repairs it.
+
+Both die to the same change: **count first, in SQL, before inserting.**
+
+```
+   ┌── ONE transaction ────────────────────────────────────────┐
+   │                                                           │
+   │  1. stats:  how many of these words are new?              │
+   │             (asks the bag, BEFORE anything is added)      │
+   │             writes the row: tick, totals, new, asked      │
+   │                                                           │
+   │  2. intern: add the new words                             │
+   │                                                           │
+   │  3. lookup: read back everyone's number                   │
+   │                                                           │
+   └───────────────────────────────────────────────────────────┘
+        all three commit together, or none of them do
+```
+
+Asking "is this word new" is one index lookup per word, which the insert was
+going to do anyway. Nothing reads the whole bag.
+
+This was tested rather than reasoned about. Seeded with one word, handed four
+words (one repeat), on both database builds this project uses:
+
+```
+   words in:  alpha, beta, gamma, beta
+   result:    new = 2      (beta and gamma; the repeat counted once)
+              asked = 3    (distinct words presented)
+              bytes = 9    ("beta" + "gamma")
+```
 
 ```
    before telemetry:   2 statements per tick at the door
-   after telemetry:    3 statements per tick at the door
+   after telemetry:    3 statements per tick, all in one transaction
    telemetry off:      2 statements, and no table exists at all
    nothing arriving:   0 statements
 ```
@@ -749,6 +928,17 @@ because ingest stopped. Ticks 42 and 43 are the interesting ones: work was
 arriving and the bag had already seen almost all of it, which is the technique
 paying off.
 
+That reading only works because of the one-transaction fix above. The red team
+pointed out that in rev 1's design a missing row could ALSO mean "the door ran,
+added words, and then the process was killed", which is the opposite meaning.
+Now the row and the words it counts commit together, so a missing row has
+exactly one meaning.
+
+One loose end, stated rather than buried: the constants added at boot (section
+6) go into the bag outside this per-tick path, so boot has to write its own
+starting row. Skip that and the counter is permanently short by however many
+constants the program has. There is a test for it.
+
 ### Who builds it
 
 | lane | job | who |
@@ -757,3 +947,46 @@ paying off.
 | F review | does a program that never mentions it come out byte-identical to before | the fast model |
 | G | the one extra statement, the running totals, the live channel, the statement-count test | the fast model: the SQL is written out |
 | G review | **does anything in here read the whole word bag**, and does the running total survive a crash | the careful model: a hidden full scan is what turns monitoring into the outage |
+
+
+---
+
+## 16. What the red team broke
+
+Seven holes. Three of them the "wrong answer, says nothing" kind, which is the
+only kind that really matters.
+
+| # | what they found | how bad | fixed in |
+|---|---|---|---|
+| 1 | comparing a column to a written-out constant was never in the plan's list of things that break | **wrong answer** | section 6. Constants go in the bag at boot. Fixing it turned up two more cases nobody had named: writing a constant into a column, and building a string into a column |
+| 2 | the way the plan counted new words reads zero, always, on the real driver | **wrong answer** (the monitoring) | section 15. Counting moved into SQL and now runs before the insert |
+| 3 | a column that opted out, joined to one that did not, returns nothing and says nothing. The only guard was a review comment | **wrong answer** | section 6. The compiler now refuses that join by name |
+| 4 | the gun's proof compared against an old commit, and a separate scheduled change would make that comparison fail forever | breaks the process | section 14. Compare two compiles of today instead |
+| 5 | the escape-hatch copy loses the table's key and shape, so it is raw data rather than a working relation | breaks the process | section 14. Five steps now, counted accurately |
+| 6 | the monitoring's write and the words it counts could not be in the same transaction, so a crash between them under-counts permanently and nothing repairs it | **wrong answer** (the monitoring) | section 15. One transaction, count first |
+| 7 | the reserved `__` name prefix was described as reserved and never actually enforced | breaks the process | new rule: the compiler refuses a program that declares or writes a relation in that namespace, while still letting programs read the ones it owns |
+
+### What they tried and could not break
+
+Five attacks bounced. Worth listing, because each one was something the plan
+asserted without proof, and now each has proof behind it:
+
+- the insert really does hand back exactly the rows it inserted, de-duplicated,
+  on both database builds
+- trimming the log to its last 4096 rows never trims the row the running total
+  reads next
+- empty strings and missing values behave: empty interns once and adds zero
+  bytes, missing is refused at the door
+- the page-size measurement works on both database builds
+- the language really has no way to sort text, so there is no hidden ordering
+  break beyond the ones listed
+
+### The one number that will fool the next reviewer
+
+The reviewer whose job is "does anything read the whole bag" will run the query
+planner, and for one of these reads it prints the word **SCAN**. That reading is
+wrong. Looking at what the database actually executes shows it jumps to the last
+row and stops. Timed at 1.3 microseconds over a thousand rows and 1.0 microseconds over four
+hundred thousand, so it does not grow with the log.
+
+It is written down here so the answer costs a minute rather than a lane.

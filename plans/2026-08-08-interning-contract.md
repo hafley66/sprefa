@@ -7,6 +7,11 @@ fill.
 
 Plain-words twin: `plans/2026-08-08-interning-contract.visual.human.unga.md`.
 
+**Rev 2, 2026-08-08.** Red-teamed at `e8bb9911` (report:
+`plans/2026-08-08-interning-contract.redteam.md`, 7 confirmed findings, 5 held
+attacks). Every finding is closed in place; §19 is the changelog with the
+section each one moved.
+
 ## TOC
 
 - [1. The decision, in one table](#1-the-decision-in-one-table)
@@ -27,6 +32,9 @@ Plain-words twin: `plans/2026-08-08-interning-contract.visual.human.unga.md`.
   - [15. The gun](#15-the-gun)
   - [16. Dictionary telemetry](#16-dictionary-telemetry)
   - [17. Lane table extension](#17-lane-table-extension)
+- [Rev 2 2026-08-08 (red team)](#rev-2-2026-08-08-red-team)
+  - [18. The `__` namespace is refused, not requested](#18-the-__-namespace-is-refused-not-requested)
+  - [19. Changelog: the seven findings and where each closed](#19-changelog-the-seven-findings-and-where-each-closed)
 
 ---
 
@@ -38,8 +46,10 @@ Plain-words twin: `plans/2026-08-08-interning-contract.visual.human.unga.md`.
 | one dictionary per natural-key shape, or one global? | **one global `__str`** | §3 |
 | when is the decode view emitted? | **in the same `rel_ddl/5` call that emits the table**, same returned list | §4 |
 | what reads text? | the emitted view `__txt_<rel>`, and nothing hand-written | §4, §5 |
-| what compares text? | nothing in the walk; every text comparison the language admits is identity, which survives interning | §5 |
-| what breaks? | six statement families, all named, all with a decode fix | §5, §13 |
+| what compares text? | identity only (`==`, `\==`, join equality), which survives interning **as long as both sides are in the id space** | §5, §5.6 |
+| what about a text CONSTANT? | it is interned at boot and compared as an id; a constant is the sixth decode site and the one the first draft missed | §5.2 rows 11-13, §5.3 |
+| what breaks? | nine statement families, all named, all with a fix | §5, §13 |
+| what refuses mechanically? | mixing encodings across a join (`mixed_encoding_join`), and a user rel in the `__` namespace (`reserved_rel_namespace`) | §5.6, §18 |
 | head table shape | WITHOUT ROWID stays everywhere except recursive heads taking the rowid-range delta | §7 |
 | how does the oracle stay the referee? | it never runs SQL; the sweep's tick-log diff is the migration receipt unchanged | §10 |
 
@@ -100,13 +110,31 @@ written to make that sentence unspellable.
 %   before every rel_ddl/5 output. No per-rel and no per-shape variant.
 intern_ddl([StringTableDdl]).
 
-% interned_column(+Decls, +Ref, +Column, +Type)
-%   TRUE when a stored column takes dict('__str') encoding.
+% interned_column(+Decls, +Rules, +Ref, +Column, +Type, -Reason)
+%   TRUE when a stored column takes dict('__str') encoding. This is a
+%   PROGRAM-WIDE analysis, not a per-column type test: what WRITES the column
+%   decides as much as what the column is declared to be (§5.2 row 13).
 %   Pseudo-code:
 %     Type == text,                       % json stays TEXT: json1 reads it in place
-%     \+ direct_waiver(Decls, Ref, Column).
-interned_column(Decls, Ref, Column, Type).
+%     \+ direct_waiver(Decls, Ref, Column),        % Reason = waiver, else
+%     forall( a rule head writing this column,
+%             the head expression at that position is a column reference
+%             or a text literal ),                 % Reason = dict, else
+%     % a computed text head expression (concat, norm, json_extract) produces a
+%     % value that is not in the dictionary and cannot be looked up in the same
+%     % statement that writes it, so the column falls back:
+%     Reason = computed_text_head(Rule).
+interned_column(Decls, Rules, Ref, Column, Type, Reason).
+
+% Reason is carried into the IR (§8) and printed by the waiver report, so
+% "why is this column TEXT" is answered by the artifact, never by reading
+% lower.pl.
 ```
+
+The auto-fallback is safe rather than dangerous because §5.6 refuses a join
+across two different encodings by name. A column that falls back and is then
+joined to an interned column stops the compile with `mixed_encoding_join`
+instead of returning nothing.
 
 ### 3.2 The DDL
 
@@ -262,10 +290,15 @@ const reachText$ = reach$.pipe(
 
 ## 5. Sort and compare at the render boundary
 
-Interning flips a column's storage class from TEXT to INTEGER. Every place the
-system depends on TEXT ORDER, rather than TEXT IDENTITY, is a break. The full
-enumeration follows; it is short because the language refuses most of them
-already.
+Interning flips a column's storage class from TEXT to INTEGER. Two families
+break: anything that depends on TEXT ORDER rather than TEXT IDENTITY, and
+anything that puts a TEXT VALUE beside an id.
+
+Rev 1 enumerated the first family and missed the second. The red team's finding
+1 is the correction, and closing it surfaced two more (rows 12 and 13). The
+enumeration below is 14 rows and is claimed complete against two mechanical
+sweeps rather than against reading: every `where_text/2` call site, and every
+`expression/5` registry row.
 
 ### 5.1 What the language admits on text
 
@@ -292,8 +325,12 @@ already.
 | 8 | `_sequence` (= `__new_<rel>`'s rowid, `lower.pl:3841-3847`, read by `:2575-2583`) | fill order comes from a WITHOUT ROWID scan of `__support_next_<rel>` (key_major) or a wave table (round_major), offload contract §4.2 | head-key text order | head-key id order | **ORDER CHANGES, observable in two places only:** Log rels (append-only, physical row order is the multiset) and `keep(count(N))` retention, which keeps by `rowid DESC LIMIT` (`lower.pl:3981`). 4 modules use retention |
 | 9 | `departure_read_sql/3` `ORDER BY "_phase","_sequence"` | `lower.pl:198` | | | inherits row 8; the ORDER BY names no data column |
 | 10 | delta arm `ORDER BY d0."_phase", d0."_sequence"` | `lower.pl:1918` | | | inherits row 8 |
+| 11 | **text literal comparison**: `where_text(lit(Left, Value))` emits `<col> = 'literal'` | `lower.pl:340`, reached from all six `where_text/2` call sites (`:347`, `:402`, `:1900`, `:2200`, `:2399`, `:3905`); IR twin `eq_lit(IrLeft, Literal)` at `:3171` | text compared to text | **INTEGER id compared to a TEXT literal.** SQLite applies the column's INTEGER affinity: a non-numeric literal stays text and matches nothing; a numeric-looking literal (`= '42'`) coerces and matches whichever row holds id 42 | **BREAKS, silently, both ways.** 12 modules, 114 occurrences in `out/*.ts`. Patient zero: `backslash_in_string_literal_survives_both_doors` |
+| 12 | **text literal PROJECTION into a head column**: `head_select_list/4` -> `compile_expr` -> `sql_literal` | `lower.pl:881-889` | writes `'warning'` into a TEXT column | writes `'warning'` into an INTEGER column; affinity stores it and the row is unfindable | **BREAKS, and it is a WRITE.** 26 modules. The red team found the read side; this is its write-side twin, found while closing it |
+| 13 | **computed text projected into a head column**: `concat`, `norm`, `json_extract` in head position | `lower.pl:591-612`, `:522-525` | writes a fresh string | the value is not in the dictionary and cannot be looked up inside the statement that computes it | **NOT FIXED BY A DECODE.** The column falls back to `direct` automatically (§3.1), with the reason recorded |
+| 14 | `where_text(pair_lit(Left, Functor))`: `json_extract(<col>,'$.fn') = 'functor'` | `lower.pl:337-339` | | | **SAFE.** The operand is a `json`-typed column, and `json` is never interned (§3.1) |
 
-### 5.3 The rule that fixes rows 2, 3, 5, 6, 7
+### 5.3 The two rules that fix rows 2, 3, 5, 6, 7, 11, 12
 
 > **An expression whose declared operand type is `text` reads the value through
 > `__str`. An expression that only needs identity (`==`, `\==`, join equality,
@@ -325,6 +362,74 @@ enumerates every `expression/5` row in `compile/registry.pl` whose TypeRule is
 A new text operator that forgets the decode fails that test on the day it is
 added.
 
+#### Rule two: a text CONSTANT enters the id space at boot
+
+Rows 11 and 12 are the same problem seen from both sides, and one mechanism
+closes both. A text literal is a compile-time constant, so it can be interned
+once, at boot, and every use of it becomes an id lookup.
+
+**Boot statement, one per module, constants baked at compile time:**
+
+```sql
+INSERT OR IGNORE INTO "__str" ("content")
+SELECT i.value FROM json_each('["warning","eprintln-exceeded","rust","acme"]') i;
+```
+
+**Every literal use, read side and write side alike, lowers to the same form:**
+
+```sql
+-- row 11, comparison:  b0."kind" = 'rust'   becomes
+b0."kind" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'rust')
+
+-- row 12, projection:  ..., 'warning', ...  becomes
+..., (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), ...
+```
+
+One predicate:
+
+```prolog
+% text_literal_sql(+Literal, +Encoding, -Sql)
+%   Encoding == direct -> Sql is sql_literal/2's quoted text, unchanged.
+%   Encoding == dict(_) -> the scalar subquery above.
+%   The literal is ALSO collected into the module's boot intern list, so the
+%   subquery is total on the write side (an interned head column is NOT NULL
+%   and a missing id would fail the insert).
+text_literal_sql(Literal, Encoding, Sql).
+```
+
+Call sites, exhaustively, all six `where_text/2` consumers plus the head:
+`compile_positive_uses/6` (`lower.pl:347`), `:402`, `:1900`, `:2200`, `:2399`,
+`:3905`, and `head_select_list/4` (`:881-889`).
+
+**Why boot interning rather than resolving the id into the emitted text.**
+Splicing an integer would make the SQL a function of the database, and
+`emit_ts.pl` prints static strings (`emit_ts.pl:988-1013`). A module whose text
+differs per database cannot be diffed, cached, or byte-gated, which is three of
+this contract's own gates.
+
+**Why the subquery is safe on the read side even for a literal no row holds.**
+It returns an id that no stored row carries, so the comparison matches nothing,
+which is the correct answer. Interning it at boot costs one dictionary row and
+buys one uniform lowering for both sides.
+
+**The receipt this owes, because it is the one cost I could not settle by
+reading:** an `EXPLAIN QUERY PLAN` receipt that the literal subquery is hoisted
+as a constant `SCALAR SUBQUERY` computed once per statement, never once per row.
+Lane I-C produces it on the flagship before writing the lowering. If the planner
+re-evaluates per row, the fallback is a `?` bind parameter carrying the id,
+resolved once per statement execution from a module-level constant list, and
+that fallback is named here so the lane does not have to invent it under time
+pressure.
+
+#### Row 12's write-side twin, and what it does to the boot seed
+
+The boot intern writes rows into `__str` outside the per-tick door. §16.3's
+running totals only count what the door interned, so the boot statement MUST
+also write the tick-0 `__str_stats` seed row with the literal count and byte
+sum, or `rows` is permanently short by the module's literal count. Measured
+while closing this: seeding `__str` outside the chain and skipping the seed row
+produced `rows = 2` where the dictionary held 3.
+
 ### 5.4 Byte-identity of the sweep, stated as a chain
 
 ```mermaid
@@ -349,6 +454,44 @@ contain non-ASCII bytes" (§4.2 closing paragraph). After interning, a head's
 text columns are INTEGER, the emit-order comparator is integer compare, and that
 whole class of risk is deleted rather than mitigated. Record it in the offload
 contract when task #4 lands.
+
+### 5.6 Mixing encodings across a join is refused by name
+
+Red-team finding 3. `rel a(p: text) direct(p)` joined to interned `b(p: text)`
+lowers to `a."p" = b."p"`, TEXT against INTEGER, silently empty. Rev 1 guarded
+this with a prose do-not in §9.3 and a review comment, which is not a guard.
+
+The compiler already refuses the neighbouring mistake:
+
+```prolog
+% lower.pl:311-315, today
+join_column_types_agree(_, ColumnType, _, ExistingType) :-
+    ColumnType == ExistingType, !.
+join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType) :-
+    throw(unsupported_construct(
+        join_column_type_mismatch(ColumnExpr, ColumnType, Existing, ExistingType))).
+```
+
+Both sides of the bad join carry declared type `text`, so this predicate passes
+them. The fix is to compare the pair (Type, Encoding) rather than Type alone,
+and to name the new failure separately so the diagnosis is not confused with the
+text-vs-integer one it already reports:
+
+```prolog
+% join_column_types_agree(+ColumnExpr, +Type-+Encoding, +Existing, +Type-+Encoding)
+%   Type mismatch          -> join_column_type_mismatch  (unchanged)
+%   Type agrees, Encoding differs -> mixed_encoding_join(ColumnExpr, Existing,
+%                                      LeftEncoding, RightEncoding)
+```
+
+The predicate is already on every join path (`lower.pl:308-315` header cites the
+measured `'1' = 1` case it was built for), so this is one clause and no new
+traversal. Its fixture is §10.3's new `direct_column_joined_to_interned_refuses`.
+
+This refusal is also what makes §3.1's automatic `direct` fallback safe: a
+column that falls back for a computed head stops the compile if anyone joins it
+to an interned column, rather than returning nothing.
+
 
 ---
 
@@ -565,6 +708,8 @@ Decl term `direct(Ref, all | [Column, ...])`. Refusals, by name:
 |---|---|
 | `direct_column_unknown(Ref, Column)` | a named column is not in the rel's column list |
 | `direct_column_not_text(Ref, Column, Type)` | a named column is not `text`; waiving a column that was never interned is a reader trap |
+| `mixed_encoding_join(LeftExpr, RightExpr, LeftEncoding, RightEncoding)` | §5.6. A join equality spans a `direct` column and an interned one. Red-team finding 3: rev 1 left this to a review comment |
+| `reserved_rel_namespace(Name)` | §18. A user rel declared or derived in the compiler-owned `__` namespace |
 
 The printer (`print_dl.pl`) must reproduce exactly the modifier that was
 literally present, per `parse_dl.pl:564-567`'s round-trip law: no synthesized
@@ -582,8 +727,14 @@ landed 2026-07-30): **"interning is a 2.44x win ONLY when names repeat and a
 | the rel is a Log rel with a small `keep(count(N))` window and its rows never join another rel on that column | the column appears in any join equality with another rel's text column (that join needs one id space, §3.3) |
 | the value is written once and read once, never compared | the column is in a PRIMARY KEY of a table with more than a few thousand rows |
 
-Review demands a one-line reason in the `.dl6` beside the modifier. The comment
-budget admits it: this is a constraint the code cannot show.
+Row 2 of the right-hand column is **no longer a review request**. §5.6 refuses a
+join that spans encodings by name (`mixed_encoding_join`), so waiving a column
+that something joins stops the compile rather than returning nothing. Rev 1 had
+this as prose enforced by a comment, which red-team finding 3 correctly called
+not a guard.
+
+Review still asks for a one-line reason in the `.dl6` beside the modifier. The
+comment budget admits it: this is a constraint the code cannot show.
 
 ### 9.4 The waiver .dl snippet, with its rx lowering
 
@@ -622,7 +773,25 @@ const httpLog$ = arrivals$.pipe(
 |---|---|---|---|
 | 1 | tick-log byte-identity | `cd v6/tsv2 && bash scripts/sweep.sh` | 306 swept / 211 compiled / **wrong=0**, both RUN and FINAL, buckets unchanged |
 | 2 | refusal-reason stability | stage 4 of the same script, `MANIFEST_DIFF_STRICT=1` | only additions, and each addition names a program shape absent from the corpus |
-| 3 | **inverted byte-identity probe** | diff `out/*.ts` against base, classify every changed line | lane P1-A-R's probe asserted 0/212 modules moved. Here the DDL genuinely moves, so the probe inverts: every changed line falls into one of four classes (a column type flipped TEXT->INTEGER, a `CREATE TEMP VIEW "__txt_` added, a delta-read FROM swapped, a §5.3 decode subquery added). **A changed line outside those four classes is the finding.** |
+| 3 | **inverted byte-identity probe** | diff `out/*.ts` against base, classify every changed line | lane P1-A-R's probe asserted 0/212 modules moved. This arc moves the DDL for real, so the probe inverts. **A changed line outside the classes below is the finding.** |
+
+The classes, revised for red-team finding 4 (rev 1 listed four and omitted the
+head flip, so the classifier would have called lane I-E's legitimate change a
+finding):
+
+| # | class | which lane owns it |
+|---|---|---|
+| 1 | a column type flipped `TEXT` -> `INTEGER` | I-A |
+| 2 | a `CREATE TEMP VIEW "__txt_..."` line added | I-A |
+| 3 | a delta read's `FROM` swapped to the view | I-A |
+| 4 | a §5.3 rule-one decode subquery added (`SELECT s."content" ...`) | I-C |
+| 5 | a §5.3 rule-two literal subquery added (`SELECT s."__id" ... WHERE s."content" = ...`), or the module's boot intern statement | I-C |
+| 6 | a `WITHOUT ROWID` head became rowid + `UNIQUE` | I-E |
+| 7 | the `__str_stats` contract row's DDL and the door's three statements | I-F, I-G |
+
+Classes 5, 6 and 7 are new in rev 2. Class 6 is the one the red team caught: it
+is scheduled, legitimate, and independent of interning, and a classifier that
+calls it a finding trains people to ignore the classifier.
 
 Receipt 3 is what makes this migration auditable rather than trusted. Write the
 classifier as a script beside `scripts/manifest-reason-diff.ts` so the reviewer
@@ -637,6 +806,12 @@ runs it rather than reads 167 diffs.
 | cross-rel text join | §3.3's decisive argument | two rels joining on a text column, asserting a nonempty result. Under per-shape dictionaries this fixture is silently empty; it is the regression test for the one-global decision |
 | non-ASCII text | offload contract risk row 3 | a text column holding multi-byte values, round-tripped through `__str` and out the view |
 | waiver | §9 | a `direct(col)` rel, asserting the emitted DDL keeps `TEXT` for that column and the IR keeps `encoding: direct` |
+| **text literal comparison** | §5.2 row 11, red-team finding 1 | `backslash_in_string_literal_survives_both_doors` is already in the corpus (`compile/dl_view/`) and is the pinning receipt: its emitted output and tick log must survive the whole arc. It is patient zero because the literal carries a backslash, so any re-quoting on the way through `__str` shows up immediately |
+| **text literal projection** | §5.2 row 12 | a rule head writing a text constant into an interned column, asserting the row is findable afterwards. 26 corpus modules already do this; the fixture makes it a named check rather than a side effect |
+| **computed text head** | §5.2 row 13 | a head projecting a concatenation into a text column, asserting the column's IR encoding is `direct` and the recorded reason is `computed_text_head` |
+| **mixed-encoding join** | §5.6, red-team finding 3 | `direct_column_joined_to_interned_refuses`: a `direct` text column joined to an interned one, asserting the named refusal. Fail-first: RED before the checker clause lands |
+| **reserved namespace** | §18, red-team finding 7 | one program declaring a rel in the `__` namespace and one deriving into `__str_stats`, both asserting `reserved_rel_namespace`; plus a program READING `__rel` that still compiles |
+| **boot seed row** | §16.4 | a module carrying text literals, asserting `__str_stats.rows` at tick 0 equals the dictionary's row count |
 
 ---
 
@@ -702,7 +877,9 @@ subagents.
 | G3 | `grid_10000`, `chain_10000`, `layered_10000` fixpoint | **no regression, <= +2%** | these cases carry INTEGER node ids already (`.in` format), so interning is a no-op by construction and any movement is overhead |
 | G4 | incremental ticks, grid 45x45, head 1,069,200 rows | insert 42 ms, delete 56 ms, structural delete 82 ms, empty drain 1 ms, **all held** | `FACTS.dredland.md` §1; a per-tick dictionary reload would show here first |
 | G5 | sweep | 306 / 211 / **wrong=0**, buckets unchanged | §10.2 receipt 1 |
-| G6 | inverted byte-identity probe | every changed emitted line in one of the four classes | §10.2 receipt 3 |
+| G6 | inverted byte-identity probe | every changed emitted line in one of the SEVEN classes | §10.2 receipt 3 |
+| G9 | **the gun, A/B at one commit** | `intern(dict)` vs `intern(direct)` at HEAD differ only in classes 1-5 and 7 | §15.4 |
+| G10 | **encoding refusals fire** | `mixed_encoding_join` and `reserved_rel_namespace` each carry a fail-first fixture that is RED before the checker clause lands | §5.6, §18 |
 | G7 | plunit / conformance / ARCH / `just green-all` / typecheck | green | standing battery |
 | G8 | the 10-second law | every gate above under 10s except SCIP | standing law |
 
@@ -818,18 +995,36 @@ in the artifact cannot be audited later.
 
 ### 15.4 The gate that proves the gun works
 
-This is the strongest form a revert switch can take, and it is cheap:
+Rev 1 pinned this to a historical reference: `intern(direct)` output must equal
+base `f650f2b7`. Red-team finding 4 killed that. §7 flips recursive-head DDL
+from `WITHOUT ROWID` to rowid+unique **independently of the intern mode**, so
+the moment lane I-E lands, `intern(direct)` legitimately stops reproducing base
+bytes at every recursive head, and the gate false-fails forever after. A gate
+that goes red for a correct change is worse than no gate, because it teaches
+people to skip it.
 
-> Compiling the 306-fixture corpus with `intern(direct)` must produce emitted
-> modules **byte-identical to base `f650f2b7`'s `out/*.ts`**.
+**The fix is to compare two compiles of the SAME commit rather than one compile
+against history.**
 
-Byte-identical to the commit before task #4, which is stronger than "equivalent"
-and stronger than "passes the sweep". It runs in the sweep's compile stage, which is 3.7s for the whole
-corpus, so the gun is checkable on every commit rather than on demand.
+> Compile the corpus twice at HEAD, once at `intern(dict)` and once at
+> `intern(direct)`. Every line that differs between the two outputs must fall
+> into one of §10.2's intern classes. Nothing else may differ.
 
-That gate also makes §10.2's receipt 3 (the inverted byte-identity probe)
-redundant in one direction: whatever the interned mode changed, the direct mode
-changes back exactly.
+This never goes stale. Whatever else the compiler grows appears identically in
+both outputs and cancels: the head flip, the aggregate work, phase 5, all of it
+is invisible to this gate by construction. And the gate still proves exactly the
+property the gun needs: **the direct mode differs from the dict mode only in the
+interning.**
+
+Cost: two compile passes at 3.7s each, ~7.4s for the pair. Inside the
+10-second law, checkable on every commit.
+
+**The historical check survives as a one-time landing receipt for lane I-A
+only**, run once, at the commit where interning first lands and before I-E
+exists: `intern(direct)` at that commit equals base `f650f2b7` byte for byte.
+That single run anchors the A/B gate's reference to real pre-task-#4 output
+rather than to whatever the dict mode happens to do. Record the passing sha in
+this section when it runs, then stop running it.
 
 ### 15.5 The artifact says which mode built it
 
@@ -864,18 +1059,42 @@ the code on disk. Fixture programs re-run `<name>.schedule.json`. Serve
 databases replay their arrival trail. Nothing bespoke, and the result is the
 authoritative state rather than a translated one.
 
-**Route B, the one-statement dump, available only while the old schema is still
-mounted.** The decoder view is exactly the pre-intern row shape, so an
-un-intern is one statement per relation:
+**Route B, the data dump. One statement per relation to GET THE ROWS OUT, and
+that is all it is.** The decoder view is exactly the pre-intern row shape, so
+the extraction is one statement:
 
 ```sql
-CREATE TABLE "rel_x__plain" AS SELECT * FROM "__txt_rel_x";
+-- DATA DUMP ONLY. Run while the interned module is still mounted and its
+-- TEMP views still exist.
+CREATE TABLE "rel_x__dump" AS SELECT * FROM "__txt_rel_x";
 ```
 
-Run this **before** swapping to the reverted module, while the views still
-exist. This is the second payoff of §4's "the view ships with the table": the
-escape hatch is one statement per relation because the decoder was never
-optional.
+Red-team finding 5, corrected: rev 1 called this "an un-intern is one statement
+per relation", which oversold it. **`CREATE TABLE ... AS SELECT` produces a
+plain rowid table with no PRIMARY KEY, no UNIQUE, no `WITHOUT ROWID`, and no
+declared column types.** It is not the shape the reverted module reads, and it
+carries a different name, so nothing reconnects on its own.
+
+The real remount, in order:
+
+| # | step | why it cannot be skipped |
+|---|---|---|
+| 1 | `CREATE TABLE "rel_x__dump" AS SELECT * FROM "__txt_rel_x"`, per interned rel, on the still-mounted interned database | the TEMP views exist only on a booted module's connection; after the swap there is nothing left to decode with |
+| 2 | boot the `intern(direct)` module against a **fresh** database | its own DDL creates the typed, keyed, `WITHOUT ROWID` tables. Hand-writing that DDL is the mistake this step exists to avoid |
+| 3 | `ATTACH` the dump database | one connection, two schemas |
+| 4 | `INSERT INTO "rel_x" (<cols>) SELECT <cols> FROM dump."rel_x__dump"`, per rel, columns named explicitly | `SELECT *` would depend on column order surviving two DDL generations |
+| 5 | `DETACH`, drop the dump | otherwise the dump file survives as a second copy of everything |
+
+Five steps and a boot. The one-statement claim holds for step 1 alone.
+
+**Route A stays preferred** for exactly this reason: it produces the
+authoritative state rather than a translation, and it skips steps 3-5. Route B
+earns its place when the source is gone or expensive to replay.
+
+The payoff of §4's "the view ships with the table" is real and smaller than rev
+1 claimed: it makes step 1 one statement instead of a hand-written join per
+relation. Steps 2-5 cost the same either way.
+
 
 ### 15.7 What the gun cannot do
 
@@ -928,56 +1147,105 @@ rel __str_stats(tick: int, rows: int, content_bytes: int,
 | column | meaning | source | cost |
 |---|---|---|---|
 | `tick` | the join key to everything else | `(SELECT "n" FROM "__tick")`, the counter the emitter already advances at the head of every tick (`lower.pl:620-633`, `emit_ts.pl:2255-2266`) | free, the read is already in the emitter's vocabulary |
-| `interned` | words added THIS tick | the intern statement's `RETURNING` row count, which is the `INSERT OR IGNORE`'s `rowsAffected` | free; `ISqlRunner.batch` already returns one `QueryResult` per statement with `rowsAffected` |
-| `looked_up` | distinct values presented this tick | the door's own batch size, already in memory | free |
-| `rows` | dictionary row count, running | previous row's `rows` + this tick's `interned` | one backward step on `__str_stats`'s rowid index |
-| `content_bytes` | logical bytes of stored text, running | previous row's `content_bytes` + `sum(length)` over the `RETURNING` rows | one backward step, plus a JS sum over the NEW words only |
+| `interned` | words added THIS tick | a `NOT EXISTS` probe against `__str` **before** the intern runs, inside the same statement (§16.3) | one UNIQUE-index SEARCH per distinct arriving value |
+| `looked_up` | distinct values presented this tick | `count(*)` over the same de-duplicated batch CTE | free, the CTE is already built |
+| `rows` | dictionary row count, running | previous row's `rows` + this tick's `interned`, computed in SQL | one `Last`+`Prev` step on `__str_stats`'s rowid |
+| `content_bytes` | logical bytes of stored text, running | previous row's `content_bytes` + `sum(length)` over the same probe, computed in SQL | same step, no separate pass |
+
+**Every number is computed in SQL. No value crosses into JavaScript and back.**
+That is what makes §16.3 one transaction, and it is the fix for red-team
+findings 2 and 6 at once.
+
+> **TRAP, measured, do not reintroduce.** Rev 1 sourced `interned` from the
+> intern statement's `rowsAffected` under `INSERT OR IGNORE ... RETURNING`. The
+> red team probed it on @libsql 0.17.4: **with `RETURNING` present the driver
+> reports `rowsAffected = 0` even for rows actually inserted**; the inserted
+> rows appear only in `.rows`. Sourcing `interned` from `rowsAffected` there
+> yields 0 every tick, `rows` never grows, and §16.5's two rules both compute
+> against a dictionary that appears never to learn. Lane I-G must not use
+> `rowsAffected` on any statement carrying `RETURNING`.
 
 **The hit ratio is not stored.** It is `(looked_up - interned) / looked_up` and
 it is derived in-language (§16.5), which is the point: the engine answers
 questions about itself with its own rules.
 
-### 16.3 The statement, and why it does not scan
+### 16.3 The three statements, one transaction, verified
 
-The naive spelling is `SELECT count(*), sum(length(content)) FROM "__str"` once
-per tick. That is a **full scan of the dictionary on every tick**, which at a
-million strings is a per-tick beachball and breaks both the 10-second law and
-the nothing-seizes-the-machine law. It is refused here by name so nobody
-rediscovers it.
+Rev 1 put the stats INSERT after the intern and folded the byte sum in
+JavaScript. Red-team finding 6 is that this forces two transactions: the fold
+needs the intern's result, so the stats INSERT cannot share the intern's batch,
+and a kill between them leaves the running totals permanently short with no
+recovery step. Finding 2 is that its `interned` source read 0 anyway.
 
-The running-total spelling, one statement, appended to the door's existing
-batch:
+Both die to the same restructure: **put the stats statement FIRST and compute
+every number in SQL.** The probe runs against `__str` before the intern does, so
+`NOT EXISTS` sees the pre-intern dictionary, and all three statements go into one
+`ISqlRunner.batch`, which is one transaction.
+
+**Refused by name, so nobody rediscovers it:** `SELECT count(*),
+sum(length(content)) FROM "__str"` once per tick is a full scan of the
+dictionary on every tick, a per-tick beachball at a million words, and a breach
+of both the 10-second law and the nothing-seizes-the-machine law.
+
+**The batch, in order.** `?1` is the same JSON array of the tick's text values in
+all three.
 
 ```sql
+-- 1. stats. Reads __str BEFORE the intern; that ordering is the whole design.
+WITH "__batch"("value") AS MATERIALIZED (
+       SELECT DISTINCT i.value FROM json_each(?1) i),
+     "__new"("value") AS MATERIALIZED (
+       SELECT b."value" FROM "__batch" b
+       WHERE NOT EXISTS (SELECT 1 FROM "__str" s WHERE s."content" = b."value"))
 INSERT INTO "__str_stats" ("tick","rows","content_bytes","interned","looked_up")
 SELECT (SELECT "n" FROM "__tick"),
-       coalesce((SELECT s."rows"          FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0) + ?,
-       coalesce((SELECT s."content_bytes" FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0) + ?,
-       ?, ?;
+       coalesce((SELECT s."rows"          FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0)
+         + (SELECT count(*) FROM "__new"),
+       coalesce((SELECT s."content_bytes" FROM "__str_stats" s ORDER BY s.rowid DESC LIMIT 1), 0)
+         + (SELECT coalesce(sum(length("value")),0) FROM "__new"),
+       (SELECT count(*) FROM "__new"),
+       (SELECT count(*) FROM "__batch");
+
+-- 2. intern
+INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?1) i;
+
+-- 3. lookup
+SELECT DISTINCT s."content" AS "__lookup", s."__id"
+FROM json_each(?1) i JOIN "__str" s ON s."content" = i.value;
 ```
 
-Both correlated subqueries are `ORDER BY rowid DESC LIMIT 1`: one backward step
-on the rowid index, O(1) in the log's length, and `keep(count(4096))` bounds
-that length anyway. Zero scans of `__str`.
+`SELECT DISTINCT` in `__batch` rather than trusting the door to de-duplicate:
+without it, a batch carrying the same word twice counts it twice in `NOT EXISTS`
+while `INSERT OR IGNORE` inserts it once, and the two numbers drift.
 
-The intern statement grows a `RETURNING` clause and nothing else:
+**Verified, not proposed.** Run on both builds this repo uses, seeding `__str`
+with `alpha` and presenting `["alpha","beta","gamma","beta"]`:
 
-```sql
-INSERT OR IGNORE INTO "__str" ("content")
-SELECT i.value FROM json_each(?) i
-RETURNING length("content");
-```
+| build | result |
+|---|---|
+| CLI sqlite3 3.43.2 | `tick=7, rows=2, content_bytes=9, interned=2, looked_up=3`; `__str` = alpha, beta, gamma |
+| @libsql 0.17.4 (SQLite 3.45.1), all three in ONE `batch(..., "write")` | identical row; batch accepted `WITH ... AS MATERIALIZED ... INSERT INTO ... SELECT` |
 
-`OR IGNORE` + `RETURNING` yields exactly the rows that were actually inserted,
-so `interned` is the row count and the new-bytes sum is a fold over that same
-result. No second statement, no scan.
+`content_bytes = 9` is `length("beta") + length("gamma")`, the new words only.
+`interned = 2` despite `beta` arriving twice.
+
+**EXPLAIN receipts, read rather than assumed.**
+
+| claim | what EXPLAIN shows |
+|---|---|
+| the `NOT EXISTS` probe never scans `__str` | `SEARCH s USING COVERING INDEX sqlite_autoindex___str_1 (content=?)` |
+| the previous-row read is O(1) | `EXPLAIN QUERY PLAN` prints a bare `SCAN s`, which **misreads**. The VDBE for `ORDER BY rowid DESC LIMIT 1` is `Last` then `Prev`, one row. Timed at 1.29 us over 1,000 rows and 1.00 us over 400,000 rows: constant |
+
+That second row is a trap for I-G-R specifically. Its brief is "does anything
+scan", and the query planner will answer `SCAN` to a reader who stops there. The
+VDBE and the timing are the real answer, and both are cheap to re-run.
 
 ### 16.4 The statement budget, on and off
 
 | state | statements per tick at the door | how it is reached |
 |---|---|---|
 | program never mentions `__str_stats` | **2** (§6.2 unchanged) | `program_uses_*` gating: no `col_type` decls, no table, no INSERT, no `__tick` |
-| program mentions `__str_stats` | **3** at the door, plus **1** for `UPDATE "__tick"` if the program did not already read `now/1` | the contract row materializes |
+| program mentions `__str_stats` | **3**, all in one batch, plus **1** for `UPDATE "__tick"` if the program did not already read `now/1` | the contract row materializes |
 | empty arrival batch | **0** | the door already returns early on an empty batch; a quiet tick writes no stats row |
 | database cold, no arrivals ever | **0** | same |
 
@@ -986,9 +1254,22 @@ declaring `__str_stats` turns on the tick counter for programs that did not
 already read `now/1`, which is one `UPDATE` per tick
 (`emit_ts.pl:2260-2264`, "One statement per tick, flat").
 
-**A missing `__str_stats` row for tick N means the door did not run at tick N.**
-That is unambiguous rather than a gap, because the tick log records that tick N
-happened. The absence is itself the signal, and §16.6 is the reading.
+**Reading a missing row, corrected.** Rev 1 said a missing `__str_stats` row for
+tick N means the door did not run. Red-team finding 6 showed that was false
+under a kill: the door could have run, interned words, and died before the stats
+row committed. §16.3's single transaction is what makes the original reading
+true again, and it is true for a mechanical reason rather than by convention:
+
+> The stats row and the words it counts commit together or not at all. A missing
+> row for tick N therefore means the door did not run at tick N, which the tick
+> log confirms independently.
+
+**The one gap that remains, stated rather than papered over.** The boot literal
+intern (§5.3 rule two) writes into `__str` outside the door's batch. It must
+write the tick-0 seed row in the same boot sequence, or `rows` starts short by
+the module's literal count forever. That is a required step, not an
+optimization, and its receipt is a fixture that boots a module with literals and
+asserts `__str_stats.rows` equals `SELECT count(*) FROM "__str"` at tick 0.
 
 ### 16.5 Dogfooding: the questions are .dl programs
 
@@ -1127,3 +1408,119 @@ flowchart TD
 | dbstat gives per-object bytes, is guarded, and is one statement not N | `v6/tsv2/runtime/serveStats.ts:20-33`, `:58-80` |
 | the tick log envelope carries the tick number | `v6/tsv2/runtime/ticklog.ts:90-105` |
 | corpus recompile wall | sweep stage 1, 3.7s / 306 fixtures, `.agent/salvage-20260807/p1ar/REPORT-P1AR.md:17-19` |
+
+
+---
+
+# Rev 2 2026-08-08 (red team)
+
+## 18. The `__` namespace is refused, not requested
+
+Red-team finding 7. Rev 1 called `__txt_<table>` and `__str_stats` reserved and
+cited the company they keep (`__ref_`, `__new_`, `__delta_`, `__frontier_`,
+`__ping_`, `__pong_`, `__cone_`). Citing company is not a check. The lexer
+accepts leading-underscore identifiers (`parse_dl.pl:414-423`) and the parser's
+only name refusal is `tagged_brace_reserved` (`:1656`), so a user rel named
+`__txt_flow_reach` reaches the emitter and collides with the TEMP view of that
+table (SQLite gives one namespace to tables and views), and a user rel named
+`__str_stats` collides with the catalog contract row that §16.1 injects the
+moment the program mentions the name.
+
+### 18.1 The rule
+
+| position | `__`-prefixed name | verdict |
+|---|---|---|
+| a `rel` declaration | any | **refused**: `reserved_rel_namespace(Name)` |
+| a rule HEAD | any | **refused**: same |
+| a rule BODY | a registered compiler-owned contract name (`__rel`, `__str_stats`) | **allowed**. This is how the catalog is read today, and how §16.5's telemetry rules are written |
+| a rule BODY | anything else `__`-prefixed | **refused**: same |
+
+Reading is allowed and writing is not, which is exactly the split the compiler
+already enforces for the catalog by another means: `compile.pl:178-183`
+subtracts the catalog ref from `ArrivalTargets` so the serve door cannot write
+it. §18 generalizes that from one hardcoded name to the namespace, and turns a
+subtraction into a named refusal, so the reason reaches the author.
+
+### 18.2 Signature
+
+```prolog
+% reserved_namespace_violation(+Decls, +Rules, -Name)
+%   Pseudo-code:
+%     a Name appearing in a decl or a rule head,
+%     sub_atom(Name, 0, 2, _, '__'),
+%     \+ compiler_owned_contract(Name).
+%
+% compiler_owned_contract(+Name): the registry of names §16.1's mechanism owns.
+%   One clause per catalog_ddl_contract/2 row, derived from it rather than
+%   listed twice, so adding a contract row cannot forget to reserve its name.
+compiler_owned_contract(Name) :- catalog_ddl_contract(Name, _).
+```
+
+Deriving the reserved list FROM `catalog_ddl_contract/2` is the point. A future
+contract row gets its reservation for free, and the two lists cannot drift.
+
+### 18.3 Where it runs
+
+`check_supported_subset_expanded/1` (`compile.pl:157`), beside the other
+program-level refusals, so a violating program lands in the sweep's
+`unsupported` bucket with a named reason like every other refusal rather than
+crashing in the emitter. Its fixtures are in §10.3.
+
+---
+
+## 19. Changelog: the seven findings and where each closed
+
+| # | finding | severity | closed in | what changed |
+|---|---|---|---|---|
+| 1 | text-literal equality is a sixth decode site, absent from the enumeration | silent wrong answer, gate-breaking | §5.2 rows 11-14, §5.3 rule two | literals are interned at boot and every use (read AND write) lowers to an id subquery. **Closing it surfaced two more rows the red team did not name**: literal PROJECTION into a head (26 modules) and computed-text projection, which forces §3.1's automatic `direct` fallback |
+| 2 | `rowsAffected` is 0 under `INSERT OR IGNORE ... RETURNING` | silent wrong answer | §16.2, §16.3 | `RETURNING` is gone from the design. Every number is computed in SQL. The trap is recorded as a blockquote so I-G cannot reintroduce it |
+| 3 | `direct(col)` joined to an interned column is silently empty | silent wrong answer | §5.6, §9.2, §9.3, §10.3 | `mixed_encoding_join`, one clause on `join_column_types_agree/4`, which is already on every join path. It also makes §3.1's auto-fallback safe |
+| 4 | the gun's byte gate and the head flip contaminate each other | ops | §15.4, §10.2 receipt 3 | the gate becomes an A/B of two compiles at ONE commit, which cannot go stale. The historical check survives as a one-time I-A landing receipt. The classifier grows classes 5, 6 and 7 |
+| 5 | Route B's CTAS loses PK/UNIQUE/WITHOUT ROWID | ops | §15.6 | CTAS is relabelled a data dump; the real five-step remount is spelled out; Route A's preference is restated with the reason |
+| 6 | intern and stats commit separately, so a kill under-counts forever | silent wrong answer + ops | §16.3, §16.4 | stats runs FIRST, probes `__str` before the intern, and all three statements share one `batch` transaction. §16.4's "a missing row means the door did not run" becomes true for a mechanical reason. The boot-seed gap is named as a required step |
+| 7 | the `__` namespace is asserted, not enforced | ops | §18, §9.2, §10.3 | `reserved_rel_namespace`, derived from `catalog_ddl_contract/2` so the lists cannot drift |
+
+### The five held attacks, and where the contract now cites them
+
+The red team failed to break five properties. Each was a claim rev 1 made
+without a receipt; each now carries one.
+
+| held attack | the property | cited at |
+|---|---|---|
+| `INSERT OR IGNORE ... RETURNING` row set | returns exactly the inserted rows, de-duplicated within one statement, empty when all-ignored and when input is empty, on both builds | recorded in §16.3's history: it is why the RETURNING design was plausible, and it is the fallback if the `NOT EXISTS` probe ever costs too much |
+| `keep(count(N))` vs the running totals | the newest cumulative row is never the one retention trims, so the chain never reads a stale value | §16.3, the `Last`/`Prev` receipt |
+| NULL and empty-string keys | stored text is `TEXT NOT NULL` (`lower.pl:976`), `__str.content` is `TEXT NOT NULL UNIQUE`, NULL is refused at the door, `''` interns once and adds 0 bytes | §6.3, unchanged, now with the probe behind it |
+| `dbstat` availability | present and functional on CLI 3.43.2 and @libsql 3.45.1 alike | §16.6's physical-bytes row |
+| the ordering refusal is total | `<`/`=<`/`>`/`>=` are `both_number`, `min`/`max` filter through `compile_aggregate_number_operand/5`; no reachable text ordering exists | §5.1, and §5.2's split into two families is the correction the same attack forced |
+
+### Rev 2 lane changes
+
+| lane | change |
+|---|---|
+| **I-A** | unchanged in scope; §15.4's gate is now the A/B, and the historical check is a one-time landing receipt it must record |
+| **I-A-R** | run the A/B, not the historical diff; confirm classes 1-3 only from this lane |
+| **I-C** | **grows the literal work**: §5.3 rule two, the boot intern statement, all six `where_text/2` call sites plus `head_select_list/4`, and the `EXPLAIN QUERY PLAN` receipt for the literal subquery. This is the largest rev-2 scope increase and I-C stays **opus** |
+| **I-C-R** | grade rows 11-14 as well; specifically, confirm the boot seed row exists, because a missing seed is invisible until the counts are read months later |
+| **I-D** | carries the encoding REASON into the IR (§3.1), and adds `eq_lit`-against-an-interned-column to `dred_plan_admissible/1`'s fence. Phase 1 refuses the offload for those heads rather than resolving literal ids at handoff; lifting it is a later phase |
+| **new: I-J** | the two refusals, `mixed_encoding_join` (§5.6) and `reserved_rel_namespace` (§18), plus their fail-first fixtures. Owns `v6/prolog/lower.pl:308-315` and `v6/prolog/compile.pl`'s check list. **flash4**: both are one clause with a named throw and a fixture. Review **I-J-R flash4**: is each fixture RED before the clause |
+| **I-G** | statements per §16.3's verified SQL; the COUNT rail asserts 2 off / 3 on / 0 empty, and one assertion that no statement in the door carries `RETURNING` |
+| **I-G-R** | unchanged brief, plus: `EXPLAIN QUERY PLAN` says `SCAN s` for the previous-row read and that reading is WRONG. Check the VDBE (`Last`, `Prev`) and the timing at two table sizes |
+
+### Rev 2 receipts
+
+| claim | receipt |
+|---|---|
+| `where_text(lit(Left, Value))` emits a bare quoted literal | `v6/prolog/lower.pl:340`, call sites `:347`, `:402`, `:1900`, `:2200`, `:2399`, `:3905` |
+| the IR twin is `eq_lit` | `v6/prolog/lower.pl:3171` |
+| `pair_lit` is safe because it reads a json column | `v6/prolog/lower.pl:337-339` |
+| 12 modules / 114 occurrences carry a `<col> = 'literal'` comparison | regex over `v6/prolog/compile/out/*.ts` at base |
+| **26 modules project a text literal into a head column** | regex over the same corpus, `INSERT ... SELECT` projection lists |
+| `join_column_types_agree/4` compares declared type only | `v6/prolog/lower.pl:311-315` |
+| the parser's only name refusal is `tagged_brace_reserved` | `v6/prolog/compile/parse_dl.pl:1656`; identifiers admit a leading underscore at `:414-423` |
+| the catalog is subtracted from arrival targets by name | `v6/prolog/compile.pl:178-183` |
+| §16.3's three statements run in one `batch` on @libsql 0.17.4 and produce `rows=2, content_bytes=9, interned=2, looked_up=3` | probe run against `@libsql/client` in `v6/tsv2`, seeded `alpha`, input `["alpha","beta","gamma","beta"]` |
+| the same statements on CLI sqlite3 3.43.2 produce the identical row | same input, `sqlite3 :memory:` |
+| the `NOT EXISTS` probe is an index SEARCH | `EXPLAIN QUERY PLAN`: `SEARCH s USING COVERING INDEX sqlite_autoindex___str_1 (content=?)` |
+| the previous-row read is O(1) despite EXPLAIN printing `SCAN` | VDBE `Last` + `Prev`; timed 1.29 us at 1,000 rows and 1.00 us at 400,000 rows |
+| `rowsAffected` reads 0 under `RETURNING` on @libsql 0.17.4 | `plans/2026-08-08-interning-contract.redteam.md` finding 2 transcript |
+| the red-team report itself | `plans/2026-08-08-interning-contract.redteam.md`, head `e8bb9911` |
