@@ -10,6 +10,14 @@ edition = "2021"
 description = "v6 extraction leaf: a corpus at a version -> normalized graph facts. Sync, rayon-parallel, arena-mastered. No DB, no async."
 license = "MIT OR Apache-2.0"
 publish = false
+repository = "https://github.com/hafley66/sprefa"
+homepage = "https://github.com/hafley66/sprefa"
+
+# publish=false keeps crates.io out; dist=true opts into cargo-dist releases
+# (tag sprefa-extract-vX.Y.Z), same shell-installer flow as sprefa-dl.
+[package.metadata.dist]
+dist = true
+features = ["cli"]
 
 [dependencies]
 # ast-grep-language ships the tree-sitter grammars for rust/ts/tsx/js/go in ONE
@@ -100,3 +108,8 @@ cli = ["dep:clap"]
 name = "extract"
 path = "src/bin/extract.rs"
 required-features = ["cli"]
+
+# cargo-dist builds with this profile; mirrors the root workspace's.
+[profile.dist]
+inherits = "release"
+lto = "thin"

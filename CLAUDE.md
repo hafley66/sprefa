@@ -96,6 +96,13 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   SEARCH-not-SCAN, never end-state equality alone. Additive only.
 - dl variable names are descriptive, never single-letter, in every snippet.
 - N+1: never a per-row write; collect the set, one `Db::insert_rows`.
+- **Surrogate keys law (user-set 2026-08-07, second interning incident)**:
+  stored rels key on INTEGER ids; natural/composite TEXT keys live ONCE in a
+  dictionary table (UNIQUE on the natural key); a composite TEXT PRIMARY KEY
+  in emitted or hand DDL is a DEFECT. Measured: TEXT keys 1.7-2.0x slower on
+  identical tables, every index copies the full key. Repo skills
+  `.claude/skills/sql-relational-design` + `.claude/skills/sqlite-costs` are
+  mandatory reads before any schema/DDL/lowering design, every agent.
 - Banned words, prose AND identifiers: provenance, substrate, load-bearing,
   regime (use source/base/critical/mode).
 - **Every new class declares its interface in the package's header types.ts**

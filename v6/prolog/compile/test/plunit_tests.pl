@@ -4470,10 +4470,44 @@ test(level_body_ref_frontier) :-
           (reachable(X, Y) <- reachable(X, M), edge(M, Y)) ],
     rel_rule_observers(Rules, edge/2, HeadRefs),
     HeadRefs = [reachable/2].
-test(level_body_ref_self_observation) :-
+
+% A recursive head's read of ITSELF, both sides of the one condition that
+% decides whether that read is real.
+%
+% This pinned `HeadRefs = [reachable/2]` until 2026-08-07, and the old
+% expectation was wrong about WHICH statement does the reading. `insertSql` is
+% the only statement of a level head that names __frontier_, and it has exactly
+% two callers: applyLevelsBeforeEdges, which routes a recursive refCount head
+% to reconcileRefCountStatement instead (1_incremental.ts `closesInOnePass`,
+% whose seeds read base tables only), and applyLevelsAfterEdges, which
+% emit_ts.pl:2133 emits ONLY for a program that has edge rules. A program with
+% no edge rule never executes `insertSql`, so the self-read observes nothing.
+% MEASURED on the exec_shootout grid_10000 bench: dropping the self observer
+% skips one `BATCH x2: INSERT __delta_reachable | INSERT __frontier_reachable`
+% staging 1,069,200 rows, moving fixpoint 2214ms -> 1409ms at an identical head
+% checksum (9d7239568960d6a8).
+test(level_body_ref_self_read_is_dead_without_edge_rules) :-
     Rules =
         [ (reachable(X, Y) <- edge(X, Y)),
           (reachable(X, Y) <- reachable(X, M), edge(M, Y)) ],
+    rel_rule_observers(Rules, reachable/2, HeadRefs),
+    HeadRefs = [].
+% One edge rule anywhere in the module puts applyLevelsAfterEdges back, so
+% `insertSql` runs and the SAME self-read is a real read again.
+test(level_body_ref_self_read_survives_an_edge_rule) :-
+    Rules =
+        [ (reachable(X, Y) <- edge(X, Y)),
+          (reachable(X, Y) <- reachable(X, M), edge(M, Y)),
+          (seen(X, Y) <+ edge(X, Y)) ],
+    rel_rule_observers(Rules, reachable/2, HeadRefs),
+    HeadRefs = [reachable/2].
+% An aggregate rule on the head means no refCount tuple, so closesInOnePass
+% fails and `insertSql` is the statement that runs.
+test(level_body_ref_self_read_survives_an_aggregate_rule) :-
+    Rules =
+        [ (reachable(X, Y) <- edge(X, Y)),
+          (reachable(X, Y) <- reachable(X, M), edge(M, Y)),
+          (reachable(0, count(Node)) <- source(Node)) ],
     rel_rule_observers(Rules, reachable/2, HeadRefs),
     HeadRefs = [reachable/2].
 

@@ -3,7 +3,8 @@ target/
 *.db
 *.db-wal
 *.db-shm
-.claude/
+.claude/*
+!.claude/skills/
 
 .DS_Store
 .ext-survey
@@ -82,3 +83,6 @@ v6/labs/exec_shootout/dl6/.bench/
 v6/labs/exec_shootout/dl6/.compiled/
 v6/labs/exec_shootout/dl6/FACTS.json
 v6/labs/exec_shootout/dl6/FACTS.baseline.json
+dist-local/
+!.claude/skills/
+!.claude/skills/**

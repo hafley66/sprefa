@@ -1,0 +1,28 @@
+[package]
+name = "intern-bench"
+version = "0.1.0"
+edition = "2021"
+description = "exec_shootout P0-A: TEXT-keyed edge generator, string interning bench, and a SQLite TEXT-vs-INTEGER insert race."
+
+[[bin]]
+name = "gen_text"
+path = "src/bin/gen_text.rs"
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+
+[[bin]]
+name = "sqlite_keys"
+path = "src/bin/sqlite_keys.rs"
+
+[dependencies]
+exec-shootout-harness = { path = "../harness" }
+rustc-hash = "2"
+libc = "0.2"
+smallvec = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Standalone crate: its own empty [workspace] table decouples it from the
+# repo-root v5 workspace so cargo runs here stay isolated.
+[workspace]
