@@ -236,3 +236,32 @@ fixture(host_free_query_leaves_a_derived_rel_unsubscribed,
     final(watched/1, [ watched(alpha), watched(beta) ]),
     final(audited/1, [ audited(3), audited(7) ]),
     final(audit_trail/1, [ audit_trail(3), audit_trail(7) ]) ]).
+
+% ITEM 8 FAIL-FIRST RECEIPT: the compiler-owned `__` namespace.
+%
+% RED, before compile.pl:check_reserved_namespace/1 (measured on this fixture
+% pair at 67a6af43): both compiled clean into bucket `compiled`, and
+% `__txt_reach` reached the emitter as an ordinary rel table, colliding with
+% the decode view lower.pl:text_view_ddl/6 emits for `reach` (SQLite gives
+% tables and views one namespace).
+%
+% GREEN, after the check: both land in bucket `unsupported` with reason
+% reserved_rel_namespace(<name>). The allowed READ of `__rel` has no fixture
+% here on purpose: the catalog table is seeded by DDL and the oracle holds no
+% `__rel` at all, so any such fixture is FINAL_WRONG by construction. Its
+% receipt is plunit catalog_g1:catalog_read_narrows_to_the_named_columns.
+
+fixture(reserved_namespace_declared_rel,
+  prog([ kind('__txt_reach'/2, log), keep('__txt_reach'/2, all) ],
+       [ ('__txt_reach'(From, To) <- edge(From, To)) ]),
+  [],
+  [ [ +edge(a, b) ] ],
+  []).
+
+fixture(reserved_namespace_derived_head,
+  prog([],
+       [ ('__str_stats'(Tick, Rows) <- tick_row(Tick, Rows)) ]),
+  [],
+  [ [ +tick_row(1, 2) ] ],
+  []).
+

@@ -15,7 +15,8 @@
 :- use_module(library(apply)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
-                compile_dl6/2, default_intern_mode/1 ]).
+                compile_dl6/2, default_intern_mode/1,
+                compiler_owned_contract/1 ]).
 :- use_module('../../0_refusal_messages',
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
@@ -23,6 +24,7 @@
               [ lower_program/2, compile_expr/4, compile_comparison/3,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4,
+                catalog_ddl_contract/2,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
@@ -4859,6 +4861,40 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     DictIr)),
     DictIr == none.
+
+% ── the compiler-owned `__` namespace (contract §18) ────────────────────────
+
+plan_verdict(Prog, Verdict) :-
+    (   catch(program_plan(fixture(probe, Prog, [], [], [])-[], _Plan),
+              Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+
+test(reserved_namespace_refuses_a_declared_rel) :-
+    plan_verdict(prog([kind('__txt_reach'/2, log)], []), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__txt_reach')).
+
+test(reserved_namespace_refuses_a_derived_head) :-
+    plan_verdict(prog([], [ ('__str_stats'(Tick) <- tick_row(Tick)) ]), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__str_stats')).
+
+test(reserved_namespace_refuses_an_unowned_body_read) :-
+    plan_verdict(prog([], [ (seen(Node) <- '__cone_walk'(Node)) ]), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__cone_walk')).
+
+% Reading a contract rel is allowed; writing one is not.
+test(reserved_namespace_admits_a_catalog_read) :-
+    plan_verdict(prog([], [ (source_row(A, B) <- '__rel'(A, B)) ]), Verdict),
+    Verdict == accepted.
+
+% The reservation list is DERIVED from the catalog contract, so a future
+% contract row cannot forget to reserve its own name.
+test(reserved_names_are_the_catalog_contract_names) :-
+    findall(Name, compiler_owned_contract(Name), Owned),
+    findall(Name, catalog_ddl_contract(Name, _), Contract),
+    msort(Owned, Sorted),
+    msort(Contract, Sorted).
 
 test(mode_travels_in_the_plan) :-
     once(( fixture_file(File),

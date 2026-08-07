@@ -21,7 +21,8 @@
             write_compile_trace/2,
             throw_text_door_error/2,
             program_plan/2,
-            program_plan/3
+            program_plan/3,
+            compiler_owned_contract/1
           ]).
 
 :- use_module(library(lists)).
@@ -159,6 +160,9 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
              Options, Plan) :-
     % The body-use table is keyed on body terms, so it belongs to ONE program.
     reset_body_use_cache,
+    % On the AUTHOR's text, before any expansion: `__host_demand_*` and the
+    % catalog's own col_type decls are the compiler writing its own namespace.
+    check_reserved_namespace(SugaredProg),
     prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
@@ -226,6 +230,39 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
                 SubscribedRels, InternMode).
+
+% ═══ the compiler-owned `__` namespace ══════════════════════════════════════
+% SQLite gives tables and views one namespace, so a user `__txt_x` collides.
+
+% Derived from the catalog contract rather than listed twice, so a future
+% contract row gets its reservation for free.
+compiler_owned_contract(Name) :- catalog_ddl_contract(Name, _).
+
+reserved_namespace_name(Name) :-
+    atom(Name),
+    sub_atom(Name, 0, 2, _, '__').
+
+check_reserved_namespace(SugaredProg) :-
+    (   SugaredProg = prog(Decls, Rules),
+        reserved_namespace_violation(Decls, Rules, Name)
+    ->  throw(unsupported_construct(reserved_rel_namespace(Name)))
+    ;   true
+    ).
+
+% Reading a contract rel is allowed and writing one is not, which is the split
+% compile.pl already enforces by subtracting the catalog from ArrivalTargets.
+reserved_namespace_violation(Decls, Rules, Name) :-
+    declared_refs(Decls, DeclaredRefs),
+    derived_refs(Rules, DerivedRefs),
+    program_refs(Rules, RuleRefs),
+    append(DeclaredRefs, DerivedRefs, WrittenRefs),
+    (   member(Name/_, WrittenRefs),
+        reserved_namespace_name(Name)
+    ;   member(Name/_, RuleRefs),
+        reserved_namespace_name(Name),
+        \+ compiler_owned_contract(Name)
+    ),
+    !.
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 

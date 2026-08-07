@@ -47,6 +47,8 @@
   {"name":"higher_order_call_over_atom_rejected","file":"5_compiler_quality.pl","bucket":"unsupported","reason":"dynamic_relation_name(call/1)"},
   {"name":"backslash_in_string_literal_survives_both_doors","file":"5_compiler_quality.pl","bucket":"compiled","reason":""},
   {"name":"host_free_query_leaves_a_derived_rel_unsubscribed","file":"5_compiler_quality.pl","bucket":"compiled","reason":""},
+  {"name":"reserved_namespace_declared_rel","file":"5_compiler_quality.pl","bucket":"unsupported","reason":"reserved_rel_namespace('__txt_reach')"},
+  {"name":"reserved_namespace_derived_head","file":"5_compiler_quality.pl","bucket":"unsupported","reason":"reserved_rel_namespace('__str_stats')"},
   {"name":"flow_arg_param_hop_is_positional_and_site_pinned","file":"5_flow_value_plane.pl","bucket":"compiled","reason":""},
   {"name":"flow_sig_owner_join_types_the_resolved_callee","file":"5_flow_value_plane.pl","bucket":"compiled","reason":""},
   {"name":"bool_literals_round_trip","file":"5_value_plane.pl","bucket":"compiled","reason":""},

@@ -7,6 +7,7 @@ Append-only. One entry per milestone.
 
 - [Milestone 1 — I-A](#milestone-1--i-a-ddl--decode-view--the-gun)
 - [Milestone 2 — I-D](#milestone-2--i-d-the-ir-encoding-slot)
+- [Milestone 3 — I-J](#milestone-3--i-j-the-reserved--namespace)
 - [Contract defects and ambiguities](#contract-defects-and-ambiguities)
 - [Summary table](#summary-table)
 
@@ -189,6 +190,80 @@ is what makes the literal path real.
 
 ---
 
+## Milestone 3 — I-J: the reserved `__` namespace
+
+**2026-08-07T22:17Z.** §20.4 refocused this lane: `mixed_encoding_join` left
+its brief (rev 3 made the state unreachable), so §18's `reserved_rel_namespace`
+plus its fixtures is the whole lane.
+
+### What landed
+
+| # | thing | where |
+|---|---|---|
+| 1 | `compiler_owned_contract/1`, DERIVED from `catalog_ddl_contract/2` rather than listed twice | `v6/prolog/compile.pl` |
+| 2 | `reserved_namespace_violation/3` + `check_reserved_namespace/1`, throwing `reserved_rel_namespace(Name)` | `compile.pl` |
+| 3 | Two fail-first fixtures with their RED-before receipt in the header | `conformance/fixtures/5_compiler_quality.pl` |
+| 4 | 5 plunit tests, including the derivation pin | `compile/test/plunit_tests.pl` |
+
+The rule, as §18.1 states it: a `__` name in a DECLARATION or a rule HEAD is
+refused whatever it is; in a rule BODY it is refused unless it is a registered
+contract name. Reading is allowed, writing is not, which generalizes the
+subtraction `compile.pl:180-183` already does for `__rel` alone.
+
+### Where it runs, and why not where §18.3 says
+
+§18.3 places the check at `check_supported_subset_expanded/1`. Measured: by
+that point `1_host_expand.pl` has already minted `__host_demand_*` heads (5
+corpus modules) and `materialize_catalog_rel/2` has already injected
+`col_type('__rel'/11, ...)` decls, so the check would refuse the compiler's
+own writes in its own namespace. It runs on the AUTHOR's `SugaredProg`, at the
+head of `program_plan/3`, which is the position where "a user rel" is still a
+distinguishable thing. Recorded as defect 6 below.
+
+### Gate outputs
+
+```
+$ cd v6/tsv2 && bash scripts/sweep.sh
+SWEEP total=308 compiled=211 unsupported=97 crash=0
+RUN total=211 identical=210 wrong=0 emitted_crash=0 rejection=1 no_oracle_log=0
+FINAL total=211 final_identical=210 final_wrong=0 no_oracle_final=1
+MANIFEST_REASON_DIFF restated=0 args=0 bucket_moved=0 added=2 removed=0
+  ADDED    reserved_namespace_declared_rel [unsupported]
+  ADDED    reserved_namespace_derived_head [unsupported]
+```
+
+Two additions, both the new fixtures, both naming a program shape absent from
+the corpus: exactly §10.1's "only by addition". The check is INERT on the 306
+pre-existing fixtures (buckets 211/95 before, 211/95 + the 2 new after).
+
+```
+$ cd v6/prolog/compile && swipl -f none -g "load_files(['test/plunit_tests.pl'], []), run_tests." -t halt
+% All 388 (+46 sub-tests) tests passed in 0.979 seconds (0.949 cpu)
+
+$ cd v6/tsv2 && pnpm exec tsgo --noEmit          -> 0 errors
+$ cd v6/prolog && swipl -g go -t halt ARCH.pl    -> 7 PASS
+$ bash v6/tsv2/scripts/intern-ab.sh              -> unexplained=0
+```
+
+### G10, and the one fixture I did NOT write
+
+§10.3 asks for three fixtures: the two refusals, plus "a program READING
+`__rel` that still compiles". I wrote it, ran it, and deleted it:
+
+```
+FINAL_WRONG reserved_namespace_read_of_the_catalog
+  actual={"final":{"__rel":[[1,0,0,"text","primitive",...
+  oracle={"final":{}}
+```
+
+The catalog table is seeded by DDL and the reference engine holds no `__rel`
+at all, so ANY conformance fixture that reads it is final-state-wrong by
+construction, independent of this lane. The read/write split keeps its
+receipt in plunit (`reserved_namespace_admits_a_catalog_read`), where the
+oracle is not the referee. Recorded as defect 7 below.
+
+---
+
 ## Contract defects and ambiguities
 
 | # | where | what | what I did |
@@ -198,6 +273,8 @@ is what makes the literal path real.
 | 3 | §15.3 vs §11's sequencing | "Default dict" at the I-A commit contradicts the sweep gate the same document demands, because I-B/I-C/I-K have not landed | `default_intern_mode(direct)`, documented above and in `compile.pl` |
 | 4 | §15.5 | `internMode` is required on `IGenProgram`, which makes four checked-in hand-written modules fail typecheck | Added `internMode: "direct"` to `gen/demand_laziness_effect_rows.ts`, `gen/scale_generated.ts`, `gen/switch_as_keyed_replace.ts`, `gen_emitted/door-handwritten.ts` |
 | 5 | §15.5 | The contract says serve refuses the crossing but names no place the DATABASE records its mode | Derived it from the physical fact instead of adding a marker table: a database holds `__str` or it does not, and the module's own DDL either builds it or does not. Zero new DDL, and it is exactly the fact that would otherwise corrupt |
+| 6 | §18.3 | "runs at `check_supported_subset_expanded/1`" is too late: host expansion has already minted `__host_demand_*` heads and the catalog has already injected `col_type('__rel'/11, ...)`, so the check refuses the compiler's own writes | Runs on the author's `SugaredProg` at the head of `program_plan/3` |
+| 7 | §10.3, "reserved namespace" row | The third fixture ("a program READING `__rel` that still compiles") cannot exist: the oracle has no `__rel`, so its final state is empty while the emitted program's is not | Kept the two refusal fixtures; the allowed-read receipt is a plunit test |
 
 ### Carried forward, found while building I-A, owned by later lanes
 
@@ -214,4 +291,5 @@ is what makes the literal path real.
 | milestone | lane | gates | commit |
 |---|---|---|---|
 | 1 | I-A | sweep wrong=0, plunit 379, tsgo 0, G9 unexplained=0, ARCH pass, tsv2 157/0, store 75/0 | `863fe1d5` |
-| 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `race: I-D ...` |
+| 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `67a6af43` |
+| 3 | I-J | sweep 308/211 wrong=0 (added=2), plunit 388, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `race: I-J ...` |
