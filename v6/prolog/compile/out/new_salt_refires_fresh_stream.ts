@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -179,6 +180,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   watch_request: ["text", "text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "new_salt_refires_fresh_stream", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "3fcd2740e5f8754a", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "demand", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "5d1c84cbf41d4757", hSchema: "a16807198159b160", hRule: "1359104177a900f5" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "args", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6ba4cf76b10e963b", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "salt", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a1389dcdbf3f2f52", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "watch_request", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "8df1c319400f677b", hSchema: "7d5b45f1b8a3817c", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "col1", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "167954a992d6a0a0", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "args", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ae23376bafbeabb3", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 10, ordinal: 3, localName: "salt", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5957eb192227884c", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -231,8 +248,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demand", kind: "set", tableName: "demand", deltaTableName: "__delta_demand", frontierTableName: "__frontier_demand", nextFrontierTableName: "__next_frontier_demand", columns: ["args", "salt"], columnTypes: ["text", "text"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' AND json_type("salt", '$.fn') = 'text' AND json_type("salt", '$.args') = 'array' THEN json_extract("salt", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("salt", '$.args')), '') || ')' ELSE "salt" END AS "salt", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demand" WHERE "_sign" IN (-1, 1) GROUP BY "args", "salt", "_sign"` },
-  { rel: "watch_request", kind: "log", tableName: "watch_request", deltaTableName: "__delta_watch_request", frontierTableName: "__frontier_watch_request", nextFrontierTableName: "__next_frontier_watch_request", columns: ["col1", "args", "salt"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "watch_request" ("col1", "args", "salt") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "args", "salt"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' AND json_type("salt", '$.fn') = 'text' AND json_type("salt", '$.args') = 'array' THEN json_extract("salt", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("salt", '$.args')), '') || ')' ELSE "salt" END AS "salt", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_watch_request" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "args", "salt", "_sign"` },
+  { rel: "demand", kind: "set", tableName: "demand", deltaTableName: "__delta_demand", frontierTableName: "__frontier_demand", nextFrontierTableName: "__next_frontier_demand", columns: ["args", "salt"], columnTypes: ["text", "text"], keyIndices: [0, 1], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' AND json_type("salt", '$.fn') = 'text' AND json_type("salt", '$.args') = 'array' THEN json_extract("salt", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("salt", '$.args')), '') || ')' ELSE "salt" END AS "salt", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demand" WHERE "_sign" IN (-1, 1) GROUP BY "args", "salt", "_sign"`, ruleObservers: [] },
+  { rel: "watch_request", kind: "log", tableName: "watch_request", deltaTableName: "__delta_watch_request", frontierTableName: "__frontier_watch_request", nextFrontierTableName: "__next_frontier_watch_request", columns: ["col1", "args", "salt"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "watch_request" ("col1", "args", "salt") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "args", "salt"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("salt") AND json_type("salt") = 'object' AND json_type("salt", '$.fn') = 'text' AND json_type("salt", '$.args') = 'array' THEN json_extract("salt", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("salt", '$.args')), '') || ')' ELSE "salt" END AS "salt", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_watch_request" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "args", "salt", "_sign"`, ruleObservers: ["demand/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -358,6 +375,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

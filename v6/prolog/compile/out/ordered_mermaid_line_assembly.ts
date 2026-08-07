@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -161,6 +162,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   mermaid_text: ["text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "ordered_mermaid_line_assembly", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "cce7a366b13d6f25", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "mermaid_line", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "2946874426d7681a", hSchema: "79a116ebf0802e65", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "file_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "289f1613b545c595", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "line_ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "71b3e11145eaee6d", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "line_text", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3a022705378c87bd", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "mermaid_text", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "38f2c5669038330b", hSchema: "aaa96cd7b942d4ff", hRule: "35daada898dd6d43" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "file_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "834b8fa2d982266d", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 11, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "46438f40f8a3fe92", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -218,8 +235,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "mermaid_line", kind: "set", tableName: "mermaid_line", deltaTableName: "__delta_mermaid_line", frontierTableName: "__frontier_mermaid_line", nextFrontierTableName: "__next_frontier_mermaid_line", columns: ["file_name", "line_ordinal", "line_text"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "mermaid_line" ("file_name", "line_ordinal", "line_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "file_name", "line_ordinal", "line_text"`, arrivalDelSql: `DELETE FROM "mermaid_line" WHERE ("file_name", "line_ordinal", "line_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "file_name", "line_ordinal", "line_text"`, boundarySql: `SELECT CASE WHEN json_valid("file_name") AND json_type("file_name") = 'object' AND json_type("file_name", '$.fn') = 'text' AND json_type("file_name", '$.args') = 'array' THEN json_extract("file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file_name", '$.args')), '') || ')' ELSE "file_name" END AS "file_name", "line_ordinal", CASE WHEN json_valid("line_text") AND json_type("line_text") = 'object' AND json_type("line_text", '$.fn') = 'text' AND json_type("line_text", '$.args') = 'array' THEN json_extract("line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("line_text", '$.args')), '') || ')' ELSE "line_text" END AS "line_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mermaid_line" WHERE "_sign" IN (-1, 1) GROUP BY "file_name", "line_ordinal", "line_text", "_sign"` },
-  { rel: "mermaid_text", kind: "set", tableName: "mermaid_text", deltaTableName: "__delta_mermaid_text", frontierTableName: "__frontier_mermaid_text", nextFrontierTableName: "__next_frontier_mermaid_text", columns: ["file_name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("file_name") AND json_type("file_name") = 'object' AND json_type("file_name", '$.fn') = 'text' AND json_type("file_name", '$.args') = 'array' THEN json_extract("file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file_name", '$.args')), '') || ')' ELSE "file_name" END AS "file_name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mermaid_text" WHERE "_sign" IN (-1, 1) GROUP BY "file_name", "col2", "_sign"` },
+  { rel: "mermaid_line", kind: "set", tableName: "mermaid_line", deltaTableName: "__delta_mermaid_line", frontierTableName: "__frontier_mermaid_line", nextFrontierTableName: "__next_frontier_mermaid_line", columns: ["file_name", "line_ordinal", "line_text"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "mermaid_line" ("file_name", "line_ordinal", "line_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "file_name", "line_ordinal", "line_text"`, arrivalDelSql: `DELETE FROM "mermaid_line" WHERE ("file_name", "line_ordinal", "line_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "file_name", "line_ordinal", "line_text"`, boundarySql: `SELECT CASE WHEN json_valid("file_name") AND json_type("file_name") = 'object' AND json_type("file_name", '$.fn') = 'text' AND json_type("file_name", '$.args') = 'array' THEN json_extract("file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file_name", '$.args')), '') || ')' ELSE "file_name" END AS "file_name", "line_ordinal", CASE WHEN json_valid("line_text") AND json_type("line_text") = 'object' AND json_type("line_text", '$.fn') = 'text' AND json_type("line_text", '$.args') = 'array' THEN json_extract("line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("line_text", '$.args')), '') || ')' ELSE "line_text" END AS "line_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mermaid_line" WHERE "_sign" IN (-1, 1) GROUP BY "file_name", "line_ordinal", "line_text", "_sign"`, ruleObservers: ["mermaid_text/2"] },
+  { rel: "mermaid_text", kind: "set", tableName: "mermaid_text", deltaTableName: "__delta_mermaid_text", frontierTableName: "__frontier_mermaid_text", nextFrontierTableName: "__next_frontier_mermaid_text", columns: ["file_name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("file_name") AND json_type("file_name") = 'object' AND json_type("file_name", '$.fn') = 'text' AND json_type("file_name", '$.args') = 'array' THEN json_extract("file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file_name", '$.args')), '') || ')' ELSE "file_name" END AS "file_name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mermaid_text" WHERE "_sign" IN (-1, 1) GROUP BY "file_name", "col2", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -318,6 +335,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

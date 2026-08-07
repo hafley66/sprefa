@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -189,6 +190,23 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   seq_numbered_1: ["text", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "seq_wire_hand", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "95ecd78c5f0140ae", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "arrival", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "db6203597b8b2cfb", hSchema: "c78b9e06d3cd491a", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "344e0816c53be26e", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "numbered", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "793942aa97f9dac8", hSchema: "86198db6aac4a59c", hRule: "5fcd4d104d325147" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "647cdf41caa2542f", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 9, ordinal: 2, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f682bad4ff6a8d27", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "seq_numbered_1", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "c2a8465f3930380d", hSchema: "e4c3fc2bc60f3a9e", hRule: "5fcd4d104d325147" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "partition", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "26f8222e12cd0eb6", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 12, ordinal: 2, localName: "at", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "925d0fbbd8655586", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   arrival: ["text"],
   numbered: ["int", "text"],
@@ -247,9 +265,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrival", kind: "set", tableName: "arrival", deltaTableName: "__delta_arrival", frontierTableName: "__frontier_arrival", nextFrontierTableName: "__next_frontier_arrival", columns: ["payload"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrivalDelSql: `DELETE FROM "arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundarySql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrival" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"` },
-  { rel: "numbered", kind: "log", tableName: "numbered", deltaTableName: "__delta_numbered", frontierTableName: "__frontier_numbered", nextFrontierTableName: "__next_frontier_numbered", columns: ["ordinal", "payload"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numbered" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"` },
-  { rel: "seq_numbered_1", kind: "set", tableName: "seq_numbered_1", deltaTableName: "__delta_seq_numbered_1", frontierTableName: "__frontier_seq_numbered_1", nextFrontierTableName: "__next_frontier_seq_numbered_1", columns: ["partition", "at"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seq_numbered_1" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "at", "_sign"` },
+  { rel: "arrival", kind: "set", tableName: "arrival", deltaTableName: "__delta_arrival", frontierTableName: "__frontier_arrival", nextFrontierTableName: "__next_frontier_arrival", columns: ["payload"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrivalDelSql: `DELETE FROM "arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundarySql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrival" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, ruleObservers: ["numbered/2", "seq_numbered_1/2"] },
+  { rel: "numbered", kind: "log", tableName: "numbered", deltaTableName: "__delta_numbered", frontierTableName: "__frontier_numbered", nextFrontierTableName: "__next_frontier_numbered", columns: ["ordinal", "payload"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_numbered" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, ruleObservers: [] },
+  { rel: "seq_numbered_1", kind: "set", tableName: "seq_numbered_1", deltaTableName: "__delta_seq_numbered_1", frontierTableName: "__frontier_seq_numbered_1", nextFrontierTableName: "__next_frontier_seq_numbered_1", columns: ["partition", "at"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seq_numbered_1" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "at", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -600,6 +618,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

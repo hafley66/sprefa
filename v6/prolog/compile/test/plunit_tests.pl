@@ -63,7 +63,7 @@
 :- use_module('../../analyze',
               [ body_ref_uses/2, conjunction_goals/2,
                 level_body_latest_ref/2, level_body_pre_ref/2,
-                listened_departure_refs/2,
+                listened_departure_refs/2, rel_rule_observers/3,
                 reserved_construct_in_body/2, body_forbidden_goal/2,
                 rule_is_level/1, rule_is_edge/1 ]).
 :- use_module('../../conformance/engine',
@@ -4109,6 +4109,25 @@ test(line_table_agrees_with_a_prefix_walk) :-
                                            TableLine-TableColumn))
              ) )).
 
+statement_count_case(1).
+statement_count_case(4).
+statement_count_case(14).
+
+% COUNT rail: identical solutions, one per statement, was 2^statements.
+test(parse_dl_solution_count_is_one_per_statement_count,
+     [forall(statement_count_case(StatementCount))]) :-
+    findall(Line,
+            ( between(1, StatementCount, Index),
+              format(string(Line), "rel r~d(x: int).\n", [Index]) ),
+            Lines),
+    atomics_to_string(Lines, Text),
+    string_codes(Text, Codes),
+    aggregate_all(count, parse_dl(Codes, _Prog, _Bindings, _Findings), Solutions),
+    (   Solutions == 1
+    ->  true
+    ;   throw(parse_dl_nondeterministic(StatementCount, Solutions))
+    ).
+
 :- end_tests(parse_error_positions).
 
 % ═══════════════════════════════════════════════════════════════════════════
@@ -4438,3 +4457,48 @@ test(regexp_operand_beside_int_column_compiles) :-
     ).
 
 :- end_tests(fact_seeding).
+
+:- begin_tests(rel_rule_observers).
+
+% One fixture per reader family: the observed rel's ruleObservers set is the
+% set of head refs whose statements read that rel's event tables.
+
+% Level body ref (non-aggregate head reads __frontier_ of the body ref).
+test(level_body_ref_frontier) :-
+    Rules =
+        [ (reachable(X, Y) <- edge(X, Y)),
+          (reachable(X, Y) <- reachable(X, M), edge(M, Y)) ],
+    rel_rule_observers(Rules, edge/2, HeadRefs),
+    HeadRefs = [reachable/2].
+test(level_body_ref_self_observation) :-
+    Rules =
+        [ (reachable(X, Y) <- edge(X, Y)),
+          (reachable(X, Y) <- reachable(X, M), edge(M, Y)) ],
+    rel_rule_observers(Rules, reachable/2, HeadRefs),
+    HeadRefs = [reachable/2].
+
+% Edge trigger reads __frontier_ of its own trigger.
+test(edge_trigger_frontier) :-
+    Rules = [ (latest(K, V) <+ set_value(K, V)) ],
+    rel_rule_observers(Rules, set_value/2, HeadRefs),
+    HeadRefs = [latest/2].
+
+% finalize-bound rel reads __departure_frontier_.
+test(finalize_departure_frontier) :-
+    Rules = [ (changed(K, Old, New) <+ finalize(r(K, Old)), r(K, New)) ],
+    rel_rule_observers(Rules, r/2, HeadRefs),
+    HeadRefs = [changed/3].
+
+% Aggregate head reads __delta_ of its positive body refs.
+test(aggregate_delta_ref) :-
+    Rules = [ (tallied(0, 0, count(Name)) <- source(Name)) ],
+    rel_rule_observers(Rules, source/1, HeadRefs),
+    HeadRefs = [tallied/3].
+
+% Ordered-carry read: the trigger of a pre-bearing edge arm reads __frontier_.
+test(ordered_carry_read) :-
+    Rules = [ (latest(K, V) <+ set_value(K, V), pre(latest(K, _))) ],
+    rel_rule_observers(Rules, set_value/2, HeadRefs),
+    HeadRefs = [latest/2].
+
+:- end_tests(rel_rule_observers).

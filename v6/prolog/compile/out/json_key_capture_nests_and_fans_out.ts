@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -163,6 +164,21 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   spec: ["json"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "json_key_capture_nests_and_fans_out", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e81662b8c8d8c43b", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "operation", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "f1d71504b147be1c", hSchema: "20a9953956c72073", hRule: "cfa6252930b56613" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c788f85d000f03c7", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "method", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c50247eee3e35249", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d3b75b73052565a0", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "spec", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "0458b84fbe6930a3", hSchema: "d12f7c978de0f0d7", hRule: "" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "352ebef52265d9cd", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   spec: ["json"],
 };
@@ -219,8 +235,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "operation", kind: "set", tableName: "operation", deltaTableName: "__delta_operation", frontierTableName: "__frontier_operation", nextFrontierTableName: "__next_frontier_operation", columns: ["path", "method", "id"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_operation" WHERE "_sign" IN (-1, 1) GROUP BY "path", "method", "id", "_sign"` },
-  { rel: "spec", kind: "set", tableName: "spec", deltaTableName: "__delta_spec", frontierTableName: "__frontier_spec", nextFrontierTableName: "__next_frontier_spec", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "spec" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "spec" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spec" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
+  { rel: "operation", kind: "set", tableName: "operation", deltaTableName: "__delta_operation", frontierTableName: "__frontier_operation", nextFrontierTableName: "__next_frontier_operation", columns: ["path", "method", "id"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_operation" WHERE "_sign" IN (-1, 1) GROUP BY "path", "method", "id", "_sign"`, ruleObservers: [] },
+  { rel: "spec", kind: "set", tableName: "spec", deltaTableName: "__delta_spec", frontierTableName: "__frontier_spec", nextFrontierTableName: "__next_frontier_spec", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "spec" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "spec" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spec" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, ruleObservers: ["operation/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -316,6 +332,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

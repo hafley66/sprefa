@@ -565,7 +565,7 @@ ruling(edge_before_first_subscribe, keep_table_is_the_replay, user,
        'user 2026-08-03: an edge rel ingests eagerly into storage; evaluation is lazy. A late subscriber reads the keep()-bounded table then the live stream (concat(from(storedRows), live$)). No second ingress buffer mechanism.').
 
 ruling(event_ingress_surface, live_event_bind, user,
-       'user 2026-08-03: outside-world events enter as a new bind name, live_event, whose executor starts no process; rows arrive through POST /arrivals and type-check like any arrival. No new keyword (external/register died; bind is the survivor).').
+       'user 2026-08-03: outside-world events enter as a new bind name, live_event, whose executor starts no process; rows arrive through POST /edb/events and type-check like any arrival. No new keyword (external/register died; bind is the survivor).').
 
 ruling(zero_query_semantics, subscribes_nothing, user,
        'user 2026-08-03: "im sorry are u saying if no file has a question in it we just subscribe to everything?" -> strict: a program with no query subscribes to NOTHING. The conformance harness seeds subscription roots from its own expectations (zero fixture edits). The compat all-rels branch in the cone is a migration bridge scheduled for removal.').

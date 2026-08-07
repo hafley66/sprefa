@@ -17,7 +17,7 @@
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
-                level_body_pre_ref/2 ]).
+                level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
@@ -212,6 +212,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
       ],
       RetentionImport,
       [
+      '  IRelCatalogRow,',
       '  IRelDelta,',
       '  IRow,',
       '  IRowColumnType,',
@@ -320,7 +321,7 @@ local_types_lines(
       '  params: readonly IRowValue[];',
       '}',
       '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };'
+      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };'
     ]).
 
 world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels), Lines) :-
@@ -692,6 +693,29 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
     js_object_key(Name, NameKey),
     format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
 
+% ═══ the catalog rows, the same list the INSERT renders ════════════════════
+% Emitted even for a program that never queries `__rel`, so a reload compares.
+program_catalog_rows(Name, plan(_, prog(_, Rules), _, _, _, _, _), RelPlans, Rows) :-
+    lower:catalog_rows(Name, Rules, RelPlans, Rows).
+
+rel_catalog_lines([], []) :- !.
+rel_catalog_lines(Rows, Lines) :-
+    maplist(rel_catalog_entry_line, Rows, EntryLines),
+    append([ ['const relCatalog: readonly IRelCatalogRow[] = ['],
+             EntryLines, ['];'] ], Lines).
+
+rel_catalog_entry_line(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
+                           ModuleId, HId, HSchema, HRule), Line) :-
+    js_string(Name, NameText),
+    js_string(Kind, KindText),
+    js_string(HId, HIdText),
+    js_string(HSchema, HSchemaText),
+    js_string(HRule, HRuleText),
+    format(atom(Line),
+           '  { relId: ~w, parentId: ~w, ordinal: ~w, localName: ~w, kind: ~w, typeId: ~w, arity: ~w, moduleId: ~w, hId: ~w, hSchema: ~w, hRule: ~w },',
+           [RelId, ParentId, Ordinal, NameText, KindText, TypeId, Arity,
+            ModuleId, HIdText, HSchemaText, HRuleText]).
+
 % ═══ the DECLARED column types (ruling type_gate_widening) ═════════════════
 % What the program WROTE DOWN, as opposed to what analyze.pl inferred. The
 % arrival gate reads this map and only this map, because the reference
@@ -880,9 +904,11 @@ arrival_statement_fn_lines(Name, Lines) :-
 
 % ═══ incremental relation plans ══════════════════════════════════════════════
 
-incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements,
+incremental_relation_lines(RelPlans, Rules, ArrivalStatements, DeltaStatements,
                            DepartureRefs, Lines) :-
-    maplist(incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs),
+    rel_rule_observers_map(Rules, ObserverMap),
+    maplist(incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements,
+                                            DepartureRefs),
             DeltaStatements, EntryLines),
     append(
         [ ['const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = ['],
@@ -890,7 +916,7 @@ incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements,
           ['];']
         ], Lines).
 
-incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
+incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql), Line) :-
     ref_name(Ref, Name),
     relplan_kind(RelPlans, Ref, Kind),
@@ -925,11 +951,25 @@ incremental_relation_entry_line(RelPlans, ArrivalStatements, DepartureRefs,
                [DepartureTable])
     ;   DepartureField = ''
     ),
+    % ruleObservers is emitted on EVERY relation entry, empty array when no
+    % rule reads this rel's event tables, so the runtime's boot-time skip has
+    % a per-rel observer set to test against.
+    (   memberchk(Ref-Observers, ObserverMap)
+    ->  true
+    ;   Observers = []
+    ),
+    rel_ref_text_list(Observers, ObserverRefTexts),
+    quoted_string_array_text(ObserverRefTexts, ObserversText),
     format(atom(Line),
-           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, columnTypes: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w },',
+           '  { rel: "~w", kind: "~w", tableName: "~w", deltaTableName: "~w", frontierTableName: "~w", nextFrontierTableName: "~w", columns: ~w, columnTypes: ~w, keyIndices: [~w], arrivalAddSql: ~w, arrivalDelSql: ~w, boundarySql: ~w~w, ruleObservers: ~w },',
            [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
-            BoundaryTemplate, DepartureField]).
+            BoundaryTemplate, DepartureField, ObserversText]).
+
+rel_ref_text_list([], []) :- !.
+rel_ref_text_list([Name/Arity | Rest], [Text | More]) :-
+    format(atom(Text), '~w/~w', [Name, Arity]),
+    rel_ref_text_list(Rest, More).
 
 position_index(Position, Index) :- Index is Position - 1.
 
@@ -2261,6 +2301,7 @@ program_export_lines(Name,
       '  bindPlans,',
       '  queryPlans,',
       '  subscribedRels,',
+      '  relCatalog,',
       '  unsupportedExecution,',
       '  tick: runTick,',
       '};'
@@ -2304,6 +2345,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
+    program_catalog_rows(Name, Plan, RelPlans, CatalogRows),
+    rel_catalog_lines(CatalogRows, RelCatalogLines),
     rel_declared_column_types_lines(PlanDecls, RelPlans, RelDeclaredColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
@@ -2312,7 +2355,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     final_select_lines(DeltaStatements, FinalSelectLines),
     arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
-    incremental_relation_lines(RelPlans, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
+    incremental_relation_lines(RelPlans, PlanRules, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
     incremental_edge_statement_lines(Name, EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
     incremental_level_statement_lines(Name, RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,
@@ -2362,7 +2405,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       DepartureOccurrencesHelperLines,
       StructPlaneLines,
-      DdlLines, RelColumnsLines, RelColumnTypesLines,
+      DdlLines, RelColumnsLines, RelColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,
       ArrivalStatementsLines, ArrivalStatementFnLines,

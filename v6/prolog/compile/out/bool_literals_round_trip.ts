@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -151,6 +152,18 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   flag: ["text", "bool"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "bool_literals_round_trip", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e8c4f040f13c09bd", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "flag", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "35faa6b3d58e470e", hSchema: "49645800ff8032d7", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6635225cf6fac539", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "enabled", kind: "column", typeId: 4, arity: 0, moduleId: 6, hId: "6eec237011e1976a", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   flag: ["text", "bool"],
 };
@@ -202,7 +215,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "flag", kind: "set", tableName: "flag", deltaTableName: "__delta_flag", frontierTableName: "__frontier_flag", nextFrontierTableName: "__next_frontier_flag", columns: ["name", "enabled"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrivalDelSql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"` },
+  { rel: "flag", kind: "set", tableName: "flag", deltaTableName: "__delta_flag", frontierTableName: "__frontier_flag", nextFrontierTableName: "__next_frontier_flag", columns: ["name", "enabled"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrivalDelSql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -293,6 +306,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -172,6 +173,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   result_b: ["text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "fork_join_is_a_conjunctive_body", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "78d058f9f151d2a0", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "combined", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "73c8358e7b60b547", hSchema: "2d93735a8b1d9258", hRule: "6b3f6ab22df16f8e" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "value_a", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c5e5aa1e261f93f6", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "value_b", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4edead571f8ced3b", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "result_a", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "af4ff8118749b03f", hSchema: "97369b227c9f1903", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "value_a", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "200a99515baf7882", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "result_b", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "0dde3f0e6bc9291a", hSchema: "937c4f19dbd8ffc3", hRule: "" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "value_b", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "80d7e495e1c513de", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -230,9 +247,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "combined", kind: "set", tableName: "combined", deltaTableName: "__delta_combined", frontierTableName: "__frontier_combined", nextFrontierTableName: "__next_frontier_combined", columns: ["value_a", "value_b"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combined" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "value_b", "_sign"` },
-  { rel: "result_a", kind: "set", tableName: "result_a", deltaTableName: "__delta_result_a", frontierTableName: "__frontier_result_a", nextFrontierTableName: "__next_frontier_result_a", columns: ["value_a"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "result_a" ("value_a") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_a"`, arrivalDelSql: `DELETE FROM "result_a" WHERE ("value_a") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_a"`, boundarySql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_a" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "_sign"` },
-  { rel: "result_b", kind: "set", tableName: "result_b", deltaTableName: "__delta_result_b", frontierTableName: "__frontier_result_b", nextFrontierTableName: "__next_frontier_result_b", columns: ["value_b"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "result_b" ("value_b") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_b"`, arrivalDelSql: `DELETE FROM "result_b" WHERE ("value_b") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_b"`, boundarySql: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_b" WHERE "_sign" IN (-1, 1) GROUP BY "value_b", "_sign"` },
+  { rel: "combined", kind: "set", tableName: "combined", deltaTableName: "__delta_combined", frontierTableName: "__frontier_combined", nextFrontierTableName: "__next_frontier_combined", columns: ["value_a", "value_b"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combined" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "value_b", "_sign"`, ruleObservers: [] },
+  { rel: "result_a", kind: "set", tableName: "result_a", deltaTableName: "__delta_result_a", frontierTableName: "__frontier_result_a", nextFrontierTableName: "__next_frontier_result_a", columns: ["value_a"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "result_a" ("value_a") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_a"`, arrivalDelSql: `DELETE FROM "result_a" WHERE ("value_a") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_a"`, boundarySql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_a" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "_sign"`, ruleObservers: ["combined/2"] },
+  { rel: "result_b", kind: "set", tableName: "result_b", deltaTableName: "__delta_result_b", frontierTableName: "__frontier_result_b", nextFrontierTableName: "__next_frontier_result_b", columns: ["value_b"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "result_b" ("value_b") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_b"`, arrivalDelSql: `DELETE FROM "result_b" WHERE ("value_b") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_b"`, boundarySql: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_b" WHERE "_sign" IN (-1, 1) GROUP BY "value_b", "_sign"`, ruleObservers: ["combined/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -330,6 +347,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

@@ -20,7 +20,8 @@
             program_column_types/7, reset_body_use_cache/0,
             literal_witness/1,
             level_body_latest_ref/2, level_body_pre_ref/2,
-            listened_departure_refs/2,
+            listened_departure_refs/2, rel_rule_observers/3,
+            rel_rule_observers_map/2,
             reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 
 :- use_module(library(lists)).
@@ -1319,6 +1320,81 @@ body_finalize_ref(Body, Ref) :-
     body_wrapper_refs(Body, finalize,
                       walk_policy(descend_not(false), splice_bare(false)),
                       Ref).
+
+% rel_rule_observers/3 -- the head rels whose statements read Ref's event
+% tables (__frontier_, __departure_frontier_, __delta_), the compile-time
+% half of the unobserved-rel skip (contract section 4a).
+rel_rule_observers(Rules, Ref, HeadRefs) :-
+    rel_rule_observers_map(Rules, Map),
+    (   memberchk(Ref-Found, Map)
+    ->  HeadRefs = Found
+    ;   HeadRefs = []
+    ).
+
+% Every clause of rule_reads_rel/3 walks every body, so asking per rel walks the
+% whole corpus once per rel; the emitter asks for all of them at once.
+rel_rule_observers_map(Rules, Map) :-
+    findall(Ref-Head, rule_reads_rel(Rules, Ref, Head), Pairs0),
+    sort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Map).
+
+% Non-aggregate level head, positive body ref -- the level delta arm reads
+% the body ref's frontier (__frontier_).
+rule_reads_rel(Rules, Ref, HeadRef) :-
+    member(Rule, Rules),
+    rule_is_level(Rule),
+    rule_head_ref(Rule, HeadRef),
+    \+ rule_is_aggregate(Rule),
+    rule_body(Rule, Body),
+    body_ref_uses(Body, Uses),
+    member(use(Ref, _, pos, _), Uses).
+% Aggregate head, positive body ref -- delta maintenance and scope seed read
+% the body ref's delta (__delta_).
+rule_reads_rel(Rules, Ref, HeadRef) :-
+    member(Rule, Rules),
+    rule_is_level(Rule),
+    rule_head_ref(Rule, HeadRef),
+    rule_is_aggregate(Rule),
+    rule_body(Rule, Body),
+    body_ref_uses(Body, Uses),
+    member(use(Ref, _, pos, _), Uses).
+% Edge trigger of a non-departure shape -- the arm reads __frontier_ of its
+% own trigger.
+rule_reads_rel(Rules, Ref, HeadRef) :-
+    member(Rule, Rules),
+    rule_is_edge(Rule),
+    rule_head_ref(Rule, HeadRef),
+    rule_body(Rule, Body),
+    edge_trigger_shape(Body, Shape),
+    edge_shape_trigger_ref(Shape, Ref).
+% Edge rule binding finalize/1 -- reads __departure_frontier_ (the departure
+% frontier exists only for listened_departure_refs/2 rels).
+rule_reads_rel(Rules, Ref, HeadRef) :-
+    member(Rule, Rules),
+    rule_is_edge(Rule),
+    rule_head_ref(Rule, HeadRef),
+    rule_body(Rule, Body),
+    body_finalize_ref(Body, Ref).
+% Ordered-carry read: the trigger of a pre-bearing edge arm is read back
+% through __frontier_ by the ordered carry machinery.
+rule_reads_rel(Rules, Ref, HeadRef) :-
+    member(Rule, Rules),
+    rule_is_edge(Rule),
+    rule_head_ref(Rule, HeadRef),
+    rule_body(Rule, Body),
+    body_has_pre(Body),
+    edge_trigger_shape(Body, Shape),
+    edge_shape_trigger_ref(Shape, Ref).
+
+edge_shape_trigger_ref(marked_single(Atom), Ref) :- rel_ref(Atom, Ref).
+edge_shape_trigger_ref(unmarked_conjunction(Atoms), Ref) :-
+    member(Atom, Atoms), rel_ref(Atom, Ref).
+edge_shape_trigger_ref(sampled_conjunction(TriggerAtoms, _, _, _, _), Ref) :-
+    member(Atom, TriggerAtoms), rel_ref(Atom, Ref).
+
+body_has_pre(Body) :-
+    body_wrapper_refs(Body, pre,
+                      walk_policy(descend_not(true), splice_bare(false)), _).
 
 check_edge_rule_shape((Head <+ Body)) :-
     edge_trigger_shape(Body, Shape),

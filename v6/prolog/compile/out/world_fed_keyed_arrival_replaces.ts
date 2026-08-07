@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -151,6 +152,18 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   world_mode: ["int", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "world_fed_keyed_arrival_replaces", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "1af09ed3f2802c4d", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "world_mode", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "d19a14970a9061a4", hSchema: "959f9ff0725663ea", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "col1", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "8c8b82ecd2a13c42", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ba89e414c7b2bbf9", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -200,7 +213,7 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], columnTypes: ["int", "text"], keyIndices: [0], arrivalAddSql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"` },
+  { rel: "world_mode", kind: "set", tableName: "world_mode", deltaTableName: "__delta_world_mode", frontierTableName: "__frontier_world_mode", nextFrontierTableName: "__next_frontier_world_mode", columns: ["col1", "col2"], columnTypes: ["int", "text"], keyIndices: [0], arrivalAddSql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrivalDelSql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundarySql: `SELECT "col1", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_world_mode" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "col2", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -291,6 +304,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

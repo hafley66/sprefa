@@ -32,6 +32,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -54,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -184,6 +185,24 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   stars: ["text", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "struct_ghcacher_stars_normalization", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e789b88c5929d6a5", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "current_body", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "0716ae52ad85ceb1", hSchema: "883c8fe6a5dc5a6b", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "ep", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d305a6ff142dbd0c", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "body", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "7f8d02caaa23f95a", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "repo_body", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "63190d9858c3eea2", hSchema: "0868b397c32b62e3", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "full_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f455e4b92e6ab423", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "stargazers_count", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "a2e58ad1306fcb44", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "stars", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "239b3ea7c0679e3f", hSchema: "6db1c0e7b201663c", hRule: "9c8b626615e7bc9e" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "ep", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fba7413a160be877", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "n", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "edffc79a7e2b109f", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   current_body: ["text", "other"],
   repo_body: ["text", "int"],
@@ -245,9 +264,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"` },
-  { rel: "repo_body", kind: "set", tableName: "repo_body", deltaTableName: "__delta_repo_body", frontierTableName: "__frontier_repo_body", nextFrontierTableName: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrivalDelSql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundarySql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' AND json_type("full_name", '$.fn') = 'text' AND json_type("full_name", '$.args') = 'array' THEN json_extract("full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')), '') || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"` },
-  { rel: "stars", kind: "set", tableName: "stars", deltaTableName: "__delta_stars", frontierTableName: "__frontier_stars", nextFrontierTableName: "__next_frontier_stars", columns: ["ep", "n"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"` },
+  { rel: "current_body", kind: "set", tableName: "current_body", deltaTableName: "__delta_current_body", frontierTableName: "__frontier_current_body", nextFrontierTableName: "__next_frontier_current_body", columns: ["ep", "body"], columnTypes: ["text", "ref"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrivalDelSql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"`, ruleObservers: ["stars/2"] },
+  { rel: "repo_body", kind: "set", tableName: "repo_body", deltaTableName: "__delta_repo_body", frontierTableName: "__frontier_repo_body", nextFrontierTableName: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrivalDelSql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundarySql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' AND json_type("full_name", '$.fn') = 'text' AND json_type("full_name", '$.args') = 'array' THEN json_extract("full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')), '') || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"`, ruleObservers: [] },
+  { rel: "stars", kind: "set", tableName: "stars", deltaTableName: "__delta_stars", frontierTableName: "__frontier_stars", nextFrontierTableName: "__next_frontier_stars", columns: ["ep", "n"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -351,6 +370,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

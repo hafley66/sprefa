@@ -16,7 +16,7 @@ for (let row = 0; row < side; row += 1) {
 }
 const loaded = (await import(modulePath)) as { program: IGenProgram };
 const program = loaded.program;
-const seam = { ...ScratchStore.open(":memory:"), unreadRels: new Set(["edge", "reachable"]) };
+const seam = { ...ScratchStore.open(":memory:"), unobservedRels: new Set(["edge", "reachable"]) };
 await firstValueFrom(ScratchStore.boot(seam, program.ddl));
 await firstValueFrom(BootRunner.run(seam, program.boot));
 

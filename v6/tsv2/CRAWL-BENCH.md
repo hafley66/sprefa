@@ -61,7 +61,7 @@ sqlite database and one program load PER REPOSITORY.
 
 Ruling `repo_column_spelling = distinct_name_hosts` closed it. The repository
 root is an ordinary demand column on distinct-named hosts, so the leg now
-starts ONE server, loads ONE program, and posts ONE `/arrivals` batch holding
+starts ONE server, loads ONE program, and posts ONE `/edb/events` batch holding
 `want_repo(root, glob)` for every selected repository and every glob. Each
 fan-out below that -- per repository, then per file -- is rows through the
 incremental emitter.

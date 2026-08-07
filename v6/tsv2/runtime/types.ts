@@ -61,9 +61,9 @@ export type IArrivalBatch = readonly IArrivalRow[];
 export interface ISqlSeam {
   readonly db: SqliteDb;
   readonly runner: ISqlRunner;
-  /** Rels whose boundary rows no caller reads; absent means every rel is read.
-   *  `readBoundary` counts these in SQL and leaves the rows there. */
-  readonly unreadRels?: ReadonlySet<string>;
+  /** Rels no caller reads at the boundary; absent means every rel is observed.
+   *  With `ruleObservers` empty too, the rel's event copies are skipped. */
+  readonly unobservedRels?: ReadonlySet<string>;
 }
 
 /**
@@ -357,6 +357,22 @@ export interface IStructPlane {
   canonicalText(value: unknown): string;
 }
 
+/** A `column` row is a child of its rel (parentId = the rel's relId, ordinal =
+ *  1-based argument position); a `rel` row carries both as 0. */
+export interface IRelCatalogRow {
+  readonly relId: number;
+  readonly parentId: number;
+  readonly ordinal: number;
+  readonly localName: string;
+  readonly kind: "primitive" | "module" | "rel" | "column";
+  readonly typeId: number;
+  readonly arity: number;
+  readonly moduleId: number;
+  readonly hId: string;
+  readonly hSchema: string;
+  readonly hRule: string;
+}
+
 /** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
@@ -569,6 +585,9 @@ export interface IServedProgram extends IGenProgram {
   readonly queryPlans: readonly IQueryPlan[];
   readonly subscribedRels: readonly ISubscribedRel[];
   readonly unsupportedExecution: readonly string[];
+  /** The rows the program's own `INSERT OR IGNORE INTO "__rel"` carries; the
+   *  reload plan reads them against what the database already holds. */
+  readonly relCatalog: readonly IRelCatalogRow[];
 }
 
 export interface IProgramCompiler {

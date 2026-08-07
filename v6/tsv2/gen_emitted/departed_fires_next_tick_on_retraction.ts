@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -200,6 +201,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   source_row: ["text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "departed_fires_next_tick_on_retraction", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "df1d95666548fc07", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "closed_at", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "3d8633a9155cc167", hSchema: "eeea42965b73609a", hRule: "e308ed65a1afc19d" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "item", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "dde43720d48ab42c", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "tick", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "374c3966e8547e2d", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "mirror", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "f6936328ad00b7a8", hSchema: "4f9957ccb96234b6", hRule: "9f283fa8f28f8bd1" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "item", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5d82bd731b454fba", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "source_row", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "890b9da0578850f7", hSchema: "4f9957ccb96234b6", hRule: "" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "item", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e14198a0dd78942b", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -257,9 +274,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "closed_at", kind: "log", tableName: "closed_at", deltaTableName: "__delta_closed_at", frontierTableName: "__frontier_closed_at", nextFrontierTableName: "__next_frontier_closed_at", columns: ["item", "tick"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_at" WHERE "_sign" IN (-1, 1) GROUP BY "item", "tick", "_sign"` },
-  { rel: "mirror", kind: "set", tableName: "mirror", deltaTableName: "__delta_mirror", frontierTableName: "__frontier_mirror", nextFrontierTableName: "__next_frontier_mirror", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, departureFrontierTableName: "__departure_frontier_mirror" },
-  { rel: "source_row", kind: "set", tableName: "source_row", deltaTableName: "__delta_source_row", frontierTableName: "__frontier_source_row", nextFrontierTableName: "__next_frontier_source_row", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrivalDelSql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"` },
+  { rel: "closed_at", kind: "log", tableName: "closed_at", deltaTableName: "__delta_closed_at", frontierTableName: "__frontier_closed_at", nextFrontierTableName: "__next_frontier_closed_at", columns: ["item", "tick"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_at" WHERE "_sign" IN (-1, 1) GROUP BY "item", "tick", "_sign"`, ruleObservers: [] },
+  { rel: "mirror", kind: "set", tableName: "mirror", deltaTableName: "__delta_mirror", frontierTableName: "__frontier_mirror", nextFrontierTableName: "__next_frontier_mirror", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, departureFrontierTableName: "__departure_frontier_mirror", ruleObservers: ["closed_at/2"] },
+  { rel: "source_row", kind: "set", tableName: "source_row", deltaTableName: "__delta_source_row", frontierTableName: "__frontier_source_row", nextFrontierTableName: "__next_frontier_source_row", columns: ["item"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrivalDelSql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundarySql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, ruleObservers: ["mirror/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -401,6 +418,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

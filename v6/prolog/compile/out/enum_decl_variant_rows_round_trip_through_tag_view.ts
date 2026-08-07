@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -172,6 +173,24 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   body_tag: ["int", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "enum_decl_variant_rows_round_trip_through_tag_view", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "d1419278b4c318bf", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "body_page", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "cfb2b841ebfc045d", hSchema: "52ae126e158c6261", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "86f5f382cf4cc235", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "view", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "3ca4215f86af064e", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "body_redirect", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "1adf968d9ad0dc3d", hSchema: "647abd74f46a4fe1", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "03b60369b5dd424a", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "to", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8c4a3ba6aad5a07d", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "body_tag", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "1c6bd43ce2838bdb", hSchema: "2901e6f8122ebf0c", hRule: "828ad5141dcb7347" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "64a4b4cec8583e47", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "tag", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "360254e6fc3d9900", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   body_page: ["int", "int"],
   body_redirect: ["int", "text"],
@@ -234,9 +253,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], columnTypes: ["int", "int"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"` },
-  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], columnTypes: ["int", "text"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"` },
-  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"` },
+  { rel: "body_page", kind: "set", tableName: "body_page", deltaTableName: "__delta_body_page", frontierTableName: "__frontier_body_page", nextFrontierTableName: "__next_frontier_body_page", columns: ["id", "view"], columnTypes: ["int", "int"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrivalDelSql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundarySql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"`, ruleObservers: ["body_tag/2"] },
+  { rel: "body_redirect", kind: "set", tableName: "body_redirect", deltaTableName: "__delta_body_redirect", frontierTableName: "__frontier_body_redirect", nextFrontierTableName: "__next_frontier_body_redirect", columns: ["id", "to"], columnTypes: ["int", "text"], keyIndices: [1], arrivalAddSql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrivalDelSql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundarySql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"`, ruleObservers: ["body_tag/2"] },
+  { rel: "body_tag", kind: "set", tableName: "body_tag", deltaTableName: "__delta_body_tag", frontierTableName: "__frontier_body_tag", nextFrontierTableName: "__next_frontier_body_tag", columns: ["id", "tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -336,6 +355,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

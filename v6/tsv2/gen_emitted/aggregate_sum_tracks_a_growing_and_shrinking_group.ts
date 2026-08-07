@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -161,6 +162,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   spend: ["text", "text", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "aggregate_sum_tracks_a_growing_and_shrinking_group", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "9b008e9e31b7ae34", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "budget", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4f2a27ae91e0bc1d", hSchema: "ed6fe1287e73349a", hRule: "5cb8d99a488ce9da" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "team", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f6bd9b7904898400", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "col2", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "56b189f537ca7009", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "spend", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "896c1a819de68164", hSchema: "1d919935858c123d", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "team", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "379564e800db0391", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "_item", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8ad9a17a40395cbf", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 10, ordinal: 3, localName: "cost", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ade30efa0d94c726", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -217,8 +234,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "budget", kind: "set", tableName: "budget", deltaTableName: "__delta_budget", frontierTableName: "__frontier_budget", nextFrontierTableName: "__next_frontier_budget", columns: ["team", "col2"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_budget" WHERE "_sign" IN (-1, 1) GROUP BY "team", "col2", "_sign"` },
-  { rel: "spend", kind: "set", tableName: "spend", deltaTableName: "__delta_spend", frontierTableName: "__frontier_spend", nextFrontierTableName: "__next_frontier_spend", columns: ["team", "_item", "cost"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrivalDelSql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundarySql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spend" WHERE "_sign" IN (-1, 1) GROUP BY "team", "_item", "cost", "_sign"` },
+  { rel: "budget", kind: "set", tableName: "budget", deltaTableName: "__delta_budget", frontierTableName: "__frontier_budget", nextFrontierTableName: "__next_frontier_budget", columns: ["team", "col2"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_budget" WHERE "_sign" IN (-1, 1) GROUP BY "team", "col2", "_sign"`, ruleObservers: [] },
+  { rel: "spend", kind: "set", tableName: "spend", deltaTableName: "__delta_spend", frontierTableName: "__frontier_spend", nextFrontierTableName: "__next_frontier_spend", columns: ["team", "_item", "cost"], columnTypes: ["text", "text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrivalDelSql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundarySql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spend" WHERE "_sign" IN (-1, 1) GROUP BY "team", "_item", "cost", "_sign"`, ruleObservers: ["budget/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -314,6 +331,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

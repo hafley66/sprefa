@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -201,6 +202,26 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   increment: ["text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "counter_fold_matches_hand_computation", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "d81798e7265b73f8", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "counter", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "944a70b98ec92175", hSchema: "6106d6fe97f57493", hRule: "ea98ffc7c6cdd41b" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "137e3e253918d3cc", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "next", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "90a13c2042db6e44", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "decrement", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "7c5178e8bd37f551", hSchema: "bd656f1e3e3dad1a", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "191b49a0ab159837", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "054f9d8a24d280e4", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "hot", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "afa50c404c0f1f4b", hSchema: "a30b139c04a632dd", hRule: "fdf8d9a58ed9ca92" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c372af05f34c9cf5", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 6, ordinal: 0, localName: "increment", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "8dc17267cd9dda0d", hSchema: "bd656f1e3e3dad1a", hRule: "" },
+  { relId: 16, parentId: 15, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d8d3f9ae7ecf06ed", hSchema: "", hRule: "" },
+  { relId: 17, parentId: 15, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3adb60dfa09c462f", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -263,10 +284,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "counter", kind: "set", tableName: "counter", deltaTableName: "__delta_counter", frontierTableName: "__frontier_counter", nextFrontierTableName: "__next_frontier_counter", columns: ["name", "next"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_counter" WHERE "_sign" IN (-1, 1) GROUP BY "name", "next", "_sign"` },
-  { rel: "decrement", kind: "log", tableName: "decrement", deltaTableName: "__delta_decrement", frontierTableName: "__frontier_decrement", nextFrontierTableName: "__next_frontier_decrement", columns: ["name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "decrement" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_decrement" WHERE "_sign" IN (-1, 1) GROUP BY "name", "col2", "_sign"` },
-  { rel: "hot", kind: "set", tableName: "hot", deltaTableName: "__delta_hot", frontierTableName: "__frontier_hot", nextFrontierTableName: "__next_frontier_hot", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hot" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
-  { rel: "increment", kind: "log", tableName: "increment", deltaTableName: "__delta_increment", frontierTableName: "__frontier_increment", nextFrontierTableName: "__next_frontier_increment", columns: ["name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "increment" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_increment" WHERE "_sign" IN (-1, 1) GROUP BY "name", "col2", "_sign"` },
+  { rel: "counter", kind: "set", tableName: "counter", deltaTableName: "__delta_counter", frontierTableName: "__frontier_counter", nextFrontierTableName: "__next_frontier_counter", columns: ["name", "next"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_counter" WHERE "_sign" IN (-1, 1) GROUP BY "name", "next", "_sign"`, ruleObservers: ["hot/1"] },
+  { rel: "decrement", kind: "log", tableName: "decrement", deltaTableName: "__delta_decrement", frontierTableName: "__frontier_decrement", nextFrontierTableName: "__next_frontier_decrement", columns: ["name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "decrement" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_decrement" WHERE "_sign" IN (-1, 1) GROUP BY "name", "col2", "_sign"`, ruleObservers: ["counter/2"] },
+  { rel: "hot", kind: "set", tableName: "hot", deltaTableName: "__delta_hot", frontierTableName: "__frontier_hot", nextFrontierTableName: "__next_frontier_hot", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hot" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, ruleObservers: [] },
+  { rel: "increment", kind: "log", tableName: "increment", deltaTableName: "__delta_increment", frontierTableName: "__frontier_increment", nextFrontierTableName: "__next_frontier_increment", columns: ["name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "increment" ("name", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "col2"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_increment" WHERE "_sign" IN (-1, 1) GROUP BY "name", "col2", "_sign"`, ruleObservers: ["counter/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -579,6 +600,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

@@ -99,7 +99,7 @@ start_server() {
 }
 
 load() { curl -s -o "$WORK/load.out" -w '%{http_code}' --data-binary "@$1" "$BASE/program"; }
-post() { curl -s -X POST -H 'content-type: application/json' -d "$1" "$BASE/arrivals"; }
+post() { curl -s -X POST -H 'content-type: application/json' -d "$1" "$BASE/edb/events"; }
 rows_of() { curl -s "$BASE/idb/$1" | tr -d "\n"; }
 row_count() { rows_of "$1" | python3 -c 'import json,sys; d=sys.stdin.read(); print(len(json.loads(d).get("rows",[])) if d.strip() else -1)'; }
 digest_of() { python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest()[:16])' "$1"; }

@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -188,6 +189,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   dispatch_seal: ["int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "one_attempt_guard_by_negation_arrival_order_beats_arm_order", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "bd779a40e10f0595", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "dispatch_ack", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "87b326172f81d563", hSchema: "6b1d2d1377cbda94", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "57430b3318797d74", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "dispatch_first", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "803afe46ce2fde7a", hSchema: "0d72ffba6c392dd8", hRule: "6a8f70d0ec0ac622" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "344a09af7070b90c", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 9, ordinal: 2, localName: "_ack_tag", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "428e4d2f430815d5", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "dispatch_seal", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "06e160de4ce21f05", hSchema: "b85f757dd3ed57d5", hRule: "" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "sealed_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "747f076285b25905", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -244,9 +261,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_ack", kind: "set", tableName: "dispatch_ack", deltaTableName: "__delta_dispatch_ack", frontierTableName: "__frontier_dispatch_ack", nextFrontierTableName: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrivalDelSql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundarySql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"` },
-  { rel: "dispatch_first", kind: "log", tableName: "dispatch_first", deltaTableName: "__delta_dispatch_first", frontierTableName: "__frontier_dispatch_first", nextFrontierTableName: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_first" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_ack_tag", "_sign"` },
-  { rel: "dispatch_seal", kind: "set", tableName: "dispatch_seal", deltaTableName: "__delta_dispatch_seal", frontierTableName: "__frontier_dispatch_seal", nextFrontierTableName: "__next_frontier_dispatch_seal", columns: ["sealed_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrivalDelSql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundarySql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"` },
+  { rel: "dispatch_ack", kind: "set", tableName: "dispatch_ack", deltaTableName: "__delta_dispatch_ack", frontierTableName: "__frontier_dispatch_ack", nextFrontierTableName: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrivalDelSql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundarySql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"`, ruleObservers: ["dispatch_first/2"] },
+  { rel: "dispatch_first", kind: "log", tableName: "dispatch_first", deltaTableName: "__delta_dispatch_first", frontierTableName: "__frontier_dispatch_first", nextFrontierTableName: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], columnTypes: ["int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_first" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_ack_tag", "_sign"`, ruleObservers: [] },
+  { rel: "dispatch_seal", kind: "set", tableName: "dispatch_seal", deltaTableName: "__delta_dispatch_seal", frontierTableName: "__frontier_dispatch_seal", nextFrontierTableName: "__next_frontier_dispatch_seal", columns: ["sealed_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrivalDelSql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundarySql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"`, ruleObservers: ["dispatch_first/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -548,6 +565,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

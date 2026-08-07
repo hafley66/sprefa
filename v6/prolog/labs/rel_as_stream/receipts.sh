@@ -134,7 +134,7 @@ served_log() {
   count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$schedule")"
   for (( index = 0; index < count; index++ )); do
     batch="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))[int(sys.argv[2])]))' "$schedule" "$index")"
-    curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null
+    curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events" >/dev/null
     sleep 0.35
   done
   sleep 0.8
@@ -251,7 +251,7 @@ served_final() {
   loaded="$(curl -s -X POST --data-binary @"$program" "$base/program")"
   case "$loaded" in *'"loaded":true'*) : ;; *) kill "$pid" 2>/dev/null; rm -rf "$scratch"; return 1 ;; esac
   for batch in "$@"; do
-    curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals" >/dev/null
+    curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events" >/dev/null
     sleep 0.35
   done
   sleep 0.6

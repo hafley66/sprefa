@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -215,6 +216,32 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   seq_ping_ordinal_2: ["text", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "ordered_program_level_fold_reaches_three_links", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "fc0e7144a2541959", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "dispatch_leg", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "ead76ef36ed920c9", hSchema: "ca1951004f168bca", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "leg_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "918ecbe5842f8f16", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "1c31035fbe9523c1", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "previous_leg", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "38b66fec1eb0e1d2", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 7, ordinal: 4, localName: "kilos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "8ec0f308bfb919f7", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "leg_total", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "ff50aaf725f44399", hSchema: "b29765c4a6c2c901", hRule: "747130d40fec10f5" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "leg_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "da94fe90a96a90ba", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 12, ordinal: 2, localName: "dispatch_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "bda1f02f69679361", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 12, ordinal: 3, localName: "kilos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "fd16d4355c94b55f", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "ping", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "815f0fb9a2859de2", hSchema: "0a430dd28c85fb71", hRule: "" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "partition", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b20b064c2832fa32", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 6, ordinal: 0, localName: "ping_ordinal", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "8ce9110c1dbd3366", hSchema: "f20f5ed68356bba7", hRule: "85f973a36ebebb14" },
+  { relId: 19, parentId: 18, ordinal: 1, localName: "partition", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c77d6ec1f070e580", hSchema: "", hRule: "" },
+  { relId: 20, parentId: 18, ordinal: 2, localName: "col2", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7cf465982dfca5db", hSchema: "", hRule: "" },
+  { relId: 21, parentId: 6, ordinal: 0, localName: "seq_ping_ordinal_2", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "9b1a436c5d3c4564", hSchema: "e4c3fc2bc60f3a9e", hRule: "85f973a36ebebb14" },
+  { relId: 22, parentId: 21, ordinal: 1, localName: "partition", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2ef2d7f22b9982c7", hSchema: "", hRule: "" },
+  { relId: 23, parentId: 21, ordinal: 2, localName: "at", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c183d82be7a8eac4", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   seq_ping_ordinal_2: ["text", "int"],
 };
@@ -281,11 +308,11 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_leg", kind: "set", tableName: "dispatch_leg", deltaTableName: "__delta_dispatch_leg", frontierTableName: "__frontier_dispatch_leg", nextFrontierTableName: "__next_frontier_dispatch_leg", columns: ["leg_id", "dispatch_id", "previous_leg", "kilos"], columnTypes: ["int", "int", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_leg" ("leg_id", "dispatch_id", "previous_leg", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, arrivalDelSql: `DELETE FROM "dispatch_leg" WHERE ("leg_id", "dispatch_id", "previous_leg", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, boundarySql: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_leg" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign"` },
-  { rel: "leg_total", kind: "set", tableName: "leg_total", deltaTableName: "__delta_leg_total", frontierTableName: "__frontier_leg_total", nextFrontierTableName: "__next_frontier_leg_total", columns: ["leg_id", "dispatch_id", "kilos"], columnTypes: ["int", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "leg_id", "dispatch_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_leg_total" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "kilos", "_sign"` },
-  { rel: "ping", kind: "set", tableName: "ping", deltaTableName: "__delta_ping", frontierTableName: "__frontier_ping", nextFrontierTableName: "__next_frontier_ping", columns: ["partition"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "ping" ("partition") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "partition"`, arrivalDelSql: `DELETE FROM "ping" WHERE ("partition") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "partition"`, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "_sign"` },
-  { rel: "ping_ordinal", kind: "log", tableName: "ping_ordinal", deltaTableName: "__delta_ping_ordinal", frontierTableName: "__frontier_ping_ordinal", nextFrontierTableName: "__next_frontier_ping_ordinal", columns: ["partition", "col2"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping_ordinal" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "col2", "_sign"` },
-  { rel: "seq_ping_ordinal_2", kind: "set", tableName: "seq_ping_ordinal_2", deltaTableName: "__delta_seq_ping_ordinal_2", frontierTableName: "__frontier_seq_ping_ordinal_2", nextFrontierTableName: "__next_frontier_seq_ping_ordinal_2", columns: ["partition", "at"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seq_ping_ordinal_2" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "at", "_sign"` },
+  { rel: "dispatch_leg", kind: "set", tableName: "dispatch_leg", deltaTableName: "__delta_dispatch_leg", frontierTableName: "__frontier_dispatch_leg", nextFrontierTableName: "__next_frontier_dispatch_leg", columns: ["leg_id", "dispatch_id", "previous_leg", "kilos"], columnTypes: ["int", "int", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "dispatch_leg" ("leg_id", "dispatch_id", "previous_leg", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, arrivalDelSql: `DELETE FROM "dispatch_leg" WHERE ("leg_id", "dispatch_id", "previous_leg", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, boundarySql: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_leg" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign"`, ruleObservers: ["leg_total/3"] },
+  { rel: "leg_total", kind: "set", tableName: "leg_total", deltaTableName: "__delta_leg_total", frontierTableName: "__frontier_leg_total", nextFrontierTableName: "__next_frontier_leg_total", columns: ["leg_id", "dispatch_id", "kilos"], columnTypes: ["int", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "leg_id", "dispatch_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_leg_total" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "kilos", "_sign"`, ruleObservers: ["leg_total/3"] },
+  { rel: "ping", kind: "set", tableName: "ping", deltaTableName: "__delta_ping", frontierTableName: "__frontier_ping", nextFrontierTableName: "__next_frontier_ping", columns: ["partition"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "ping" ("partition") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "partition"`, arrivalDelSql: `DELETE FROM "ping" WHERE ("partition") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "partition"`, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "_sign"`, ruleObservers: ["ping_ordinal/2", "seq_ping_ordinal_2/2"] },
+  { rel: "ping_ordinal", kind: "log", tableName: "ping_ordinal", deltaTableName: "__delta_ping_ordinal", frontierTableName: "__frontier_ping_ordinal", nextFrontierTableName: "__next_frontier_ping_ordinal", columns: ["partition", "col2"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping_ordinal" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "col2", "_sign"`, ruleObservers: [] },
+  { rel: "seq_ping_ordinal_2", kind: "set", tableName: "seq_ping_ordinal_2", deltaTableName: "__delta_seq_ping_ordinal_2", frontierTableName: "__frontier_seq_ping_ordinal_2", nextFrontierTableName: "__next_frontier_seq_ping_ordinal_2", columns: ["partition", "at"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seq_ping_ordinal_2" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "at", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -655,6 +682,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -179,6 +180,21 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   head_move: ["int", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "head_move_replaces_key", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "3720ef969c8957bf", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "head", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "365b44d9d168121e", hSchema: "8cb497737c5383d9", hRule: "e22432c07cde4945" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e780d68199108389", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0f7d2d1377309571", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "head_move", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "bcf21c40d763a5b1", hSchema: "d5a7cf9fdd74576f", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "6c16268c86512c8d", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "192dd55f7661ba1f", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -232,8 +248,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"` },
-  { rel: "head_move", kind: "log", tableName: "head_move", deltaTableName: "__delta_head_move", frontierTableName: "__frontier_head_move", nextFrontierTableName: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"` },
+  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, ruleObservers: [] },
+  { rel: "head_move", kind: "log", tableName: "head_move", deltaTableName: "__delta_head_move", frontierTableName: "__frontier_head_move", nextFrontierTableName: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, ruleObservers: ["head/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -359,6 +375,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

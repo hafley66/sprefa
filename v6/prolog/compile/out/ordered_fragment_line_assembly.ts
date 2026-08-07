@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -161,6 +162,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   fragment_text: ["text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "ordered_fragment_line_assembly", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "f4e748c63acec664", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "fragment_line", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "17fccab434474e50", hSchema: "02653488dcd5c6ed", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "fragment_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7d5b674920198b94", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "line_ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "1c5b396687a2805d", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "line_text", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5d6e2dd6891e7661", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "fragment_text", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "7a3139908889b6d5", hSchema: "e50c9c5f140eebea", hRule: "8c7e737e70726d61" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "fragment_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "21c6ac6e37ba641c", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 11, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3196b9cde65caf5c", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -218,8 +235,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fragment_line", kind: "set", tableName: "fragment_line", deltaTableName: "__delta_fragment_line", frontierTableName: "__frontier_fragment_line", nextFrontierTableName: "__next_frontier_fragment_line", columns: ["fragment_name", "line_ordinal", "line_text"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "fragment_line" ("fragment_name", "line_ordinal", "line_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "fragment_name", "line_ordinal", "line_text"`, arrivalDelSql: `DELETE FROM "fragment_line" WHERE ("fragment_name", "line_ordinal", "line_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "fragment_name", "line_ordinal", "line_text"`, boundarySql: `SELECT CASE WHEN json_valid("fragment_name") AND json_type("fragment_name") = 'object' AND json_type("fragment_name", '$.fn') = 'text' AND json_type("fragment_name", '$.args') = 'array' THEN json_extract("fragment_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("fragment_name", '$.args')), '') || ')' ELSE "fragment_name" END AS "fragment_name", "line_ordinal", CASE WHEN json_valid("line_text") AND json_type("line_text") = 'object' AND json_type("line_text", '$.fn') = 'text' AND json_type("line_text", '$.args') = 'array' THEN json_extract("line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("line_text", '$.args')), '') || ')' ELSE "line_text" END AS "line_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fragment_line" WHERE "_sign" IN (-1, 1) GROUP BY "fragment_name", "line_ordinal", "line_text", "_sign"` },
-  { rel: "fragment_text", kind: "set", tableName: "fragment_text", deltaTableName: "__delta_fragment_text", frontierTableName: "__frontier_fragment_text", nextFrontierTableName: "__next_frontier_fragment_text", columns: ["fragment_name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("fragment_name") AND json_type("fragment_name") = 'object' AND json_type("fragment_name", '$.fn') = 'text' AND json_type("fragment_name", '$.args') = 'array' THEN json_extract("fragment_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("fragment_name", '$.args')), '') || ')' ELSE "fragment_name" END AS "fragment_name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fragment_text" WHERE "_sign" IN (-1, 1) GROUP BY "fragment_name", "col2", "_sign"` },
+  { rel: "fragment_line", kind: "set", tableName: "fragment_line", deltaTableName: "__delta_fragment_line", frontierTableName: "__frontier_fragment_line", nextFrontierTableName: "__next_frontier_fragment_line", columns: ["fragment_name", "line_ordinal", "line_text"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "fragment_line" ("fragment_name", "line_ordinal", "line_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "fragment_name", "line_ordinal", "line_text"`, arrivalDelSql: `DELETE FROM "fragment_line" WHERE ("fragment_name", "line_ordinal", "line_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "fragment_name", "line_ordinal", "line_text"`, boundarySql: `SELECT CASE WHEN json_valid("fragment_name") AND json_type("fragment_name") = 'object' AND json_type("fragment_name", '$.fn') = 'text' AND json_type("fragment_name", '$.args') = 'array' THEN json_extract("fragment_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("fragment_name", '$.args')), '') || ')' ELSE "fragment_name" END AS "fragment_name", "line_ordinal", CASE WHEN json_valid("line_text") AND json_type("line_text") = 'object' AND json_type("line_text", '$.fn') = 'text' AND json_type("line_text", '$.args') = 'array' THEN json_extract("line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("line_text", '$.args')), '') || ')' ELSE "line_text" END AS "line_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fragment_line" WHERE "_sign" IN (-1, 1) GROUP BY "fragment_name", "line_ordinal", "line_text", "_sign"`, ruleObservers: ["fragment_text/2"] },
+  { rel: "fragment_text", kind: "set", tableName: "fragment_text", deltaTableName: "__delta_fragment_text", frontierTableName: "__frontier_fragment_text", nextFrontierTableName: "__next_frontier_fragment_text", columns: ["fragment_name", "col2"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("fragment_name") AND json_type("fragment_name") = 'object' AND json_type("fragment_name", '$.fn') = 'text' AND json_type("fragment_name", '$.args') = 'array' THEN json_extract("fragment_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("fragment_name", '$.args')), '') || ')' ELSE "fragment_name" END AS "fragment_name", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fragment_text" WHERE "_sign" IN (-1, 1) GROUP BY "fragment_name", "col2", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -318,6 +335,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

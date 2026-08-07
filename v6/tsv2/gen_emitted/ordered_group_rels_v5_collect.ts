@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -161,6 +162,23 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   rel_catalog: ["text", "text", "text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "ordered_group_rels_v5_collect", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e83ae3c9038ea552", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "group_rels", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4df0763b2354f44a", hSchema: "1780a038033959f5", hRule: "2d30b19b3394e762" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "group_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8c9d8ffc4af3c4a9", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "col2", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "e2b7866fd5039994", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "rel_catalog", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "7df5da1da34eefa4", hSchema: "6e72a40585d43caf", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "relation_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6078980460e3cb35", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "group_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "66486cc7b90cff33", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 10, ordinal: 3, localName: "_column_text", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "039b9a9628a5c2fe", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 10, ordinal: 4, localName: "_documentation_text", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9a72aa87325442e8", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -218,8 +236,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "group_rels", kind: "set", tableName: "group_rels", deltaTableName: "__delta_group_rels", frontierTableName: "__frontier_group_rels", nextFrontierTableName: "__next_frontier_group_rels", columns: ["group_name", "col2"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_group_rels" WHERE "_sign" IN (-1, 1) GROUP BY "group_name", "col2", "_sign"` },
-  { rel: "rel_catalog", kind: "set", tableName: "rel_catalog", deltaTableName: "__delta_rel_catalog", frontierTableName: "__frontier_rel_catalog", nextFrontierTableName: "__next_frontier_rel_catalog", columns: ["relation_name", "group_name", "_column_text", "_documentation_text"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, arrivalDelSql: `DELETE FROM "rel_catalog" WHERE ("relation_name", "group_name", "_column_text", "_documentation_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, boundarySql: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rel_catalog" WHERE "_sign" IN (-1, 1) GROUP BY "relation_name", "group_name", "_column_text", "_documentation_text", "_sign"` },
+  { rel: "group_rels", kind: "set", tableName: "group_rels", deltaTableName: "__delta_group_rels", frontierTableName: "__frontier_group_rels", nextFrontierTableName: "__next_frontier_group_rels", columns: ["group_name", "col2"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_group_rels" WHERE "_sign" IN (-1, 1) GROUP BY "group_name", "col2", "_sign"`, ruleObservers: [] },
+  { rel: "rel_catalog", kind: "set", tableName: "rel_catalog", deltaTableName: "__delta_rel_catalog", frontierTableName: "__frontier_rel_catalog", nextFrontierTableName: "__next_frontier_rel_catalog", columns: ["relation_name", "group_name", "_column_text", "_documentation_text"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, arrivalDelSql: `DELETE FROM "rel_catalog" WHERE ("relation_name", "group_name", "_column_text", "_documentation_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, boundarySql: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rel_catalog" WHERE "_sign" IN (-1, 1) GROUP BY "relation_name", "group_name", "_column_text", "_documentation_text", "_sign"`, ruleObservers: ["group_rels/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -315,6 +333,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

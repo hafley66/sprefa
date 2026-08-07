@@ -15,7 +15,7 @@ export const CLI_COMMANDS: readonly ICliCommandInventory[] = [
 
 export const HTTP_ROUTES: readonly IHttpRouteInventory[] = [
   { method: "POST", path: "/program", summary: "compile and load a DL6 program." },
-  { method: "POST", path: "/arrivals", summary: "submit signed EDB arrivals." },
+  { method: "POST", path: "/edb/events", summary: "submit signed EDB events, one tick per call." },
   { method: "GET", path: "/idb/:rel", summary: "read one relation snapshot." },
   { method: "GET", path: "/ticks", summary: "stream tick events as SSE." },
   { method: "GET", path: "/stats", summary: "read process memory and SQLite storage statistics." },

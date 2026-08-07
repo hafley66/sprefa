@@ -44,7 +44,7 @@
 % changed from a 5-field EXCEPT-query/refresh-table design to a 2-field
 % "just read every row" design, EdgeStatements changed from a SQL self-join
 % design to a "project one arrival row, resolve keys, upsert" design, and
-% Log-rel DDL/arrivals dropped their stamp columns entirely. Reported as a
+% Log-rel DDL and its arrival rows dropped their stamp columns. Reported as a
 % finding, not silently absorbed.
 %
 % The replacement strategy matches Phase A's own hand-carved exemplar
@@ -139,7 +139,9 @@
             json_capture_json_type/2,
             % The catalog's column contract, read by compile.pl so the ordinary
             % rel path builds the table from real decls instead of caller spellings.
-            catalog_ddl_contract/2 ]).
+            catalog_ddl_contract/2,
+            % The same rows the catalog INSERT renders, read by emit_ts.pl.
+            catalog_rows/4 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -661,20 +663,24 @@ schema_hash(Columns, ColumnTypes, KeyOrNone, HashText) :-
     canonical_hash_key(schema(Columns, ColumnTypes, KeyOrNone), Key),
     module_hash(Key, HashText).
 
-%! rule_hash(+Rules, +Ref, -HashText) is det.
-%   The empty atom when no rule in this program derives Ref: a source rel has no
-%   derivation to fingerprint.
-rule_hash(Rules, Ref, HashText) :-
-    findall(Body,
+%! rule_bodies_map(+Rules, -Map) is det.
+%   msort, not sort: a duplicate body counts toward the hash.
+rule_bodies_map(Rules, Map) :-
+    findall(Ref-Body,
             ( member(Rule, Rules),
               rule_head_ref(Rule, Ref),
               rule_body_of(Rule, Body) ),
-            Bodies0),
-    (   Bodies0 == []
-    ->  HashText = ''
-    ;   msort(Bodies0, Bodies),
-        canonical_hash_key(rules(Bodies), Key),
+            Pairs0),
+    msort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Map).
+
+%! rule_hash(+BodiesMap, +Ref, -HashText) is det.
+%   The empty atom for a source rel: no derivation to fingerprint.
+rule_hash(BodiesMap, Ref, HashText) :-
+    (   memberchk(Ref-Bodies, BodiesMap)
+    ->  canonical_hash_key(rules(Bodies), Key),
         module_hash(Key, HashText)
+    ;   HashText = ''
     ).
 
 rule_body_of((_Head <- Body), Body).
@@ -691,20 +697,26 @@ canonical_hash_key(Term, KeyAtom) :-
 % Ids are assigned by POSITION for a byte-stable recompile: the primitives
 % first, then the module row, then each rel and its columns, one INSERT.
 catalog_row_ddl(ModuleName, Rules, RelPlans, [Statement]) :-
-    module_hash(ModuleName, ModuleHash),
-    catalog_primitive_rows(1, PrimitiveRows),
-    length(PrimitiveRows, PrimitiveCount),
-    ModuleId is PrimitiveCount + 1,
-    ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
-    FirstRelId is ModuleId + 1,
-    catalog_rel_rows(RelPlans, Rules, ModuleId, ModuleHash, FirstRelId, _FinalId, RelRows),
-    append([PrimitiveRows, [ModuleRow], RelRows], AllRows),
+    catalog_rows(ModuleName, Rules, RelPlans, AllRows),
     foldl(catalog_row_part, AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
            'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
+
+%! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
+%   One source for the INSERT and the emitted constant a reload compares.
+catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
+    module_hash(ModuleName, ModuleHash),
+    rule_bodies_map(Rules, BodiesMap),
+    catalog_primitive_rows(1, PrimitiveRows),
+    length(PrimitiveRows, PrimitiveCount),
+    ModuleId is PrimitiveCount + 1,
+    ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
+    FirstRelId is ModuleId + 1,
+    catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, FirstRelId, _FinalId, RelRows),
+    append([PrimitiveRows, [ModuleRow], RelRows], AllRows).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
     catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).
@@ -714,18 +726,18 @@ catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
     catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '', '', '') | Acc], Rows).
 
-catalog_rel_rows([], _Rules, _ModuleId, _ModuleHash, Id, Id, []).
-catalog_rel_rows([RelPlan | Rest], Rules, ModuleId, ModuleHash, Id0, FinalId, Rows) :-
+catalog_rel_rows([], _BodiesMap, _ModuleId, _ModuleHash, Id, Id, []).
+catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, Id0, FinalId, Rows) :-
     RelPlan = relplan(Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
-    rule_hash(Rules, Name/RelArity, HRule),
+    rule_hash(BodiesMap, Name/RelArity, HRule),
     RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId,
                  HSchema, HRule),
     IdAfterRel is Id0 + 1,
     catalog_column_rows(Columns, ColumnTypes, ModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
-    catalog_rel_rows(Rest, Rules, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
+    catalog_rel_rows(Rest, BodiesMap, ModuleId, ModuleHash, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 
 catalog_column_rows([], _ColumnTypes, _ModuleId, _ParentHId, _RelId, _Ordinal,

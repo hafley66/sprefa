@@ -95,15 +95,15 @@ python3 - "$WORK_DIR" "$CHUNKS" "$TOKEN" <<'PY'
 import json, sys
 work, chunks, token = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 rows = [{"rel":"probe_row","sign":"add","row":[str(i)]} for i in range(chunks)]
-with open(sys.argv[1] + "/arrivals.json", "w") as f:
+with open(sys.argv[1] + "/events.json", "w") as f:
     json.dump({"batch": rows}, f)
 print(f"posting {chunks} probe tokens")
 PY
 
-status="$(curl -s -o "$WORK_DIR/arrivals.out" -w '%{http_code}' -X POST --data-binary @"$WORK_DIR/arrivals.json" "$BASE/arrivals")"
+status="$(curl -s -o "$WORK_DIR/events.out" -w '%{http_code}' -X POST --data-binary @"$WORK_DIR/events.json" "$BASE/edb/events")"
 if [ "$status" != 200 ]; then
   printf 'run.sh: arrivals returned %s\n' >&2
-  cat "$WORK_DIR/arrivals.out" >&2
+  cat "$WORK_DIR/events.out" >&2
   exit 1
 fi
 

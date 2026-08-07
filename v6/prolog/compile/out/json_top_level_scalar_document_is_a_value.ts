@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -184,6 +185,27 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   payload: ["text", "json"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "json_top_level_scalar_document_is_a_value", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "f551fa089ee36b62", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "echoed", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "f58f4e4cec6f614d", hSchema: "6247e9d76bac057d", hRule: "8a5275c6f09cbb25" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b32de58f2b89e3e3", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "a5d218525b882cd4", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "label", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "6e953bd9c907f907", hSchema: "dada85f3e8bf5278", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "72a1aa18f722d488", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c52ba6e7dbebc898", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "labelled", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "bbec5fcbacc0178a", hSchema: "dada85f3e8bf5278", hRule: "d2adbf6ba2df3129" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a9fdf13fc96ee78b", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "cf57e4ad0fe8da0b", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "payload", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "13b7dae4a76a2e65", hSchema: "6247e9d76bac057d", hRule: "" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "aaa1ed24e4e9ac8e", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 16, ordinal: 2, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "74ef604c99e247d6", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   echoed: ["text", "json"],
   label: ["text", "text"],
@@ -251,10 +273,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "echoed", kind: "set", tableName: "echoed", deltaTableName: "__delta_echoed", frontierTableName: "__frontier_echoed", nextFrontierTableName: "__next_frontier_echoed", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"` },
-  { rel: "label", kind: "set", tableName: "label", deltaTableName: "__delta_label", frontierTableName: "__frontier_label", nextFrontierTableName: "__next_frontier_label", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"` },
-  { rel: "labelled", kind: "set", tableName: "labelled", deltaTableName: "__delta_labelled", frontierTableName: "__frontier_labelled", nextFrontierTableName: "__next_frontier_labelled", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"` },
-  { rel: "payload", kind: "set", tableName: "payload", deltaTableName: "__delta_payload", frontierTableName: "__frontier_payload", nextFrontierTableName: "__next_frontier_payload", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"` },
+  { rel: "echoed", kind: "set", tableName: "echoed", deltaTableName: "__delta_echoed", frontierTableName: "__frontier_echoed", nextFrontierTableName: "__next_frontier_echoed", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: [] },
+  { rel: "label", kind: "set", tableName: "label", deltaTableName: "__delta_label", frontierTableName: "__frontier_label", nextFrontierTableName: "__next_frontier_label", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: ["labelled/2"] },
+  { rel: "labelled", kind: "set", tableName: "labelled", deltaTableName: "__delta_labelled", frontierTableName: "__frontier_labelled", nextFrontierTableName: "__next_frontier_labelled", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: [] },
+  { rel: "payload", kind: "set", tableName: "payload", deltaTableName: "__delta_payload", frontierTableName: "__frontier_payload", nextFrontierTableName: "__next_frontier_payload", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: ["echoed/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -358,6 +380,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

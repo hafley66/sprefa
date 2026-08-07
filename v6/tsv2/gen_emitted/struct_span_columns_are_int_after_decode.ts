@@ -32,6 +32,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -54,7 +55,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -184,6 +185,25 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   span: ["int", "int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "struct_span_columns_are_int_after_decode", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "64fad9917dfc6f2f", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "def_start", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "9f851880cde1c0fb", hSchema: "1fa6daf57d417643", hRule: "8b2bf2a44af14211" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "120e79165e261efb", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "offset", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c0a6bd07affb2587", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "node_fact", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "603205adc2eb97b5", hSchema: "a3a1118f46e7a1d4", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "62f9be16d76c9efa", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b0c27d9c8f14aa11", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 10, ordinal: 3, localName: "at", kind: "column", typeId: 0, arity: 0, moduleId: 6, hId: "e6630d4ceb88209b", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 6, ordinal: 0, localName: "span", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "65c324dd09fa068c", hSchema: "1280524bf1611222", hRule: "" },
+  { relId: 15, parentId: 14, ordinal: 1, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7e99b947cfb3248c", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 14, ordinal: 2, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7496a4e21e863770", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   def_start: ["text", "int"],
   node_fact: ["text", "text", "other"],
@@ -245,9 +265,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "def_start", kind: "set", tableName: "def_start", deltaTableName: "__delta_def_start", frontierTableName: "__frontier_def_start", nextFrontierTableName: "__next_frontier_def_start", columns: ["path", "offset"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def_start" WHERE "_sign" IN (-1, 1) GROUP BY "path", "offset", "_sign"` },
-  { rel: "node_fact", kind: "log", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "name", "at"], columnTypes: ["text", "text", "ref"], keyIndices: [], arrivalAddSql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"` },
-  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["end", "start"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "end", "start"`, arrivalDelSql: `DELETE FROM "span" WHERE ("end", "start") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "end", "start"`, boundarySql: `SELECT "end", "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "end", "start", "_sign"` },
+  { rel: "def_start", kind: "set", tableName: "def_start", deltaTableName: "__delta_def_start", frontierTableName: "__frontier_def_start", nextFrontierTableName: "__next_frontier_def_start", columns: ["path", "offset"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def_start" WHERE "_sign" IN (-1, 1) GROUP BY "path", "offset", "_sign"`, ruleObservers: [] },
+  { rel: "node_fact", kind: "log", tableName: "node_fact", deltaTableName: "__delta_node_fact", frontierTableName: "__frontier_node_fact", nextFrontierTableName: "__next_frontier_node_fact", columns: ["path", "name", "at"], columnTypes: ["text", "text", "ref"], keyIndices: [], arrivalAddSql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"`, ruleObservers: ["def_start/2"] },
+  { rel: "span", kind: "set", tableName: "span", deltaTableName: "__delta_span", frontierTableName: "__frontier_span", nextFrontierTableName: "__next_frontier_span", columns: ["end", "start"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "span" ("end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "end", "start"`, arrivalDelSql: `DELETE FROM "span" WHERE ("end", "start") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "end", "start"`, boundarySql: `SELECT "end", "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "end", "start", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -351,6 +371,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

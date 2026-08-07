@@ -26,7 +26,7 @@ count="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' 
 for (( i = 0; i < count; i++ )); do
   batch="$(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))[int(sys.argv[2])]))' "$schedule" "$i")"
   echo "--- arrivals batch $i ---"
-  curl -s -X POST -d "{\"batch\":$batch}" "$base/arrivals"; echo
+  curl -s -X POST -d "{\"batch\":$batch}" "$base/edb/events"; echo
   sleep 0.5
 done
 sleep 1

@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -163,6 +164,19 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   source: ["int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "next_level_is_the_bare_atom_spelling", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "82ccbab513f6bcac", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "seen", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "0b24ca2d84a65cac", hSchema: "7e38e778eed579a5", hRule: "0f40a17b2b18ce80" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "3dc7a7473404e46e", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "source", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "4a20d878a675f790", hSchema: "7e38e778eed579a5", hRule: "" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b6f4b30d30e8900d", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -217,8 +231,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "seen", kind: "set", tableName: "seen", deltaTableName: "__delta_seen", frontierTableName: "__frontier_seen", nextFrontierTableName: "__next_frontier_seen", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
-  { rel: "source", kind: "set", tableName: "source", deltaTableName: "__delta_source", frontierTableName: "__frontier_source", nextFrontierTableName: "__next_frontier_source", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"` },
+  { rel: "seen", kind: "set", tableName: "seen", deltaTableName: "__delta_seen", frontierTableName: "__frontier_seen", nextFrontierTableName: "__next_frontier_seen", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: [] },
+  { rel: "source", kind: "set", tableName: "source", deltaTableName: "__delta_source", frontierTableName: "__frontier_source", nextFrontierTableName: "__next_frontier_source", columns: ["value"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrivalDelSql: `DELETE FROM "source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, ruleObservers: ["seen/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -314,6 +328,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

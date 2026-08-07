@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -184,6 +185,26 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   tree: ["int"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "coalesce_over_derived_source", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "57a6ccec71804e95", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "heavy", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "a96b1ef72c1f0b6d", hSchema: "179294fd5c1cf519", hRule: "cbb1af9159c98e06" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "tree_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "50eac0a0be9fd5ca", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "kilos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "20aa61746e151913", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "pick", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "22e58124171ab881", hSchema: "179294fd5c1cf519", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "tree_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "feb08bdff8cf2a63", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "kilos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "10ab86776c8a07b1", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "report", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "802ded1e506a0b45", hSchema: "179294fd5c1cf519", hRule: "80f240064be17f47" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "tree_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "91224c3ffeca833c", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "kilos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "4c031742595dd0d8", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "tree", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "23a37947378ea9f4", hSchema: "f9ef23491f91e03d", hRule: "" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "tree_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "383c6eaeec59dcfb", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   heavy: ["int", "int"],
   pick: ["int", "int"],
@@ -257,10 +278,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "heavy", kind: "set", tableName: "heavy", deltaTableName: "__delta_heavy", frontierTableName: "__frontier_heavy", nextFrontierTableName: "__next_frontier_heavy", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_heavy" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"` },
-  { rel: "pick", kind: "set", tableName: "pick", deltaTableName: "__delta_pick", frontierTableName: "__frontier_pick", nextFrontierTableName: "__next_frontier_pick", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "pick" ("tree_id", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "kilos"`, arrivalDelSql: `DELETE FROM "pick" WHERE ("tree_id", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "kilos"`, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pick" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"` },
-  { rel: "report", kind: "set", tableName: "report", deltaTableName: "__delta_report", frontierTableName: "__frontier_report", nextFrontierTableName: "__next_frontier_report", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_report" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"` },
-  { rel: "tree", kind: "set", tableName: "tree", deltaTableName: "__delta_tree", frontierTableName: "__frontier_tree", nextFrontierTableName: "__next_frontier_tree", columns: ["tree_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "tree" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrivalDelSql: `DELETE FROM "tree" WHERE ("tree_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "tree_id"`, boundarySql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"` },
+  { rel: "heavy", kind: "set", tableName: "heavy", deltaTableName: "__delta_heavy", frontierTableName: "__frontier_heavy", nextFrontierTableName: "__next_frontier_heavy", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_heavy" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, ruleObservers: ["report/2"] },
+  { rel: "pick", kind: "set", tableName: "pick", deltaTableName: "__delta_pick", frontierTableName: "__frontier_pick", nextFrontierTableName: "__next_frontier_pick", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "pick" ("tree_id", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "kilos"`, arrivalDelSql: `DELETE FROM "pick" WHERE ("tree_id", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "kilos"`, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pick" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, ruleObservers: ["heavy/2"] },
+  { rel: "report", kind: "set", tableName: "report", deltaTableName: "__delta_report", frontierTableName: "__frontier_report", nextFrontierTableName: "__next_frontier_report", columns: ["tree_id", "kilos"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_report" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, ruleObservers: [] },
+  { rel: "tree", kind: "set", tableName: "tree", deltaTableName: "__delta_tree", frontierTableName: "__frontier_tree", nextFrontierTableName: "__next_frontier_tree", columns: ["tree_id"], columnTypes: ["int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "tree" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrivalDelSql: `DELETE FROM "tree" WHERE ("tree_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "tree_id"`, boundarySql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, ruleObservers: ["report/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -366,6 +387,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

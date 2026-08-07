@@ -26,6 +26,29 @@ type DeltaEvent = {
   readonly row: IRow;
 };
 
+/** Carry a skipped rel can no longer report from `__next_frontier_`: the row
+ *  count of the fill its copies read stands in for the EXISTS. */
+const skippedCarry = new WeakSet<ISqlSeam>();
+
+/** Nobody reads this rel's event tables: no rule body (compile time) and no
+ *  caller at the boundary (boot). An absent `ruleObservers` never skips. */
+function isUnobserved(relation: IIncrementalRelationPlan, seam: ISqlSeam): boolean {
+  return (
+    (relation.ruleObservers ?? ["*"]).length === 0 &&
+    seam.unobservedRels?.has(relation.rel) === true
+  );
+}
+
+/** The same array by reference when no boot set narrows it, so a caller that
+ *  never names an unobserved rel allocates and renders exactly what it did. */
+function observedRels(
+  relations: readonly IIncrementalRelationPlan[],
+  seam: ISqlSeam,
+): readonly IIncrementalRelationPlan[] {
+  if (seam.unobservedRels === undefined || seam.unobservedRels.size === 0) return relations;
+  return relations.filter((relation) => !isUnobserved(relation, seam));
+}
+
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
@@ -116,6 +139,17 @@ function frontierStageStatement(
   };
 }
 
+function stagesNextFrontier(
+  relation: IIncrementalRelationPlan,
+  frontierCopies: readonly {
+    readonly tableName: (relation: IIncrementalRelationPlan) => string;
+  }[],
+): boolean {
+  return frontierCopies.some(
+    (copy) => copy.tableName(relation) === relation.nextFrontierTableName,
+  );
+}
+
 function stageEvents(
   seam: ISqlSeam,
   relations: readonly IIncrementalRelationPlan[],
@@ -135,8 +169,14 @@ function stageEvents(
   const statements = [...eventsByRel].flatMap(([rel, grouped]) => {
     const relation = relationByName.get(rel);
     if (relation === undefined) throw new Error(`incremental delta relation missing: ${rel}`);
-    const boundary = boundaryStageStatement(relation, grouped);
     const additions = grouped.filter((event) => event.sign === 1);
+    if (isUnobserved(relation, seam)) {
+      if (additions.length > 0 && stagesNextFrontier(relation, frontierCopies)) {
+        skippedCarry.add(seam);
+      }
+      return [];
+    }
+    const boundary = boundaryStageStatement(relation, grouped);
     if (additions.length === 0) return [boundary];
     return [
       boundary,
@@ -556,16 +596,29 @@ function reconcileRefCountStatement(
     clear, seed, update, stageRetract, collectZero,
     clearNew, fillNew, stageAdd, stageFrontier, stageNextFrontier, insertNew,
   ] = statement.supportSql;
+  const skipped = isUnobserved(relation, seam);
   // Each copy names the table it wants and the emitted statement carries its
   // phase as the one bind, so the two copies share one prepared shape.
-  const frontierStages = frontierCopies.map((copy): SqlStatement => ({
-    sql: copy.tableName(relation) === relation.nextFrontierTableName ? stageNextFrontier! : stageFrontier!,
-    args: [copy.phase],
-  }));
+  const frontierStages = skipped
+    ? []
+    : frontierCopies.map((copy): SqlStatement => ({
+        sql: copy.tableName(relation) === relation.nextFrontierTableName ? stageNextFrontier! : stageFrontier!,
+        args: [copy.phase],
+      }));
+  // `__new_` is the table the dropped copies read, so its row count is the
+  // carry the dropped `__next_frontier_` rows would have signalled.
+  const carriesNext = skipped && stagesNextFrontier(relation, frontierCopies);
+  const noteFill = (rows: number): void => {
+    if (carriesNext && rows > 0) skippedCarry.add(seam);
+  };
   const toStatements = (texts: readonly string[]): SqlStatement[] =>
     texts.map((text): SqlStatement => ({ sql: text, args: [] }));
+  const tailTexts = skipped
+    ? [update!, collectZero!, clearNew!, fillNew!]
+    : [update!, stageRetract!, collectZero!, clearNew!, fillNew!, stageAdd!];
+  const fillNewIndex = tailTexts.length - (skipped ? 1 : 2);
   const tail: SqlStatement[] = [
-    ...toStatements([update!, stageRetract!, collectZero!, clearNew!, fillNew!, stageAdd!]),
+    ...toStatements(tailTexts),
     ...frontierStages,
     { sql: insertNew!, args: [] },
   ];
@@ -574,7 +627,7 @@ function reconcileRefCountStatement(
     if (expandPlan === null) {
       return seam.runner
         .batch(seam.db, [...toStatements([clear!, seed!]), ...tail])
-        .pipe(map(() => undefined));
+        .pipe(map((results) => noteFill(results[fillNewIndex + 2]!.rowsAffected)));
     }
     // rx expand over the wavefront pair: hop fills the idle wave from the busy
     // one, absorb folds it into the refCount table, roles swap until a hop is 0.
@@ -604,21 +657,25 @@ function reconcileRefCountStatement(
         ),
       ),
       concatMap(() => seam.runner.batch(seam.db, tail)),
-      map(() => undefined),
+      map((results) => noteFill(results[fillNewIndex]!.rowsAffected)),
     );
   };
   const dredPlan = statement.dredSql ?? null;
   if (dredPlan === null) return recompute();
-  const arrivalTail: SqlStatement[] = [
-    ...toStatements([stageAdd!]),
-    ...frontierStages,
-  ];
+  const arrivalTail: SqlStatement[] = skipped
+    ? []
+    : [...toStatements([stageAdd!]), ...frontierStages];
   return maintainHeadInPlace(
     seam,
     dredPlan,
     relations,
     toStatements,
-    { clearNew: clearNew!, arrivalTail },
+    {
+      clearNew: clearNew!,
+      arrivalTail,
+      stageRetract: skipped ? [] : toStatements([dredPlan.stageRetractSql]),
+      noteFill,
+    },
     recompute,
   );
 }
@@ -633,7 +690,12 @@ function maintainHeadInPlace(
   plan: IDredPlan,
   relations: readonly IIncrementalRelationPlan[],
   toStatements: (texts: readonly string[]) => SqlStatement[],
-  arrivals: { readonly clearNew: string; readonly arrivalTail: SqlStatement[] },
+  staging: {
+    readonly clearNew: string;
+    readonly arrivalTail: readonly SqlStatement[];
+    readonly stageRetract: readonly SqlStatement[];
+    readonly noteFill: (rows: number) => void;
+  },
   recompute: () => Observable<void>,
 ): Observable<void> {
   const walk = (
@@ -653,13 +715,18 @@ function maintainHeadInPlace(
             : [plan.clearPingSql, plan.assertHopBASql, plan.commitASql, plan.arrivalASql],
         ),
       )
-      .pipe(map((results) => results[1]!.rowsAffected));
+      .pipe(
+        map((results) => {
+          staging.noteFill(results[3]!.rowsAffected);
+          return results[1]!.rowsAffected;
+        }),
+      );
   const assertHalf = (): Observable<void> =>
     seam.runner
       .batch(
         seam.db,
         toStatements([
-          arrivals.clearNew,
+          staging.clearNew,
           plan.clearPingSql,
           plan.clearPongSql,
           ...plan.assertSeedSqls,
@@ -668,8 +735,15 @@ function maintainHeadInPlace(
         ]),
       )
       .pipe(
-        concatMap(() => walk(assertRound)),
-        concatMap(() => seam.runner.batch(seam.db, arrivals.arrivalTail)),
+        concatMap((results) => {
+          staging.noteFill(results[results.length - 1]!.rowsAffected);
+          return walk(assertRound);
+        }),
+        concatMap(() =>
+          staging.arrivalTail.length === 0
+            ? of(undefined)
+            : seam.runner.batch(seam.db, staging.arrivalTail)
+        ),
         map(() => undefined),
       );
   // Resolves true when the cone outgrew a quarter of the head. The walk writes
@@ -746,7 +820,9 @@ function maintainHeadInPlace(
                 .pipe(
                   concatMap(() => walk(reviveRound)),
                   concatMap(() =>
-                    seam.runner.batch(seam.db, toStatements([plan.stageRetractSql])),
+                    staging.stageRetract.length === 0
+                      ? of(undefined)
+                      : seam.runner.batch(seam.db, staging.stageRetract)
                   ),
                   map(() => false),
                 );
@@ -754,7 +830,7 @@ function maintainHeadInPlace(
           );
       }),
     );
-  return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
+  return seam.runner.execute(seam.db, retractionGuardSql(relations, seam)).pipe(
     concatMap((result) =>
       Number(result.rows[0]?.has_retraction ?? 0) === 0
         ? assertHalf()
@@ -769,11 +845,17 @@ function maintainHeadInPlace(
  *  both reconcile passes use when the program has no negative level body
  *  (`reconcileEveryTick === false`): with only monotone level bodies, a level
  *  row can stop being derivable only if one of its inputs left. */
-function retractionGuardSql(relations: readonly IIncrementalRelationPlan[]): string {
-  const terms = relations.map(
+function retractionGuardSql(
+  relations: readonly IIncrementalRelationPlan[],
+  seam: ISqlSeam,
+): string {
+  // A rel no rule body reads is nobody's input, so its departures cannot make
+  // another rel's row stop being derivable.
+  const terms = observedRels(relations, seam).map(
     (relation) =>
       `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.deltaTableName)} WHERE "_sign" = -1 LIMIT 1)`,
   );
+  if (terms.length === 0) return `SELECT 0 AS has_retraction`;
   return `SELECT CASE WHEN ${terms.join(" OR ")} THEN 1 ELSE 0 END AS has_retraction`;
 }
 
@@ -851,13 +933,15 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     seam: ISqlSeam,
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
+    skippedCarry.delete(seam);
     if (relations.length === 0) return of(undefined);
-    const sql = relations
+    const sql = observedRels(relations, seam)
       .flatMap((relation) => [
         `DELETE FROM ${quoteIdentifier(relation.deltaTableName)}`,
         `DELETE FROM ${quoteIdentifier(relation.nextFrontierTableName)}`,
       ])
       .join(";\n");
+    if (sql === "") return of(undefined);
     return seam.runner.executeMultiple(seam.db, sql);
   },
 
@@ -1097,7 +1181,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       );
     };
     if (reconcileEveryTick) return reconcile();
-    return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
+    return seam.runner.execute(seam.db, retractionGuardSql(relations, seam)).pipe(
       concatMap((result) =>
         Number(result.rows[0]?.has_retraction ?? 0) === 0 ? of(undefined) : reconcile()
       ),
@@ -1109,7 +1193,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<void> {
     if (relations.length === 0) return of(undefined);
-    const sql = relations
+    const sql = observedRels(relations, seam)
       .map((relation) => {
         const columns = ["_phase", "_sequence", ...relation.columns]
           .map(quoteIdentifier)
@@ -1117,6 +1201,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         return `INSERT INTO ${quoteIdentifier(relation.frontierTableName)} (${columns}) SELECT ${columns} FROM ${quoteIdentifier(relation.nextFrontierTableName)}`;
       })
       .join(";\n");
+    if (sql === "") return of(undefined);
     return seam.runner.executeMultiple(seam.db, sql);
   },
 
@@ -1232,7 +1317,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     };
     if (reconcileEveryTick) return reconcile();
     if (relations.length === 0) return of(undefined);
-    return seam.runner.execute(seam.db, retractionGuardSql(relations)).pipe(
+    return seam.runner.execute(seam.db, retractionGuardSql(relations, seam)).pipe(
       concatMap((result) =>
         Number(result.rows[0]?.has_retraction ?? 0) === 0 ? of(undefined) : reconcile()
       ),
@@ -1246,7 +1331,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     if (relations.length === 0) return of([]);
     return forkJoin(
       relations.map((relation) =>
-        seam.unreadRels?.has(relation.rel) === true
+        seam.unobservedRels?.has(relation.rel) === true
           ? of({ rel: relation.rel, add: [], del: [] } satisfies IRelDelta)
           : seam.runner.execute(seam.db, relation.boundarySql).pipe(
               map((result) => boundaryDelta(relation, result)),
@@ -1318,7 +1403,11 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     relations: readonly IIncrementalRelationPlan[],
   ): Observable<boolean> {
     if (relations.length === 0) return of(false);
-    const carryTerms = relations.flatMap((relation) => [
+    // Read-and-clear: a skipped rel's `__next_frontier_` stayed empty, so the
+    // fill counts collected during the tick are its only carry evidence.
+    const skippedCarried = skippedCarry.delete(seam);
+    const observed = observedRels(relations, seam);
+    const carryTerms = observed.flatMap((relation) => [
       `EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.nextFrontierTableName)} LIMIT 1)`,
       // A staged departure is carry exactly the way a staged addition is:
       // engine.pl appends DepartureCarry to ArrivalCarry in one CarryOut list,
@@ -1329,8 +1418,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         ? []
         : [`EXISTS (SELECT 1 FROM ${quoteIdentifier(relation.departureFrontierTableName)} LIMIT 1)`]),
     ]);
-    const carrySql = `SELECT CASE WHEN ${carryTerms.join(" OR ")} THEN 1 ELSE 0 END AS carry_pending`;
-    const promoteSql = relations
+    const promoteSql = observed
       .flatMap((relation) => {
         const columns = ["_phase", "_sequence", ...relation.columns]
           .map(quoteIdentifier)
@@ -1342,10 +1430,14 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         ];
       })
       .join(";\n");
+    const promote = (): Observable<void> =>
+      promoteSql === "" ? of(undefined) : seam.runner.executeMultiple(seam.db, promoteSql);
+    if (carryTerms.length === 0) return promote().pipe(map(() => skippedCarried));
+    const carrySql = `SELECT CASE WHEN ${carryTerms.join(" OR ")} THEN 1 ELSE 0 END AS carry_pending`;
     return seam.runner.execute(seam.db, carrySql).pipe(
       concatMap((result) => {
         const carryPending = Number(result.rows[0]?.carry_pending ?? 0) === 1;
-        return seam.runner.executeMultiple(seam.db, promoteSql).pipe(map(() => carryPending));
+        return promote().pipe(map(() => carryPending || skippedCarried));
       }),
     );
   },

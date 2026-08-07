@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -172,6 +173,22 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   item: ["text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "bool_relation_negation_is_two_valued", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "452101119b73f71a", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "active", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "58edbed9b6f4a1b3", hSchema: "a30b139c04a632dd", hRule: "95f3891856615252" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4e84d9e5f71dda66", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "disabled", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "39be8ce8516b40c4", hSchema: "bcae10399a291412", hRule: "" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "57d4a1c3ff8ade3e", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 9, ordinal: 2, localName: "value", kind: "column", typeId: 4, arity: 0, moduleId: 6, hId: "1d7c77b8ef51c3c8", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "item", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "a8068a829be6a533", hSchema: "a30b139c04a632dd", hRule: "" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f21ccd16deb6bbbb", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   active: ["text"],
   disabled: ["text", "bool"],
@@ -237,9 +254,9 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "active", kind: "set", tableName: "active", deltaTableName: "__delta_active", frontierTableName: "__frontier_active", nextFrontierTableName: "__next_frontier_active", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_active" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
-  { rel: "disabled", kind: "set", tableName: "disabled", deltaTableName: "__delta_disabled", frontierTableName: "__frontier_disabled", nextFrontierTableName: "__next_frontier_disabled", columns: ["name", "value"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "disabled" ("name", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "value"`, arrivalDelSql: `DELETE FROM "disabled" WHERE ("name", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "value"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_disabled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"` },
-  { rel: "item", kind: "set", tableName: "item", deltaTableName: "__delta_item", frontierTableName: "__frontier_item", nextFrontierTableName: "__next_frontier_item", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "item" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrivalDelSql: `DELETE FROM "item" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_item" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"` },
+  { rel: "active", kind: "set", tableName: "active", deltaTableName: "__delta_active", frontierTableName: "__frontier_active", nextFrontierTableName: "__next_frontier_active", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_active" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, ruleObservers: [] },
+  { rel: "disabled", kind: "set", tableName: "disabled", deltaTableName: "__delta_disabled", frontierTableName: "__frontier_disabled", nextFrontierTableName: "__next_frontier_disabled", columns: ["name", "value"], columnTypes: ["text", "bool"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "disabled" ("name", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "value"`, arrivalDelSql: `DELETE FROM "disabled" WHERE ("name", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "value"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_disabled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, ruleObservers: [] },
+  { rel: "item", kind: "set", tableName: "item", deltaTableName: "__delta_item", frontierTableName: "__frontier_item", nextFrontierTableName: "__next_frontier_item", columns: ["name"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "item" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrivalDelSql: `DELETE FROM "item" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_item" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, ruleObservers: ["active/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -337,6 +354,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

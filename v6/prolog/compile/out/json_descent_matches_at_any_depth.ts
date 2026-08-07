@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -163,6 +164,20 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   image: ["text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "json_descent_matches_at_any_depth", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "15fa7f8570f79d2c", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "chart", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "9954a3127242c3fe", hSchema: "d12f7c978de0f0d7", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "47e3d66892b44d0b", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "image", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "c7f7f898af3cc687", hSchema: "05b1ee6f289c3ce4", hRule: "5a96510138ad7ffc" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "repository", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c5afca695e26a0b3", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 9, ordinal: 2, localName: "tag", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ad57981ee9662263", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   chart: ["json"],
 };
@@ -219,8 +234,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "chart", kind: "set", tableName: "chart", deltaTableName: "__delta_chart", frontierTableName: "__frontier_chart", nextFrontierTableName: "__next_frontier_chart", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"` },
-  { rel: "image", kind: "set", tableName: "image", deltaTableName: "__delta_image", frontierTableName: "__frontier_image", nextFrontierTableName: "__next_frontier_image", columns: ["repository", "tag"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"` },
+  { rel: "chart", kind: "set", tableName: "chart", deltaTableName: "__delta_chart", frontierTableName: "__frontier_chart", nextFrontierTableName: "__next_frontier_chart", columns: ["body"], columnTypes: ["json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrivalDelSql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundarySql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, ruleObservers: ["image/2"] },
+  { rel: "image", kind: "set", tableName: "image", deltaTableName: "__delta_image", frontierTableName: "__frontier_image", nextFrontierTableName: "__next_frontier_image", columns: ["repository", "tag"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -316,6 +331,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

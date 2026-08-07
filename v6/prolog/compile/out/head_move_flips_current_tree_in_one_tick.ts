@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -200,6 +201,28 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   tree_file: ["int", "text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "head_move_flips_current_tree_in_one_tick", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "72b181f8a4dad3ac", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "current_tree", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "d6c7868e16999f95", hSchema: "bfb0386aeeecf4af", hRule: "297baf002b1c7a0e" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "71957f402ab69ee1", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f96a5d45702b3b32", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "head", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "65464a59c35ddaa6", hSchema: "8cb497737c5383d9", hRule: "e22432c07cde4945" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "564002ad743dc262", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "1b8324d34a1406db", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "head_move", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "b6522052007df0cf", hSchema: "d5a7cf9fdd74576f", hRule: "" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "repo_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "777e3989b3947040", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "3c30356809f995a7", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 6, ordinal: 0, localName: "tree_file", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "28f096a055691c66", hSchema: "06bf0b6575bf507c", hRule: "" },
+  { relId: 17, parentId: 16, ordinal: 1, localName: "rev_id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "42a5692a14e54e35", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 16, ordinal: 2, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a653316d36cbe587", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 16, ordinal: 3, localName: "digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0ba9e01a5b5e9ae8", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -267,10 +290,10 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_tree", kind: "set", tableName: "current_tree", deltaTableName: "__delta_current_tree", frontierTableName: "__frontier_current_tree", nextFrontierTableName: "__next_frontier_current_tree", columns: ["path", "digest"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_tree" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"` },
-  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"` },
-  { rel: "head_move", kind: "log", tableName: "head_move", deltaTableName: "__delta_head_move", frontierTableName: "__frontier_head_move", nextFrontierTableName: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"` },
-  { rel: "tree_file", kind: "set", tableName: "tree_file", deltaTableName: "__delta_tree_file", frontierTableName: "__frontier_tree_file", nextFrontierTableName: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], columnTypes: ["int", "text", "text"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "tree_file" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "digest" = excluded."digest" RETURNING "rev_id", "path", "digest"`, arrivalDelSql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "digest"`, boundarySql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"` },
+  { rel: "current_tree", kind: "set", tableName: "current_tree", deltaTableName: "__delta_current_tree", frontierTableName: "__frontier_current_tree", nextFrontierTableName: "__next_frontier_current_tree", columns: ["path", "digest"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_tree" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, ruleObservers: [] },
+  { rel: "head", kind: "set", tableName: "head", deltaTableName: "__delta_head", frontierTableName: "__frontier_head", nextFrontierTableName: "__next_frontier_head", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, ruleObservers: ["current_tree/2"] },
+  { rel: "head_move", kind: "log", tableName: "head_move", deltaTableName: "__delta_head_move", frontierTableName: "__frontier_head_move", nextFrontierTableName: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], columnTypes: ["int", "int"], keyIndices: [], arrivalAddSql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrivalDelSql: null, boundarySql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, ruleObservers: ["head/2"] },
+  { rel: "tree_file", kind: "set", tableName: "tree_file", deltaTableName: "__delta_tree_file", frontierTableName: "__frontier_tree_file", nextFrontierTableName: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], columnTypes: ["int", "text", "text"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "tree_file" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "digest" = excluded."digest" RETURNING "rev_id", "path", "digest"`, arrivalDelSql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "digest"`, boundarySql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, ruleObservers: ["current_tree/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -403,6 +426,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

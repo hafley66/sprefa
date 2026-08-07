@@ -109,7 +109,7 @@ status="$(curl -s -o "$WORK/load.json" -w '%{http_code}' -X POST --data-binary @
 [ "$status" = "200" ] || die "program load returned $status: $(cat "$WORK/load.json")"
 say "PASS  program loaded, hosts: $(sed 's/.*"hosts":\[//; s/\].*//' "$WORK/load.json")"
 
-curl -s -o /dev/null -X POST --data-binary '{"batch":[{"rel":"go","sign":"add","row":["run"]}]}' "$BASE/arrivals"
+curl -s -o /dev/null -X POST --data-binary '{"batch":[{"rel":"go","sign":"add","row":["run"]}]}' "$BASE/edb/events"
 
 rows()  { curl -s "$BASE/idb/$1" | python3 -c '
 import json,sys

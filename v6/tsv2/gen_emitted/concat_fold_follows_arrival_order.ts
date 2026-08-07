@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -180,6 +181,21 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   log_text: ["text", "text"],
 };
 
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "concat_fold_follows_arrival_order", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "9e5fa2c6e7aa35bf", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "append_line", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "a51f922c3624e50d", hSchema: "8457c5aa5b496623", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "channel", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6ccbdb97b7815e2e", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "piece", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b56f4b2e638b1ccb", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "log_text", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "883223d043c5823a", hSchema: "7b5fb7c6440be0a0", hRule: "87645854aeeb6db1" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "channel", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "abafbf0b5da85b89", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "next", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "af7298438da39989", hSchema: "", hRule: "" },
+];
+
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
 
@@ -233,8 +249,8 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "append_line", kind: "log", tableName: "append_line", deltaTableName: "__delta_append_line", frontierTableName: "__frontier_append_line", nextFrontierTableName: "__next_frontier_append_line", columns: ["channel", "piece"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "append_line" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("channel") AND json_type("channel") = 'object' AND json_type("channel", '$.fn') = 'text' AND json_type("channel", '$.args') = 'array' THEN json_extract("channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("channel", '$.args')), '') || ')' ELSE "channel" END AS "channel", CASE WHEN json_valid("piece") AND json_type("piece") = 'object' AND json_type("piece", '$.fn') = 'text' AND json_type("piece", '$.args') = 'array' THEN json_extract("piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("piece", '$.args')), '') || ')' ELSE "piece" END AS "piece", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_append_line" WHERE "_sign" IN (-1, 1) GROUP BY "channel", "piece", "_sign"` },
-  { rel: "log_text", kind: "set", tableName: "log_text", deltaTableName: "__delta_log_text", frontierTableName: "__frontier_log_text", nextFrontierTableName: "__next_frontier_log_text", columns: ["channel", "next"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("channel") AND json_type("channel") = 'object' AND json_type("channel", '$.fn') = 'text' AND json_type("channel", '$.args') = 'array' THEN json_extract("channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("channel", '$.args')), '') || ')' ELSE "channel" END AS "channel", CASE WHEN json_valid("next") AND json_type("next") = 'object' AND json_type("next", '$.fn') = 'text' AND json_type("next", '$.args') = 'array' THEN json_extract("next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("next", '$.args')), '') || ')' ELSE "next" END AS "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_log_text" WHERE "_sign" IN (-1, 1) GROUP BY "channel", "next", "_sign"` },
+  { rel: "append_line", kind: "log", tableName: "append_line", deltaTableName: "__delta_append_line", frontierTableName: "__frontier_append_line", nextFrontierTableName: "__next_frontier_append_line", columns: ["channel", "piece"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "append_line" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("channel") AND json_type("channel") = 'object' AND json_type("channel", '$.fn') = 'text' AND json_type("channel", '$.args') = 'array' THEN json_extract("channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("channel", '$.args')), '') || ')' ELSE "channel" END AS "channel", CASE WHEN json_valid("piece") AND json_type("piece") = 'object' AND json_type("piece", '$.fn') = 'text' AND json_type("piece", '$.args') = 'array' THEN json_extract("piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("piece", '$.args')), '') || ')' ELSE "piece" END AS "piece", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_append_line" WHERE "_sign" IN (-1, 1) GROUP BY "channel", "piece", "_sign"`, ruleObservers: ["log_text/2"] },
+  { rel: "log_text", kind: "set", tableName: "log_text", deltaTableName: "__delta_log_text", frontierTableName: "__frontier_log_text", nextFrontierTableName: "__next_frontier_log_text", columns: ["channel", "next"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("channel") AND json_type("channel") = 'object' AND json_type("channel", '$.fn') = 'text' AND json_type("channel", '$.args') = 'array' THEN json_extract("channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("channel", '$.args')), '') || ')' ELSE "channel" END AS "channel", CASE WHEN json_valid("next") AND json_type("next") = 'object' AND json_type("next", '$.fn') = 'text' AND json_type("next", '$.args') = 'array' THEN json_extract("next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("next", '$.args')), '') || ')' ELSE "next" END AS "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_log_text" WHERE "_sign" IN (-1, 1) GROUP BY "channel", "next", "_sign"`, ruleObservers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -512,6 +528,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };
