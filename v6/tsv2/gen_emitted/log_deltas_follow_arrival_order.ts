@@ -320,6 +320,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "log_deltas_follow_arrival_order",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

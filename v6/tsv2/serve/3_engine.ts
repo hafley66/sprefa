@@ -225,12 +225,44 @@ function is_already_exists(failure: unknown): boolean {
   return failure instanceof Error && /already exists/i.test(failure.message);
 }
 
+const DICTIONARY_TABLE = "__str";
+
+const USER_TABLES_SQL =
+  `SELECT "name" FROM "sqlite_master" WHERE "type" = 'table' AND "name" NOT LIKE 'sqlite_%'`;
+
+/** Whether this module's own DDL builds the string dictionary. A dict-mode
+ *  program with no text column builds none and reads either database. */
+function program_builds_dictionary(program: IServedProgram): boolean {
+  return program.ddl.some((sql) => sql.startsWith(`CREATE TABLE "${DICTIONARY_TABLE}" (`));
+}
+
+/** Refused before any DDL runs: affinity would store strings into id columns
+ *  silently, and the corruption is recoverable only by rebuilding. */
+function intern_crossing_failure(program: IServedProgram, tableNames: readonly string[]): Error | null {
+  if (tableNames.length === 0) return null;
+  const databaseIsInterned = tableNames.includes(DICTIONARY_TABLE);
+  if (databaseIsInterned === program_builds_dictionary(program)) return null;
+  const databaseMode = databaseIsInterned ? "dict" : "direct";
+  return new Error(
+    `intern mode crossing: module "${program.name}" was built intern(${program.internMode}) ` +
+      `and this database was built intern(${databaseMode}). Recompile the module in the ` +
+      `database's mode, or rebuild the database from its source.`,
+  );
+}
+
 export const boot_served_program: IBootServedProgram = (
   seam: ISqlSeam,
   program: IServedProgram,
 ): Observable<void> => {
   const statements = [...program.ddl, ...WitnessCache.ddl()];
-  return from(statements).pipe(
+  return select_rows(seam, USER_TABLES_SQL, ["name"], ["text"]).pipe(
+    map((rows) => rows.map((row) => String(row[0]))),
+    concatMap((tableNames) => {
+      const failure = intern_crossing_failure(program, tableNames);
+      return failure === null ? of(undefined) : throwError(() => failure);
+    }),
+    concatMap(() => from(statements)),
+  ).pipe(
     concatMap((sql) =>
       seam.runner.execute(seam.db, sql).pipe(
         catchError((failure: unknown) => (is_already_exists(failure) ? of(undefined) : throwError(() => failure))),

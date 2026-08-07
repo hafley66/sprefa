@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_array_spread_skips_non_matching_elements",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

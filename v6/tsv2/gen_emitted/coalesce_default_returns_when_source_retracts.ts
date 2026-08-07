@@ -345,6 +345,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_default_returns_when_source_retracts",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

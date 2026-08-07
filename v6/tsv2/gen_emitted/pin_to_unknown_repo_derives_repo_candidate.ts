@@ -415,6 +415,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "pin_to_unknown_repo_derives_repo_candidate",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

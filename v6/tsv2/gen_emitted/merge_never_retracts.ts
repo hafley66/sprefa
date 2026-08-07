@@ -400,6 +400,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "merge_never_retracts",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

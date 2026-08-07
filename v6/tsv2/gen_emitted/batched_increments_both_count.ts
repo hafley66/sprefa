@@ -518,6 +518,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "batched_increments_both_count",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

@@ -1,1 +1,1 @@
-20260807.0.ir-offload-phase1-interning-reckoning-turnkey-release.md
+20260807.2.relcatalog-emit-quadratic-lanes-snakecase.md

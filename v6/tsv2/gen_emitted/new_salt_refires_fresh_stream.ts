@@ -365,6 +365,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "new_salt_refires_fresh_stream",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

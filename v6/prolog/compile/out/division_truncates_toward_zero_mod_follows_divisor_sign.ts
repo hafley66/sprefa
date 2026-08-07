@@ -326,6 +326,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "division_truncates_toward_zero_mod_follows_divisor_sign",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

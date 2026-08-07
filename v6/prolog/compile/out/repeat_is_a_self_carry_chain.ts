@@ -380,6 +380,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "repeat_is_a_self_carry_chain",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

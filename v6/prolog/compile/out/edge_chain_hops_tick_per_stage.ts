@@ -397,6 +397,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "edge_chain_hops_tick_per_stage",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

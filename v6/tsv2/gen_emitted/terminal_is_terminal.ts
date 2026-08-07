@@ -343,6 +343,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "terminal_is_terminal",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

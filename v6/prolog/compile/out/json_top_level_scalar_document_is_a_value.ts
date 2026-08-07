@@ -370,6 +370,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_top_level_scalar_document_is_a_value",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

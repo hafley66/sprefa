@@ -369,6 +369,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "now_reads_the_tick",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

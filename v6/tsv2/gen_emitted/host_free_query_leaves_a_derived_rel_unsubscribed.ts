@@ -376,6 +376,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "host_free_query_leaves_a_derived_rel_unsubscribed",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

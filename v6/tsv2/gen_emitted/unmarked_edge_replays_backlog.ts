@@ -401,6 +401,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unmarked_edge_replays_backlog",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

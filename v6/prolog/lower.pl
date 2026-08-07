@@ -120,8 +120,15 @@
 
 :- module(lower,
           [ lower_program/2, boot_statements/5, relplan_kind/3,
+            % The interning contract's mode vocabulary. compile.pl resolves
+            % the compile option into the atom the plan term carries.
+            intern_mode/2, interned_column/2, string_dictionary_table/1,
+            program_text_intern_plan/3,
+            % Both halves of the storage decision, exported so one test can
+            % compare the DDL's answer against the IR's on ONE run.
+            column_def/4, ir_column_class/4, uniform_text_encoding/1,
             compile_expr/4, compile_comparison/3,
-            canonical_column_expr/2, level_ref_count_sql/4, level_dred_plan/4,
+            canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
@@ -888,29 +895,152 @@ head_select_list(Head, Bound, ColumnAliases, SelectExprs) :-
 
 alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS "~w"', [Expr, Alias]).
 
+% ═══ interning (plans/2026-08-08-interning-contract.md rev 3) ══════════════
+% Threaded, never a flag: a runtime toggle cannot undo a declared column type.
+
+% intern_mode(+Options, -Mode) is det.
+%   A compile input, defaulted here and recorded in the emitted artifact.
+intern_mode(Options, Mode) :-
+    ( memberchk(intern(Requested), Options) -> Mode = Requested ; Mode = dict ).
+
+% interned_column(+Mode, +DeclaredType)
+%   json stays TEXT: json1 reads it in place.
+interned_column(dict, text).
+
+string_dictionary_table('__str').
+
+% rowid + UNIQUE, not WITHOUT ROWID: `__id` is read once per boundary render
+% per column, and that read is `SEARCH s USING INTEGER PRIMARY KEY`.
+intern_ddl(dict, [ 'CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)' ]) :- !.
+intern_ddl(_, []).
+
+any_interned_column(Mode, ColumnTypes) :-
+    member(ColumnType, ColumnTypes),
+    interned_column(Mode, ColumnType),
+    !.
+
+program_intern_ddl(Mode, RelPlans, Ddl) :-
+    (   member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+        any_interned_column(Mode, ColumnTypes)
+    ->  intern_ddl(Mode, Ddl)
+    ;   Ddl = []
+    ).
+
+% ═══ the decode view, returned in its table's own Ddls list ═════════════════
+% One clause builds both from one Columns/ColumnTypes pair, so they cannot drift.
+
+text_view_name(Table, ViewName) :-
+    atomic_list_concat(['__txt_', Table], ViewName).
+
+% Correlated scalar subquery, not a FROM-clause join: the same expression text
+% drops into any SELECT list with no restructuring (dictionary_render_expr/3).
+text_decode_expr(ColumnSql, Expr) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(Expr),
+           '(SELECT s."content" FROM ~w s WHERE s."__id" = ~w)',
+           [QuotedDictionary, ColumnSql]).
+
+text_view_column_expr(Mode, Column, ColumnType, Expr) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(ColumnSql), 't.~w', [QuotedColumn]),
+    (   interned_column(Mode, ColumnType)
+    ->  text_decode_expr(ColumnSql, Decoded),
+        format(atom(Expr), '~w AS ~w', [Decoded, QuotedColumn])
+    ;   format(atom(Expr), '~w AS ~w', [ColumnSql, QuotedColumn])
+    ).
+
+% PassThroughColumns are the table's hidden columns (__id, __refcount, _sign,
+% _sequence, _phase): the view is the table's shape with text restored.
+text_view_ddl(Mode, Table, Columns, ColumnTypes, PassThroughColumns, Ddl) :-
+    text_view_name(Table, ViewName),
+    quote_ident(ViewName, QuotedViewName),
+    quote_ident(Table, QuotedTable),
+    maplist(text_view_column_expr(Mode), Columns, ColumnTypes, ColumnExprs),
+    findall(PassExpr,
+            ( member(PassColumn, PassThroughColumns),
+              quote_ident(PassColumn, QuotedPassColumn),
+              format(atom(PassExpr), 't.~w AS ~w',
+                     [QuotedPassColumn, QuotedPassColumn]) ),
+            PassExprs),
+    append(ColumnExprs, PassExprs, AllExprs),
+    atomic_list_concat(AllExprs, ', ', SelectSql),
+    format(atom(Ddl), 'CREATE TEMP VIEW ~w AS SELECT ~w FROM ~w t',
+           [QuotedViewName, SelectSql, QuotedTable]).
+
+% [] when nothing is interned, so a program compiled at intern(direct) emits
+% no view at all rather than an identity one.
+text_view_ddls(Mode, Table, Columns, ColumnTypes, PassThroughColumns, Ddls) :-
+    (   any_interned_column(Mode, ColumnTypes)
+    ->  text_view_ddl(Mode, Table, Columns, ColumnTypes, PassThroughColumns,
+                      Ddl),
+        Ddls = [Ddl]
+    ;   Ddls = []
+    ).
+
+% ═══ the ingest door's intern plan (contract §6) ════════════════════════════
+% Two statements, both flat in the number of arriving distinct values. Where
+% StructPlane needs three, the third is a same-key/different-row preflight that
+% cannot exist here: `__str`'s key IS the whole value.
+text_intern_plan(Mode, RelPlans, textintern(InternSql, LookupSql, RelColumns)) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(InternSql),
+           'INSERT OR IGNORE INTO ~w ("content") SELECT i.value FROM json_each(?) i',
+           [QuotedDictionary]),
+    format(atom(LookupSql),
+           'SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN ~w s ON s."content" = i.value',
+           [QuotedDictionary]),
+    findall(Name-Flags,
+            ( member(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+              any_interned_column(Mode, ColumnTypes),
+              maplist(interned_column_flag(Mode), ColumnTypes, Flags) ),
+            RelColumns).
+
+interned_column_flag(Mode, ColumnType, Flag) :-
+    ( interned_column(Mode, ColumnType) -> Flag = true ; Flag = false ).
+
+% none when no column in the program is interned, so a direct-mode module
+% carries no plan, no import and no statement.
+program_text_intern_plan(Mode, RelPlans, Plan) :-
+    (   text_intern_plan(Mode, RelPlans, textintern(InternSql, LookupSql, RelColumns)),
+        RelColumns \== []
+    ->  Plan = textintern(InternSql, LookupSql, RelColumns)
+    ;   Plan = none
+    ).
+
+% The table a boundary read names: the decode view when one exists.
+text_read_table(Mode, Table, ColumnTypes, ReadTable) :-
+    (   any_interned_column(Mode, ColumnTypes)
+    ->  text_view_name(Table, ReadTable)
+    ;   ReadTable = Table
+    ).
+
 % ═══ DDL (round 2: no stamp columns, no __prev tables) ══════════════════════
 %
-% rel_ddl/5 receives the edge-headed, arrival-target, and level-headed refs.
+% rel_ddl/6 receives the edge-headed, arrival-target, and level-headed refs.
 % An edge-headed keyed rel's UPSERT targets `ON CONFLICT(<key columns>)`, and
 % SQLite requires that clause to name a constraint on exactly that column
 % set. A keyed arrival target needs the same key constraint because
 % absorb_set_arrival/5 replaces by key. An unkeyed arrival target retains the
 % all-column primary key used for exact-row Set membership.
 
-rel_ddl(_, _, _, _, relplan(Ref, log, Columns, _, ColumnTypes), [Ddl]) :- !,
+rel_ddl(Mode, _, _, _, _, relplan(Ref, log, Columns, _, ColumnTypes), Ddls) :- !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     % Plain rowid table (no PK, no WITHOUT ROWID): a Log rel's duplicate rows
     % are distinct occurrences (engine.pl q1) and must physically coexist as
     % separate rows for multisetDiff to count them correctly.
-    format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]).
-rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
+    format(atom(Ddl), 'CREATE TABLE ~w (~w)', [QuotedTable, ColumnsSql]),
+    text_view_ddls(Mode, Table, Columns, ColumnTypes, [], ViewDdls),
+    Ddls = [Ddl | ViewDdls].
+rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
         relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), Ddls) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', SelectColumnsSql),
     ( ( memberchk(Ref, EdgeHeadedRefs) ; memberchk(Ref, ArrivalTargetRefs) ),
@@ -921,8 +1051,10 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
     ),
     ( memberchk(Ref, LevelHeadedRefs)
-    -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1'
-    ;  RefCountColumn = ''
+    -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1',
+       RefCountPassThrough = ['__refcount']
+    ;  RefCountColumn = '',
+       RefCountPassThrough = []
     ),
     Ref = Name/_,
     ( declared_type_name(Types, Name)
@@ -931,16 +1063,21 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
               [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
        dictionary_table_name(Name, ReferenceView),
        quote_ident(ReferenceView, QuotedReferenceView),
-       relation_render_expr(Types, Columns, ColumnTypes, RenderExpr),
+       relation_render_expr(Mode, Types, Columns, ColumnTypes, RenderExpr),
        format(atom(ViewDdl),
               'CREATE TEMP VIEW ~w AS SELECT t."__id", ~w, ~w AS "__rendered" FROM ~w t',
               [QuotedReferenceView, SelectColumnsSql, RenderExpr, QuotedTable]),
-       Ddls = [Ddl, ViewDdl]
+       TableDdls = [Ddl, ViewDdl],
+       PassThroughColumns = ['__id' | RefCountPassThrough]
     ;  format(atom(Ddl),
               'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
               [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
-       Ddls = [Ddl]
-    ).
+       TableDdls = [Ddl],
+       PassThroughColumns = RefCountPassThrough
+    ),
+    text_view_ddls(Mode, Table, Columns, ColumnTypes, PassThroughColumns,
+                   TextViewDdls),
+    append(TableDdls, TextViewDdls, Ddls).
 
 % PHASE C2 RULING 1: INTEGER storage for an int-typed column, TEXT for
 % everything else (text columns and compound-term columns alike -- a
@@ -948,11 +1085,11 @@ rel_ddl(Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
 % so it always falls through to text here, matching the ruling's flat-punt:
 % compound-term columns stay inline-flat text, never their own storage
 % type).
-column_def(QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
-column_def(QuotedColumn, bool, Def) :- !,
+column_def(_, QuotedColumn, int, Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, bool, Def) :- !,
     format(atom(Def), '~w INTEGER NOT NULL CHECK (~w IN (0,1))',
            [QuotedColumn, QuotedColumn]).
-column_def(QuotedColumn, float, Def) :- !,
+column_def(_, QuotedColumn, float, Def) :- !,
     format(atom(Def),
            '~w REAL NOT NULL CHECK (typeof(~w) = \'real\' AND ~w BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)',
            [QuotedColumn, QuotedColumn, QuotedColumn]).
@@ -961,7 +1098,7 @@ column_def(QuotedColumn, float, Def) :- !,
 % lab measured SQL cascade deleting a shared child out from under a live
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
-column_def(QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
 % A json column stores TEXT with a json_valid CHECK, never jsonb: the two
 % SQLite builds this project runs disagree about whether jsonb exists at all
 % (system sqlite3 3.43.2 rejects it, the @libsql driver bundles 3.45.1 and
@@ -970,10 +1107,16 @@ column_def(QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NU
 % guard: json_extract over a column that is not valid JSON RAISES rather than
 % returning NULL, so validity has to be an invariant of the column, not a
 % per-read conjunct.
-column_def(QuotedColumn, json, Def) :- !,
+column_def(_, QuotedColumn, json, Def) :- !,
     format(atom(Def), '~w TEXT NOT NULL CHECK (json_valid(~w))',
            [QuotedColumn, QuotedColumn]).
-column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
+% An interned column stores the dictionary id and nothing else; the value is
+% restored by text_view_ddl/6 at the boundary, never by a hand-written join.
+column_def(Mode, QuotedColumn, Type, Def) :-
+    interned_column(Mode, Type),
+    !,
+    format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [QuotedColumn]).
 
 % ═══ relation reference projection ═════════════════════════════════════════
 %
@@ -988,18 +1131,18 @@ column_def(QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', [Qu
 dictionary_table_name(TypeName, Table) :-
     atomic_list_concat(['__ref_', TypeName], Table).
 
-relation_render_expr(Types, Columns, ColumnTypes, Expr) :-
+relation_render_expr(Mode, Types, Columns, ColumnTypes, Expr) :-
     pairs_keys_values(Pairs, Columns, ColumnTypes),
     findall(Part,
             ( member(Column-ColumnType, Pairs),
               sql_literal(Column, ColumnLiteral),
-              relation_render_column_expr(Types, Column, ColumnType, ValueExpr),
+              relation_render_column_expr(Mode, Types, Column, ColumnType, ValueExpr),
               format(atom(Part), '~w, ~w', [ColumnLiteral, ValueExpr]) ),
             Parts),
     atomic_list_concat(Parts, ', ', PartsSql),
     format(atom(Expr), 'json_object(~w)', [PartsSql]).
 
-relation_render_column_expr(_, Column, ref(TypeName), Expr) :-
+relation_render_column_expr(_, _, Column, ref(TypeName), Expr) :-
     !,
     quote_ident(Column, QuotedColumn),
     dictionary_table_name(TypeName, ReferenceView),
@@ -1007,7 +1150,13 @@ relation_render_column_expr(_, Column, ref(TypeName), Expr) :-
     format(atom(Expr),
            'json((SELECT c."__rendered" FROM ~w c WHERE c."__id" = t.~w))',
            [QuotedReferenceView, QuotedColumn]).
-relation_render_column_expr(_, Column, _, Expr) :-
+relation_render_column_expr(Mode, _, Column, ColumnType, Expr) :-
+    interned_column(Mode, ColumnType),
+    !,
+    quote_ident(Column, QuotedColumn),
+    format(atom(ColumnSql), 't.~w', [QuotedColumn]),
+    text_decode_expr(ColumnSql, Expr).
+relation_render_column_expr(_, _, Column, _, Expr) :-
     quote_ident(Column, QuotedColumn),
     format(atom(Expr), 't.~w', [QuotedColumn]).
 
@@ -1968,9 +2117,9 @@ nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Ele
 % is a singleton list, and emit_ts.pl's recompute_levels_fn_lines/2 flattens
 % [Delete, Insert] the same way whether the list has one entry or several.
 
-level_statement_groups(RelPlans, RuleOrder, LevelStatements) :-
+level_statement_groups(Mode, RelPlans, RuleOrder, LevelStatements) :-
     group_adjacent_by_head(RuleOrder, Groups),
-    maplist(level_statement_group(RelPlans), Groups, LevelStatements).
+    maplist(level_statement_group(Mode, RelPlans), Groups, LevelStatements).
 
 group_adjacent_by_head([], []).
 group_adjacent_by_head([Rule | Rest], [HeadRef-[Rule | SameHeadRest] | MoreGroups]) :-
@@ -1983,7 +2132,7 @@ take_same_head(HeadRef, [Rule | Rest], [Rule | SameRest], Remaining) :-
     take_same_head(HeadRef, Rest, SameRest, Remaining).
 take_same_head(_, Rules, [], Rules).
 
-level_statement_group(RelPlans, HeadRef-Rules,
+level_statement_group(Mode, RelPlans, HeadRef-Rules,
                       levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
                                 RefCountSql, AggregateSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
@@ -1992,7 +2141,7 @@ level_statement_group(RelPlans, HeadRef-Rules,
     partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
     ( AggregateRules == []
     -> level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
-       level_ref_count_sql(RelPlans, HeadRef, Rules, RefCountSql),
+       level_ref_count_sql(Mode, RelPlans, HeadRef, Rules, RefCountSql),
        AggregateSql = none
     ;  PlainRules \== []
     -> throw(unsupported_construct(aggregate_head_mixed_with_plain_clause(HeadRef)))
@@ -2468,19 +2617,19 @@ aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
 % The scope columns and their storage types ride inside the aggsql/6 term
 % itself, so DDL emission needs nothing but the levelstmt (lower_program/2
 % no longer has the rule list in scope by then).
-aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
+aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
                               aggsql(ScopeColumns, ScopeTypes, _, _, _, _)),
                     [Ddl]) :- !,
     aggregate_scope_table_name(HeadRef, ScopeTable),
     quote_ident(ScopeTable, QuotedScopeTable),
     maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
-    maplist(column_def, QuotedScopeColumns, ScopeTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedScopeColumns, ScopeTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedScopeColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedScopeTable, ColumnsSql, PrimaryKeySql]).
-aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
+aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
                               avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _)),
                     [ScopeDdl, AccumulatorDdl]) :- !,
     aggregate_scope_table_name(HeadRef, ScopeTable),
@@ -2488,36 +2637,36 @@ aggregate_scope_ddl(levelstmt(HeadRef, _, _, _, _,
     quote_ident(ScopeTable, QuotedScopeTable),
     quote_ident(AccumulatorTable, QuotedAccumulatorTable),
     maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
-    maplist(column_def, QuotedScopeColumns, ScopeTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedScopeColumns, ScopeTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedScopeColumns, ', ', PrimaryKeySql),
     format(atom(ScopeDdl),
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedScopeTable, ColumnsSql, PrimaryKeySql]),
-    avg_accumulator_columns(ScopeColumns, ScopeTypes,
+    avg_accumulator_columns(Mode, ScopeColumns, ScopeTypes,
                             AccumulatorColumnsSql, AccumulatorPrimaryKeySql),
     format(atom(AccumulatorDdl),
            'CREATE TEMP TABLE ~w (~w, "__sum" REAL NOT NULL, "__count" INTEGER NOT NULL, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedAccumulatorTable, AccumulatorColumnsSql,
             AccumulatorPrimaryKeySql]).
-aggregate_scope_ddl(_, []).
+aggregate_scope_ddl(_, _, []).
 
-avg_accumulator_columns(['_all'], _,
+avg_accumulator_columns(_, ['_all'], _,
                         '"__group_1" INTEGER NOT NULL', '"__group_1"') :- !.
-avg_accumulator_columns(ScopeColumns, ScopeTypes, ColumnsSql,
+avg_accumulator_columns(Mode, ScopeColumns, ScopeTypes, ColumnsSql,
                         PrimaryKeySql) :-
-    avg_accumulator_group_columns(ScopeColumns, ScopeTypes, 1, GroupColumns),
+    avg_accumulator_group_columns(Mode, ScopeColumns, ScopeTypes, 1, GroupColumns),
     atomic_list_concat(GroupColumns, ', ', ColumnsSql),
     avg_accumulator_key_columns(ScopeColumns, 1, KeyColumns),
     atomic_list_concat(KeyColumns, ', ', PrimaryKeySql).
 
-avg_accumulator_group_columns([], [], _, []).
-avg_accumulator_group_columns([_ | RestColumns], [Type | RestTypes], Position,
+avg_accumulator_group_columns(_, [], [], _, []).
+avg_accumulator_group_columns(Mode, [_ | RestColumns], [Type | RestTypes], Position,
                               [Column | More]) :-
     format(atom(QuotedColumn), '"__group_~w"', [Position]),
-    column_def(QuotedColumn, Type, Column),
+    column_def(Mode, QuotedColumn, Type, Column),
     NextPosition is Position + 1,
-    avg_accumulator_group_columns(RestColumns, RestTypes, NextPosition, More).
+    avg_accumulator_group_columns(Mode, RestColumns, RestTypes, NextPosition, More).
 
 avg_accumulator_key_columns([], _, []).
 avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
@@ -2527,7 +2676,7 @@ avg_accumulator_key_columns([_ | Rest], Position, [Column | More]) :-
 
 % The delta and both frontier copies are written by SQL that reads the same
 % predicates the head mutation reads, so no derived row crosses the JS seam.
-level_ref_count_sql(RelPlans, HeadRef, Rules,
+level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
                   refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
@@ -2566,7 +2715,7 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
     ),
     (   DredPlan == none
     ->  FixpointIr = none
-    ;   level_fixpoint_ir(RelPlans, HeadRef, Rules, FixpointIr0)
+    ;   level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules, FixpointIr0)
     ->  FixpointIr = FixpointIr0
     ;   FixpointIr = none
     ),
@@ -2973,7 +3122,7 @@ dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
 
 % Term grammar: plans/2026-08-07-plan-ir-offload-contract.md §2.4. The fence is
 % dred_plan_admissible/1, called rather than restated.
-level_fixpoint_ir(RelPlans, HeadRef, Rules,
+level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules,
                   fixpointir(Storage, Assert, Dred, Revive, Expand)) :-
     dred_plan_admissible(Rules),
     fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes),
@@ -2996,13 +3145,24 @@ level_fixpoint_ir(RelPlans, HeadRef, Rules,
                      stop(none, probe(present, cone)), none),
     Expand = fixplan(Ref, Columns, ColumnTypes, ExpandSeeds, Hops,
                      stop(none, probe(absent, ref_count)), order(key_major)),
-    ir_storage(RelPlans, HeadRef, [Assert, Dred, Revive, Expand], Storage).
+    interned_literals_absent(Mode, [Assert, Dred, Revive, Expand]),
+    ir_storage(Mode, RelPlans, HeadRef, [Assert, Dred, Revive, Expand],
+               Storage).
+
+% Phase 1 has no IR spelling for `<interned column> = 'literal'`: the SQL
+% resolves the literal through __str, and eq_lit/2 carries the bare text.
+interned_literals_absent(Mode, Walks) :-
+    \+ ( interned_column(Mode, text),
+         member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
+         ( member(Arm, Seeds) ; member(Arm, Hops) ),
+         Arm = arm(_, _, Filters, _, _),
+         member(eq_lit(_, lit(text(_))), Filters) ).
 
 ir_rel_ref(Name/Arity, ref(Name, Arity)).
 
 % Every rel any src reads, plus the head, which is what wave/1 and cone/0 carry.
 % col(Index, Ordinal) resolves through the arm's src to a row here.
-ir_storage(RelPlans, HeadRef, Walks, Storage) :-
+ir_storage(Mode, RelPlans, HeadRef, Walks, Storage) :-
     findall(Ref,
             ( member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
               ( member(Arm, Seeds) ; member(Arm, Hops) ),
@@ -3011,33 +3171,54 @@ ir_storage(RelPlans, HeadRef, Walks, Storage) :-
               ir_source_ref(Source, Ref) ),
             SourceRefs),
     sort([HeadRef | SourceRefs], Refs),
-    maplist(ir_rel_storage(RelPlans), Refs, Storage).
+    maplist(ir_rel_storage(Mode, RelPlans), Refs, Storage).
 
 ir_source_ref(rel(ref(Name, Arity)), Name/Arity).
 ir_source_ref(rel_or_retracted(ref(Name, Arity)), Name/Arity).
 ir_source_ref(delta(ref(Name, Arity), _, _), Name/Arity).
 
-ir_rel_storage(RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
+ir_rel_storage(Mode, RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
     ir_rel_ref(Ref, IrRef),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    maplist(ir_column_class, Columns, ColumnTypes, ColumnClasses).
+    maplist(ir_column_class(Mode), Columns, ColumnTypes, ColumnClasses),
+    uniform_text_encoding(ColumnClasses).
+
+% INVARIANT, not a refusal: two encodings on one program's text columns would
+% put the two sides of a text join in different id spaces, silently empty.
+% Unreachable while interned_column/2 is one clause; it exists so that the day
+% a per-column waiver returns, it fires at compile time instead.
+uniform_text_encoding(ColumnClasses) :-
+    findall(Encoding,
+            member(colclass(_, text, _, _, Encoding), ColumnClasses),
+            Encodings),
+    sort(Encodings, Distinct),
+    (   ( Distinct == [] ; Distinct = [_] )
+    ->  true
+    ;   throw(unsupported_construct(mixed_text_encoding(Distinct)))
+    ).
 
 % The comparator, which the declared type does not give: bool and ref(_) both
 % store INTEGER, json stores TEXT (column_def/3:939), and no COLLATE is emitted.
-ir_column_class(Column, Type, colclass(Column, TypeName, StorageClass,
-                                       Collation, Encoding)) :-
-    ir_column_storage(Type, TypeName, StorageClass, Encoding),
+ir_column_class(Mode, Column, Type, colclass(Column, TypeName, StorageClass,
+                                             Collation, Encoding)) :-
+    ir_column_storage(Mode, Type, TypeName, StorageClass, Encoding),
     ( StorageClass == text -> Collation = binary ; Collation = none ).
 
 % Encoding is the interning slot: ref(Target) already stores a dense id into
 % Target's table rather than the value, which is dictionary encoding.
-ir_column_storage(ref(Target), ref, integer, dict(Target)) :- !.
-ir_column_storage(bool, bool, integer, direct) :- !.
-ir_column_storage(int, int, integer, direct) :- !.
-ir_column_storage(float, float, real, direct) :- !.
-ir_column_storage(json, json, text, direct) :- !.
-ir_column_storage(text, text, text, direct).
+ir_column_storage(_, ref(Target), ref, integer, dict(Target)) :- !.
+ir_column_storage(_, bool, bool, integer, direct) :- !.
+ir_column_storage(_, int, int, integer, direct) :- !.
+ir_column_storage(_, float, float, real, direct) :- !.
+ir_column_storage(_, json, json, text, direct) :- !.
+% An interned text column reports storage `integer`; without the encoding slot
+% the pair {type: text, storage: integer} is uninterpretable to an executor.
+ir_column_storage(Mode, text, text, integer, dict(Dictionary)) :-
+    interned_column(Mode, text),
+    !,
+    string_dictionary_table(Dictionary).
+ir_column_storage(_, text, text, text, direct).
 
 % The executor's comparator is defined by these types, so a head column whose
 % storage class is a dictionary id or json has no phase-1 spelling.
@@ -3954,14 +4135,17 @@ is_negative_use(use(_, _, neg, _)).
 % because it is a SQL-generation decision a future emit_rust.pl would want
 % identically, not a TypeScript-specific rendering choice.
 
-delta_statement(relplan(Ref, _Kind, Columns, _, ColumnTypes),
+delta_statement(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes),
                 deltastmt(Ref, SelectSql, DeltaTable, BoundarySql)) :-
-    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    table_name(Ref, Table),
+    text_read_table(Mode, Table, ColumnTypes, ReadTable),
+    quote_ident(ReadTable, QuotedTable),
     maplist(canonical_column_expr, Columns, ColumnTypes, ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
     format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]),
     delta_table_name(Ref, DeltaTable),
-    quote_ident(DeltaTable, QuotedDeltaTable),
+    text_read_table(Mode, DeltaTable, ColumnTypes, DeltaReadTable),
+    quote_ident(DeltaReadTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
     format(atom(BoundarySql),
@@ -3989,31 +4173,31 @@ retention_statements(Decls, RelPlans, RetentionStatements) :-
             ),
             RetentionStatements).
 
-delta_ddl(DepartureRefs, RelPlan, Ddl) :-
+delta_ddl(Mode, DepartureRefs, RelPlan, Ddl) :-
     RelPlan = relplan(Ref, _, Columns, _, ColumnTypes),
-    delta_ddl(RelPlan, BaseDdl),
+    delta_ddl(Mode, RelPlan, BaseDdl),
     (   memberchk(Ref, DepartureRefs)
-    ->  departure_frontier_ddl(Ref, Columns, ColumnTypes, DepartureDdl),
+    ->  departure_frontier_ddl(Mode, Ref, Columns, ColumnTypes, DepartureDdl),
         append(BaseDdl, DepartureDdl, Ddl)
     ;   Ddl = BaseDdl
     ).
 
-departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
+departure_frontier_ddl(Mode, Ref, Columns, ColumnTypes, [TableDdl]) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
            [QuotedDepartureTable, ColumnsSql]).
 
-pre_ddl(RelPlans, Ref, Ddl) :-
+pre_ddl(Mode, RelPlans, Ref, Ddl) :-
     memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
     pre_table_name(Ref, PreTable),
     quote_ident(PreTable, QuotedPreTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     ( KeyOrNone = key(KeyPositions)
     -> nth1_list(KeyPositions, Columns, KeyColumns),
@@ -4028,13 +4212,11 @@ pre_ddl(RelPlans, Ref, Ddl) :-
 
 % No _phase index on the next-frontier: nothing filters that table by phase
 % (0 of 747 emitted modules had a query plan choose one).
-delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
-          [TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
-           NextFrontierDdl]) :-
+delta_ddl(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes), Ddls) :-
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
@@ -4064,28 +4246,32 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
     quote_ident(NextFrontierTable, QuotedNextFrontierTable),
     format(atom(NextFrontierDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',
-           [QuotedNextFrontierTable, ColumnsSql]).
+           [QuotedNextFrontierTable, ColumnsSql]),
+    text_view_ddls(Mode, DeltaTable, Columns, ColumnTypes,
+                   ['_sign', '_sequence'], DeltaViewDdls),
+    append([[TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
+             NextFrontierDdl], DeltaViewDdls], Ddls).
 
 % An aggregate head has no refCount table (aggsql/6 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
-ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
-ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
-    ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
+ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _), []) :- !.
+ref_count_ddl(Mode, RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
+    ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
     ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _),
       ExpandPlan = expandplan(_, _, _, _, _, _, _)
-    -> expand_wave_ddl(RelPlans, HeadRef, WaveDdl),
-       dred_wave_ddl(RelPlans, HeadRef, DredPlan, DredDdl),
+    -> expand_wave_ddl(Mode, RelPlans, HeadRef, WaveDdl),
+       dred_wave_ddl(Mode, RelPlans, HeadRef, DredPlan, DredDdl),
        append([[Ddl, NewDdl, ZeroIndexDdl], WaveDdl, DredDdl], DdlList)
     ;  DdlList = [Ddl, NewDdl, ZeroIndexDdl]
     ).
 
-dred_wave_ddl(_, _, none, []) :- !.
-dred_wave_ddl(RelPlans, HeadRef, _, [PingDdl, PongDdl, ConeDdl]) :-
+dred_wave_ddl(_, _, _, none, []) :- !.
+dred_wave_ddl(Mode, RelPlans, HeadRef, _, [PingDdl, PongDdl, ConeDdl]) :-
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     dred_ping_table_name(HeadRef, PingTable),
@@ -4100,11 +4286,11 @@ dred_wave_table_ddl(ColumnsSql, PrimaryKeySql, TableName, Ddl) :-
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedTable, ColumnsSql, PrimaryKeySql]).
 
-expand_wave_ddl(RelPlans, HeadRef, [DdlA, DdlB]) :-
+expand_wave_ddl(Mode, RelPlans, HeadRef, [DdlA, DdlB]) :-
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     expand_table_name(HeadRef, a, TableA),
@@ -4118,7 +4304,7 @@ expand_wave_ddl(RelPlans, HeadRef, [DdlA, DdlB]) :-
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedTableB, ColumnsSql, PrimaryKeySql]).
 
-ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
+ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
     ref_count_table_name(HeadRef, RefCountTable),
     quote_ident(RefCountTable, QuotedRefCountTable),
     table_name(HeadRef, HeadTable),
@@ -4126,7 +4312,7 @@ ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def, QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', PrimaryKeySql),
     format(atom(Ddl),
@@ -4315,17 +4501,18 @@ struct_intern_statements(Decls, Types, TypeName, Value, LookupSlot, LookupParams
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels),
+lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     type_definitions(Decls, LoweringTypes),
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
             ( member(LevelRule, RuleOrder), rule_head_ref(LevelRule, LevelHeadedRef) ),
             LevelHeadedRefs),
-    maplist(rel_ddl(LoweringTypes, EdgeHeadedRefs, ArrivalTargets, LevelHeadedRefs),
+    maplist(rel_ddl(Mode, LoweringTypes, EdgeHeadedRefs, ArrivalTargets,
+                    LevelHeadedRefs),
             RelPlans, RelationDdlGroups),
     listened_departure_refs(Rules, DepartureRefs),
-    maplist(delta_ddl(DepartureRefs), RelPlans, DeltaDdlGroups),
+    maplist(delta_ddl(Mode, DepartureRefs), RelPlans, DeltaDdlGroups),
     append(RelationDdlGroups, RelationDdl),
     append(DeltaDdlGroups, DeltaDdl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
@@ -4355,11 +4542,13 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
                                   PatternedRuleOrder),
     expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
                         DecodedRuleOrder),
-    level_statement_groups(BodyRelPlans, DecodedRuleOrder, RuleLevelStatements),
+    level_statement_groups(Mode, BodyRelPlans, DecodedRuleOrder,
+                           RuleLevelStatements),
     retention_statements(Decls, RelPlans, RetentionStatements),
     append(RuleLevelStatements, RetentionStatements, LevelStatements),
-    maplist(ref_count_ddl(RelPlans), RuleLevelStatements, RefCountDdlGroups),
-    maplist(aggregate_scope_ddl, RuleLevelStatements, AggregateScopeDdlGroups),
+    maplist(ref_count_ddl(Mode, RelPlans), RuleLevelStatements, RefCountDdlGroups),
+    maplist(aggregate_scope_ddl(Mode), RuleLevelStatements,
+            AggregateScopeDdlGroups),
     append(RefCountDdlGroups, RefCountDdl),
     append(AggregateScopeDdlGroups, AggregateScopeDdl),
     findall(PreRef,
@@ -4367,7 +4556,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
               level_body_pre_ref(EdgeBody, PreRef) ),
             PreRefs0),
     sort(PreRefs0, PreRefs),
-    maplist(pre_ddl(RelPlans), PreRefs, PreDdl),
+    maplist(pre_ddl(Mode, RelPlans), PreRefs, PreDdl),
     program_uses_tick(prog(Decls, Rules), UsesTick),
     ( UsesTick == true -> tick_table_ddl(TickDdl) ; TickDdl = [] ),
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
@@ -4378,9 +4567,10 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
-    append([RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl, PreDdl,
-            TickDdl, CatalogTableDdl, CatalogRowDdl], Ddl),
-    maplist(delta_statement, RelPlans, DeltaStatements).
+    program_intern_ddl(Mode, RelPlans, InternDdl),
+    append([InternDdl, RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
+            PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], Ddl),
+    maplist(delta_statement(Mode), RelPlans, DeltaStatements).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
 

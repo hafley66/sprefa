@@ -320,6 +320,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "backslash_in_string_literal_survives_both_doors",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

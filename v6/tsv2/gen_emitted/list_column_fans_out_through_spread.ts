@@ -324,6 +324,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "list_column_fans_out_through_spread",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

@@ -401,6 +401,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "any_two_tagged_arms_land_on_one_tick",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

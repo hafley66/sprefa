@@ -320,6 +320,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_string_control_escapes_are_valid_json",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

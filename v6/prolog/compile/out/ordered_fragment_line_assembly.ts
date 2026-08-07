@@ -325,6 +325,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_fragment_line_assembly",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

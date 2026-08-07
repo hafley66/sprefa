@@ -294,6 +294,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_widens_integer_ingress",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

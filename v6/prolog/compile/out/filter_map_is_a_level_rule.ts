@@ -322,6 +322,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "filter_map_is_a_level_rule",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

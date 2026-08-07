@@ -547,6 +547,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "diag_scenario_seven_ticks_end_to_end",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

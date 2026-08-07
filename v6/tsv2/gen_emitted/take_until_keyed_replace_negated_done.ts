@@ -686,6 +686,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "take_until_keyed_replace_negated_done",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

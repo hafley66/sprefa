@@ -382,6 +382,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_nested_value_renders_whole_tree",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

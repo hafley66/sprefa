@@ -332,6 +332,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_intern_order_a",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

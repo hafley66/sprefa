@@ -322,6 +322,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_safe_integer_boundary_survives_both_doors",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

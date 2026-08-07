@@ -322,6 +322,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "interpolation_desugars_to_concat",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

@@ -456,6 +456,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "two_pins_dedup_to_one_demand_row",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

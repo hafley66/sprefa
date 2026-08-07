@@ -345,6 +345,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_decl_two_variants_union_in_tag_view",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

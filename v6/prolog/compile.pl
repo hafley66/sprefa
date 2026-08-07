@@ -9,14 +9,20 @@
           [ read_fixture_term/4,
             compile_fixture/3,
             compile_fixture/4,
+            compile_fixture/5,
             compile_dl6/2,
+            compile_dl6/3,
             compile_program/6,
+            compile_program/7,
+            default_intern_mode/1,
             dl6_seeded_form/3,
             measure_phase/3,
             restore_phase_outcome/1,
             write_compile_trace/2,
             throw_text_door_error/2,
-            program_plan/2
+            program_plan/2,
+            program_plan/3,
+            compiler_owned_contract/1
           ]).
 
 :- use_module(library(lists)).
@@ -142,9 +148,21 @@ materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
     ;   Decls = Decls0
     ).
 
-program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
+% THE BUILD DEFAULT, not the contract's. §15.3 asks for dict; a dict module
+% is only runnable once the door, the literal lowering and intern-on-write land.
+default_intern_mode(direct).
+
+program_plan(Term, Plan) :-
+    default_intern_mode(Mode),
+    program_plan(Term, [intern(Mode)], Plan).
+
+program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings,
+             Options, Plan) :-
     % The body-use table is keyed on body terms, so it belongs to ONE program.
     reset_body_use_cache,
+    % On the AUTHOR's text, before any expansion: `__host_demand_*` and the
+    % catalog's own col_type decls are the compiler writing its own namespace.
+    check_reserved_namespace(SugaredProg),
     prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
@@ -209,8 +227,42 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % Decls for the same reason emit_ts.pl:world_plan_lines/2 reads them there.
     findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
     subscribed_rels(Decls, Rules, Queries, SubscribedRels),
+    intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-                SubscribedRels).
+                SubscribedRels, InternMode).
+
+% ═══ the compiler-owned `__` namespace ══════════════════════════════════════
+% SQLite gives tables and views one namespace, so a user `__txt_x` collides.
+
+% Derived from the catalog contract rather than listed twice, so a future
+% contract row gets its reservation for free.
+compiler_owned_contract(Name) :- catalog_ddl_contract(Name, _).
+
+reserved_namespace_name(Name) :-
+    atom(Name),
+    sub_atom(Name, 0, 2, _, '__').
+
+check_reserved_namespace(SugaredProg) :-
+    (   SugaredProg = prog(Decls, Rules),
+        reserved_namespace_violation(Decls, Rules, Name)
+    ->  throw(unsupported_construct(reserved_rel_namespace(Name)))
+    ;   true
+    ).
+
+% Reading a contract rel is allowed and writing one is not, which is the split
+% compile.pl already enforces by subtracting the catalog from ArrivalTargets.
+reserved_namespace_violation(Decls, Rules, Name) :-
+    declared_refs(Decls, DeclaredRefs),
+    derived_refs(Rules, DerivedRefs),
+    program_refs(Rules, RuleRefs),
+    append(DeclaredRefs, DerivedRefs, WrittenRefs),
+    (   member(Name/_, WrittenRefs),
+        reserved_namespace_name(Name)
+    ;   member(Name/_, RuleRefs),
+        reserved_namespace_name(Name),
+        \+ compiler_owned_contract(Name)
+    ),
+    !.
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -218,9 +270,13 @@ compile_fixture(Name, FixtureFile, OutFile) :-
     compile_fixture(Name, FixtureFile, OutFile, emit_ts:emit_program).
 
 compile_fixture(Name, FixtureFile, OutFile, Emitter) :-
+    default_intern_mode(Mode),
+    compile_fixture(Name, FixtureFile, OutFile, Emitter, [intern(Mode)]).
+
+compile_fixture(Name, FixtureFile, OutFile, Emitter, Options) :-
     read_fixture_term(FixtureFile, Name, Term, Bindings),
     Term = fixture(Name, _Prog, Initial, _Schedule, _Expectations),
-    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter).
+    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options).
 
 check_world_shapes(prog(Decls, _), Initial, Schedule) :-
     append([Initial | Schedule], WorldRows),
@@ -245,6 +301,10 @@ check_single_arity_per_name([_ | Rest]) :-
     check_single_arity_per_name(Rest).
 
 compile_dl6(File, OutFile) :-
+    default_intern_mode(Mode),
+    compile_dl6(File, OutFile, [intern(Mode)]).
+
+compile_dl6(File, OutFile, Options) :-
     catch(
         ( run_compile_phase(parse,
                             parse_dl_file(File, Prog, Bindings, Findings),
@@ -263,7 +323,7 @@ compile_dl6(File, OutFile) :-
     catch(
         compile_program_phases(Name, fixture(Name, ProgOut, Initial, [], []),
                                Bindings, Initial, OutFile, emit_ts:emit_program,
-                               PhaseMeasurements),
+                               Options, PhaseMeasurements),
         Error,
         throw_text_door_error(File, Error)
     ),
@@ -331,21 +391,26 @@ throw_text_door_error(_File, Error) :-
     throw(Error).
 
 compile_program(Name, Term, Bindings, Initial, OutFile, Emitter) :-
+    default_intern_mode(Mode),
+    compile_program(Name, Term, Bindings, Initial, OutFile, Emitter,
+                    [intern(Mode)]).
+
+compile_program(Name, Term, Bindings, Initial, OutFile, Emitter, Options) :-
     compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
-                           PhaseMeasurements),
+                           Options, PhaseMeasurements),
     zero_phase_measurement(EmptyMeasurement),
     write_compile_trace(
         Name, [phase(parse, EmptyMeasurement) | PhaseMeasurements]).
 
 compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
-                       PhaseMeasurements) :-
+                       Options, PhaseMeasurements) :-
     run_compile_phase(plan,
-                      program_plan(Term-Bindings, Plan),
+                      program_plan(Term-Bindings, Options, Plan),
                       PlanMeasurement),
     run_compile_phase(lower,
                       lower_program(Plan, Lowered),
                       LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     run_compile_phase(
         boot,

@@ -333,6 +333,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_shared_child_survives_one_release",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

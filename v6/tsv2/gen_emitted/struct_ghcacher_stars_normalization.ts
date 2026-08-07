@@ -360,6 +360,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_ghcacher_stars_normalization",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

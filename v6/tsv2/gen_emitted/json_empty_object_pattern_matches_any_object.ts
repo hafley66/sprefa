@@ -323,6 +323,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_empty_object_pattern_matches_any_object",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

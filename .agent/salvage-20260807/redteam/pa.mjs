@@ -1,0 +1,12 @@
+import { createClient } from '@libsql/client';
+const c = createClient({ url: 'file:./probe_rowsaffected.db' });
+await c.execute(`CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`);
+let r = await c.execute(`INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each('["a","b","c"]') i`);
+console.log('plain OR IGNORE (non-dup): rowsAffected =', r.rowsAffected, 'rows=', JSON.stringify(r.rows));
+r = await c.execute(`INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each('["a","b","c","d"]') i`);
+console.log('plain OR IGNORE (1 new): rowsAffected =', r.rowsAffected);
+r = await c.execute(`INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each('["a","d"]') i`);
+console.log('plain OR IGNORE (all-dup): rowsAffected =', r.rowsAffected);
+r = await c.execute(`INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each('["x"]') i RETURNING "content"`);
+console.log('RETURNING (1 new): rowsAffected =', r.rowsAffected, 'rows=', JSON.stringify(r.rows));
+await c.close();

@@ -1,0 +1,148 @@
+...@_house
+
+# Three answers on one canvas: what the type plane accepts, what a module path
+# does today, and what `bop load` runs when a program swaps under a live server.
+direction: down
+
+title: |md
+  # types, imports, dynamic load
+  - green box = a compiled fixture in
+    `v6/prolog/compile/out/manifest.json`
+  - red box = a NAMED refusal,
+    with its own fixture
+| { class: note }
+
+# ── 1. the value plane ───────────────────────────────────────────────────────
+types: 1. types — a rel is a column type {
+  class: stage
+
+  src: |`prolog
+    rel span(start: int, end: int).
+    rel finding(path: text, at: span).
+
+    finding("a.rs", span(1, 9)).
+  `| { class: src }
+
+  arrive: arrival carries the\nnested value { class: muted }
+
+  norm: normalize\ntarget arrival FIRST { class: shipped }
+
+  target: span row interned\nby key(...), dense __id { class: [shipped; db] }
+  parent: finding row,\nat = that __id (INTEGER) { class: [shipped; db] }
+
+  tick: both visible the SAME tick\ntarget membership is public { class: shipped }
+  wire: canonical JSON only\nat wire and render { class: [shipped; receipt] }
+
+  src -> arrive
+  arrive -> norm
+  norm -> target
+  norm -> parent
+  target -> tick
+  parent -> tick
+  tick -> wire
+}
+
+# ── 2. what the columns can hold ─────────────────────────────────────────────
+plane: 2. the six column types { class: stage
+
+  table: |||md
+    | type | SQL storage | receipt fixture |
+    | --- | --- | --- |
+    | int | `INTEGER NOT NULL` | `int_accepts_integral_float` |
+    | bool | `INTEGER CHECK (c IN (0,1))` | `bool_relation_negation_is_two_valued` |
+    | float | `REAL CHECK (typeof=real AND finite)` | `float_avg_retracts_to_empty_group` |
+    | text | `TEXT NOT NULL` | the no-witness default |
+    | ref | `INTEGER`, dense target id, no FK | `relation_depth3_chained_decode` |
+    | json | `TEXT` + `json_valid` CHECK | `json_typed_capture_folds_into_a_keyed_int_total` |
+  ||| { class: note }
+
+  walls: |md
+    ### the walls are fixtures too
+    - `struct_type_cycle_rejected`
+    - `relation_value_under_negation_rejected`
+    - `relation_pattern_wrong_target_rejected`
+    - `json_capture_type_typo_is_refused`
+    - `wide_int_refused_inside_json_document`
+    - `int_rejects_fractional_ingress`
+  | { class: [note; danger] }
+}
+
+# ── 3. imports ───────────────────────────────────────────────────────────────
+imports: 3. imports — v5 has them, v6 refuses by name { class: stage
+
+  v5: |md
+    ### v5 has one: `src/frontend.rs`
+    - `use "lib.dl".` needs no new keyword
+    - `expand` splices Core items in file order
+    - roots, first match wins: program dir,
+      `$SPREFA_STD`, `<crate>`, `<exe>/..`
+    - diamond loads once, keyed by canonical path
+    - same name + same cols dedups
+    - conflicting cols hard-error, naming both paths
+  | { class: [note; shipped] }
+
+  v6: |md
+    ### v6 has no resolver
+    - `serve/0_compile.ts:98`
+      is `compile(source: string)`
+    - ONE string, one file
+    - zero `use` / `import` / `include`
+      tokens in `compile/parse_dl.pl`
+  | { class: [note; muted] }
+
+  refused: |md
+    ### the door holds, by name
+    - `module_path_unresolved([orchard,tree])`
+    - 3 fixtures in `7_module_path.pl`
+    - head position and body position
+    - any segment count
+    - the grammar slot exists,
+      the resolver does not
+  | { class: [note; danger] }
+
+  v6 -> refused: 'orchard.tree(X)'
+}
+
+# ── 4. the swap ──────────────────────────────────────────────────────────────
+load: 4. bop load — a program swap under a live server {
+  class: stage
+  shape: sequence_diagram
+
+  cli: bop load
+  http: 'POST /program'
+  swipl: swipl child
+  lane: switchMap
+  db: SQLite
+
+  cli -> http: source text
+  http -> swipl: compile_dl6/2
+  swipl -> http: emitted .ts,\ndynamic import()
+  bad compile: {
+    http -> cli: 400, running\nprogram keeps running
+  }
+  http -> lane: accepted
+  lane -> lane: unsubscribe old branch:\ntick loop, hosts, bind timers
+  lane -> db: replay ddl
+  db -> lane: "'already exists' SWALLOWED"
+  lane -> db: boot statements
+  lane -> cli: '200 {loaded, rels, arrivalTargets, hosts, binds}'
+}
+
+gap: |md
+  ### know this before leaning on hot reload
+  - `serve/3_engine.ts:224` swallows
+    every `already exists`
+  - change a column type and the new
+    `CREATE TABLE` fails, is swallowed,
+    and the OLD table keeps the OLD rows
+  - `__rel.h_schema` is that fingerprint,
+    WRITTEN at `lower.pl:637`
+  - no runtime code reads it yet — h5b
+| { class: [note; danger] }
+
+title -> types
+types -> plane
+types -> imports
+plane -> load
+imports -> load
+load -> gap

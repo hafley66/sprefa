@@ -322,6 +322,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_empty_string_key_round_trips",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

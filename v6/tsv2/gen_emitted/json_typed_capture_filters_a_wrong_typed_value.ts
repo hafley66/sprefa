@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_typed_capture_filters_a_wrong_typed_value",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

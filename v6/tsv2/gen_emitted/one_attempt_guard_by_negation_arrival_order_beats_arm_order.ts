@@ -555,6 +555,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

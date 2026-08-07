@@ -13,13 +13,19 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
-:- use_module('../../compile', [ read_fixture_term/4, program_plan/2, compile_dl6/2 ]).
+:- use_module('../../compile',
+              [ read_fixture_term/4, program_plan/2, program_plan/3,
+                compile_dl6/2, default_intern_mode/1,
+                compiler_owned_contract/1 ]).
 :- use_module('../../0_refusal_messages',
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
-                canonical_column_expr/2, level_ref_count_sql/4,
+                canonical_column_expr/2, level_ref_count_sql/5,
+                column_def/4, ir_column_class/4, uniform_text_encoding/1,
+                catalog_ddl_contract/2,
+                program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
@@ -130,14 +136,14 @@ lowered_for(Base, Name, Lowered) :-
 % reproduce that grouping exactly.
 
 test(switch_as_keyed_replace_one_group) :-
-    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
     length(Group, 2).
 
 test(demand_laziness_one_group) :-
-    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
@@ -148,13 +154,13 @@ test(demand_laziness_one_group) :-
 % demanded); demanded must precede effect_call likewise.
 
 test(switch_as_keyed_replace_rule_order) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, _, _, RuleOrder, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, _, _, RuleOrder, _, _, _)),
     RuleOrder = [(DemandedHead <- _), (RouteViewHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(RouteViewHead, route_view, 2).
 
 test(demand_laziness_rule_order) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, RuleOrder, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, RuleOrder, _, _, _)),
     RuleOrder = [(DemandedHead <- _), (EffectCallHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(EffectCallHead, effect_call, 1).
@@ -178,7 +184,7 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 % witness at all and stays text per the ruling's flat-punt).
 
 test(switch_as_keyed_replace_columns) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _, _, _)),
     memberchk(relplan(open_scope/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(route_view/2, set, [route_id, body], none, [text, text]), RelPlans),
@@ -186,7 +192,7 @@ test(switch_as_keyed_replace_columns) :-
     memberchk(relplan(route_row/2, set, [route_id, body], none, [text, text]), RelPlans).
 
 test(demand_laziness_columns) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _, _, _)),
     memberchk(relplan(open_feed/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(effect_call/1, set, [target], none, [text]), RelPlans).
@@ -300,7 +306,7 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
@@ -545,7 +551,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
     ],
-    level_ref_count_sql(
+    level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
                     DredPlan, _)),
@@ -587,7 +593,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     HeadDelete == 'DELETE FROM "path" WHERE ("node") IN (SELECT "node" FROM "__cone_path")',
     once(sub_atom(StageRetract, _, _, _, 'SELECT -1, row_number() OVER () - 1, "node" FROM "__cone_path"')),
     HeadCount == 'SELECT count(*) AS "n" FROM "path"',
-    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], []),
+    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], [], direct),
     retraction_guard(Plan, 'recursive-cte-reseed').
 
 % A NEGATED body atom retracts a head row on an ARRIVAL, which stages no -1
@@ -603,7 +609,7 @@ test(negated_body_refuses_the_in_place_plan) :-
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child), not(blocked(Child)))
     ],
-    level_ref_count_sql(
+    level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
                     FixpointIr)),
@@ -681,7 +687,7 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
@@ -723,7 +729,7 @@ fixpoint_ir_share_walk(LegsType, FixpointIr) :-
            ( share(Parent, Total), hop(Parent, Child, Legs),
              Each := Total / Legs ))
     ],
-    level_ref_count_sql(RelPlans, share/2, Rules,
+    level_ref_count_sql(direct, RelPlans, share/2, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     FixpointIr)),
     FixpointIr \== none.
@@ -749,7 +755,7 @@ test(fixpoint_ir_storage_separates_class_from_declared_type) :-
         (walk(Parent) <- edge_row(Parent, _, _, _, _)),
         (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
     ],
-    level_ref_count_sql(RelPlans, walk/1, Rules,
+    level_ref_count_sql(direct, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
                                     FixpointIr)),
     FixpointIr = fixpointir(Storage, _, _, _, _),
@@ -800,7 +806,7 @@ test(catalog_table_shape) :-
 % into it; a leftover arrival target is that door standing open.
 test(catalog_is_never_an_arrival_target) :-
     catalog_program(Term),
-    once(program_plan(Term-[], plan(_, _, _, ArrivalTargets, _, _, _))),
+    once(program_plan(Term-[], plan(_, _, _, ArrivalTargets, _, _, _, _))),
     \+ memberchk('__rel'/_, ArrivalTargets).
 
 % The gate keys on the contract's arity: a rel spelled the same at another
@@ -1243,7 +1249,7 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
@@ -1408,7 +1414,7 @@ test(accepts_edge_derived_edge_trigger) :-
 test(head_arithmetic_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
     assertion(UnionTypes == [text, text, int]),
     memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
@@ -1421,7 +1427,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
                              Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
     assertion(Types == [text, int]).
 
@@ -1434,7 +1440,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
 test(concat_result_column_stays_text) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(message/3, _, _, _, Types), RelPlans),
     assertion(Types == [text, int, text]).
 
@@ -1989,14 +1995,14 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
       fixture(host_declared_struct_output_parses_and_lowers_as_ref,
               Program, [], [], [])-Bindings,
       Plan),
-    Plan = plan(_, _, RelPlans, _, _, _, _),
+    Plan = plan(_, _, RelPlans, _, _, _, _, _),
     memberchk(
       relplan('__host_response_scan_span'/4, set,
               [witness_digest, ordinal, path, at],
               key([1, 2]), [text, int, text, ref(span)]),
       RelPlans),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), _, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(
@@ -2111,7 +2117,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
@@ -2157,7 +2163,7 @@ test(query_plan_carries_columns_and_bound_positions) :-
               Program, [], [], [])-Bindings,
       Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(query_plan_carries_columns_and_bound_positions,
@@ -3686,7 +3692,7 @@ test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
             pre(counter(Name, Total)),
             Next := Total + 1) ]),
     program_plan(fixture(scan_numeric_constraint, Prog, [], [], [])-[], Plan),
-    Plan = plan(_, _, RelPlans, _, _, _, _),
+    Plan = plan(_, _, RelPlans, _, _, _, _, _),
     memberchk(relplan(counter/2, _, _, _, [text, int]), RelPlans).
 
 :- end_tests(phase5_value_plane).
@@ -3822,7 +3828,7 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 :- begin_tests(relation_depth_lowering).
 
 depth_program(Rules, plan(depth, prog(Decls, Rules), RelPlans, [raw/4],
-                          LevelRules, EdgeRules, [])) :-
+                          LevelRules, EdgeRules, [], direct)) :-
     Decls = [ type_decl(repo,  [col(name, text)]),
               col_type(repo/1, name, text),
               type_decl(fpath, [col(name, text)]),
@@ -4692,3 +4698,289 @@ test(ordered_carry_read) :-
     HeadRefs = [latest/2].
 
 :- end_tests(rel_rule_observers).
+
+:- begin_tests(interning).
+
+interning_lowered(Mode, Name, Lowered) :-
+    once(( fixture_file(File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered) )).
+
+ddl_containing(Ddl, Needle, Statement) :-
+    member(Statement, Ddl),
+    sub_atom(Statement, _, _, _, Needle).
+
+interned_relplan(RelPlans, Name, Columns, ColumnTypes) :-
+    member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+    memberchk(text, ColumnTypes).
+
+% One dictionary per program, never one per rel or per key shape: a second one
+% would put two id spaces on the two sides of a cross-rel text join.
+test(dictionary_ddl_emitted_once) :-
+    interning_lowered(dict, switch_as_keyed_replace, lowered(_, Ddl, _, _, _, _, _, _)),
+    findall(Statement, ddl_containing(Ddl, 'CREATE TABLE "__str"', Statement), Statements),
+    Statements = ['CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)'].
+
+test(no_dictionary_ddl_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace, lowered(_, Ddl, _, _, _, _, _, _)),
+    \+ ddl_containing(Ddl, '"__str"', _).
+
+% G11 in miniature: no text column survives as TEXT storage.
+test(every_text_column_stores_an_id) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, RelPlans, _)),
+    forall(( member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+             nth1(Index, ColumnTypes, text),
+             nth1(Index, Columns, Column) ),
+           ( format(atom(TableHead), 'CREATE TABLE "~w" (', [Name]),
+             ddl_containing(Ddl, TableHead, Statement),
+             format(atom(IdColumn), '"~w" INTEGER NOT NULL', [Column]),
+             sub_atom(Statement, _, _, _, IdColumn),
+             format(atom(TextColumn), '"~w" TEXT NOT NULL', [Column]),
+             \+ sub_atom(Statement, _, _, _, TextColumn) )).
+
+test(every_text_column_stays_text_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, RelPlans, _)),
+    forall(( member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+             nth1(Index, ColumnTypes, text),
+             nth1(Index, Columns, Column) ),
+           ( format(atom(TableHead), 'CREATE TABLE "~w" (', [Name]),
+             ddl_containing(Ddl, TableHead, Statement),
+             format(atom(TextColumn), '"~w" TEXT NOT NULL', [Column]),
+             sub_atom(Statement, _, _, _, TextColumn) )).
+
+% The structural rule of the contract's §4: no table without its view.
+test(every_interned_table_ships_its_view) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, RelPlans, _)),
+    forall(interned_relplan(RelPlans, Name, _, _),
+           ( format(atom(ViewHead), 'CREATE TEMP VIEW "__txt_~w" AS', [Name]),
+             ddl_containing(Ddl, ViewHead, _),
+             format(atom(DeltaViewHead), 'CREATE TEMP VIEW "__txt___delta_~w" AS', [Name]),
+             ddl_containing(Ddl, DeltaViewHead, _) )).
+
+test(no_decode_view_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace, lowered(_, Ddl, _, _, _, _, _, _)),
+    \+ ddl_containing(Ddl, '__txt_', _).
+
+% The drift check: the view is built from the table's own column list, so every
+% column reappears in it under its own name.
+test(decode_view_carries_every_column) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, RelPlans, _)),
+    forall(( interned_relplan(RelPlans, Name, Columns, _),
+             member(Column, Columns) ),
+           ( format(atom(ViewHead), 'CREATE TEMP VIEW "__txt_~w" AS', [Name]),
+             ddl_containing(Ddl, ViewHead, ViewDdl),
+             format(atom(Alias), 'AS "~w"', [Column]),
+             sub_atom(ViewDdl, _, _, _, Alias) )).
+
+test(boundary_reads_go_through_the_view) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, DeltaStatements, RelPlans, _)),
+    forall(interned_relplan(RelPlans, Name, _, _),
+           ( memberchk(deltastmt(Name/_, SelectSql, _, BoundarySql), DeltaStatements),
+             format(atom(SnapshotFrom), 'FROM "__txt_~w"', [Name]),
+             sub_atom(SelectSql, _, _, _, SnapshotFrom),
+             format(atom(DeltaFrom), 'FROM "__txt___delta_~w"', [Name]),
+             sub_atom(BoundarySql, _, _, _, DeltaFrom) )).
+
+test(boundary_reads_name_the_table_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, DeltaStatements, RelPlans, _)),
+    forall(interned_relplan(RelPlans, Name, _, _),
+           ( memberchk(deltastmt(Name/_, SelectSql, _, _), DeltaStatements),
+             format(atom(SnapshotFrom), 'FROM "~w"', [Name]),
+             sub_atom(SelectSql, _, _, _, SnapshotFrom) )).
+
+% The mode is a compile INPUT carried by the plan, not a flag read at emit time.
+% One recursive head, one text column in a source rel, two modes.
+interning_walk_relplans([
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(walk/1, set, [node], none, [int])
+    ]).
+
+interning_walk_rules([
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
+    ]).
+
+interning_walk_ir(Mode, FixpointIr) :-
+    interning_walk_relplans(RelPlans),
+    interning_walk_rules(Rules),
+    level_ref_count_sql(Mode, RelPlans, walk/1, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)).
+
+test(fixpoint_ir_text_column_encodes_dict) :-
+    interning_walk_ir(dict, fixpointir(Storage, _, _, _, _)),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    memberchk(colclass(label, text, integer, none, dict('__str')), ColumnClasses).
+
+test(fixpoint_ir_text_column_stays_direct_at_direct) :-
+    interning_walk_ir(direct, fixpointir(Storage, _, _, _, _)),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    memberchk(colclass(label, text, text, binary, direct), ColumnClasses).
+
+% The anti-drift test: ONE run, two outputs of it, one comparison. The DDL's
+% storage keyword and the IR's storage class are the same decision twice.
+test(fixpoint_ir_encoding_agrees_with_ddl) :-
+    forall(member(Mode, [dict, direct]),
+           ( interning_lowered(Mode, switch_as_keyed_replace,
+                               lowered(_, _, _, _, _, _, RelPlans, _)),
+             forall(( member(relplan(_, _, Columns, _, ColumnTypes), RelPlans),
+                      nth1(Index, Columns, Column),
+                      nth1(Index, ColumnTypes, ColumnType) ),
+                    ( format(atom(QuotedColumn), '"~w"', [Column]),
+                      column_def(Mode, QuotedColumn, ColumnType, Def),
+                      ir_column_class(Mode, Column, ColumnType,
+                                      colclass(_, _, StorageClass, _, _)),
+                      storage_keyword(StorageClass, Keyword),
+                      format(atom(Needle), '~w ~w NOT NULL', [QuotedColumn, Keyword]),
+                      sub_atom(Def, _, _, _, Needle) ) ) )).
+
+storage_keyword(integer, 'INTEGER').
+storage_keyword(real, 'REAL').
+storage_keyword(text, 'TEXT').
+
+% Phase 1 has no IR node for `<interned column> = 'literal'`: the SQL resolves
+% the literal through __str and eq_lit/2 carries the bare text.
+test(text_literal_filter_fences_the_ir_at_dict) :-
+    interning_walk_relplans(RelPlans),
+    LiteralRules = [
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, rust) ))
+    ],
+    level_ref_count_sql(direct, RelPlans, walk/1, LiteralRules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    DirectIr)),
+    DirectIr \== none,
+    level_ref_count_sql(dict, RelPlans, walk/1, LiteralRules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    DictIr)),
+    DictIr == none.
+
+% ── the ingest door (contract §6) ───────────────────────────────────────────
+
+interning_emitted(Mode, Base, Name, Text) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered),
+           Term = fixture(_, _, Initial, _, _),
+           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+           boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+           emit_program(Name, Plan, Lowered, Boot, Text) )).
+
+% A `__ref_<type>` target table carries text columns inside its own UNIQUE key,
+% so those columns must already be ids when StructPlane writes the target row.
+test(text_intern_runs_before_struct_intern) :-
+    interning_emitted(dict, '6_relation_depth.pl', relation_depth2_dot_read, Text),
+    once(sub_atom(Text, TextAt, _, _, 'TextPlane.intern(seam, TEXT_INTERN_PLAN')),
+    once(sub_atom(Text, StructAt, _, _, 'StructPlane.intern(seam, STRUCT_TYPES')),
+    TextAt < StructAt.
+
+test(the_door_is_absent_at_direct) :-
+    interning_emitted(direct, '6_relation_depth.pl', relation_depth2_dot_read, Text),
+    \+ sub_atom(Text, _, _, _, 'TextPlane'),
+    \+ sub_atom(Text, _, _, _, 'TEXT_INTERN_PLAN').
+
+% Two statements, not three: `__str`'s key IS the whole value, so StructPlane's
+% same-key/different-row preflight has no case here and is not copied.
+test(the_door_carries_exactly_two_statements) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(dict, RelPlans,
+                             textintern(InternSql, LookupSql, RelColumns)),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i',
+    LookupSql == 'SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value',
+    RelColumns \== [].
+
+% The runtime's rewrite map is one flag per column, in column order.
+test(the_door_flags_every_text_column) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(dict, RelPlans, textintern(_, _, RelColumns)),
+    forall(member(Name-Flags, RelColumns),
+           ( memberchk(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+             length(Flags, Arity),
+             length(ColumnTypes, Arity),
+             forall(( nth1(Index, ColumnTypes, ColumnType),
+                      nth1(Index, Flags, Flag) ),
+                    ( ColumnType == text -> Flag == true ; Flag == false )) )).
+
+test(no_door_at_direct) :-
+    interning_lowered(direct, switch_as_keyed_replace,
+                      lowered(_, _, _, _, _, _, RelPlans, _)),
+    program_text_intern_plan(direct, RelPlans, none).
+
+% ── the uniform-encoding invariant (contract §5.6) ──────────────────────────
+% Tested by CALLING the predicate, never by a fixture: no program can build a
+% mixed list, and a refusal no fixture can turn red is untested code posing as
+% a guard.
+
+test(uniform_text_encoding_admits_one_encoding) :-
+    uniform_text_encoding([ colclass(path, text, integer, none, dict('__str')),
+                            colclass(name, text, integer, none, dict('__str')),
+                            colclass(line, int, integer, none, direct) ]).
+
+test(uniform_text_encoding_admits_no_text_column) :-
+    uniform_text_encoding([ colclass(line, int, integer, none, direct) ]).
+
+test(uniform_text_encoding_refuses_a_mixed_list) :-
+    catch(uniform_text_encoding(
+              [ colclass(path, text, integer, none, dict('__str')),
+                colclass(name, text, text, binary, direct) ]),
+          Thrown, true),
+    Thrown == unsupported_construct(mixed_text_encoding([direct, dict('__str')])).
+
+% ── the compiler-owned `__` namespace (contract §18) ────────────────────────
+
+plan_verdict(Prog, Verdict) :-
+    (   catch(program_plan(fixture(probe, Prog, [], [], [])-[], _Plan),
+              Thrown, true)
+    ->  ( var(Thrown) -> Verdict = accepted ; Verdict = Thrown )
+    ;   Verdict = failed
+    ).
+
+test(reserved_namespace_refuses_a_declared_rel) :-
+    plan_verdict(prog([kind('__txt_reach'/2, log)], []), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__txt_reach')).
+
+test(reserved_namespace_refuses_a_derived_head) :-
+    plan_verdict(prog([], [ ('__str_stats'(Tick) <- tick_row(Tick)) ]), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__str_stats')).
+
+test(reserved_namespace_refuses_an_unowned_body_read) :-
+    plan_verdict(prog([], [ (seen(Node) <- '__cone_walk'(Node)) ]), Verdict),
+    Verdict == unsupported_construct(reserved_rel_namespace('__cone_walk')).
+
+% Reading a contract rel is allowed; writing one is not.
+test(reserved_namespace_admits_a_catalog_read) :-
+    plan_verdict(prog([], [ (source_row(A, B) <- '__rel'(A, B)) ]), Verdict),
+    Verdict == accepted.
+
+% The reservation list is DERIVED from the catalog contract, so a future
+% contract row cannot forget to reserve its own name.
+test(reserved_names_are_the_catalog_contract_names) :-
+    findall(Name, compiler_owned_contract(Name), Owned),
+    findall(Name, catalog_ddl_contract(Name, _), Contract),
+    msort(Owned, Sorted),
+    msort(Contract, Sorted).
+
+test(mode_travels_in_the_plan) :-
+    once(( fixture_file(File),
+           read_fixture_term(File, switch_as_keyed_replace, Term, Bindings),
+           program_plan(Term-Bindings, [intern(dict)], DictPlan),
+           program_plan(Term-Bindings, [intern(direct)], DirectPlan),
+           program_plan(Term-Bindings, DefaultPlan),
+           default_intern_mode(DefaultMode) )),
+    DictPlan = plan(_, _, _, _, _, _, _, dict),
+    DirectPlan = plan(_, _, _, _, _, _, _, direct),
+    DefaultPlan = plan(_, _, _, _, _, _, _, DefaultMode).
+
+:- end_tests(interning).

@@ -687,6 +687,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "state_flap_nets_to_zero_scope_churn",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

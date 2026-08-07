@@ -344,6 +344,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bind_computes_derived_value_then_comparison_filters",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

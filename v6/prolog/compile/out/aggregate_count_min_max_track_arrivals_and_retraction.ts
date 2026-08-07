@@ -320,6 +320,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "aggregate_count_min_max_track_arrivals_and_retraction",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

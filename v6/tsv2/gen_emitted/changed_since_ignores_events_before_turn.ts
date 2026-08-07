@@ -456,6 +456,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "changed_since_ignores_events_before_turn",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

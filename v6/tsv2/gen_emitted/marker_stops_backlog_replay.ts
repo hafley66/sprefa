@@ -379,6 +379,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "marker_stops_backlog_replay",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

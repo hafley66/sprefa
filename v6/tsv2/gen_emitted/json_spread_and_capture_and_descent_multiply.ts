@@ -323,6 +323,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_spread_and_capture_and_descent_multiply",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

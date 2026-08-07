@@ -573,6 +573,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "completion_propagation_lattice_tick",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

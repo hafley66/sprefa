@@ -438,6 +438,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "switch_as_keyed_replace",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

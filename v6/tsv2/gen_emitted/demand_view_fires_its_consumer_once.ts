@@ -383,6 +383,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "demand_view_fires_its_consumer_once",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

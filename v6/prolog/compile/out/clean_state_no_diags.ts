@@ -576,6 +576,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "clean_state_no_diags",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

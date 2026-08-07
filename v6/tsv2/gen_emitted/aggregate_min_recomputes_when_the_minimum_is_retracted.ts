@@ -324,6 +324,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "aggregate_min_recomputes_when_the_minimum_is_retracted",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

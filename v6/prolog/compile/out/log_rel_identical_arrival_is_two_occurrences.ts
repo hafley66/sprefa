@@ -360,6 +360,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "log_rel_identical_arrival_is_two_occurrences",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

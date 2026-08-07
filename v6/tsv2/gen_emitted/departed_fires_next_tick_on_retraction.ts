@@ -408,6 +408,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "departed_fires_next_tick_on_retraction",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

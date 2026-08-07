@@ -374,6 +374,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unwrap_below_budget_silent",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

@@ -391,6 +391,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "worktree_edit_replaces_digest_and_flips_kind_view",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

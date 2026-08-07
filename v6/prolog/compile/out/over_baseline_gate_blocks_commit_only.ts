@@ -700,6 +700,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "over_baseline_gate_blocks_commit_only",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

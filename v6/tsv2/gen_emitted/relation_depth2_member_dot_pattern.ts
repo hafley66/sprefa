@@ -459,6 +459,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth2_member_dot_pattern",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

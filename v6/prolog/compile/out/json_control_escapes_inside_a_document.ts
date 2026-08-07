@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_control_escapes_inside_a_document",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

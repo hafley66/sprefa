@@ -320,6 +320,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_untyped_capture_binds_without_a_type",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

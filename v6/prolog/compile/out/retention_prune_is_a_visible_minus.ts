@@ -307,6 +307,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retention_prune_is_a_visible_minus",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

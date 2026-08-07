@@ -426,6 +426,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "identical_demand_dedups",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

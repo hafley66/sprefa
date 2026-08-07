@@ -373,6 +373,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "callgraph_derivation_over_extraction",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

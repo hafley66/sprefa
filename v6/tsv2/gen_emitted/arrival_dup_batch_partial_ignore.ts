@@ -319,6 +319,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "arrival_dup_batch_partial_ignore",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

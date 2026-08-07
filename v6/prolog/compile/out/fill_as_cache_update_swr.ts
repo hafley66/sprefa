@@ -436,6 +436,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "fill_as_cache_update_swr",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

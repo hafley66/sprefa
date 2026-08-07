@@ -374,6 +374,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "comparison_filters_rows",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

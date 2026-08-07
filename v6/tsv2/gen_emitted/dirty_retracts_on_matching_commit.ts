@@ -516,6 +516,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "dirty_retracts_on_matching_commit",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

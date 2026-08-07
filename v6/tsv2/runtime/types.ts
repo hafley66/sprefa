@@ -394,9 +394,32 @@ export interface IReloadPlanner {
   ): IReloadPlan;
 }
 
+/** Which lowering built a module: `dict` stores every text column as an id
+ *  into `__str`, `direct` stores the text. */
+export type IInternMode = "dict" | "direct";
+
+/** The emitted module's half of the ingest-door intern (lower.pl's
+ *  `text_intern_plan/3`). Absent on a module built at `intern(direct)`. */
+export interface ITextInternPlan {
+  readonly internSql: string;
+  readonly lookupSql: string;
+  /** rel name -> per-column flags; a rel absent from the map has no interned
+   *  column and its rows pass through untouched. */
+  readonly relColumns: Readonly<Record<string, readonly boolean[]>>;
+}
+
+export interface ITextPlane {
+  /** Swaps every interned position for its `__str` id. Runs once per tick,
+   *  over the union of every arriving rel, before anything downstream. */
+  intern(seam: ISqlSeam, plan: ITextInternPlan, arrivals: IArrivalBatch): Observable<IArrivalBatch>;
+}
+
 /** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
+  /** A database is readable only by a module of its own mode; the crossing is
+   *  refused at boot because SQLite affinity would store the wrong shape. */
+  readonly internMode: IInternMode;
   readonly ddl: readonly string[];
   readonly rel_columns: Readonly<Record<string, readonly string[]>>;
   readonly rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>;

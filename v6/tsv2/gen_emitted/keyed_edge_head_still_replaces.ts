@@ -364,6 +364,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "keyed_edge_head_still_replaces",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

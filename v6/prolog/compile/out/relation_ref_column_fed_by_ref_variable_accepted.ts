@@ -395,6 +395,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_ref_column_fed_by_ref_variable_accepted",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

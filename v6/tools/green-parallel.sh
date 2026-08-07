@@ -51,6 +51,13 @@ PHASE_B=(
 started="$(date +%s)"
 status=0
 
+# Rows go to refs/notes/perf, never the worktree: a dirty tree after every gate
+# run is why goldens/scale-floor-history.jsonl is ignored. Keys match that file.
+GREEN_RUN="g-$(date +%s | tail -c 7)$$"
+GREEN_COMMIT="$(git -C "$V6" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+GREEN_PHASE=wall
+export GREEN_RUN GREEN_COMMIT GREEN_PHASE
+
 run_leg() {
   local spec="$1" leg env_assignments
   leg="${spec%%:*}"
@@ -59,8 +66,13 @@ run_leg() {
   local begin; begin="$(date +%s)"
   ( cd "$V6" && env $env_assignments just "$leg" ) >"$WORK/$leg.out" 2>&1
   local rc=$?
+  local sec=$(( $(date +%s) - begin ))
   printf '%s' "$rc" >"$WORK/$leg.rc"
-  printf '%s' "$(( $(date +%s) - begin ))" >"$WORK/$leg.sec"
+  printf '%s' "$sec" >"$WORK/$leg.sec"
+  # Single write under 4KB: O_APPEND keeps the xargs -P 6 writers from interleaving.
+  printf '{"at":"%s","commit":"%s","run":"%s","phase":"%s","leg":"%s","seconds":%s,"rc":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GREEN_COMMIT" "$GREEN_RUN" \
+    "$GREEN_PHASE" "$leg" "$sec" "$rc" >>"$WORK/history.jsonl"
   return $rc
 }
 export -f run_leg
@@ -81,19 +93,23 @@ report() {
   done
 }
 
+GREEN_PHASE=wall
 for leg in "${PHASE_WALL[@]}"; do run_leg "$leg"; done
 report "${PHASE_WALL[@]}"
 
+GREEN_PHASE=soak
 run_leg "$SOAK"
 report memory-soak
 
 echo
 echo "== serial legs (${#PHASE_A[@]}) =="
+GREEN_PHASE=A
 for leg in "${PHASE_A[@]}"; do run_leg "$leg"; done
 report "${PHASE_A[@]}"
 
 echo
 echo "== parallel legs, ${JOBS} at a time (${#PHASE_B[@]}) =="
+GREEN_PHASE=B
 printf '%s\n' "${PHASE_B[@]}" | xargs -P "$JOBS" -I{} bash -c 'run_leg "$@"' _ {}
 # Unquoted on purpose: report/1 takes one leg name per argument.
 # shellcheck disable=SC2046
@@ -106,4 +122,13 @@ if [ "$status" = "0" ]; then
 else
   echo "GREEN ALL FAILED after ${elapsed}s"
 fi
+
+printf '{"at":"%s","commit":"%s","run":"%s","phase":"total","leg":"__gate","seconds":%s,"rc":%s}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$GREEN_COMMIT" "$GREEN_RUN" "$elapsed" "$status" \
+  >>"$WORK/history.jsonl"
+# Recording a run must never redden it, and a concurrent worktree can hold the ref lock.
+git -C "$V6" notes --ref=perf append -F "$WORK/history.jsonl" 2>/dev/null \
+  || git -C "$V6" notes --ref=perf append -F "$WORK/history.jsonl" 2>/dev/null \
+  || echo "perf note not recorded (run $GREEN_RUN)"
+
 exit "$status"

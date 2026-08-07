@@ -518,6 +518,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "lww_fold_follows_arrival_order",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

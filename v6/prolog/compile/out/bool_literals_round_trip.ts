@@ -296,6 +296,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bool_literals_round_trip",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

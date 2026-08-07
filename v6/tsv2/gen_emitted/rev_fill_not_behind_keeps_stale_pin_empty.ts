@@ -456,6 +456,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "rev_fill_not_behind_keeps_stale_pin_empty",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

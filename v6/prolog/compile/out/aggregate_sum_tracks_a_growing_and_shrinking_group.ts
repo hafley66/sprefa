@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "aggregate_sum_tracks_a_growing_and_shrinking_group",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

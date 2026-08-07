@@ -379,6 +379,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "pairwise_pairs_adjacent_values_when_the_source_idles",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

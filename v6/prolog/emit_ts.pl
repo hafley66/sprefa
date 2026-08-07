@@ -13,6 +13,7 @@
 % relplan_kind/3 supplies trigger kind to the per-arm resolver.
 :- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/2,
+                       program_text_intern_plan/3,
                        statement_rule_ids/3 ]).
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
@@ -165,9 +166,10 @@ header_lines(Name, Lines) :-
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
 imports_lines(HasEdgeRules, HasRetention, Lines) :-
-    imports_lines(HasEdgeRules, HasRetention, false, false, [], Lines).
+    imports_lines(HasEdgeRules, HasRetention, false, false, false, [], Lines).
 
-imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
+imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
+              HasOrderedProgram,
               SelfReferentialLevelRefs, Lines) :-
     ( HasRetention == true
     -> RetentionImport = ['  IIncrementalRetentionStatement,']
@@ -192,6 +194,11 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
        StructTypeImports = ['  IStructRefColumns,', '  IStructTypePlan,']
     ;  StructImport = [], StructTypeImports = []
     ),
+    ( HasTextIntern == true
+    -> TextImport = ['import { TextPlane } from "../runtime/textPlane.ts";'],
+       TextTypeImports = ['  ITextInternPlan,']
+    ;  TextImport = [], TextTypeImports = []
+    ),
     append(
     [ [ RxImportLine,
       '',
@@ -201,6 +208,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
       'import { select_rows } from "../runtime/rows.ts";'
       ],
       StructImport,
+      TextImport,
       [ 'import type {',
       '  IArrivalBatch,',
       '  IArrivalRow,',
@@ -220,6 +228,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
       '  ISqlSeam,'
       ],
       StructTypeImports,
+      TextTypeImports,
       [
       '  ITickDeltas,',
       '  SqlStatement,',
@@ -230,6 +239,30 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasOrderedProgram,
 % ═══ the declared value plane (STRUCT-AS-ROWS) ══════════════════════════════
 % Emitted ONLY for a program that declares a type. Every other module stays
 % Programs without struct declarations receive no struct-plane output.
+
+% The plan a direct-mode module has no use for is simply absent, along with
+% its import and its statement.
+text_intern_plan_lines(none, [], false) :- !.
+text_intern_plan_lines(textintern(InternSql, LookupSql, RelColumns),
+                       Lines, true) :-
+    js_template(InternSql, InternTemplate),
+    js_template(LookupSql, LookupTemplate),
+    findall(EntryLine,
+            ( member(Name-Flags, RelColumns),
+              js_string(Name, NameKey),
+              atomic_list_concat(Flags, ', ', FlagsText),
+              format(atom(EntryLine), '    ~w: [~w],', [NameKey, FlagsText]) ),
+            EntryLines),
+    format(atom(InternLine), '  internSql: ~w,', [InternTemplate]),
+    format(atom(LookupLine), '  lookupSql: ~w,', [LookupTemplate]),
+    append(
+    [ [ 'export const TEXT_INTERN_PLAN: ITextInternPlan = {',
+        InternLine,
+        LookupLine,
+        '  relColumns: {' ],
+      EntryLines,
+      [ '  },', '};' ]
+    ], Lines).
 
 struct_plane_lines([], _, [], false) :- !.
 struct_plane_lines(StructPlans, RelPlans, Lines, true) :-
@@ -285,6 +318,20 @@ column_type_ref_entry(_, 'null').
 % exists.
 struct_tick_wrapper_lines(_, _, []).
 
+% Before StructPlane and before any level statement: a rewritten row must
+% never reach a statement that would store a string in an id column.
+naive_text_intern_lines(false, []) :- !.
+naive_text_intern_lines(true,
+    [ '    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)',
+      '      .pipe(map((interned) => { arrivals = interned; return before; }))),'
+    ]).
+
+incremental_text_intern_lines(false, []) :- !.
+incremental_text_intern_lines(true,
+    [ '    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)',
+      '      .pipe(map((interned) => { arrivals = interned; }))),'
+    ]).
+
 naive_reference_normalize_lines(false, []) :- !.
 naive_reference_normalize_lines(true,
     [ '    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,',
@@ -324,7 +371,7 @@ local_types_lines(
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
     ]).
 
-world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels), Lines) :-
+world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels, _), Lines) :-
     findall(HostPlan,
             ( member(Decl, Decls),
               Decl = sh_decl(_, _, _, _),
@@ -695,7 +742,7 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
 
 % ═══ the catalog rows, the same list the INSERT renders ════════════════════
 % Emitted even for a program that never queries `__rel`, so a reload compares.
-program_catalog_rows(Name, plan(_, prog(_, Rules), _, _, _, _, _), RelPlans, Rows) :-
+program_catalog_rows(Name, plan(_, prog(_, Rules), _, _, _, _, _, _), RelPlans, Rows) :-
     lower:catalog_rows(Name, Rules, RelPlans, Rows).
 
 rel_catalog_lines([], []) :- !.
@@ -1531,7 +1578,7 @@ ordered_program(EdgeStatements) :-
     ordered_edge_statement(Statement),
     !.
 
-plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _), Refs) :-
+plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _), Refs) :-
     findall(Ref,
             ( member((_ <+ Body), Rules),
               level_body_pre_ref(Body, Ref) ),
@@ -2025,17 +2072,19 @@ naive_retention_fn_lines(_RetentionStatements,
     ]).
 
 run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs,
-                        HasStructTypes, Lines) :- !,
+                        HasStructTypes, HasTextIntern, Lines) :- !,
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
     retention_tick_lines(HasRetention, RetentionLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_text_intern_lines(HasTextIntern, TextInternLines),
     naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     append(
     [ [ 'function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
         '  return read_snapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      TextInternLines,
       NormalizeLines,
       [ '    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),',
         '    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),'
@@ -2050,10 +2099,11 @@ run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs,
       ]
     ], Lines).
 run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                        DepartureRefs, HasStructTypes, Lines) :-
+                        DepartureRefs, HasStructTypes, HasTextIntern, Lines) :-
     EdgeStatements \== [],
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_text_intern_lines(HasTextIntern, TextInternLines),
     naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     edge_resolve_call_exprs(EdgeStatements, ResolveCallExprs),
     ( ResolveCallExprs = [SingleCall]
@@ -2069,6 +2119,7 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
       '  return read_snapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      TextInternLines,
       NormalizeLines,
       [ '    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),',
       % TICK PHASE ALIGNMENT: the referee freezes the level plane where
@@ -2096,11 +2147,12 @@ run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
       ]
     ], Lines).
 
-run_ordered_tick_fn_lines(false, _, _, _, _, _, []) :- !.
+run_ordered_tick_fn_lines(false, _, _, _, _, _, _, []) :- !.
 run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
-                          HasStructTypes, Lines) :-
+                          HasStructTypes, HasTextIntern, Lines) :-
     departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
     advance_tick_naive_line(UsesTick, AdvanceTickLines),
+    naive_text_intern_lines(HasTextIntern, TextInternLines),
     naive_reference_normalize_lines(HasStructTypes, NormalizeLines),
     retention_tick_lines_ordered(HasRetention, RetentionLines),
     format(atom(NameCommentLine),
@@ -2111,6 +2163,7 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
         '  return read_snapshot(seam).pipe('
       ],
       AdvanceTickLines,
+      TextInternLines,
       NormalizeLines,
       [ '    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),',
         '    concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),',
@@ -2305,8 +2358,10 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
 
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs,
-                              HasStructTypes, HasOrderedProgram, Lines) :-
+                              HasStructTypes, HasTextIntern, HasOrderedProgram,
+                              Lines) :-
     advance_tick_pipeline_line(UsesTick, AdvanceTickLines),
+    incremental_text_intern_lines(HasTextIntern, TextInternLines),
     incremental_reference_normalize_lines(HasStructTypes, NormalizeLines),
     departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
     pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
@@ -2329,6 +2384,7 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       '  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe('
       ],
       AdvanceTickLines,
+      TextInternLines,
       NormalizeLines,
       [ '    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),',
       '    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),'
@@ -2386,7 +2442,7 @@ dispatch_signature(_,
     'function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {').
 
 derived_edge_carry_required(
-        plan(_, prog(_, Rules), _, _, _, _, _), EdgeStatements, Required) :-
+        plan(_, prog(_, Rules), _, _, _, _, _, _), EdgeStatements, Required) :-
     derived_refs(Rules, DerivedRefs),
     ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _), EdgeStatements),
       memberchk(TriggerRef, DerivedRefs)
@@ -2394,7 +2450,7 @@ derived_edge_carry_required(
     ;  Required = false
     ).
 
-incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _),
+incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _, _),
                          _EdgeStatements, _LevelStatements, Safe) :-
     rules_have_supported_level_bodies(Rules),
     Safe = true.
@@ -2403,7 +2459,7 @@ rules_have_supported_level_bodies([]).
 rules_have_supported_level_bodies([_ | Rest]) :-
     rules_have_supported_level_bodies(Rest).
 
-reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _), Reconcile) :-
+reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       body_ref_uses(Body, Uses),
@@ -2412,7 +2468,7 @@ reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _), Reconcile) :-
     ;  Reconcile = false
     ).
 
-retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _), Guard) :-
+retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _), Guard) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       rule_head_ref(Rule, HeadRef),
@@ -2440,9 +2496,10 @@ edge_resolve_call_expr(HeadRef, Index, Expr) :-
 % `boot` is the ONE field the cone filter reaches from out here: the tick path
 % takes its lists from the SUBSCRIBED_* consts, but boot is run by the harness
 % off this object.
-program_export_lines(Name,
+program_export_lines(Name, InternMode,
     [ 'export const program: IGenProgramWithBoot = {',
       NameLine,
+      InternModeLine,
       '  ddl,',
       '  rel_columns,',
       '  rel_column_types,',
@@ -2458,7 +2515,12 @@ program_export_lines(Name,
       '  tick: run_tick,',
       '};'
     ]) :-
-    format(atom(NameLine), '  name: "~w",', [Name]).
+    format(atom(NameLine), '  name: "~w",', [Name]),
+    format(atom(InternModeLine), '  internMode: "~w",', [InternMode]).
+
+% A database built by one mode is unreadable by the other, so the artifact
+% names the mode that built it (interning contract §15.5).
+plan_intern_mode(plan(_, _, _, _, _, _, _, InternMode), InternMode).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -2469,22 +2531,25 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
-    Plan = plan(_, prog(PlanDecls, _), _, _, _, _, _),
+    Plan = plan(_, prog(PlanDecls, _), _, _, _, _, _, _),
     struct_type_plans(PlanDecls, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
+    plan_intern_mode(Plan, InternMode),
+    program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
+    text_intern_plan_lines(TextInternPlan, TextInternPlanLines, HasTextIntern),
     ( ordered_program(EdgeStatements) -> HasOrderedProgram = true
     ; HasOrderedProgram = false
     ),
-    Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _),
+    Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _),
     self_referential_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
-    imports_lines(HasEdgeRules, HasRetention, HasStructTypes,
+    imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
                   HasOrderedProgram, SelfReferentialLevelRefs, ImportLines),
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _),
+    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
     plan_pre_refs(Plan, PreRefs),
     findall(LevelRef,
@@ -2528,13 +2593,14 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
                           DepartureRefs, BuildDeltasFnLines),
-    Plan = plan(_, TickProg, _, _, _, _, _),
+    Plan = plan(_, TickProg, _, _, _, _, _, _),
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                            DepartureRefs, HasStructTypes, RunNaiveTickFnLines),
+                            DepartureRefs, HasStructTypes, HasTextIntern,
+                            RunNaiveTickFnLines),
     run_ordered_tick_fn_lines(HasOrderedProgram, Name, HasRetention, UsesTick,
-                              DepartureRefs, HasStructTypes,
+                              DepartureRefs, HasStructTypes, HasTextIntern,
                               RunOrderedTickFnLines),
     incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
@@ -2546,17 +2612,18 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                           HasOrderedProgram, SubscribePruneLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                                   HasRetention, UsesTick, DepartureRefs,
-                                  HasStructTypes, HasOrderedProgram,
+                                  HasStructTypes, HasTextIntern,
+                                  HasOrderedProgram,
                                   RunIncrementalTickFnLines),
     struct_tick_wrapper_lines(HasStructTypes, Name, StructTickWrapperLines),
     incremental_plan_export_lines(RetractionGuard, HasRetention,
                                   IncrementalPlanExportLines),
-    program_export_lines(Name, ProgramExportLines),
+    program_export_lines(Name, InternMode, ProgramExportLines),
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       DepartureOccurrencesHelperLines,
-      StructPlaneLines,
+      StructPlaneLines, TextInternPlanLines,
       DdlLines, RelColumnsLines, RelColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines, FinalSelectLines,

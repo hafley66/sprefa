@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_group_concat_value",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,

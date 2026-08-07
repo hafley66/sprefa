@@ -321,6 +321,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "regexp_non_match",
+  internMode: "direct",
   ddl,
   rel_columns,
   rel_column_types,
