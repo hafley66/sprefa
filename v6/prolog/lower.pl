@@ -2532,7 +2532,7 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
                              StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                             DredPlan)) :-
+                             DredPlan, FixpointIr)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
@@ -2563,6 +2563,12 @@ level_ref_count_sql(RelPlans, HeadRef, Rules,
                                 HeadColumnsSql, SeedSql),
        ExpandPlan = none,
        DredPlan = none
+    ),
+    (   DredPlan == none
+    ->  FixpointIr = none
+    ;   level_fixpoint_ir(RelPlans, HeadRef, Rules, FixpointIr0)
+    ->  FixpointIr = FixpointIr0
+    ;   FixpointIr = none
     ),
     format(atom(UpdateSql),
            'UPDATE ~w AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM ~w n WHERE ~w), 0)',
@@ -2962,6 +2968,282 @@ dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
     format(atom(RederiveSql),
            'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM ~w WHERE ~w',
            [QuotedPing, HeadColumnsSql, SelectSql, FromSql, WhereSql]).
+
+% ═══ backend-neutral fixpoint IR ═════════════════════════════════════════════
+
+% Term grammar: plans/2026-08-07-plan-ir-offload-contract.md §2.4. The fence is
+% dred_plan_admissible/1, called rather than restated.
+level_fixpoint_ir(RelPlans, HeadRef, Rules,
+                  fixpointir(Storage, Assert, Dred, Revive, Expand)) :-
+    dred_plan_admissible(Rules),
+    fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes),
+    maplist(ir_rule_arm(RelPlans), Rules, AllParts),
+    include(ir_parts_read_head(HeadRef), AllParts, RecursiveParts),
+    RecursiveParts \== [],
+    exclude(ir_parts_read_head(HeadRef), AllParts, BaseParts),
+    ir_rel_ref(HeadRef, Ref),
+    maplist(ir_hop_arm(HeadRef), RecursiveParts, Hops),
+    ir_delta_seeds(HeadRef, AllParts, 1, AssertSeeds),
+    ir_delta_seeds(HeadRef, AllParts, -1, DredSeeds),
+    maplist(ir_cone_seed(Columns), AllParts, ReviveSeeds),
+    maplist(ir_base_seed, BaseParts, ExpandSeeds),
+    Assert = fixplan(Ref, Columns, ColumnTypes, AssertSeeds, Hops,
+                     stop(probe(absent, head), probe(absent, head)),
+                     order(round_major)),
+    Dred = fixplan(Ref, Columns, ColumnTypes, DredSeeds, Hops,
+                   stop(probe(present, head), probe(absent, cone)), none),
+    Revive = fixplan(Ref, Columns, ColumnTypes, ReviveSeeds, Hops,
+                     stop(none, probe(present, cone)), none),
+    Expand = fixplan(Ref, Columns, ColumnTypes, ExpandSeeds, Hops,
+                     stop(none, probe(absent, ref_count)), order(key_major)),
+    ir_storage(RelPlans, HeadRef, [Assert, Dred, Revive, Expand], Storage).
+
+ir_rel_ref(Name/Arity, ref(Name, Arity)).
+
+% Every rel any src reads, plus the head, which is what wave/1 and cone/0 carry.
+% col(Index, Ordinal) resolves through the arm's src to a row here.
+ir_storage(RelPlans, HeadRef, Walks, Storage) :-
+    findall(Ref,
+            ( member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
+              ( member(Arm, Seeds) ; member(Arm, Hops) ),
+              Arm = arm(Sources, _, _, _, _),
+              member(src(_, Source), Sources),
+              ir_source_ref(Source, Ref) ),
+            SourceRefs),
+    sort([HeadRef | SourceRefs], Refs),
+    maplist(ir_rel_storage(RelPlans), Refs, Storage).
+
+ir_source_ref(rel(ref(Name, Arity)), Name/Arity).
+ir_source_ref(rel_or_retracted(ref(Name, Arity)), Name/Arity).
+ir_source_ref(delta(ref(Name, Arity), _, _), Name/Arity).
+
+ir_rel_storage(RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
+    ir_rel_ref(Ref, IrRef),
+    relplan_columns(RelPlans, Ref, Columns),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    maplist(ir_column_class, Columns, ColumnTypes, ColumnClasses).
+
+% The comparator, which the declared type does not give: bool and ref(_) both
+% store INTEGER, json stores TEXT (column_def/3:939), and no COLLATE is emitted.
+ir_column_class(Column, Type, colclass(Column, TypeName, StorageClass,
+                                       Collation, Encoding)) :-
+    ir_column_storage(Type, TypeName, StorageClass, Encoding),
+    ( StorageClass == text -> Collation = binary ; Collation = none ).
+
+% Encoding is the interning slot: ref(Target) already stores a dense id into
+% Target's table rather than the value, which is dictionary encoding.
+ir_column_storage(ref(Target), ref, integer, dict(Target)) :- !.
+ir_column_storage(bool, bool, integer, direct) :- !.
+ir_column_storage(int, int, integer, direct) :- !.
+ir_column_storage(float, float, real, direct) :- !.
+ir_column_storage(json, json, text, direct) :- !.
+ir_column_storage(text, text, text, direct).
+
+% The executor's comparator is defined by these types, so a head column whose
+% storage class is a dictionary id or json has no phase-1 spelling.
+fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes) :-
+    relplan_columns(RelPlans, HeadRef, Columns),
+    relplan_column_types(RelPlans, HeadRef, ColumnTypes),
+    forall(member(ColumnType, ColumnTypes),
+           memberchk(ColumnType, [int, text, float, bool])).
+
+ir_parts_read_head(HeadRef, armparts(PosUses, _, _, _)) :-
+    memberchk(use(HeadRef, _, pos, _), PosUses).
+
+% One seed per (rule, non-self positive atom), matching dred_seed_sql/7's
+% nth0 enumeration; the enumerated atom reads its delta at Sign.
+ir_delta_seeds(HeadRef, AllParts, Sign, Seeds) :-
+    findall(arm(Sources, Equalities, Filters, Project, none),
+            ( member(armparts(PosUses, Equalities, Filters, Project), AllParts),
+              nth0(Index, PosUses, use(Ref, _, pos, _)),
+              Ref \== HeadRef,
+              ir_seed_sources(HeadRef, PosUses, Index, Sign, Sources) ),
+            Seeds).
+
+ir_seed_sources(HeadRef, PosUses, DeltaIndex, Sign, Sources) :-
+    findall(src(Position, Source),
+            ( nth0(Position, PosUses, use(Ref, _, pos, _)),
+              ir_seed_source(HeadRef, Ref, Position, DeltaIndex, Sign, Source) ),
+            Sources).
+
+ir_seed_source(_, Ref, Index, Index, Sign, delta(IrRef, Sign, liveness(Live))) :-
+    !,
+    ir_rel_ref(Ref, IrRef),
+    ( Sign =:= 1 -> Live = present ; Live = absent ).
+ir_seed_source(HeadRef, HeadRef, _, _, _, rel(IrRef)) :- !,
+    ir_rel_ref(HeadRef, IrRef).
+ir_seed_source(_, Ref, _, _, -1, rel_or_retracted(IrRef)) :- !,
+    ir_rel_ref(Ref, IrRef).
+ir_seed_source(_, Ref, _, _, _, rel(IrRef)) :-
+    ir_rel_ref(Ref, IrRef).
+
+ir_hop_arm(HeadRef, armparts(PosUses, Equalities, Filters, Project),
+           arm(Sources, Equalities, Filters, Project, SelfIndex)) :-
+    nth0(SelfIndex, PosUses, use(HeadRef, _, pos, _)),
+    !,
+    findall(src(Position, Source),
+            ( nth0(Position, PosUses, use(Ref, _, pos, _)),
+              (   Position =:= SelfIndex
+              ->  Source = wave(frontier)
+              ;   ir_rel_ref(Ref, IrRef), Source = rel(IrRef)
+              ) ),
+            Sources).
+
+% The revive seed is cone-driven: the cone joins in as its own source and one
+% equality per head column pins the projection to the cone row.
+ir_cone_seed(Columns, armparts(PosUses, Equalities0, Filters, Project),
+             arm(Sources, Equalities, Filters, Project, none)) :-
+    length(PosUses, ConeIndex),
+    ir_rel_sources(PosUses, RelSources),
+    append(RelSources, [src(ConeIndex, cone)], Sources),
+    findall(eq(ProjectExpr, col(ConeIndex, Ordinal)),
+            ( nth0(Ordinal, Columns, _),
+              nth0(Ordinal, Project, ProjectExpr) ),
+            ConeEqualities),
+    append(Equalities0, ConeEqualities, Equalities).
+
+ir_base_seed(armparts(PosUses, Equalities, Filters, Project),
+             arm(Sources, Equalities, Filters, Project, none)) :-
+    ir_rel_sources(PosUses, Sources).
+
+ir_rel_sources(PosUses, Sources) :-
+    findall(src(Position, rel(IrRef)),
+            ( nth0(Position, PosUses, use(Ref, _, pos, _)),
+              ir_rel_ref(Ref, IrRef) ),
+            Sources).
+
+% Reads the SAME Bound and where-parts compile_positive_uses/7 hands
+% level_recursive_arm_parts/8; anything outside the grammar fails the head.
+ir_rule_arm(RelPlans, Rule, armparts(PosUses, Equalities, Filters, Project)) :-
+    Rule = (Head <- Body),
+    body_ref_uses(Body, Uses),
+    include(is_positive_use, Uses, PosUses),
+    conjunction_goals(Body, AllGoals),
+    \+ ( member(Goal, AllGoals), is_decode_goal(Goal) ),
+    compile_positive_uses(RelPlans, PosUses, 0, [], Bound, _FromParts,
+                          WhereParts),
+    ir_column_dict(RelPlans, PosUses, 0, Dict),
+    ir_bound(Bound, Dict, IrBound0),
+    ir_atom_conditions(WhereParts, Dict, AtomEqualities, AtomFilters),
+    body_guard_goals(Body, GuardGoals),
+    foldl(ir_guard_goal, GuardGoals, ir(IrBound0, [], []),
+          ir(IrBound, ReversedEqualities, ReversedFilters)),
+    reverse(ReversedEqualities, GuardEqualities),
+    reverse(ReversedFilters, GuardFilters),
+    append(AtomEqualities, GuardEqualities, Equalities),
+    append(AtomFilters, GuardFilters, Filters),
+    Head =.. [_ | HeadArgs],
+    maplist(ir_untyped_expr(IrBound), HeadArgs, Project).
+
+ir_column_dict(_, [], _, []).
+ir_column_dict(RelPlans, [use(Ref, _, pos, _) | Rest], Index, Dict) :-
+    relplan_columns(RelPlans, Ref, Columns),
+    format(atom(Alias), 'b~w', [Index]),
+    findall(ircol(ColumnExpr, col(Index, Ordinal)),
+            ( nth0(Ordinal, Columns, Column),
+              format(atom(ColumnExpr), '~w."~w"', [Alias, Column]) ),
+            Here),
+    NextIndex is Index + 1,
+    ir_column_dict(RelPlans, Rest, NextIndex, More),
+    append(Here, More, Dict).
+
+ir_dict_lookup([ircol(Key, Ir) | Rest], ColumnExpr, Found) :-
+    ( Key == ColumnExpr -> Found = Ir ; ir_dict_lookup(Rest, ColumnExpr, Found) ).
+
+% A VARIABLE outside the expression grammar refuses the arm; a compound key is
+% the reference-identity slot, and an arm that reads one refuses at ir_expr/4.
+ir_bound([], _, []).
+ir_bound([Key-typed(Sql, Type) | Rest], Dict, IrBound) :-
+    (   ir_dict_lookup(Dict, Sql, Ir)
+    ->  IrBound = [Key-irtyped(Ir, Type) | More]
+    ;   nonvar(Key),
+        IrBound = More
+    ),
+    ir_bound(Rest, Dict, More).
+
+ir_atom_conditions([], _, [], []).
+ir_atom_conditions([pair(Left, Right) | Rest], Dict,
+                   [eq(IrLeft, IrRight) | Equalities], Filters) :-
+    ir_dict_lookup(Dict, Left, IrLeft),
+    ir_dict_lookup(Dict, Right, IrRight),
+    ir_atom_conditions(Rest, Dict, Equalities, Filters).
+ir_atom_conditions([lit(Left, Value) | Rest], Dict, Equalities,
+                   [eq_lit(IrLeft, Literal) | Filters]) :-
+    ir_dict_lookup(Dict, Left, IrLeft),
+    ir_literal(Value, Literal),
+    ir_atom_conditions(Rest, Dict, Equalities, Filters).
+
+ir_literal(bool_lit(Boolean), lit(bool(Boolean))) :- !.
+ir_literal(Value, lit(int(Value))) :- integer(Value), !.
+ir_literal(Value, lit(float(Value))) :- float(Value), !.
+ir_literal(Value, lit(text(Value))) :- atomic(Value).
+
+ir_literal_type(lit(Literal), Type) :- functor(Literal, Type, 1).
+
+ir_untyped_expr(IrBound, Expr, Ir) :- ir_expr(IrBound, Expr, Ir, _Type).
+
+% Clause order and the result type both mirror compile_expr/4's, so a bound
+% compound resolves first and `/` carries the int-vs-real answer SQLite gives.
+ir_expr(IrBound, Expr, Ir, Type) :-
+    (   var(Expr)
+    ->  bound_lookup(IrBound, Expr, irtyped(Ir, Type))
+    ;   Expr = bool_lit(_)
+    ->  ir_literal(Expr, Ir), Type = bool
+    ;   compound(Expr), bound_lookup(IrBound, Expr, irtyped(BoundIr, BoundType))
+    ->  Ir = BoundIr, Type = BoundType
+    ;   atomic(Expr)
+    ->  ir_literal(Expr, Ir), ir_literal_type(Ir, Type)
+    ;   Expr = concat(Parts)
+    ->  is_list(Parts),
+        maplist(ir_concat_part(IrBound), Parts, PartIrs),
+        Ir = concat(PartIrs), Type = text
+    ;   arithmetic_expr(Expr, Operator, Left, Right)
+    ->  ir_expr(IrBound, Left, IrLeft, LeftType),
+        ir_expr(IrBound, Right, IrRight, RightType),
+        ir_arith_operand_type(Operator, LeftType),
+        ir_arith_operand_type(Operator, RightType),
+        arithmetic_result_type(Operator, LeftType, RightType, Type),
+        Ir = arith(Operator, IrLeft, IrRight, Type)
+    ;   fail
+    ).
+
+% compile_numeric_operand/6 and compile_concat_part/4: the same operand
+% admissions, so the IR never spells an expression the SQL side refuses.
+ir_arith_operand_type(mod, int) :- !.
+ir_arith_operand_type(Operator, Type) :-
+    Operator \== mod, memberchk(Type, [int, float]).
+
+ir_concat_part(IrBound, Part, Ir) :-
+    ir_expr(IrBound, Part, Ir, Type),
+    memberchk(Type, [int, text]).
+
+% The same left-to-right fold compile_guard_goal/3 runs, over the same goal
+% list: a bind introduces a binding once and is an equality every time after.
+ir_guard_goal(Goal, ir(IrBound0, Equalities0, Filters0),
+              ir(IrBound, Equalities, Filters)) :-
+    (   regexp_goal(Goal)
+    ->  fail
+    ;   tick_goal(Goal, _)
+    ->  fail
+    ;   bind_goal(Goal, Variable, Expr)
+    ->  ir_expr(IrBound0, Expr, Ir, Type),
+        (   var(Variable), \+ bound_lookup(IrBound0, Variable, _)
+        ->  IrBound = [Variable-irtyped(Ir, Type) | IrBound0],
+            Equalities = Equalities0, Filters = Filters0
+        ;   ir_expr(IrBound0, Variable, VariableIr, _),
+            IrBound = IrBound0, Filters = Filters0,
+            Equalities = [eq(VariableIr, Ir) | Equalities0]
+        )
+    ;   guard_goal(Goal)
+    ->  Goal =.. [Operator, Left, Right],
+        expression(Operator/2, Family, _, infix(_), _),
+        memberchk(Family, [ordered_comparison, identity_comparison]),
+        ir_expr(IrBound0, Left, IrLeft, _),
+        ir_expr(IrBound0, Right, IrRight, _),
+        IrBound = IrBound0, Equalities = Equalities0,
+        Filters = [cmp(Operator, IrLeft, IrRight) | Filters0]
+    ;   fail
+    ).
 
 rules_read_head_recursively(HeadRef, Rules) :-
     member(Rule, Rules),
@@ -3790,7 +4072,7 @@ delta_ddl(relplan(Ref, _Kind, Columns, _, ColumnTypes),
 ref_count_ddl(_, levelstmt(_, _, _, _, none, _), []) :- !.
 ref_count_ddl(RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
     ref_count_head_ddl(RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
-    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan),
+    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _),
       ExpandPlan = expandplan(_, _, _, _, _, _, _)
     -> expand_wave_ddl(RelPlans, HeadRef, WaveDdl),
        dred_wave_ddl(RelPlans, HeadRef, DredPlan, DredDdl),
