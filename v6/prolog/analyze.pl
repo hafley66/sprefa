@@ -1336,7 +1336,8 @@ rule_reads_rel(Rules, Ref, HeadRef) :-
     \+ rule_is_aggregate(Rule),
     rule_body(Rule, Body),
     body_ref_uses(Body, Uses),
-    member(use(Ref, _, pos, _), Uses).
+    member(use(Ref, _, pos, _), Uses),
+    \+ self_read_closes_in_one_pass(Rules, Ref, HeadRef).
 % Aggregate head, positive body ref -- delta maintenance and scope seed read
 % the body ref's delta (__delta_).
 rule_reads_rel(Rules, Ref, HeadRef) :-
@@ -1374,6 +1375,15 @@ rule_reads_rel(Rules, Ref, HeadRef) :-
     body_has_pre(Body),
     edge_trigger_shape(Body, Shape),
     edge_shape_trigger_ref(Shape, Ref).
+
+% The self-read of a recursive head whose `insertSql` never runs: a refCount
+% head takes closesInOnePass, and emit_ts.pl:2133 emits no post-edge caller.
+self_read_closes_in_one_pass(Rules, Ref, Ref) :-
+    \+ ( member(EdgeRule, Rules), rule_is_edge(EdgeRule) ),
+    \+ ( member(AggregateRule, Rules),
+         rule_is_level(AggregateRule),
+         rule_head_ref(AggregateRule, Ref),
+         rule_is_aggregate(AggregateRule) ).
 
 edge_shape_trigger_ref(marked_single(Atom), Ref) :- rel_ref(Atom, Ref).
 edge_shape_trigger_ref(unmarked_conjunction(Atoms), Ref) :-
