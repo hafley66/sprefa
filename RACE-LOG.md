@@ -11,6 +11,7 @@ Append-only. One entry per milestone.
 - [Milestone 4 — I-B](#milestone-4--i-b-the-ingest-door)
 - [Milestone 5 — I-J rev-3 remainder + G11](#milestone-5--i-j-rev-3-remainder--g11)
 - [Contract defects and ambiguities](#contract-defects-and-ambiguities)
+- [Stop condition](#stop-condition)
 - [Summary table](#summary-table)
 
 ---
@@ -433,6 +434,45 @@ $ bash v6/tsv2/scripts/intern-ab.sh              -> unexplained=0  (G9 + G11 in 
 
 ---
 
+## Stop condition
+
+**2026-08-07T22:33Z.** Stopping after five milestones, with every gate green,
+rather than opening the next lane.
+
+### What the sequencing allows next, and why each is not a milestone I can close
+
+| lane | state | the blocker |
+|---|---|---|
+| **I-C** | not started | the contract's own largest single scope (§19: "the largest rev-2 scope increase"). Two rules, twelve call sites, a boot-intern statement per module, and an `EXPLAIN QUERY PLAN` receipt. Half of it is not a milestone, and a half-landed literal path is the exact silent-wrong-answer class §5.2 row 11 is about |
+| **I-F** | not started | it is not the one-clause job the lane table suggests. `catalog_ddl_contract/2` has ONE row today and three callers written for one name: `compile.pl:materialize_catalog_rel/2` (an if-then that takes the first solution), `compile.pl:program_plan/3`'s ArrivalTargets subtraction, and `analyze.pl:catalog_mentions_atom/1` (which hardcodes `'__rel'/11`). `__str_stats` also needs `kind(log)` and `keep(count(4096))` injected, which no contract row carries today. Generalizing that family is its own arc |
+| **I-K** | blocked | §20.4 sequences it after I-C merges; both touch the head projection path |
+| **I-G** | blocked | needs I-F's contract row |
+| **I-E** | blocked | §11 sequences it behind I-B-R, I-C-R and I-D-R |
+
+### The one number that says how far the arc actually is
+
+`default_intern_mode` is still `direct`. Four things stand between here and
+flipping it, all named in milestone 4's gap table: literals (I-C), boot seed
+rows (unowned), built strings (I-K), and telemetry (I-F + I-G). Milestones 1-5
+are the DDL, the decode views, the gun, the IR handshake, the ingest door, the
+namespace refusal and two gates. What they are not is a runnable dict mode.
+
+### Every gate, one final run
+
+```
+sweep            SWEEP 308/211/97 crash=0; RUN wrong=0; FINAL final_wrong=0;
+                 MANIFEST_REASON_DIFF added=0 removed=0 bucket_moved=0    3.9s
+plunit           All 396 (+46 sub-tests) passed                           1.0s
+tsgo --noEmit    0 errors                                                 1.0s
+ARCH.pl          7 PASS                                                   0.03s
+intern-ab.sh     G9 + G11, unexplained=0 over 211 modules                 3.8s
+tsv2 pnpm test   170 tests, 169 pass, 0 fail, 1 skipped                   6.5s
+store pnpm test  75 tests, 75 pass, 0 fail                                8.3s
+```
+
+Every gate under the 10-second law. The slowest, `sprefa-store` at 8.3s, is
+pre-existing and untouched by this branch.
+
 ## Summary table
 
 | milestone | lane | gates | commit |
@@ -441,4 +481,30 @@ $ bash v6/tsv2/scripts/intern-ab.sh              -> unexplained=0  (G9 + G11 in 
 | 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `67a6af43` |
 | 3 | I-J | sweep 308/211 wrong=0 (added=2), plunit 388, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `49b76b26` |
 | 4 | I-B | sweep wrong=0, plunit 393, tsgo 0, tsv2 169/0/1skip, G9 unexplained=0, ARCH 7 PASS | `a07030ba` |
-| 5 | I-J remainder + G11 | sweep wrong=0, plunit 396, tsgo 0, G9+G11 unexplained=0, ARCH 7 PASS | `race: I-J ...` |
+| 5 | I-J remainder + G11 | sweep wrong=0, plunit 396, tsgo 0, G9+G11 unexplained=0, ARCH 7 PASS | `794b2f46` |
+
+### Defects found, by severity
+
+| # | defect | severity | where |
+|---|---|---|---|
+| 1 | §4.1's `Ddls` length assertion is unsatisfiable against the existing `__ref_` view arm | would have made I-A's own gate impossible to write | contract §4.1 |
+| 2 | §18.3 places the namespace check where the compiler's own `__` writes already exist | would refuse 5 corpus modules and every catalog reader | contract §18.3 |
+| 3 | §10.3's third reserved-namespace fixture cannot exist | a fixture that is FINAL_WRONG by construction | contract §10.3 |
+| 4 | §15.3's `dict` default is red at the I-A commit by construction | the deviation this log opens with | contract §15.3 vs §11 |
+| 5 | §15.5 names no place the DATABASE records its mode | closed without new DDL | contract §15.5 |
+| 6 | §4.3's delta-read swap needs a view the contract does not name | closed by emitting one | contract §4.3 |
+| 7 | I-F is scoped as a one-row addition; the catalog family is single-name today | would have surprised the lane mid-task | contract §17 |
+
+### Numbers this branch measured that the contract did not have
+
+| quantity | value |
+|---|---|
+| modules that grow a dictionary at `intern(dict)` | 184 of 211 |
+| decode views emitted across the corpus | 1,242 |
+| boundary reads swapped to a view | 1,863 |
+| `__ref_` render decodes | 23 |
+| IR text columns carrying an encoding | 16 (32 across both modes) |
+| door plan lines / door call lines | 2,093 / 772 |
+| corpus modules losing `fixpointIr` to the `eq_lit` fence | 0 |
+| corpus modules affected by the namespace refusal | 0 |
+| G11 findings when fed the direct corpus as if it were dict | 4,738 |
