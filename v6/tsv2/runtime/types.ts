@@ -376,6 +376,24 @@ export interface IRelCatalogRow {
   readonly h_rule: string;
 }
 
+export type RelVerdict = "create" | "recreate" | "refill" | "keep" | "drop";
+
+export interface IReloadPlan {
+  /** Keyed by `module_id:local_name`. h_id hashes the name AND the arity, so
+   *  keying on it reads a routine column addition as a drop plus a create. */
+  readonly verdicts: ReadonlyMap<string, RelVerdict>;
+  readonly statements: readonly string[];
+  readonly refusals: readonly string[];
+}
+
+export interface IReloadPlanner {
+  plan(
+    prev: readonly IRelCatalogRow[],
+    next: readonly IRelCatalogRow[],
+    allow_drop: boolean,
+  ): IReloadPlan;
+}
+
 /** Generated program contract. The five core fields are emitter-stable. */
 export interface IGenProgram {
   readonly name: string;
