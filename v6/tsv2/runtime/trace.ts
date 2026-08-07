@@ -17,15 +17,15 @@ import type { IRuntimeTrace, IServeRuleEvent } from "./types.ts";
 
 export const RUNTIME_CHANNEL_NAMES = { rule: "sprefa:rule" } as const;
 
-const ruleChannel = diagnostics_channel.channel(RUNTIME_CHANNEL_NAMES.rule);
+const rule_channel = diagnostics_channel.channel(RUNTIME_CHANNEL_NAMES.rule);
 
 export const RuntimeTrace: IRuntimeTrace = {
   get enabled(): boolean {
-    return ruleChannel.hasSubscribers;
+    return rule_channel.hasSubscribers;
   },
 
-  rule(ruleId, rows, wallMs): void {
-    if (!ruleChannel.hasSubscribers) return;
-    ruleChannel.publish({ rule: ruleId, rows, wall_ms: wallMs } satisfies IServeRuleEvent);
+  rule(rule_id, rows, wall_ms): void {
+    if (!rule_channel.hasSubscribers) return;
+    rule_channel.publish({ rule: rule_id, rows, wall_ms: wall_ms } satisfies IServeRuleEvent);
   },
 };

@@ -20,7 +20,7 @@ const REGISTRY_PL = fileURLToPath(new URL("../../prolog/compile/registry.pl", im
 const EMITTER_PL = fileURLToPath(new URL("../../prolog/compile/2_emit_cli_inventory.pl", import.meta.url));
 const INVENTORY_TS = fileURLToPath(new URL("../cli/0_inventory.ts", import.meta.url));
 
-function registryVerbs(): readonly string[] {
+function registry_verbs(): readonly string[] {
   const result = spawnSync(
     "swipl",
     [
@@ -38,15 +38,15 @@ function registryVerbs(): readonly string[] {
   return result.stdout.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
 }
 
-function bopTsVerbs(): readonly string[] {
+function bop_ts_verbs(): readonly string[] {
   const source = readFileSync(BOP_TS, "utf8");
   return [...source.matchAll(/\.command\("([a-z]+)"\)/g)].map((match) => match[1] ?? "");
 }
 
 test("registry.pl cli_command/3 and cli/bop.ts's commander verbs name the same set", () => {
-  const fromRegistry = [...registryVerbs()].sort();
-  const fromBopTs = [...bopTsVerbs()].sort();
-  assert.deepEqual(fromBopTs, fromRegistry, `registry: ${fromRegistry.join(",")} vs bop.ts: ${fromBopTs.join(",")}`);
+  const from_registry = [...registry_verbs()].sort();
+  const from_bop_ts = [...bop_ts_verbs()].sort();
+  assert.deepEqual(from_bop_ts, from_registry, `registry: ${from_registry.join(",")} vs bop.ts: ${from_bop_ts.join(",")}`);
 });
 
 test("generated CLI and HTTP inventory is current with canonical Prolog facts", () => {

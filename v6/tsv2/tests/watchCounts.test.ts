@@ -46,7 +46,7 @@ import { Observable, Subject, VirtualTimeScheduler } from "rxjs";
 
 import { SERVE_CHANNEL_NAMES } from "../serve/0_trace.ts";
 import type { IServeTickEvent, IWatchSource } from "../runtime/types.ts";
-import { postProgram, request, startServed, tickEvents } from "./serveHelpers.ts";
+import { post_program, request, start_served, tick_events } from "./serveHelpers.ts";
 
 const WATCH_RAIL_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-watch-rail.dl6", import.meta.url));
 const COALESCE_MS = 50;
@@ -73,9 +73,9 @@ class ScriptedWatchSource implements IWatchSource {
 /** The served engine publishes one of these per tick when anything listens
  *  (serve/0_trace.ts checks `hasSubscribers` before publishing). Listening here
  *  is what turns the statement counter on; nothing else changes. */
-const tickSpans: IServeTickEvent[] = [];
+const tick_spans: IServeTickEvent[] = [];
 diagnostics_channel.channel(SERVE_CHANNEL_NAMES.tick).subscribe((message) => {
-  tickSpans.push(message as IServeTickEvent);
+  tick_spans.push(message as IServeTickEvent);
 });
 
 function settled(): Promise<void> {
@@ -84,48 +84,48 @@ function settled(): Promise<void> {
 
 interface BurstCounts {
   readonly ticks: number;
-  readonly arrivalRows: number;
+  readonly arrival_rows: number;
   readonly rows: number;
-  readonly statementsPerTick: readonly number[];
+  readonly statements_per_tick: readonly number[];
 }
 
 /** One burst of `fileCount` files, each notified `eventsPerFile` times. */
 /** Ports are ephemeral: every server here binds 0 and the receipt reads back
  *  `served.port`. Four hardcoded numbers here were four collisions waiting for a
  *  second lane (bug hostdecode_hardcoded_port_collision). */
-async function burst(fileCount: number, eventsPerFile: number): Promise<BurstCounts> {
+async function burst(file_count: number, events_per_file: number): Promise<BurstCounts> {
   const source = readFileSync(WATCH_RAIL_DL6, "utf8");
   const root = mkdtempSync(join(tmpdir(), "tsv2-watch-count-"));
   const scheduler = new VirtualTimeScheduler();
-  const watchSource = new ScriptedWatchSource(scheduler);
-  const served = await startServed(0, scheduler, ":memory:", {
-    watchRoot: root,
-    watchCoalesceMs: COALESCE_MS,
-    watchSource,
+  const watch_source = new ScriptedWatchSource(scheduler);
+  const served = await start_served(0, scheduler, ":memory:", {
+    watch_root: root,
+    watch_coalesce_ms: COALESCE_MS,
+    watch_source,
   });
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
 
     const paths: string[] = [];
-    for (let index = 0; index < fileCount; index += 1) {
+    for (let index = 0; index < file_count; index += 1) {
       const absolute = join(root, `file${index}.ts`);
       writeFileSync(absolute, `export const value${index} = ${index};\n`);
-      for (let repeat = 0; repeat < eventsPerFile; repeat += 1) paths.push(absolute);
+      for (let repeat = 0; repeat < events_per_file; repeat += 1) paths.push(absolute);
     }
 
-    const spansBefore = tickSpans.length;
-    watchSource.notify(paths);
-    watchSource.settle();
+    const spans_before = tick_spans.length;
+    watch_source.notify(paths);
+    watch_source.settle();
     await settled();
 
-    const outcomes = tickEvents(served.events);
-    const watchDelta = outcomes[0]?.deltas.rels.find((delta) => delta.rel === "watch");
-    const rowsReply = await request(served.port, "/idb/seen", "GET");
+    const outcomes = tick_events(served.events);
+    const watch_delta = outcomes[0]?.deltas.rels.find((delta) => delta.rel === "watch");
+    const rows_reply = await request(served.port, "/idb/seen", "GET");
     return {
       ticks: outcomes.length,
-      arrivalRows: (watchDelta?.add.length ?? 0) + (watchDelta?.del.length ?? 0),
-      rows: (JSON.parse(rowsReply.body) as { rows: unknown[] }).rows.length,
-      statementsPerTick: tickSpans.slice(spansBefore).map((span) => span.statements),
+      arrival_rows: (watch_delta?.add.length ?? 0) + (watch_delta?.del.length ?? 0),
+      rows: (JSON.parse(rows_reply.body) as { rows: unknown[] }).rows.length,
+      statements_per_tick: tick_spans.slice(spans_before).map((span) => span.statements),
     };
   } finally {
     await served.stop();
@@ -139,8 +139,8 @@ test("count: one coalesce window is ONE tick, and one file is ONE row however ma
 
   assert.equal(small.ticks, 1, `5 files in one window must be 1 tick, got ${small.ticks}`);
   assert.equal(large.ticks, 1, `50 files in one window must be 1 tick, got ${large.ticks}`);
-  assert.equal(small.arrivalRows, 5, `5 files x 3 events must be 5 arrival rows, got ${small.arrivalRows}`);
-  assert.equal(large.arrivalRows, 50, `50 files x 3 events must be 50 arrival rows, got ${large.arrivalRows}`);
+  assert.equal(small.arrival_rows, 5, `5 files x 3 events must be 5 arrival rows, got ${small.arrival_rows}`);
+  assert.equal(large.arrival_rows, 50, `50 files x 3 events must be 50 arrival rows, got ${large.arrival_rows}`);
   assert.equal(small.rows, 5);
   assert.equal(large.rows, 50);
 });
@@ -149,13 +149,13 @@ test("count: statements per tick are FLAT from a 5-file burst to a 50-file burst
   const small = await burst(5, 1);
   const large = await burst(50, 1);
 
-  assert.equal(small.statementsPerTick.length, 1, "one tick, one span");
-  assert.equal(large.statementsPerTick.length, 1, "one tick, one span");
-  assert.ok((small.statementsPerTick[0] ?? 0) > 0, "the tracing channel produced no statement count at all");
+  assert.equal(small.statements_per_tick.length, 1, "one tick, one span");
+  assert.equal(large.statements_per_tick.length, 1, "one tick, one span");
+  assert.ok((small.statements_per_tick[0] ?? 0) > 0, "the tracing channel produced no statement count at all");
   assert.equal(
-    large.statementsPerTick[0],
-    small.statementsPerTick[0],
-    `statements per tick moved with corpus size: ${small.statementsPerTick[0]} at 5 files, ` +
-      `${large.statementsPerTick[0]} at 50`,
+    large.statements_per_tick[0],
+    small.statements_per_tick[0],
+    `statements per tick moved with corpus size: ${small.statements_per_tick[0]} at 5 files, ` +
+      `${large.statements_per_tick[0]} at 50`,
   );
 });

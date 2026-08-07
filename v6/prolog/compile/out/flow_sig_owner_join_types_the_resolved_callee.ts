@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: flow_sig_owner_join_types_the_resolved_callee.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -185,7 +185,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "flow_param_type_zero" ON "flow_param_type" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   df_param: ["path", "node", "pos", "end"],
   flow_node_type: ["node", "path", "name", "ty"],
   flow_param_type: ["path", "name", "pos", "ty"],
@@ -194,7 +194,7 @@ const relColumns: Record<string, readonly string[]> = {
   type_owner: ["path", "name", "start", "end"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   df_param: ["text", "text", "int", "int"],
   flow_node_type: ["text", "text", "text", "text"],
   flow_param_type: ["text", "text", "int", "text"],
@@ -203,46 +203,46 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   type_owner: ["text", "text", "int", "int"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "flow_sig_owner_join_types_the_resolved_callee", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "9d9cced5abd3a78d", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "df_param", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "e3c6c5c3e222a6b2", hSchema: "461b3eb9add7b8fb", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4c087318ef20e99e", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "node", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8c930a75a4f2b38e", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 7, ordinal: 3, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "590ff5280d00f506", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 7, ordinal: 4, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b1c387287dd2d0e4", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 6, ordinal: 0, localName: "flow_node_type", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "08a4151af01b6bdb", hSchema: "c78b609a14087eef", hRule: "2d2d00875ef85f95" },
-  { relId: 13, parentId: 12, ordinal: 1, localName: "node", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "90ccb70c4e053822", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 12, ordinal: 2, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "19343b2fe9d518c8", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 12, ordinal: 3, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a403aff8978dda6b", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 12, ordinal: 4, localName: "ty", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "38f1b66f4ac0b251", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 6, ordinal: 0, localName: "flow_param_type", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "43d2f3de5ea92524", hSchema: "0de0fb3d29fe40ad", hRule: "fc4e108ed0fd8a24" },
-  { relId: 18, parentId: 17, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "dacaf12663d6d7fa", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 17, ordinal: 2, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d7b1c8c2212577ee", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 17, ordinal: 3, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "485e725176168113", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 17, ordinal: 4, localName: "ty", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "83c9d8de20f953a5", hSchema: "", hRule: "" },
-  { relId: 22, parentId: 6, ordinal: 0, localName: "sig", kind: "rel", typeId: 0, arity: 6, moduleId: 6, hId: "0b6f4d6ea3deda55", hSchema: "d56a9971daaeddb2", hRule: "" },
-  { relId: 23, parentId: 22, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0f00857ed63892c2", hSchema: "", hRule: "" },
-  { relId: 24, parentId: 22, ordinal: 2, localName: "owner_start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "78a86ba4c1adb079", hSchema: "", hRule: "" },
-  { relId: 25, parentId: 22, ordinal: 3, localName: "owner_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "2a4cd3bb68755339", hSchema: "", hRule: "" },
-  { relId: 26, parentId: 22, ordinal: 4, localName: "slot", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f9f0fcc3ad998b97", hSchema: "", hRule: "" },
-  { relId: 27, parentId: 22, ordinal: 5, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "25e8895058e8b7f9", hSchema: "", hRule: "" },
-  { relId: 28, parentId: 22, ordinal: 6, localName: "ty", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "65c9e69181f4af58", hSchema: "", hRule: "" },
-  { relId: 29, parentId: 6, ordinal: 0, localName: "sink_callee", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "714b61a37e51ae35", hSchema: "95e12fc179104a2b", hRule: "" },
-  { relId: 30, parentId: 29, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6a12d90e711c851c", hSchema: "", hRule: "" },
-  { relId: 31, parentId: 29, ordinal: 2, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7d4dc4a5f84b2b74", hSchema: "", hRule: "" },
-  { relId: 32, parentId: 6, ordinal: 0, localName: "type_owner", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "ed2d2684d443cc07", hSchema: "0f4247edfa06d334", hRule: "" },
-  { relId: 33, parentId: 32, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "68afe3e9072a7478", hSchema: "", hRule: "" },
-  { relId: 34, parentId: 32, ordinal: 2, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "695fce309c65b651", hSchema: "", hRule: "" },
-  { relId: 35, parentId: 32, ordinal: 3, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "92dbaee18bf8f6b7", hSchema: "", hRule: "" },
-  { relId: 36, parentId: 32, ordinal: 4, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "70a5c2d6b2273591", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "flow_sig_owner_join_types_the_resolved_callee", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "9d9cced5abd3a78d", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "df_param", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "e3c6c5c3e222a6b2", h_schema: "461b3eb9add7b8fb", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "4c087318ef20e99e", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "node", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8c930a75a4f2b38e", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "pos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "590ff5280d00f506", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 4, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "b1c387287dd2d0e4", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "flow_node_type", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "08a4151af01b6bdb", h_schema: "c78b609a14087eef", h_rule: "2d2d00875ef85f95" },
+  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "node", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "90ccb70c4e053822", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "19343b2fe9d518c8", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 12, ordinal: 3, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a403aff8978dda6b", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 4, local_name: "ty", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "38f1b66f4ac0b251", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 6, ordinal: 0, local_name: "flow_param_type", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "43d2f3de5ea92524", h_schema: "0de0fb3d29fe40ad", h_rule: "fc4e108ed0fd8a24" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "dacaf12663d6d7fa", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 17, ordinal: 2, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d7b1c8c2212577ee", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 17, ordinal: 3, local_name: "pos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "485e725176168113", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 17, ordinal: 4, local_name: "ty", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "83c9d8de20f953a5", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 6, ordinal: 0, local_name: "sig", kind: "rel", type_id: 0, arity: 6, module_id: 6, h_id: "0b6f4d6ea3deda55", h_schema: "d56a9971daaeddb2", h_rule: "" },
+  { rel_id: 23, parent_id: 22, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "0f00857ed63892c2", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 22, ordinal: 2, local_name: "owner_start", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "78a86ba4c1adb079", h_schema: "", h_rule: "" },
+  { rel_id: 25, parent_id: 22, ordinal: 3, local_name: "owner_end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "2a4cd3bb68755339", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 22, ordinal: 4, local_name: "slot", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f9f0fcc3ad998b97", h_schema: "", h_rule: "" },
+  { rel_id: 27, parent_id: 22, ordinal: 5, local_name: "pos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "25e8895058e8b7f9", h_schema: "", h_rule: "" },
+  { rel_id: 28, parent_id: 22, ordinal: 6, local_name: "ty", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "65c9e69181f4af58", h_schema: "", h_rule: "" },
+  { rel_id: 29, parent_id: 6, ordinal: 0, local_name: "sink_callee", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "714b61a37e51ae35", h_schema: "95e12fc179104a2b", h_rule: "" },
+  { rel_id: 30, parent_id: 29, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "6a12d90e711c851c", h_schema: "", h_rule: "" },
+  { rel_id: 31, parent_id: 29, ordinal: 2, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "7d4dc4a5f84b2b74", h_schema: "", h_rule: "" },
+  { rel_id: 32, parent_id: 6, ordinal: 0, local_name: "type_owner", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "ed2d2684d443cc07", h_schema: "0f4247edfa06d334", h_rule: "" },
+  { rel_id: 33, parent_id: 32, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "68afe3e9072a7478", h_schema: "", h_rule: "" },
+  { rel_id: 34, parent_id: 32, ordinal: 2, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "695fce309c65b651", h_schema: "", h_rule: "" },
+  { rel_id: 35, parent_id: 32, ordinal: 3, local_name: "start", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "92dbaee18bf8f6b7", h_schema: "", h_rule: "" },
+  { rel_id: 36, parent_id: 32, ordinal: 4, local_name: "end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "70a5c2d6b2273591", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   df_param: ["text", "text", "int", "int"],
   flow_node_type: ["text", "text", "text", "text"],
   flow_param_type: ["text", "text", "int", "text"],
@@ -251,7 +251,7 @@ const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   type_owner: ["text", "text", "int", "int"],
 };
 
-const arrivalTargets: readonly string[] = ["df_param", "sig", "sink_callee", "type_owner"];
+const arrival_targets: readonly string[] = ["df_param", "sig", "sink_callee", "type_owner"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "flow_node_type", sql: `DELETE FROM "flow_node_type"`, params: [] },
@@ -269,18 +269,18 @@ type Snapshot = {
   readonly type_owner: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    df_param: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", "pos", "end" FROM "df_param"`, relColumns.df_param!, relColumnTypes.df_param!),
-    flow_node_type: selectRows(seam, `SELECT CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_node_type"`, relColumns.flow_node_type!, relColumnTypes.flow_node_type!),
-    flow_param_type: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_param_type"`, relColumns.flow_param_type!, relColumnTypes.flow_param_type!),
-    sig: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "owner_start", "owner_end", CASE WHEN json_valid("slot") AND json_type("slot") = 'object' AND json_type("slot", '$.fn') = 'text' AND json_type("slot", '$.args') = 'array' THEN json_extract("slot", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("slot", '$.args')), '') || ')' ELSE "slot" END AS "slot", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "sig"`, relColumns.sig!, relColumnTypes.sig!),
-    sink_callee: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "sink_callee"`, relColumns.sink_callee!, relColumnTypes.sink_callee!),
-    type_owner: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "start", "end" FROM "type_owner"`, relColumns.type_owner!, relColumnTypes.type_owner!),
+    df_param: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", "pos", "end" FROM "df_param"`, rel_columns.df_param!, rel_column_types.df_param!),
+    flow_node_type: select_rows(seam, `SELECT CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_node_type"`, rel_columns.flow_node_type!, rel_column_types.flow_node_type!),
+    flow_param_type: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_param_type"`, rel_columns.flow_param_type!, rel_column_types.flow_param_type!),
+    sig: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "owner_start", "owner_end", CASE WHEN json_valid("slot") AND json_type("slot") = 'object' AND json_type("slot", '$.fn') = 'text' AND json_type("slot", '$.args') = 'array' THEN json_extract("slot", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("slot", '$.args')), '') || ')' ELSE "slot" END AS "slot", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "sig"`, rel_columns.sig!, rel_column_types.sig!),
+    sink_callee: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "sink_callee"`, rel_columns.sink_callee!, rel_column_types.sink_callee!),
+    type_owner: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "start", "end" FROM "type_owner"`, rel_columns.type_owner!, rel_column_types.type_owner!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   df_param: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", "pos", "end" FROM "df_param"`,
   flow_node_type: `SELECT CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_node_type"`,
   flow_param_type: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty" FROM "flow_param_type"`,
@@ -289,14 +289,14 @@ const finalSelect: Record<string, string> = {
   type_owner: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "start", "end" FROM "type_owner"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  df_param: { kind: "set", addSql: `INSERT OR IGNORE INTO "df_param" ("path", "node", "pos", "end") VALUES (?, ?, ?, ?)`, delSql: `DELETE FROM "df_param" WHERE "path" = ? AND "node" = ? AND "pos" = ? AND "end" = ?` },
-  sig: { kind: "set", addSql: `INSERT OR IGNORE INTO "sig" ("path", "owner_start", "owner_end", "slot", "pos", "ty") VALUES (?, ?, ?, ?, ?, ?)`, delSql: `DELETE FROM "sig" WHERE "path" = ? AND "owner_start" = ? AND "owner_end" = ? AND "slot" = ? AND "pos" = ? AND "ty" = ?` },
-  sink_callee: { kind: "set", addSql: `INSERT OR IGNORE INTO "sink_callee" ("path", "name") VALUES (?, ?)`, delSql: `DELETE FROM "sink_callee" WHERE "path" = ? AND "name" = ?` },
-  type_owner: { kind: "set", addSql: `INSERT OR IGNORE INTO "type_owner" ("path", "name", "start", "end") VALUES (?, ?, ?, ?)`, delSql: `DELETE FROM "type_owner" WHERE "path" = ? AND "name" = ? AND "start" = ? AND "end" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  df_param: { kind: "set", add_sql: `INSERT OR IGNORE INTO "df_param" ("path", "node", "pos", "end") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "df_param" WHERE "path" = ? AND "node" = ? AND "pos" = ? AND "end" = ?` },
+  sig: { kind: "set", add_sql: `INSERT OR IGNORE INTO "sig" ("path", "owner_start", "owner_end", "slot", "pos", "ty") VALUES (?, ?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "sig" WHERE "path" = ? AND "owner_start" = ? AND "owner_end" = ? AND "slot" = ? AND "pos" = ? AND "ty" = ?` },
+  sink_callee: { kind: "set", add_sql: `INSERT OR IGNORE INTO "sink_callee" ("path", "name") VALUES (?, ?)`, del_sql: `DELETE FROM "sink_callee" WHERE "path" = ? AND "name" = ?` },
+  type_owner: { kind: "set", add_sql: `INSERT OR IGNORE INTO "type_owner" ("path", "name", "start", "end") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "type_owner" WHERE "path" = ? AND "name" = ? AND "start" = ? AND "end" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`flow_sig_owner_join_types_the_resolved_callee: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -305,39 +305,39 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`flow_sig_owner_join_types_the_resolved_callee: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`flow_sig_owner_join_types_the_resolved_callee: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "df_param", kind: "set", tableName: "df_param", deltaTableName: "__delta_df_param", frontierTableName: "__frontier_df_param", nextFrontierTableName: "__next_frontier_df_param", columns: ["path", "node", "pos", "end"], columnTypes: ["text", "text", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "df_param" ("path", "node", "pos", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "node", "pos", "end"`, arrivalDelSql: `DELETE FROM "df_param" WHERE ("path", "node", "pos", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "node", "pos", "end"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", "pos", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_param" WHERE "_sign" IN (-1, 1) GROUP BY "path", "node", "pos", "end", "_sign"`, ruleObservers: ["flow_node_type/4"] },
-  { rel: "flow_node_type", kind: "set", tableName: "flow_node_type", deltaTableName: "__delta_flow_node_type", frontierTableName: "__frontier_flow_node_type", nextFrontierTableName: "__next_frontier_flow_node_type", columns: ["node", "path", "name", "ty"], columnTypes: ["text", "text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_node_type" WHERE "_sign" IN (-1, 1) GROUP BY "node", "path", "name", "ty", "_sign"`, ruleObservers: [] },
-  { rel: "flow_param_type", kind: "set", tableName: "flow_param_type", deltaTableName: "__delta_flow_param_type", frontierTableName: "__frontier_flow_param_type", nextFrontierTableName: "__next_frontier_flow_param_type", columns: ["path", "name", "pos", "ty"], columnTypes: ["text", "text", "int", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_param_type" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "pos", "ty", "_sign"`, ruleObservers: [] },
-  { rel: "sig", kind: "set", tableName: "sig", deltaTableName: "__delta_sig", frontierTableName: "__frontier_sig", nextFrontierTableName: "__next_frontier_sig", columns: ["path", "owner_start", "owner_end", "slot", "pos", "ty"], columnTypes: ["text", "int", "int", "text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "sig" ("path", "owner_start", "owner_end", "slot", "pos", "ty") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?) RETURNING "path", "owner_start", "owner_end", "slot", "pos", "ty"`, arrivalDelSql: `DELETE FROM "sig" WHERE ("path", "owner_start", "owner_end", "slot", "pos", "ty") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?)) RETURNING "path", "owner_start", "owner_end", "slot", "pos", "ty"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "owner_start", "owner_end", CASE WHEN json_valid("slot") AND json_type("slot") = 'object' AND json_type("slot", '$.fn') = 'text' AND json_type("slot", '$.args') = 'array' THEN json_extract("slot", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("slot", '$.args')), '') || ')' ELSE "slot" END AS "slot", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sig" WHERE "_sign" IN (-1, 1) GROUP BY "path", "owner_start", "owner_end", "slot", "pos", "ty", "_sign"`, ruleObservers: ["flow_node_type/4", "flow_param_type/4"] },
-  { rel: "sink_callee", kind: "set", tableName: "sink_callee", deltaTableName: "__delta_sink_callee", frontierTableName: "__frontier_sink_callee", nextFrontierTableName: "__next_frontier_sink_callee", columns: ["path", "name"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "sink_callee" ("path", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "name"`, arrivalDelSql: `DELETE FROM "sink_callee" WHERE ("path", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "name"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sink_callee" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "_sign"`, ruleObservers: ["flow_node_type/4", "flow_param_type/4"] },
-  { rel: "type_owner", kind: "set", tableName: "type_owner", deltaTableName: "__delta_type_owner", frontierTableName: "__frontier_type_owner", nextFrontierTableName: "__next_frontier_type_owner", columns: ["path", "name", "start", "end"], columnTypes: ["text", "text", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "type_owner" ("path", "name", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "name", "start", "end"`, arrivalDelSql: `DELETE FROM "type_owner" WHERE ("path", "name", "start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "name", "start", "end"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_type_owner" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "start", "end", "_sign"`, ruleObservers: ["flow_node_type/4", "flow_param_type/4"] },
+  { rel: "df_param", kind: "set", table_name: "df_param", delta_table_name: "__delta_df_param", frontier_table_name: "__frontier_df_param", next_frontier_table_name: "__next_frontier_df_param", columns: ["path", "node", "pos", "end"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "df_param" ("path", "node", "pos", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "node", "pos", "end"`, arrival_del_sql: `DELETE FROM "df_param" WHERE ("path", "node", "pos", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "node", "pos", "end"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", "pos", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_param" WHERE "_sign" IN (-1, 1) GROUP BY "path", "node", "pos", "end", "_sign"`, rule_observers: ["flow_node_type/4"] },
+  { rel: "flow_node_type", kind: "set", table_name: "flow_node_type", delta_table_name: "__delta_flow_node_type", frontier_table_name: "__frontier_flow_node_type", next_frontier_table_name: "__next_frontier_flow_node_type", columns: ["node", "path", "name", "ty"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("node") AND json_type("node") = 'object' AND json_type("node", '$.fn') = 'text' AND json_type("node", '$.args') = 'array' THEN json_extract("node", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("node", '$.args')), '') || ')' ELSE "node" END AS "node", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_node_type" WHERE "_sign" IN (-1, 1) GROUP BY "node", "path", "name", "ty", "_sign"`, rule_observers: [] },
+  { rel: "flow_param_type", kind: "set", table_name: "flow_param_type", delta_table_name: "__delta_flow_param_type", frontier_table_name: "__frontier_flow_param_type", next_frontier_table_name: "__next_frontier_flow_param_type", columns: ["path", "name", "pos", "ty"], column_types: ["text", "text", "int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_param_type" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "pos", "ty", "_sign"`, rule_observers: [] },
+  { rel: "sig", kind: "set", table_name: "sig", delta_table_name: "__delta_sig", frontier_table_name: "__frontier_sig", next_frontier_table_name: "__next_frontier_sig", columns: ["path", "owner_start", "owner_end", "slot", "pos", "ty"], column_types: ["text", "int", "int", "text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "sig" ("path", "owner_start", "owner_end", "slot", "pos", "ty") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?) RETURNING "path", "owner_start", "owner_end", "slot", "pos", "ty"`, arrival_del_sql: `DELETE FROM "sig" WHERE ("path", "owner_start", "owner_end", "slot", "pos", "ty") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?)) RETURNING "path", "owner_start", "owner_end", "slot", "pos", "ty"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "owner_start", "owner_end", CASE WHEN json_valid("slot") AND json_type("slot") = 'object' AND json_type("slot", '$.fn') = 'text' AND json_type("slot", '$.args') = 'array' THEN json_extract("slot", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("slot", '$.args')), '') || ')' ELSE "slot" END AS "slot", "pos", CASE WHEN json_valid("ty") AND json_type("ty") = 'object' AND json_type("ty", '$.fn') = 'text' AND json_type("ty", '$.args') = 'array' THEN json_extract("ty", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ty", '$.args')), '') || ')' ELSE "ty" END AS "ty", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sig" WHERE "_sign" IN (-1, 1) GROUP BY "path", "owner_start", "owner_end", "slot", "pos", "ty", "_sign"`, rule_observers: ["flow_node_type/4", "flow_param_type/4"] },
+  { rel: "sink_callee", kind: "set", table_name: "sink_callee", delta_table_name: "__delta_sink_callee", frontier_table_name: "__frontier_sink_callee", next_frontier_table_name: "__next_frontier_sink_callee", columns: ["path", "name"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "sink_callee" ("path", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "name"`, arrival_del_sql: `DELETE FROM "sink_callee" WHERE ("path", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "name"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sink_callee" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "_sign"`, rule_observers: ["flow_node_type/4", "flow_param_type/4"] },
+  { rel: "type_owner", kind: "set", table_name: "type_owner", delta_table_name: "__delta_type_owner", frontier_table_name: "__frontier_type_owner", next_frontier_table_name: "__next_frontier_type_owner", columns: ["path", "name", "start", "end"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "type_owner" ("path", "name", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "path", "name", "start", "end"`, arrival_del_sql: `DELETE FROM "type_owner" WHERE ("path", "name", "start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "path", "name", "start", "end"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_type_owner" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "start", "end", "_sign"`, rule_observers: ["flow_node_type/4", "flow_param_type/4"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "flow_node_type", ruleId: "flow_sig_owner_join_types_the_resolved_callee:flow_node_type/4#1", headDeltaTableName: "__delta_flow_node_type", headColumns: ["node", "path", "name", "ty"], insertSql: `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT DISTINCT b1."node", d0."path", d0."name", b2."ty" FROM "__frontier_sink_callee" d0, "type_owner" b0, "df_param" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b2."path" = d0."path" AND b2."owner_start" = b0."start" AND b2."owner_end" = b0."end" AND b2."slot" = 'param' AND b2."pos" = b1."pos" UNION ALL SELECT DISTINCT b1."node", d0."path", d0."name", b2."ty" FROM "__frontier_type_owner" d0, "sink_callee" b0, "df_param" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b2."path" = d0."path" AND b2."owner_start" = d0."start" AND b2."owner_end" = d0."end" AND b2."slot" = 'param' AND b2."pos" = b1."pos" UNION ALL SELECT DISTINCT d0."node", d0."path", b0."name", b2."ty" FROM "__frontier_df_param" d0, "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b2."path" = d0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param' AND b2."pos" = d0."pos" UNION ALL SELECT DISTINCT b2."node", d0."path", b0."name", d0."ty" FROM "__frontier_sig" d0, "sink_callee" b0, "type_owner" b1, "df_param" b2 WHERE d0."_phase" >= 0 AND d0."slot" = 'param' AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b1."start" = d0."owner_start" AND b1."end" = d0."owner_end" AND b2."path" = d0."path" AND b2."pos" = d0."pos" RETURNING "node", "path", "name", "ty"`, selectSql: `SELECT "node", "path", "name", "ty" FROM "flow_node_type"`, recomputeSql: `DELETE FROM "flow_node_type";
-INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT b2."node", b0."path", b0."name", b3."ty" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos"`, supportSql: [`DELETE FROM "__support_next_flow_node_type"`, `INSERT INTO "__support_next_flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT "node", "path", "name", "ty", sum("__refcount") FROM (SELECT b2."node" AS "node", b0."path" AS "path", b0."name" AS "name", b3."ty" AS "ty", count(*) AS "__refcount" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos" GROUP BY b2."node", b0."path", b0."name", b3."ty") GROUP BY "node", "path", "name", "ty"`, `UPDATE "flow_node_type" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_node_type" n WHERE n."node" = h."node" AND n."path" = h."path" AND n."name" = h."name" AND n."ty" = h."ty"), 0)`, `INSERT INTO "__delta_flow_node_type" ("_sign", "_sequence", "node", "path", "name", "ty") SELECT -1, row_number() OVER () - 1, "node", "path", "name", "ty" FROM "flow_node_type" WHERE "__refcount" <= 0`, `DELETE FROM "flow_node_type" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_node_type"`, `INSERT INTO "__new_flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT n."node", n."path", n."name", n."ty", n."__refcount" FROM "__support_next_flow_node_type" n LEFT JOIN "flow_node_type" h ON n."node" = h."node" AND n."path" = h."path" AND n."name" = h."name" AND n."ty" = h."ty" WHERE h."node" IS NULL`, `INSERT INTO "__delta_flow_node_type" ("_sign", "_sequence", "node", "path", "name", "ty") SELECT 1, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT INTO "__frontier_flow_node_type" ("_phase", "_sequence", "node", "path", "name", "ty") SELECT ?, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT INTO "__next_frontier_flow_node_type" ("_phase", "_sequence", "node", "path", "name", "ty") SELECT ?, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT n."node", n."path", n."name", n."ty", n."__refcount" FROM "__support_next_flow_node_type" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "flow_param_type", ruleId: "flow_sig_owner_join_types_the_resolved_callee:flow_param_type/4#1", headDeltaTableName: "__delta_flow_param_type", headColumns: ["path", "name", "pos", "ty"], insertSql: `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT DISTINCT d0."path", d0."name", b1."pos", b1."ty" FROM "__frontier_sink_callee" d0, "type_owner" b0, "sig" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b1."owner_start" = b0."start" AND b1."owner_end" = b0."end" AND b1."slot" = 'param' UNION ALL SELECT DISTINCT d0."path", d0."name", b1."pos", b1."ty" FROM "__frontier_type_owner" d0, "sink_callee" b0, "sig" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b1."owner_start" = d0."start" AND b1."owner_end" = d0."end" AND b1."slot" = 'param' UNION ALL SELECT DISTINCT d0."path", b0."name", d0."pos", d0."ty" FROM "__frontier_sig" d0, "sink_callee" b0, "type_owner" b1 WHERE d0."_phase" >= 0 AND d0."slot" = 'param' AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b1."start" = d0."owner_start" AND b1."end" = d0."owner_end" RETURNING "path", "name", "pos", "ty"`, selectSql: `SELECT "path", "name", "pos", "ty" FROM "flow_param_type"`, recomputeSql: `DELETE FROM "flow_param_type";
-INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT b0."path", b0."name", b2."pos", b2."ty" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param'`, supportSql: [`DELETE FROM "__support_next_flow_param_type"`, `INSERT INTO "__support_next_flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT "path", "name", "pos", "ty", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."name" AS "name", b2."pos" AS "pos", b2."ty" AS "ty", count(*) AS "__refcount" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param' GROUP BY b0."path", b0."name", b2."pos", b2."ty") GROUP BY "path", "name", "pos", "ty"`, `UPDATE "flow_param_type" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_param_type" n WHERE n."path" = h."path" AND n."name" = h."name" AND n."pos" = h."pos" AND n."ty" = h."ty"), 0)`, `INSERT INTO "__delta_flow_param_type" ("_sign", "_sequence", "path", "name", "pos", "ty") SELECT -1, row_number() OVER () - 1, "path", "name", "pos", "ty" FROM "flow_param_type" WHERE "__refcount" <= 0`, `DELETE FROM "flow_param_type" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_param_type"`, `INSERT INTO "__new_flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT n."path", n."name", n."pos", n."ty", n."__refcount" FROM "__support_next_flow_param_type" n LEFT JOIN "flow_param_type" h ON n."path" = h."path" AND n."name" = h."name" AND n."pos" = h."pos" AND n."ty" = h."ty" WHERE h."path" IS NULL`, `INSERT INTO "__delta_flow_param_type" ("_sign", "_sequence", "path", "name", "pos", "ty") SELECT 1, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT INTO "__frontier_flow_param_type" ("_phase", "_sequence", "path", "name", "pos", "ty") SELECT ?, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT INTO "__next_frontier_flow_param_type" ("_phase", "_sequence", "path", "name", "pos", "ty") SELECT ?, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT n."path", n."name", n."pos", n."ty", n."__refcount" FROM "__support_next_flow_param_type" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "flow_node_type", rule_id: "flow_sig_owner_join_types_the_resolved_callee:flow_node_type/4#1", head_delta_table_name: "__delta_flow_node_type", head_columns: ["node", "path", "name", "ty"], insert_sql: `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT DISTINCT b1."node", d0."path", d0."name", b2."ty" FROM "__frontier_sink_callee" d0, "type_owner" b0, "df_param" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b2."path" = d0."path" AND b2."owner_start" = b0."start" AND b2."owner_end" = b0."end" AND b2."slot" = 'param' AND b2."pos" = b1."pos" UNION ALL SELECT DISTINCT b1."node", d0."path", d0."name", b2."ty" FROM "__frontier_type_owner" d0, "sink_callee" b0, "df_param" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b2."path" = d0."path" AND b2."owner_start" = d0."start" AND b2."owner_end" = d0."end" AND b2."slot" = 'param' AND b2."pos" = b1."pos" UNION ALL SELECT DISTINCT d0."node", d0."path", b0."name", b2."ty" FROM "__frontier_df_param" d0, "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b2."path" = d0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param' AND b2."pos" = d0."pos" UNION ALL SELECT DISTINCT b2."node", d0."path", b0."name", d0."ty" FROM "__frontier_sig" d0, "sink_callee" b0, "type_owner" b1, "df_param" b2 WHERE d0."_phase" >= 0 AND d0."slot" = 'param' AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b1."start" = d0."owner_start" AND b1."end" = d0."owner_end" AND b2."path" = d0."path" AND b2."pos" = d0."pos" RETURNING "node", "path", "name", "ty"`, select_sql: `SELECT "node", "path", "name", "ty" FROM "flow_node_type"`, recompute_sql: `DELETE FROM "flow_node_type";
+INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT b2."node", b0."path", b0."name", b3."ty" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos"`, support_sql: [`DELETE FROM "__support_next_flow_node_type"`, `INSERT INTO "__support_next_flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT "node", "path", "name", "ty", sum("__refcount") FROM (SELECT b2."node" AS "node", b0."path" AS "path", b0."name" AS "name", b3."ty" AS "ty", count(*) AS "__refcount" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos" GROUP BY b2."node", b0."path", b0."name", b3."ty") GROUP BY "node", "path", "name", "ty"`, `UPDATE "flow_node_type" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_node_type" n WHERE n."node" = h."node" AND n."path" = h."path" AND n."name" = h."name" AND n."ty" = h."ty"), 0)`, `INSERT INTO "__delta_flow_node_type" ("_sign", "_sequence", "node", "path", "name", "ty") SELECT -1, row_number() OVER () - 1, "node", "path", "name", "ty" FROM "flow_node_type" WHERE "__refcount" <= 0`, `DELETE FROM "flow_node_type" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_node_type"`, `INSERT INTO "__new_flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT n."node", n."path", n."name", n."ty", n."__refcount" FROM "__support_next_flow_node_type" n LEFT JOIN "flow_node_type" h ON n."node" = h."node" AND n."path" = h."path" AND n."name" = h."name" AND n."ty" = h."ty" WHERE h."node" IS NULL`, `INSERT INTO "__delta_flow_node_type" ("_sign", "_sequence", "node", "path", "name", "ty") SELECT 1, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT INTO "__frontier_flow_node_type" ("_phase", "_sequence", "node", "path", "name", "ty") SELECT ?, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT INTO "__next_frontier_flow_node_type" ("_phase", "_sequence", "node", "path", "name", "ty") SELECT ?, "rowid" - 1, "node", "path", "name", "ty" FROM "__new_flow_node_type"`, `INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty", "__refcount") SELECT n."node", n."path", n."name", n."ty", n."__refcount" FROM "__support_next_flow_node_type" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "flow_param_type", rule_id: "flow_sig_owner_join_types_the_resolved_callee:flow_param_type/4#1", head_delta_table_name: "__delta_flow_param_type", head_columns: ["path", "name", "pos", "ty"], insert_sql: `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT DISTINCT d0."path", d0."name", b1."pos", b1."ty" FROM "__frontier_sink_callee" d0, "type_owner" b0, "sig" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b1."owner_start" = b0."start" AND b1."owner_end" = b0."end" AND b1."slot" = 'param' UNION ALL SELECT DISTINCT d0."path", d0."name", b1."pos", b1."ty" FROM "__frontier_type_owner" d0, "sink_callee" b0, "sig" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."name" = d0."name" AND b1."path" = d0."path" AND b1."owner_start" = d0."start" AND b1."owner_end" = d0."end" AND b1."slot" = 'param' UNION ALL SELECT DISTINCT d0."path", b0."name", d0."pos", d0."ty" FROM "__frontier_sig" d0, "sink_callee" b0, "type_owner" b1 WHERE d0."_phase" >= 0 AND d0."slot" = 'param' AND b0."path" = d0."path" AND b1."path" = d0."path" AND b1."name" = b0."name" AND b1."start" = d0."owner_start" AND b1."end" = d0."owner_end" RETURNING "path", "name", "pos", "ty"`, select_sql: `SELECT "path", "name", "pos", "ty" FROM "flow_param_type"`, recompute_sql: `DELETE FROM "flow_param_type";
+INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT b0."path", b0."name", b2."pos", b2."ty" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param'`, support_sql: [`DELETE FROM "__support_next_flow_param_type"`, `INSERT INTO "__support_next_flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT "path", "name", "pos", "ty", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."name" AS "name", b2."pos" AS "pos", b2."ty" AS "ty", count(*) AS "__refcount" FROM "sink_callee" b0, "type_owner" b1, "sig" b2 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b2."owner_start" = b1."start" AND b2."owner_end" = b1."end" AND b2."slot" = 'param' GROUP BY b0."path", b0."name", b2."pos", b2."ty") GROUP BY "path", "name", "pos", "ty"`, `UPDATE "flow_param_type" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_param_type" n WHERE n."path" = h."path" AND n."name" = h."name" AND n."pos" = h."pos" AND n."ty" = h."ty"), 0)`, `INSERT INTO "__delta_flow_param_type" ("_sign", "_sequence", "path", "name", "pos", "ty") SELECT -1, row_number() OVER () - 1, "path", "name", "pos", "ty" FROM "flow_param_type" WHERE "__refcount" <= 0`, `DELETE FROM "flow_param_type" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_param_type"`, `INSERT INTO "__new_flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT n."path", n."name", n."pos", n."ty", n."__refcount" FROM "__support_next_flow_param_type" n LEFT JOIN "flow_param_type" h ON n."path" = h."path" AND n."name" = h."name" AND n."pos" = h."pos" AND n."ty" = h."ty" WHERE h."path" IS NULL`, `INSERT INTO "__delta_flow_param_type" ("_sign", "_sequence", "path", "name", "pos", "ty") SELECT 1, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT INTO "__frontier_flow_param_type" ("_phase", "_sequence", "path", "name", "pos", "ty") SELECT ?, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT INTO "__next_frontier_flow_param_type" ("_phase", "_sequence", "path", "name", "pos", "ty") SELECT ?, "rowid" - 1, "path", "name", "pos", "ty" FROM "__new_flow_param_type"`, `INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty", "__refcount") SELECT n."path", n."name", n."pos", n."ty", n."__refcount" FROM "__support_next_flow_param_type" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "flow_node_type";
 INSERT OR IGNORE INTO "flow_node_type" ("node", "path", "name", "ty") SELECT b2."node", b0."path", b0."name", b3."ty" FROM "sink_callee" b0, "type_owner" b1, "df_param" b2, "sig" b3 WHERE b1."path" = b0."path" AND b1."name" = b0."name" AND b2."path" = b0."path" AND b3."path" = b0."path" AND b3."owner_start" = b1."start" AND b3."owner_end" = b1."end" AND b3."slot" = 'param' AND b3."pos" = b2."pos";
 DELETE FROM "flow_param_type";
@@ -345,13 +345,13 @@ INSERT OR IGNORE INTO "flow_param_type" ("path", "name", "pos", "ty") SELECT b0.
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const df_param = multisetDiff(before.df_param, after.df_param);
-  const flow_node_type = multisetDiff(before.flow_node_type, after.flow_node_type);
-  const flow_param_type = multisetDiff(before.flow_param_type, after.flow_param_type);
-  const sig = multisetDiff(before.sig, after.sig);
-  const sink_callee = multisetDiff(before.sink_callee, after.sink_callee);
-  const type_owner = multisetDiff(before.type_owner, after.type_owner);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const df_param = multiset_diff(before.df_param, after.df_param);
+  const flow_node_type = multiset_diff(before.flow_node_type, after.flow_node_type);
+  const flow_param_type = multiset_diff(before.flow_param_type, after.flow_param_type);
+  const sig = multiset_diff(before.sig, after.sig);
+  const sink_callee = multiset_diff(before.sink_callee, after.sink_callee);
+  const type_owner = multiset_diff(before.type_owner, after.type_owner);
   return {
     rels: [
       { rel: "df_param", add: df_param.add, del: df_param.del },
@@ -361,15 +361,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "sink_callee", add: sink_callee.add, del: sink_callee.del },
       { rel: "type_owner", add: type_owner.add, del: type_owner.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // flow_sig_owner_join_types_the_resolved_callee: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -383,38 +383,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -423,16 +423,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "flow_sig_owner_join_types_the_resolved_callee",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

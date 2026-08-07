@@ -107,14 +107,14 @@ function git(root: string, ...arguments_: readonly string[]): void {
 
 /** Writes TREE into `root`. Tracks it in a fresh repo unless `track` is false,
  *  which is how the live leg gets an empty `git ls-files` answer. */
-function plantTree(root: string, track = true): void {
-  for (const [relativePath, body] of TREE) {
-    mkdirSync(join(root, dirname(relativePath)), { recursive: true });
-    writeFileSync(join(root, relativePath), body);
+function plant_tree(root: string, track = true): void {
+  for (const [relative_path, body] of TREE) {
+    mkdirSync(join(root, dirname(relative_path)), { recursive: true });
+    writeFileSync(join(root, relative_path), body);
   }
   if (!track) return;
   git(root, "init", "-q");
-  git(root, "add", "--", ...TREE.map(([relativePath]) => relativePath));
+  git(root, "add", "--", ...TREE.map(([relative_path]) => relative_path));
 }
 
 class ScriptedWatchSource implements IWatchSource {
@@ -136,7 +136,7 @@ class ScriptedWatchSource implements IWatchSource {
   }
 }
 
-function watchPlan(glob: string): IBindPlan {
+function watch_plan(glob: string): IBindPlan {
   return {
     name: "watch",
     columns: [
@@ -149,7 +149,7 @@ function watchPlan(glob: string): IBindPlan {
   };
 }
 
-function collectingEngine(storedRows: readonly IRow[]): {
+function collecting_engine(stored_rows: readonly IRow[]): {
   readonly engine: ILiveEngine;
   readonly batches: IArrivalBatch[];
 } {
@@ -157,12 +157,12 @@ function collectingEngine(storedRows: readonly IRow[]): {
   let tick = 0;
   const engine = {
     rows(): Observable<readonly IRow[]> {
-      return of(storedRows);
+      return of(stored_rows);
     },
     submit(batch: IArrivalBatch): Observable<ITickOutcome> {
       batches.push(batch);
       tick += 1;
-      return of({ tick, line: "", deltas: { rels: [], carryPending: false } });
+      return of({ tick, line: "", deltas: { rels: [], carry_pending: false } });
     },
   } as unknown as ILiveEngine;
   return { engine, batches };
@@ -170,15 +170,15 @@ function collectingEngine(storedRows: readonly IRow[]): {
 
 /** Paths the BOOT half accepts for `glob`: a fresh runner over a tracked tree
  *  with no durable rows emits one `add` per accepted path. */
-function bootAccepts(glob: string): readonly string[] {
+function boot_accepts(glob: string): readonly string[] {
   const root = mkdtempSync(join(tmpdir(), "tsv2-glob-boot-"));
   try {
-    plantTree(root);
+    plant_tree(root);
     const scheduler = new VirtualTimeScheduler();
-    const collected = collectingEngine([]);
-    const running = new WatchBindRunner(collected.engine, [watchPlan(glob)], {
+    const collected = collecting_engine([]);
+    const running = new WatchBindRunner(collected.engine, [watch_plan(glob)], {
       root,
-      coalesceMs: COALESCE_MS,
+      coalesce_ms: COALESCE_MS,
       scheduler,
       source: new ScriptedWatchSource(scheduler),
     }).firings$.subscribe();
@@ -191,20 +191,20 @@ function bootAccepts(glob: string): readonly string[] {
 
 /** Paths the LIVE half accepts for `glob`: the same tree UNTRACKED, so boot
  *  contributes nothing, then every file notified through the watch source. */
-function liveAccepts(glob: string): readonly string[] {
+function live_accepts(glob: string): readonly string[] {
   const root = mkdtempSync(join(tmpdir(), "tsv2-glob-live-"));
   try {
-    plantTree(root, false);
+    plant_tree(root, false);
     const scheduler = new VirtualTimeScheduler();
     const source = new ScriptedWatchSource(scheduler);
-    const collected = collectingEngine([]);
-    const running = new WatchBindRunner(collected.engine, [watchPlan(glob)], {
+    const collected = collecting_engine([]);
+    const running = new WatchBindRunner(collected.engine, [watch_plan(glob)], {
       root,
-      coalesceMs: COALESCE_MS,
+      coalesce_ms: COALESCE_MS,
       scheduler,
       source,
     }).firings$.subscribe();
-    source.notify(...TREE.map(([relativePath]) => join(root, relativePath)));
+    source.notify(...TREE.map(([relative_path]) => join(root, relative_path)));
     source.settle();
     running.unsubscribe();
     return collected.batches.flatMap((batch) => batch.map((arrival) => String(arrival.row[1])));
@@ -216,19 +216,19 @@ function liveAccepts(glob: string): readonly string[] {
 const sorted = (paths: readonly string[]): readonly string[] => [...paths].sort();
 
 test("watch boot: `src/**/*.rs` admits direct children of src/, not only nested ones", () => {
-  const booted = sorted(bootAccepts("src/**/*.rs"));
+  const booted = sorted(boot_accepts("src/**/*.rs"));
   assert.deepEqual(booted, ["src/lib.rs", "src/nested/deep.rs", "src/nested/deeper/deepest.rs"]);
 });
 
 test("watch boot: `**/*.md` admits repo-root files", () => {
-  const booted = sorted(bootAccepts("**/*.md"));
+  const booted = sorted(boot_accepts("**/*.md"));
   assert.deepEqual(booted, ["README.md", "docs/guide.md"]);
 });
 
 test("watch boot: a brace glob boots rows rather than a silent zero", () => {
   // Braces are matcher syntax, not pathspec syntax. `*` still does not cross
   // `/`, so src/lib.rs is correctly absent and top.ts is correctly present.
-  const booted = sorted(bootAccepts("*.{rs,ts}"));
+  const booted = sorted(boot_accepts("*.{rs,ts}"));
   assert.deepEqual(booted, ["top.ts"]);
 });
 
@@ -243,12 +243,12 @@ test("watch: boot and live accept identical path sets across every census glob s
     "**/*.md", // E: leading `**/`, 18 sites
   ];
   for (const glob of shapes) {
-    const boot = sorted(bootAccepts(glob));
-    const live = sorted(liveAccepts(glob));
+    const boot = sorted(boot_accepts(glob));
+    const live = sorted(live_accepts(glob));
     assert.deepEqual(boot, live, `boot and live disagree on '${glob}'`);
     assert.ok(boot.length > 0, `'${glob}' selected nothing, so the comparison is vacuous`);
     assert.ok(
-      boot.every((relativePath) => !relativePath.startsWith("noise/")),
+      boot.every((relative_path) => !relative_path.startsWith("noise/")),
       `'${glob}' hashed a decoy file, so the filter ran after the digest`,
     );
   }

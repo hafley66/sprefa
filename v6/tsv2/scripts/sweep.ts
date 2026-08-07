@@ -52,7 +52,7 @@ import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
-import { rowValueFromSql } from "../runtime/rows.ts";
+import { row_value_from_sql } from "../runtime/rows.ts";
 import type { IArrivalBatch, IBootStatement, IRowColumnType, IRowValue, ISqlSeam, IGenProgram } from "../runtime/types.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -71,7 +71,7 @@ interface IManifestEntry {
 // `params` RAW, which is fail-first check (b) -- see runtime/2_boot.ts.
 type EmittedProgram = IGenProgram & {
   readonly boot: readonly IBootStatement[];
-  readonly finalSelect: Record<string, string>;
+  readonly final_select: Record<string, string>;
 };
 
 /** A compiled fixture whose replay THREW used to land in one `run_error`
@@ -103,21 +103,21 @@ interface IFixtureRunResult {
   readonly name: string;
   readonly bucket: RunBucket;
   readonly detail: string;
-  readonly finalBucket: FinalBucket;
-  readonly finalDetail: string;
+  readonly final_bucket: FinalBucket;
+  readonly final_detail: string;
 }
 
-function readManifest(): readonly IManifestEntry[] {
+function read_manifest(): readonly IManifestEntry[] {
   const text = readFileSync(join(COMPILE_OUT, "manifest.json"), "utf8");
   return JSON.parse(text) as readonly IManifestEntry[];
 }
 
-function readSchedule(name: string): readonly IArrivalBatch[] {
+function read_schedule(name: string): readonly IArrivalBatch[] {
   const text = readFileSync(join(COMPILE_OUT, `${name}.schedule.json`), "utf8");
   return JSON.parse(text) as readonly IArrivalBatch[];
 }
 
-function readOracleLines(name: string): readonly string[] | null {
+function read_oracle_lines(name: string): readonly string[] | null {
   try {
     const text = readFileSync(join(COMPILE_OUT, `${name}.oracle.jsonl`), "utf8");
     return text.split("\n").filter((line) => line.length > 0);
@@ -126,7 +126,7 @@ function readOracleLines(name: string): readonly string[] | null {
   }
 }
 
-function readOracleFinalLine(name: string): string | null {
+function read_oracle_final_line(name: string): string | null {
   try {
     const text = readFileSync(join(COMPILE_OUT, `${name}.oracle.final.jsonl`), "utf8");
     return text.split("\n").filter((line) => line.length > 0)[0] ?? null;
@@ -150,43 +150,43 @@ function readOracleFinalLine(name: string): string | null {
  *  exercised until a struct column arrived whose stored value IS canonical
  *  JSON text -- the tick log printed the object and the final state printed
  *  the same bytes wrapped in quotes. */
-function finalValueJson(value: unknown, type?: IRowColumnType): string {
+function final_value_json(value: unknown, type?: IRowColumnType): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") {
-    return TickLogEmitter.valueText(value as IRowValue, type);
+    return TickLogEmitter.value_text(value as IRowValue, type);
   }
-  return TickLogEmitter.valueText(String(value), type);
+  return TickLogEmitter.value_text(String(value), type);
 }
 
-function finalStateLine(
-  rowsByRel: Record<string, readonly (readonly unknown[])[]>,
-  relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>,
+function final_state_line(
+  rows_by_rel: Record<string, readonly (readonly unknown[])[]>,
+  rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>,
 ): string {
-  const relNames = Object.keys(rowsByRel).sort();
+  const rel_names = Object.keys(rows_by_rel).sort();
   const parts: string[] = [];
-  for (const rel of relNames) {
-    const rows = rowsByRel[rel]!;
+  for (const rel of rel_names) {
+    const rows = rows_by_rel[rel]!;
     if (rows.length === 0) continue;
-    const types = relColumnTypes?.[rel];
-    const rowTexts = rows
-      .map((row) => `[${row.map((value, index) => finalValueJson(value, types?.[index])).join(",")}]`)
+    const types = rel_column_types?.[rel];
+    const row_texts = rows
+      .map((row) => `[${row.map((value, index) => final_value_json(value, types?.[index])).join(",")}]`)
       .sort();
-    parts.push(`${JSON.stringify(rel)}:[${rowTexts.join(",")}]`);
+    parts.push(`${JSON.stringify(rel)}:[${row_texts.join(",")}]`);
   }
   return `{"final":{${parts.join(",")}}}`;
 }
 
-function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
-  const relNames = Object.keys(program.finalSelect);
-  if (relNames.length === 0) return of(finalStateLine({}));
+function read_final_state(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
+  const rel_names = Object.keys(program.final_select);
+  if (rel_names.length === 0) return of(final_state_line({}));
   return forkJoin(
-    relNames.map((rel) =>
-      seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
+    rel_names.map((rel) =>
+      seam.runner.execute(seam.db, program.final_select[rel]!).pipe(
         map((result) => ({
           rel,
           rows: result.rows.map((row) =>
-            (program.relColumns[rel] ?? []).map((column, index) =>
-              rowValueFromSql(program.relColumnTypes?.[rel]?.[index], row[column]),
+            (program.rel_columns[rel] ?? []).map((column, index) =>
+              row_value_from_sql(program.rel_column_types?.[rel]?.[index], row[column]),
             ),
           ),
         })),
@@ -194,73 +194,73 @@ function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<str
     ),
   ).pipe(
     map((entries) => {
-      const rowsByRel: Record<string, readonly (readonly unknown[])[]> = {};
-      for (const entry of entries) rowsByRel[entry.rel] = entry.rows;
-      return finalStateLine(rowsByRel, program.relColumnTypes);
+      const rows_by_rel: Record<string, readonly (readonly unknown[])[]> = {};
+      for (const entry of entries) rows_by_rel[entry.rel] = entry.rows;
+      return final_state_line(rows_by_rel, program.rel_column_types);
     }),
   );
 }
 
-function gradeFinalState(name: string, actualLine: string): { bucket: FinalBucket; detail: string } {
-  const oracleLine = readOracleFinalLine(name);
-  if (oracleLine === null) return { bucket: "no_oracle_final", detail: "oracle run threw; no final state to diff" };
-  if (oracleLine === actualLine) return { bucket: "final_identical", detail: "" };
-  return { bucket: "final_wrong", detail: `actual=${actualLine.slice(0, 400)} oracle=${oracleLine.slice(0, 400)}` };
+function grade_final_state(name: string, actual_line: string): { bucket: FinalBucket; detail: string } {
+  const oracle_line = read_oracle_final_line(name);
+  if (oracle_line === null) return { bucket: "no_oracle_final", detail: "oracle run threw; no final state to diff" };
+  if (oracle_line === actual_line) return { bucket: "final_identical", detail: "" };
+  return { bucket: "final_wrong", detail: `actual=${actual_line.slice(0, 400)} oracle=${oracle_line.slice(0, 400)}` };
 }
 
-function loadEmitted(name: string): Promise<EmittedProgram> {
+function load_emitted(name: string): Promise<EmittedProgram> {
   const specifier = ["..", "gen_emitted", `${name}.ts`].join("/");
   return import(specifier).then((loaded: { program: EmittedProgram }) => loaded.program);
 }
 
-function gradeAgainstOracle(
+function grade_against_oracle(
   name: string,
-  actualLines: readonly string[],
-  finalGrade: { bucket: FinalBucket; detail: string },
+  actual_lines: readonly string[],
+  final_grade: { bucket: FinalBucket; detail: string },
 ): IFixtureRunResult {
-  const oracle = readOracleLines(name);
-  const withFinal = (bucket: RunBucket, detail: string): IFixtureRunResult => ({
+  const oracle = read_oracle_lines(name);
+  const with_final = (bucket: RunBucket, detail: string): IFixtureRunResult => ({
     name,
     bucket,
     detail,
-    finalBucket: finalGrade.bucket,
-    finalDetail: finalGrade.detail,
+    final_bucket: final_grade.bucket,
+    final_detail: final_grade.detail,
   });
   if (oracle === null) {
-    return withFinal("no_oracle_log", "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff");
+    return with_final("no_oracle_log", "oracle run threw (see oracle_dump.pl ORACLE_THROW output); nothing to diff");
   }
-  const identical = actualLines.length === oracle.length && actualLines.every((line, index) => line === oracle[index]);
-  if (identical) return withFinal("identical", "");
-  const firstDiffIndex = actualLines.findIndex((line, index) => line !== oracle[index]);
-  const excerptIndex = firstDiffIndex === -1 ? Math.min(actualLines.length, oracle.length) : firstDiffIndex;
-  const actualExcerpt = actualLines[excerptIndex] ?? "<missing tick>";
-  const oracleExcerpt = oracle[excerptIndex] ?? "<missing tick>";
-  return withFinal("wrong", `first diff at line ${excerptIndex + 1}: actual=${actualExcerpt} oracle=${oracleExcerpt}`);
+  const identical = actual_lines.length === oracle.length && actual_lines.every((line, index) => line === oracle[index]);
+  if (identical) return with_final("identical", "");
+  const first_diff_index = actual_lines.findIndex((line, index) => line !== oracle[index]);
+  const excerpt_index = first_diff_index === -1 ? Math.min(actual_lines.length, oracle.length) : first_diff_index;
+  const actual_excerpt = actual_lines[excerpt_index] ?? "<missing tick>";
+  const oracle_excerpt = oracle[excerpt_index] ?? "<missing tick>";
+  return with_final("wrong", `first diff at line ${excerpt_index + 1}: actual=${actual_excerpt} oracle=${oracle_excerpt}`);
 }
 
-function runFixture(name: string): Observable<IFixtureRunResult> {
-  return from(loadEmitted(name)).pipe(
+function run_fixture(name: string): Observable<IFixtureRunResult> {
+  return from(load_emitted(name)).pipe(
     concatMap((program) => {
-      const schedule = readSchedule(name);
+      const schedule = read_schedule(name);
       const seam = ScratchStore.open(":memory:");
       return ScratchStore.boot(seam, program.ddl).pipe(
         concatMap(() => BootRunner.run(seam, program.boot)),
         concatMap(() => TickFold.run(program, seam, schedule).pipe(toArray())),
-        concatMap((lines) => readFinalState(seam, program).pipe(map((finalLine) => ({ lines, finalLine })))),
+        concatMap((lines) => read_final_state(seam, program).pipe(map((final_line) => ({ lines, final_line })))),
       );
     }),
-    map(({ lines, finalLine }) => gradeAgainstOracle(name, lines, gradeFinalState(name, finalLine))),
+    map(({ lines, final_line }) => grade_against_oracle(name, lines, grade_final_state(name, final_line))),
     catchError((error: unknown) => {
       // Same split on the final leg, same discriminator: a rejection fixture
       // has no oracle FINAL line either, so calling its missing final state
       // `final_wrong` was the identical noise one column over.
-      const rejection = readOracleLines(name) === null;
+      const rejection = read_oracle_lines(name) === null;
       return of<IFixtureRunResult>({
         name,
         bucket: rejection ? "rejection" : "emitted_crash",
         detail: error instanceof Error ? error.message : String(error),
-        finalBucket: rejection ? "no_oracle_final" : "final_wrong",
-        finalDetail: rejection
+        final_bucket: rejection ? "no_oracle_final" : "final_wrong",
+        final_detail: rejection
           ? "oracle threw on this schedule too; no final state to diff"
           : "run threw before the final state could be read",
       });
@@ -268,32 +268,32 @@ function runFixture(name: string): Observable<IFixtureRunResult> {
   );
 }
 
-function summaryLine(results: readonly IFixtureRunResult[]): string {
-  const countOf = (bucket: RunBucket): number => results.filter((result) => result.bucket === bucket).length;
-  return `RUN total=${results.length} identical=${countOf("identical")} wrong=${countOf("wrong")} emitted_crash=${countOf("emitted_crash")} rejection=${countOf("rejection")} no_oracle_log=${countOf("no_oracle_log")}`;
+function summary_line(results: readonly IFixtureRunResult[]): string {
+  const count_of = (bucket: RunBucket): number => results.filter((result) => result.bucket === bucket).length;
+  return `RUN total=${results.length} identical=${count_of("identical")} wrong=${count_of("wrong")} emitted_crash=${count_of("emitted_crash")} rejection=${count_of("rejection")} no_oracle_log=${count_of("no_oracle_log")}`;
 }
 
-function finalSummaryLine(results: readonly IFixtureRunResult[]): string {
-  const countOf = (bucket: FinalBucket): number => results.filter((result) => result.finalBucket === bucket).length;
-  return `FINAL total=${results.length} final_identical=${countOf("final_identical")} final_wrong=${countOf("final_wrong")} no_oracle_final=${countOf("no_oracle_final")}`;
+function final_summary_line(results: readonly IFixtureRunResult[]): string {
+  const count_of = (bucket: FinalBucket): number => results.filter((result) => result.final_bucket === bucket).length;
+  return `FINAL total=${results.length} final_identical=${count_of("final_identical")} final_wrong=${count_of("final_wrong")} no_oracle_final=${count_of("no_oracle_final")}`;
 }
 
 function main(): void {
-  const manifest = readManifest();
-  const compiledNames = manifest.filter((entry) => entry.bucket === "compiled").map((entry) => entry.name);
-  from(compiledNames)
-    .pipe(concatMap((name) => runFixture(name)), toArray())
+  const manifest = read_manifest();
+  const compiled_names = manifest.filter((entry) => entry.bucket === "compiled").map((entry) => entry.name);
+  from(compiled_names)
+    .pipe(concatMap((name) => run_fixture(name)), toArray())
     .subscribe({
       next: (results) => {
         writeFileSync(join(COMPILE_OUT, "run-results.json"), `${JSON.stringify(results, null, 2)}\n`);
-        process.stdout.write(`${summaryLine(results)}\n`);
+        process.stdout.write(`${summary_line(results)}\n`);
         for (const result of results) {
           if (result.bucket !== "identical") process.stdout.write(`  ${result.bucket.toUpperCase()} ${result.name} ${result.detail}\n`);
         }
-        process.stdout.write(`${finalSummaryLine(results)}\n`);
+        process.stdout.write(`${final_summary_line(results)}\n`);
         for (const result of results) {
-          if (result.finalBucket !== "final_identical") {
-            process.stdout.write(`  ${result.finalBucket.toUpperCase()} ${result.name} ${result.finalDetail}\n`);
+          if (result.final_bucket !== "final_identical") {
+            process.stdout.write(`  ${result.final_bucket.toUpperCase()} ${result.name} ${result.final_detail}\n`);
           }
         }
         // The ratchet the split exists for. `emitted_crash` is zero today and

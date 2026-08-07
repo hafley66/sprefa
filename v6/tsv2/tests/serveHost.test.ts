@@ -45,7 +45,7 @@ import { fileURLToPath } from "node:url";
 import { VirtualTimeScheduler, firstValueFrom } from "rxjs";
 
 import { ScratchStore } from "../runtime/scratchStore.ts";
-import { oracleLog, logOfTicks, postArrivals, postProgram, request, scheduleFromTicks, startServed, tickEvents } from "./serveHelpers.ts";
+import { oracle_log, log_of_ticks, post_arrivals, post_program, request, schedule_from_ticks, start_served, tick_events } from "./serveHelpers.ts";
 
 const HOST_CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
 
@@ -70,13 +70,13 @@ host_start(Path, Start) <-
 /** Advance an injected virtual scheduler by whole seconds and flush. `maxFrames`
  *  is bounded on purpose: a live `interval` reschedules itself every firing, so
  *  an unbounded flush would spin forever. */
-function advanceVirtualSeconds(scheduler: VirtualTimeScheduler, seconds: number): void {
+function advance_virtual_seconds(scheduler: VirtualTimeScheduler, seconds: number): void {
   scheduler.maxFrames = scheduler.frame + seconds * 1000;
   scheduler.flush();
 }
 
-async function waitUntil(predicate: () => boolean | Promise<boolean>, what: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => boolean | Promise<boolean>, what: string, timeout_ms = 10_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error(`timeout waiting for ${what}`);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -86,42 +86,42 @@ async function waitUntil(predicate: () => boolean | Promise<boolean>, what: stri
 test("receipt (b): live interval bind + live sh host, served, matches the oracle fed the same answers", async () => {
   const source = readFileSync(HOST_CLOCK_DL6, "utf8");
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(0, scheduler);
+  const served = await start_served(0, scheduler);
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
     const plans = JSON.parse(loaded.body) as {
       readonly hosts: readonly string[];
       readonly binds: readonly { readonly name: string; readonly literals: readonly (string | number)[] }[];
-      readonly arrivalTargets: readonly string[];
+      readonly arrival_targets: readonly string[];
     };
     // The program's own rules said the cadence; nothing out here chose it.
     assert.deepEqual(plans.hosts, ["answer"]);
     assert.deepEqual(plans.binds, [{ name: "interval", literals: [1] }]);
 
-    await postArrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
+    await post_arrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
 
     // The interval subscribes only after the program's boot SQL resolves, on
     // the real event loop; flushing before it registers advances nothing.
-    await waitUntil(() => scheduler.actions.length >= 1, "the interval to register on the injected scheduler");
-    advanceVirtualSeconds(scheduler, 1);
+    await wait_until(() => scheduler.actions.length >= 1, "the interval to register on the injected scheduler");
+    advance_virtual_seconds(scheduler, 1);
 
     // The bind's tick is synchronous with the flush; the host's subprocess and
     // its response commit are not.
-    await waitUntil(async () => {
+    await wait_until(async () => {
       const answered = JSON.parse((await request(served.port, "/idb/answered", "GET")).body) as { rows: unknown[] };
       return answered.rows.length === 1;
     }, "the sh host's response to land in answered");
 
-    const outcomes = tickEvents(served.events);
+    const outcomes = tick_events(served.events);
     assert.equal(outcomes.length, 3, `expected seed / bind / host ticks, got ${outcomes.length}`);
 
-    const replayed = scheduleFromTicks(outcomes, plans.arrivalTargets);
+    const replayed = schedule_from_ticks(outcomes, plans.arrival_targets);
     assert.deepEqual(
       replayed.map((batch) => batch.map((arrival) => arrival.rel)),
       [["seed"], ["interval"], ["__host_response_answer"]],
     );
-    assert.equal(logOfTicks(outcomes), oracleLog(source, replayed));
+    assert.equal(log_of_ticks(outcomes), oracle_log(source, replayed));
 
     // The host really ran: one witness, one spawn, one answer.
     const demand = JSON.parse((await request(served.port, "/idb/__host_demand_answer", "GET")).body) as {
@@ -142,15 +142,15 @@ test("receipt (b): live interval bind + live sh host, served, matches the oracle
 test("receipt (b) teardown: a program swap stops the previous program's interval", async () => {
   const source = readFileSync(HOST_CLOCK_DL6, "utf8");
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(0, scheduler);
+  const served = await start_served(0, scheduler);
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
-    await waitUntil(() => scheduler.actions.length === 1, "the first program's interval to register");
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
+    await wait_until(() => scheduler.actions.length === 1, "the first program's interval to register");
 
     // A program with no bind at all: the switchMap must leave zero timers.
     const plain = "rel event(id: int, kind: text) log keep(all).\nrel current(id: int, kind: text).\ncurrent(Id, Kind) <- event(Id, Kind).\n";
-    assert.equal((await postProgram(served.port, plain)).statusCode, 200);
-    await waitUntil(() => scheduler.actions.length === 0, "the swapped-out program's interval to be torn down");
+    assert.equal((await post_program(served.port, plain)).statusCode, 200);
+    await wait_until(() => scheduler.actions.length === 0, "the swapped-out program's interval to be torn down");
   } finally {
     await served.stop();
   }
@@ -180,37 +180,37 @@ test("receipt (b) teardown: a program swap stops the previous program's interval
  */
 test("declared-struct live host output interns once and tick logs render the canonical value", async () => {
   const directory = mkdtempSync(join(tmpdir(), "tsv2-struct-host-"));
-  const dbUrl = `file:${join(directory, "served.sqlite")}`;
-  const served = await startServed(0, undefined, dbUrl);
+  const db_url = `file:${join(directory, "served.sqlite")}`;
+  const served = await start_served(0, undefined, db_url);
   try {
-    const loaded = await postProgram(served.port, STRUCT_HOST_DL6);
+    const loaded = await post_program(served.port, STRUCT_HOST_DL6);
     assert.equal(loaded.statusCode, 200, loaded.body);
 
-    await postArrivals(served.port, [
+    await post_arrivals(served.port, [
       { rel: "source_path", sign: "add", row: ["a.rs"] },
     ]);
-    await waitUntil(async () => {
+    await wait_until(async () => {
       const rows = JSON.parse((await request(served.port, "/idb/host_start", "GET")).body) as {
         rows: readonly (readonly (string | number)[])[];
       };
       return rows.rows.length === 1;
     }, "the struct-typed host answer to land");
 
-    const hostSpan = JSON.parse((await request(served.port, "/idb/host_span", "GET")).body) as {
+    const host_span = JSON.parse((await request(served.port, "/idb/host_span", "GET")).body) as {
       rows: readonly (readonly (string | number)[])[];
     };
-    const hostStart = JSON.parse((await request(served.port, "/idb/host_start", "GET")).body) as {
+    const host_start = JSON.parse((await request(served.port, "/idb/host_start", "GET")).body) as {
       rows: readonly (readonly (string | number)[])[];
     };
-    assert.deepEqual(hostSpan.rows, [["a.rs", '{"end":42,"start":17}']]);
-    assert.deepEqual(hostStart.rows, [["a.rs", 17]]);
+    assert.deepEqual(host_span.rows, [["a.rs", '{"end":42,"start":17}']]);
+    assert.deepEqual(host_start.rows, [["a.rs", 17]]);
 
-    const outcomes = tickEvents(served.events);
+    const outcomes = tick_events(served.events);
     assert.equal(outcomes.length, 2, `expected source / host ticks, got ${outcomes.length}`);
-    const hostTick = JSON.parse(outcomes[1]!.line) as {
+    const host_tick = JSON.parse(outcomes[1]!.line) as {
       deltas: Record<string, { add: readonly (readonly unknown[])[]; del: readonly (readonly unknown[])[] }>;
     };
-    assert.deepEqual(hostTick.deltas["__host_response_scan_span"]?.add, [
+    assert.deepEqual(host_tick.deltas["__host_response_scan_span"]?.add, [
       [
         "witness|scan_span|path:text=a.rs",
         0,
@@ -218,29 +218,29 @@ test("declared-struct live host output interns once and tick logs render the can
         { end: 42, start: 17 },
       ],
     ]);
-    assert.deepEqual(hostTick.deltas.host_span?.add, [
+    assert.deepEqual(host_tick.deltas.host_span?.add, [
       ["a.rs", { end: 42, start: 17 }],
     ]);
-    assert.deepEqual(hostTick.deltas.host_start?.add, [["a.rs", 17]]);
+    assert.deepEqual(host_tick.deltas.host_start?.add, [["a.rs", 17]]);
     // The referenced relation is ordinary and PUBLIC: the target row enters the
     // same tick as the parent that references it, in its own declared column
     // order, and is queryable by name. Under the dictionary model this row was
     // storage-plane only and appeared in neither place.
-    assert.deepEqual(hostTick.deltas.span?.add, [[42, 17]]);
-    const spanRows = JSON.parse((await request(served.port, "/idb/span", "GET")).body) as {
+    assert.deepEqual(host_tick.deltas.span?.add, [[42, 17]]);
+    const span_rows = JSON.parse((await request(served.port, "/idb/span", "GET")).body) as {
       rows: readonly (readonly (string | number)[])[];
     };
-    assert.deepEqual(spanRows.rows, [[42, 17]]);
+    assert.deepEqual(span_rows.rows, [[42, 17]]);
 
-    const inspection = ScratchStore.open(dbUrl);
+    const inspection = ScratchStore.open(db_url);
     try {
-      const targetRows = await firstValueFrom(
+      const target_rows = await firstValueFrom(
         inspection.runner.scalar(
           inspection.db,
           'SELECT count(*) FROM "span"',
         ),
       );
-      assert.equal(targetRows, 1);
+      assert.equal(target_rows, 1);
     } finally {
       inspection.db.close();
     }

@@ -57,8 +57,8 @@
 
 import { concatMap, forkJoin, map, type Observable } from "rxjs";
 
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatement } from "../runtime/types.ts";
 
 // ── DDL (run once at boot; seed INSERTs for the fixture's Initial rows ride
@@ -95,20 +95,20 @@ type Snapshot = {
   readonly route_view: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    route_change: selectRows(seam, "SELECT session_id, route_id FROM route_change", REL_COLUMNS.route_change!),
-    route_row: selectRows(seam, "SELECT route_id, body FROM route_row", REL_COLUMNS.route_row!),
-    open_scope: selectRows(seam, "SELECT session_id, target FROM open_scope", REL_COLUMNS.open_scope!),
-    demanded: selectRows(seam, "SELECT target, session_id FROM demanded", REL_COLUMNS.demanded!),
-    route_view: selectRows(seam, "SELECT route_id, body FROM route_view", REL_COLUMNS.route_view!),
+    route_change: select_rows(seam, "SELECT session_id, route_id FROM route_change", REL_COLUMNS.route_change!),
+    route_row: select_rows(seam, "SELECT route_id, body FROM route_row", REL_COLUMNS.route_row!),
+    open_scope: select_rows(seam, "SELECT session_id, target FROM open_scope", REL_COLUMNS.open_scope!),
+    demanded: select_rows(seam, "SELECT target, session_id FROM demanded", REL_COLUMNS.demanded!),
+    route_view: select_rows(seam, "SELECT route_id, body FROM route_view", REL_COLUMNS.route_view!),
   });
 }
 
 // ── route_change arrivals: Log append only (rulings.pl: -Row into a Log rel
 // throws; not exercised by this fixture, so a defensive throw is enough) ────
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
   const statements: SqlStatement[] = arrivals
     .filter((arrival) => arrival.rel === "route_change")
     .map((arrival): SqlStatement => {
@@ -123,39 +123,39 @@ function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unkn
 //    route_change arrivals, in arrival order; keyed replace on session_id,
 //    later write for the same key wins (engine.pl apply_edge_writes). ───────
 
-function scopeWrites(
+function scope_writes(
   arrivals: IArrivalBatch,
-  beforeOpenScope: readonly IRow[],
-): { statements: readonly SqlStatement[]; writtenRows: readonly IRow[] } {
-  const beforeBySession = new Map(beforeOpenScope.map((row): [string, IRow] => [row[0] as string, row]));
-  const candidateBySession = new Map<string, IRow>();
+  before_open_scope: readonly IRow[],
+): { statements: readonly SqlStatement[]; written_rows: readonly IRow[] } {
+  const before_by_session = new Map(before_open_scope.map((row): [string, IRow] => [row[0] as string, row]));
+  const candidate_by_session = new Map<string, IRow>();
   for (const arrival of arrivals) {
     if (arrival.rel !== "route_change" || arrival.sign !== "add") continue;
-    const sessionId = arrival.row[0] as string;
-    const routeId = arrival.row[1] as string;
-    const target = `${ROUTE_DATA_PREFIX}${routeId})`;
-    candidateBySession.set(sessionId, [sessionId, target]);
+    const session_id = arrival.row[0] as string;
+    const route_id = arrival.row[1] as string;
+    const target = `${ROUTE_DATA_PREFIX}${route_id})`;
+    candidate_by_session.set(session_id, [session_id, target]);
   }
 
   const statements: SqlStatement[] = [];
-  const writtenRows: IRow[] = [];
-  for (const [sessionId, candidateRow] of candidateBySession) {
-    const existing = beforeBySession.get(sessionId);
-    if (existing !== undefined && existing[1] === candidateRow[1]) continue; // equal-row write = no-op
+  const written_rows: IRow[] = [];
+  for (const [session_id, candidate_row] of candidate_by_session) {
+    const existing = before_by_session.get(session_id);
+    if (existing !== undefined && existing[1] === candidate_row[1]) continue; // equal-row write = no-op
     statements.push({
       sql: "INSERT INTO open_scope (session_id, target) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET target = excluded.target",
-      args: [...candidateRow],
+      args: [...candidate_row],
     });
-    writtenRows.push(candidateRow);
+    written_rows.push(candidate_row);
   }
-  return { statements, writtenRows };
+  return { statements, written_rows };
 }
 
 // ── level rules, dependency order: demanded then route_view ──────────────────
 // demanded(Target, SessionId)  <- open_scope(SessionId, Target)
 // route_view(RouteId, Body)    <- demanded(route_data(RouteId), _), route_row(RouteId, Body)
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = [
     "DELETE FROM demanded",
     "INSERT INTO demanded (target, session_id) SELECT target, session_id FROM open_scope",
@@ -170,41 +170,41 @@ function recomputeLevels(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot, writtenRows: readonly IRow[]): ITickDeltas {
-  const routeChange = multisetDiff(before.route_change, after.route_change);
-  const routeRow = multisetDiff(before.route_row, after.route_row);
-  const openScope = multisetDiff(before.open_scope, after.open_scope);
-  const demanded = multisetDiff(before.demanded, after.demanded);
-  const routeView = multisetDiff(before.route_view, after.route_view);
+function build_deltas(before: Snapshot, after: Snapshot, written_rows: readonly IRow[]): ITickDeltas {
+  const route_change = multiset_diff(before.route_change, after.route_change);
+  const route_row = multiset_diff(before.route_row, after.route_row);
+  const open_scope = multiset_diff(before.open_scope, after.open_scope);
+  const demanded = multiset_diff(before.demanded, after.demanded);
+  const route_view = multiset_diff(before.route_view, after.route_view);
   return {
     rels: [
-      { rel: "route_change", add: routeChange.add, del: routeChange.del },
-      { rel: "route_row", add: routeRow.add, del: routeRow.del },
-      { rel: "open_scope", add: openScope.add, del: openScope.del },
+      { rel: "route_change", add: route_change.add, del: route_change.del },
+      { rel: "route_row", add: route_row.add, del: route_row.del },
+      { rel: "open_scope", add: open_scope.add, del: open_scope.del },
       { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "route_view", add: routeView.add, del: routeView.del },
+      { rel: "route_view", add: route_view.add, del: route_view.del },
     ],
     // See FINDING 3 above.
-    carryPending: writtenRows.length > 0,
+    carry_pending: written_rows.length > 0,
   };
 }
 
 export const SwitchAsKeyedReplace: IGenProgram = {
   name: "switch_as_keyed_replace",
   ddl: DDL,
-  relColumns: REL_COLUMNS,
-  arrivalTargets: ARRIVAL_TARGETS,
+  rel_columns: REL_COLUMNS,
+  arrival_targets: ARRIVAL_TARGETS,
 
   tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-    return readSnapshot(seam).pipe(
-      concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
+    return read_snapshot(seam).pipe(
+      concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
       concatMap((before) => {
-        const { statements, writtenRows } = scopeWrites(arrivals, before.open_scope);
-        return seam.runner.batch(seam.db, statements).pipe(map(() => ({ before, writtenRows })));
+        const { statements, written_rows } = scope_writes(arrivals, before.open_scope);
+        return seam.runner.batch(seam.db, statements).pipe(map(() => ({ before, written_rows })));
       }),
-      concatMap(({ before, writtenRows }) => recomputeLevels(seam).pipe(map(() => ({ before, writtenRows })))),
-      concatMap(({ before, writtenRows }) =>
-        readSnapshot(seam).pipe(map((after) => buildDeltas(before, after, writtenRows))),
+      concatMap(({ before, written_rows }) => recompute_levels(seam).pipe(map(() => ({ before, written_rows })))),
+      concatMap(({ before, written_rows }) =>
+        read_snapshot(seam).pipe(map((after) => build_deltas(before, after, written_rows))),
       ),
     );
   },

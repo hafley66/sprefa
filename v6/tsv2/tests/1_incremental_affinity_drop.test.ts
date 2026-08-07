@@ -10,16 +10,16 @@ import type { IArrivalBatch, IIncrementalRelationPlan } from "../runtime/types.t
 const PLAN: IIncrementalRelationPlan = {
   rel: "probe_in",
   kind: "set",
-  tableName: "probe_in",
-  deltaTableName: "__delta_probe_in",
-  frontierTableName: "__frontier_probe_in",
-  nextFrontierTableName: "__next_frontier_probe_in",
+  table_name: "probe_in",
+  delta_table_name: "__delta_probe_in",
+  frontier_table_name: "__frontier_probe_in",
+  next_frontier_table_name: "__next_frontier_probe_in",
   columns: ["value"],
-  columnTypes: ["text"],
-  keyIndices: [],
-  arrivalAddSql: `INSERT INTO "probe_in" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`,
-  arrivalDelSql: `DELETE FROM "probe_in" WHERE "value" IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`,
-  boundarySql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_in" GROUP BY "value", "_sign"`,
+  column_types: ["text"],
+  key_indices: [],
+  arrival_add_sql: `INSERT INTO "probe_in" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`,
+  arrival_del_sql: `DELETE FROM "probe_in" WHERE "value" IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`,
+  boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_in" GROUP BY "value", "_sign"`,
 };
 
 const DDL = [
@@ -34,7 +34,7 @@ test("arrival delta carries the text value returned by SQLite", async () => {
   await firstValueFrom(ScratchStore.boot(seam, DDL));
 
   const arrivals: IArrivalBatch = [{ rel: "probe_in", sign: "add", row: [4] }];
-  await firstValueFrom(IncrementalRuntime.applyArrivals(seam, arrivals, [PLAN]));
+  await firstValueFrom(IncrementalRuntime.apply_arrivals(seam, arrivals, [PLAN]));
 
   const result = await firstValueFrom(
     seam.runner.execute(seam.db, `SELECT "_sign", "_sequence", "value" FROM "__delta_probe_in"`),

@@ -77,19 +77,19 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import type { IArrivalBatch, IRelDelta, ISqlSeam, SqlStatement } from "../runtime/types.ts";
 import {
-  incrementalPlan as departurePlan,
-  program as departureProgram,
+  incremental_plan as departure_plan,
+  program as departure_program,
 } from "../gen_emitted/keyed_replace_departs_the_old_row.ts";
-import { incrementalPlan as plainPlan } from "../gen_emitted/switch_as_keyed_replace.ts";
+import { incremental_plan as plain_plan } from "../gen_emitted/switch_as_keyed_replace.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 
-function emittedSource(fixture: string): string {
+function emitted_source(fixture: string): string {
   return readFileSync(join(COMPILE_OUT, `${fixture}.ts`), "utf8");
 }
 
-function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
+function counting_seam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
   const statements: string[] = [];
   const record = (statement: string | SqlStatement): void => {
     statements.push(typeof statement === "string" ? statement : statement.sql);
@@ -112,24 +112,24 @@ function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } 
   return { seam: { db: seam.db, runner }, statements };
 }
 
-function bootedSeam(url = ":memory:"): Promise<ISqlSeam> {
+function booted_seam(url = ":memory:"): Promise<ISqlSeam> {
   const seam = ScratchStore.open(url);
-  return firstValueFrom(ScratchStore.boot(seam, departureProgram.ddl)).then(() => seam);
+  return firstValueFrom(ScratchStore.boot(seam, departure_program.ddl)).then(() => seam);
 }
 
 const DEPARTED: readonly IRelDelta[] = [{ rel: "latest", add: [], del: [["cli", "v1"]] }];
 const NOTHING_DEPARTED: readonly IRelDelta[] = [{ rel: "latest", add: [["cli", "v2"]], del: [] }];
 
 test("count: a program with no finalize emits no departure table anywhere", () => {
-  const source = emittedSource("switch_as_keyed_replace");
-  const departureMentions = [...source.matchAll(/__departure_frontier_/g)].length;
+  const source = emitted_source("switch_as_keyed_replace");
+  const departure_mentions = [...source.matchAll(/__departure_frontier_/g)].length;
   assert.equal(
-    departureMentions,
+    departure_mentions,
     0,
-    `a program with no finalize must not emit a departure table, got ${departureMentions}`,
+    `a program with no finalize must not emit a departure table, got ${departure_mentions}`,
   );
   assert.equal(
-    plainPlan.relations.filter((relation) => relation.departureFrontierTableName !== undefined).length,
+    plain_plan.relations.filter((relation) => relation.departure_frontier_table_name !== undefined).length,
     0,
     "no relation plan may carry departureFrontierTableName",
   );
@@ -139,17 +139,17 @@ test("count: a program with no finalize emits no departure table anywhere", () =
   );
   // ... and the listening program does carry all three, so the assertions
   // above are discriminating rather than vacuously true of every fixture.
-  const listening = emittedSource("keyed_replace_departs_the_old_row");
-  assert.ok(listening.includes(`departureFrontierTableName: "__departure_frontier_latest"`));
-  assert.ok(listening.includes("IncrementalRuntime.stageDepartures"));
+  const listening = emitted_source("keyed_replace_departs_the_old_row");
+  assert.ok(listening.includes(`departure_frontier_table_name: "__departure_frontier_latest"`));
+  assert.ok(listening.includes("IncrementalRuntime.stage_departures"));
 });
 
 test("count: staging is one clear, plus one insert only when something departed", async () => {
-  const base = await bootedSeam();
+  const base = await booted_seam();
 
-  const empty = countingSeam(base);
+  const empty = counting_seam(base);
   await firstValueFrom(
-    IncrementalRuntime.stageDepartures(empty.seam, plainPlan.relations, DEPARTED),
+    IncrementalRuntime.stage_departures(empty.seam, plain_plan.relations, DEPARTED),
   );
   assert.equal(
     empty.statements.length,
@@ -157,9 +157,9 @@ test("count: staging is one clear, plus one insert only when something departed"
     `a program with no listened rel stages nothing: ${empty.statements.length} statements`,
   );
 
-  const quiet = countingSeam(base);
+  const quiet = counting_seam(base);
   await firstValueFrom(
-    IncrementalRuntime.stageDepartures(quiet.seam, departurePlan.relations, NOTHING_DEPARTED),
+    IncrementalRuntime.stage_departures(quiet.seam, departure_plan.relations, NOTHING_DEPARTED),
   );
   assert.equal(
     quiet.statements.length,
@@ -168,9 +168,9 @@ test("count: staging is one clear, plus one insert only when something departed"
   );
   assert.match(quiet.statements[0]!, /^DELETE FROM "__departure_frontier_latest"$/);
 
-  const staged = countingSeam(base);
+  const staged = counting_seam(base);
   await firstValueFrom(
-    IncrementalRuntime.stageDepartures(staged.seam, departurePlan.relations, DEPARTED),
+    IncrementalRuntime.stage_departures(staged.seam, departure_plan.relations, DEPARTED),
   );
   assert.equal(
     staged.statements.length,
@@ -184,11 +184,11 @@ test("count: staging is one clear, plus one insert only when something departed"
 });
 
 test("plan: the departure arm reads only its own departure table", async () => {
-  const seam = await bootedSeam();
-  const arm = departurePlan.edges.find((edge) => edge.projectSql.includes("__departure_frontier_"))!;
+  const seam = await booted_seam();
+  const arm = departure_plan.edges.find((edge) => edge.project_sql.includes("__departure_frontier_"))!;
   assert.ok(arm !== undefined, "the fixture must have a departure arm");
   const explained = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${arm.projectSql}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${arm.project_sql}`),
   );
   const plan = explained.rows.map((row) => String(row.detail)).join(" | ");
   assert.ok(
@@ -208,29 +208,29 @@ test("endurance: a staged departure is exactly as durable as a staged addition",
   const directory = mkdtempSync(join(tmpdir(), "tsv2-departure-"));
   const url = `file:${join(directory, "db.sqlite")}`;
   try {
-    const seam = await bootedSeam(url);
+    const seam = await booted_seam(url);
     await firstValueFrom(
-      IncrementalRuntime.stageDepartures(seam, departurePlan.relations, DEPARTED),
+      IncrementalRuntime.stage_departures(seam, departure_plan.relations, DEPARTED),
     );
     const before = await firstValueFrom(
       seam.runner.execute(seam.db, `SELECT count(*) AS n FROM "__departure_frontier_latest"`),
     );
     assert.equal(Number(before.rows[0]!.n), 1, "the departure must be staged before the reopen");
 
-    const carryTablesSql =
+    const carry_tables_sql =
       `SELECT name FROM temp.sqlite_master WHERE type = 'table' AND name LIKE '%frontier%' ORDER BY name`;
-    const live = await firstValueFrom(seam.runner.execute(seam.db, carryTablesSql));
-    const liveNames = live.rows.map((row) => String(row.name));
+    const live = await firstValueFrom(seam.runner.execute(seam.db, carry_tables_sql));
+    const live_names = live.rows.map((row) => String(row.name));
     assert.ok(
-      liveNames.includes("__frontier_latest") && liveNames.includes("__departure_frontier_latest"),
-      `the probe must see both carry tables while the connection is open, got: ${liveNames.join(", ")}`,
+      live_names.includes("__frontier_latest") && live_names.includes("__departure_frontier_latest"),
+      `the probe must see both carry tables while the connection is open, got: ${live_names.join(", ")}`,
     );
 
     // A fresh connection is what a restart looks like from SQLite's side.
     const reopened = ScratchStore.open(url);
-    const afterRestart = await firstValueFrom(reopened.runner.execute(reopened.db, carryTablesSql));
+    const after_restart = await firstValueFrom(reopened.runner.execute(reopened.db, carry_tables_sql));
     assert.deepEqual(
-      afterRestart.rows.map((row) => String(row.name)),
+      after_restart.rows.map((row) => String(row.name)),
       [],
       "C7 inherited, not closed: the arrival frontier and the departure frontier are both TEMP, and a new connection sees neither",
     );
@@ -243,13 +243,13 @@ test("endurance: a staged departure is exactly as durable as a staged addition",
  *  fires ONCE, on the tick AFTER the replace (update-arm verdict), and the
  *  carry it minted is a real drain tick rather than a silent stall. */
 test("count: a departure fires exactly one tick after the row left", async () => {
-  const seam = await bootedSeam();
-  await firstValueFrom(BootRunner.run(seam, departureProgram.boot));
+  const seam = await booted_seam();
+  await firstValueFrom(BootRunner.run(seam, departure_program.boot));
   const schedule = JSON.parse(
     readFileSync(join(COMPILE_OUT, "keyed_replace_departs_the_old_row.schedule.json"), "utf8"),
   ) as readonly IArrivalBatch[];
   const lines = await firstValueFrom(
-    (TickFold.run(departureProgram, seam, schedule).pipe(toArray()) as Observable<string[]>),
+    (TickFold.run(departure_program, seam, schedule).pipe(toArray()) as Observable<string[]>),
   );
   assert.equal(schedule.length, 2, "fixture shape assumed below");
   assert.equal(lines.length, 4, `2 scheduled ticks + the departure drain + its own carry drain: ${lines.length}`);

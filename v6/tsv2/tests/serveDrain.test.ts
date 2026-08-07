@@ -31,11 +31,11 @@ import { fileURLToPath } from "node:url";
 
 import { firstValueFrom, forkJoin, toArray } from "rxjs";
 
-import { program as switchProgram } from "../gen_emitted/switch_as_keyed_replace.ts";
+import { program as switch_program } from "../gen_emitted/switch_as_keyed_replace.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IServedProgram } from "../runtime/types.ts";
-import { LiveEngine, bootServedProgram } from "../serve/3_engine.ts";
-import { logOfTicks, oracleLog, postArrivals, postProgram, scheduleFromTicks, startServed, tickEvents } from "./serveHelpers.ts";
+import { LiveEngine, boot_served_program } from "../serve/3_engine.ts";
+import { log_of_ticks, oracle_log, post_arrivals, post_program, schedule_from_ticks, start_served, tick_events } from "./serveHelpers.ts";
 
 const SWITCH_DL6 = fileURLToPath(new URL("../../prolog/compile/dl_view/switch_as_keyed_replace.dl6", import.meta.url));
 
@@ -46,21 +46,21 @@ const ROUTE_BATCHES = [
 
 test("a carrying program served one POST at a time matches the oracle replayed on its own consumed schedule", async () => {
   const source = readFileSync(SWITCH_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
-    const { arrivalTargets } = JSON.parse(loaded.body) as { readonly arrivalTargets: readonly string[] };
+    const { arrival_targets } = JSON.parse(loaded.body) as { readonly arrival_targets: readonly string[] };
 
-    for (const batch of ROUTE_BATCHES) await postArrivals(served.port, batch);
+    for (const batch of ROUTE_BATCHES) await post_arrivals(served.port, batch);
 
-    const outcomes = tickEvents(served.events);
+    const outcomes = tick_events(served.events);
     // settle, drain, settle, drain -- the server's own boundaries.
     assert.deepEqual(outcomes.map((outcome) => outcome.tick), [1, 2, 3, 4]);
 
-    const replayed = scheduleFromTicks(outcomes, arrivalTargets);
+    const replayed = schedule_from_ticks(outcomes, arrival_targets);
     assert.deepEqual(replayed.map((batch) => batch.length), [1, 0, 1, 0]);
-    assert.equal(logOfTicks(outcomes), oracleLog(source, replayed));
+    assert.equal(log_of_ticks(outcomes), oracle_log(source, replayed));
   } finally {
     await served.stop();
   }
@@ -75,10 +75,10 @@ test("a batch already queued behind a carrying tick takes the tick, not a drain"
   // arrivals produced by the engine's own sources (a host response landing
   // while a bind firing waits), and here means two synchronous submits.
   const seam = ScratchStore.open(":memory:");
-  const engine = new LiveEngine(switchProgram as unknown as IServedProgram, seam);
+  const engine = new LiveEngine(switch_program as unknown as IServedProgram, seam);
   const ticks: number[] = [];
   const lines: string[] = [];
-  await firstValueFrom(bootServedProgram(seam, switchProgram as unknown as IServedProgram));
+  await firstValueFrom(boot_served_program(seam, switch_program as unknown as IServedProgram));
   const running = engine.ticks$.subscribe((outcome) => {
     ticks.push(outcome.tick);
     lines.push(outcome.line);

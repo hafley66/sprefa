@@ -34,7 +34,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
 import type { IServeEvent, IWatchFired } from "../runtime/types.ts";
-import { postProgram, request, startServed } from "./serveHelpers.ts";
+import { post_program, request, start_served } from "./serveHelpers.ts";
 
 const WATCH_RAIL_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-watch-rail.dl6", import.meta.url));
 const COALESCE_MS = 50;
@@ -47,8 +47,8 @@ function firings(events: readonly IServeEvent[]): readonly IWatchFired[] {
   return events.flatMap((event) => (event.kind === "watch" ? [event.fired] : []));
 }
 
-function waitUntil(condition: () => boolean, limitMs: number): Promise<boolean> {
-  const deadline = Date.now() + limitMs;
+function wait_until(condition: () => boolean, limit_ms: number): Promise<boolean> {
+  const deadline = Date.now() + limit_ms;
   return new Promise((resolve) => {
     const poll = (): void => {
       if (condition()) return resolve(true);
@@ -59,7 +59,7 @@ function waitUntil(condition: () => boolean, limitMs: number): Promise<boolean> 
   });
 }
 
-async function seenRows(port: number): Promise<readonly (readonly (string | number)[])[]> {
+async function seen_rows(port: number): Promise<readonly (readonly (string | number)[])[]> {
   const reply = await request(port, "/idb/seen", "GET");
   return (JSON.parse(reply.body) as { rows: readonly (readonly (string | number)[])[] }).rows;
 }
@@ -76,22 +76,22 @@ test("watch bind: successive saves to ONE file stay audible on the real fs backe
 
   // No `watchSource` override and no `scheduler` override: this is the
   // production pair, `NodeWatchSource` on `asyncScheduler`.
-  const served = await startServed(0, undefined, ":memory:", { watchRoot: root, watchCoalesceMs: COALESCE_MS });
+  const served = await start_served(0, undefined, ":memory:", { watch_root: root, watch_coalesce_ms: COALESCE_MS });
   try {
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
 
-    const booted = await waitUntil(() => firings(served.events).length >= 1, AUDIBLE_MS);
+    const booted = await wait_until(() => firings(served.events).length >= 1, AUDIBLE_MS);
     assert.ok(booted, "boot reconciliation owes one batch for the tracked file");
-    const bootFirings = firings(served.events).length;
+    const boot_firings = firings(served.events).length;
 
     for (let edit = 1; edit <= EDITS; edit += 1) {
       const bytes = `export const one = ${edit};\n`;
       const before = firings(served.events).length;
       writeFileSync(join(root, "src/one.ts"), bytes);
 
-      const heard = await waitUntil(() => firings(served.events).length > before, AUDIBLE_MS);
-      assert.ok(heard, `edit ${edit} owes its own batch; the stream went deaf after ${before - bootFirings} live batches`);
+      const heard = await wait_until(() => firings(served.events).length > before, AUDIBLE_MS);
+      assert.ok(heard, `edit ${edit} owes its own batch; the stream went deaf after ${before - boot_firings} live batches`);
 
       const fired = firings(served.events).at(-1);
       assert.deepEqual(
@@ -99,7 +99,7 @@ test("watch bind: successive saves to ONE file stay audible on the real fs backe
         { added: 1, removed: 1 },
         `edit ${edit} is one del+add pair`,
       );
-      const rows = await seenRows(served.port);
+      const rows = await seen_rows(served.port);
       assert.deepEqual(
         rows.map((row) => [row[0], row[1]]),
         [["src/one.ts", bytesToHex(sha256(new TextEncoder().encode(bytes)))]],
@@ -108,7 +108,7 @@ test("watch bind: successive saves to ONE file stay audible on the real fs backe
     }
 
     assert.equal(
-      firings(served.events).length - bootFirings,
+      firings(served.events).length - boot_firings,
       EDITS,
       "one batch per digest-changing save, no replays and no swallowed windows",
     );

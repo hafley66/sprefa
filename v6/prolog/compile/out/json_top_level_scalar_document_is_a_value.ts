@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: json_top_level_scalar_document_is_a_value.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -171,49 +171,49 @@ const ddl: readonly string[] = [
   `CREATE INDEX "labelled_zero" ON "labelled" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   echoed: ["name", "body"],
   label: ["name", "body"],
   labelled: ["name", "body"],
   payload: ["name", "body"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   echoed: ["text", "json"],
   label: ["text", "text"],
   labelled: ["text", "text"],
   payload: ["text", "json"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "json_top_level_scalar_document_is_a_value", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "f551fa089ee36b62", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "echoed", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "f58f4e4cec6f614d", hSchema: "6247e9d76bac057d", hRule: "8a5275c6f09cbb25" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "b32de58f2b89e3e3", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "a5d218525b882cd4", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "label", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "6e953bd9c907f907", hSchema: "dada85f3e8bf5278", hRule: "" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "72a1aa18f722d488", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c52ba6e7dbebc898", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "labelled", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "bbec5fcbacc0178a", hSchema: "dada85f3e8bf5278", hRule: "d2adbf6ba2df3129" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a9fdf13fc96ee78b", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 13, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "cf57e4ad0fe8da0b", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 6, ordinal: 0, localName: "payload", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "13b7dae4a76a2e65", hSchema: "6247e9d76bac057d", hRule: "" },
-  { relId: 17, parentId: 16, ordinal: 1, localName: "name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "aaa1ed24e4e9ac8e", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 16, ordinal: 2, localName: "body", kind: "column", typeId: 5, arity: 0, moduleId: 6, hId: "74ef604c99e247d6", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "json_top_level_scalar_document_is_a_value", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "f551fa089ee36b62", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "echoed", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "f58f4e4cec6f614d", h_schema: "6247e9d76bac057d", h_rule: "8a5275c6f09cbb25" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "b32de58f2b89e3e3", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "body", kind: "column", type_id: 5, arity: 0, module_id: 6, h_id: "a5d218525b882cd4", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "label", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "6e953bd9c907f907", h_schema: "dada85f3e8bf5278", h_rule: "" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "72a1aa18f722d488", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c52ba6e7dbebc898", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "labelled", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "bbec5fcbacc0178a", h_schema: "dada85f3e8bf5278", h_rule: "d2adbf6ba2df3129" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "a9fdf13fc96ee78b", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "cf57e4ad0fe8da0b", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "payload", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "13b7dae4a76a2e65", h_schema: "6247e9d76bac057d", h_rule: "" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "aaa1ed24e4e9ac8e", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 16, ordinal: 2, local_name: "body", kind: "column", type_id: 5, arity: 0, module_id: 6, h_id: "74ef604c99e247d6", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   echoed: ["text", "json"],
   label: ["text", "text"],
   labelled: ["text", "text"],
   payload: ["text", "json"],
 };
 
-const arrivalTargets: readonly string[] = ["label", "payload"];
+const arrival_targets: readonly string[] = ["label", "payload"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "echoed", sql: `DELETE FROM "echoed"`, params: [] },
@@ -229,28 +229,28 @@ type Snapshot = {
   readonly payload: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    echoed: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "echoed"`, relColumns.echoed!, relColumnTypes.echoed!),
-    label: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "label"`, relColumns.label!, relColumnTypes.label!),
-    labelled: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "labelled"`, relColumns.labelled!, relColumnTypes.labelled!),
-    payload: selectRows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "payload"`, relColumns.payload!, relColumnTypes.payload!),
+    echoed: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "echoed"`, rel_columns.echoed!, rel_column_types.echoed!),
+    label: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "label"`, rel_columns.label!, rel_column_types.label!),
+    labelled: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
+    payload: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "payload"`, rel_columns.payload!, rel_column_types.payload!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   echoed: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "echoed"`,
   label: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "label"`,
   labelled: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "labelled"`,
   payload: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "payload"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  label: { kind: "set", addSql: `INSERT OR IGNORE INTO "label" ("name", "body") VALUES (?, ?)`, delSql: `DELETE FROM "label" WHERE "name" = ? AND "body" = ?` },
-  payload: { kind: "set", addSql: `INSERT OR IGNORE INTO "payload" ("name", "body") VALUES (?, ?)`, delSql: `DELETE FROM "payload" WHERE "name" = ? AND "body" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  label: { kind: "set", add_sql: `INSERT OR IGNORE INTO "label" ("name", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "label" WHERE "name" = ? AND "body" = ?` },
+  payload: { kind: "set", add_sql: `INSERT OR IGNORE INTO "payload" ("name", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "payload" WHERE "name" = ? AND "body" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`json_top_level_scalar_document_is_a_value: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -259,37 +259,37 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`json_top_level_scalar_document_is_a_value: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`json_top_level_scalar_document_is_a_value: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "echoed", kind: "set", tableName: "echoed", deltaTableName: "__delta_echoed", frontierTableName: "__frontier_echoed", nextFrontierTableName: "__next_frontier_echoed", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: [] },
-  { rel: "label", kind: "set", tableName: "label", deltaTableName: "__delta_label", frontierTableName: "__frontier_label", nextFrontierTableName: "__next_frontier_label", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: ["labelled/2"] },
-  { rel: "labelled", kind: "set", tableName: "labelled", deltaTableName: "__delta_labelled", frontierTableName: "__frontier_labelled", nextFrontierTableName: "__next_frontier_labelled", columns: ["name", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: [] },
-  { rel: "payload", kind: "set", tableName: "payload", deltaTableName: "__delta_payload", frontierTableName: "__frontier_payload", nextFrontierTableName: "__next_frontier_payload", columns: ["name", "body"], columnTypes: ["text", "json"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrivalDelSql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundarySql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, ruleObservers: ["echoed/2"] },
+  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
+  { rel: "label", kind: "set", table_name: "label", delta_table_name: "__delta_label", frontier_table_name: "__frontier_label", next_frontier_table_name: "__next_frontier_label", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["labelled/2"] },
+  { rel: "labelled", kind: "set", table_name: "labelled", delta_table_name: "__delta_labelled", frontier_table_name: "__frontier_labelled", next_frontier_table_name: "__next_frontier_labelled", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
+  { rel: "payload", kind: "set", table_name: "payload", delta_table_name: "__delta_payload", frontier_table_name: "__frontier_payload", next_frontier_table_name: "__next_frontier_payload", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["echoed/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "echoed", ruleId: "json_top_level_scalar_document_is_a_value:echoed/2#1", headDeltaTableName: "__delta_echoed", headColumns: ["name", "body"], insertSql: `INSERT OR IGNORE INTO "echoed" ("name", "body") SELECT DISTINCT d0."name", d0."body" FROM "__frontier_payload" d0 WHERE d0."_phase" >= 0 RETURNING "name", "body"`, selectSql: `SELECT "name", "body" FROM "echoed"`, recomputeSql: `DELETE FROM "echoed";
-INSERT OR IGNORE INTO "echoed" ("name", "body") SELECT b0."name", b0."body" FROM "payload" b0`, supportSql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("name", "body", "__refcount") SELECT "name", "body", sum("__refcount") FROM (SELECT b0."name" AS "name", b0."body" AS "body", count(*) AS "__refcount" FROM "payload" b0 GROUP BY b0."name", b0."body") GROUP BY "name", "body"`, `UPDATE "echoed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_echoed" n WHERE n."name" = h."name" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "name", "body") SELECT -1, row_number() OVER () - 1, "name", "body" FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_echoed"`, `INSERT INTO "__new_echoed" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_echoed" n LEFT JOIN "echoed" h ON n."name" = h."name" AND n."body" = h."body" WHERE h."name" IS NULL`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "name", "body") SELECT 1, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT INTO "__frontier_echoed" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT INTO "__next_frontier_echoed" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT OR IGNORE INTO "echoed" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_echoed" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "labelled", ruleId: "json_top_level_scalar_document_is_a_value:labelled/2#1", headDeltaTableName: "__delta_labelled", headColumns: ["name", "body"], insertSql: `INSERT OR IGNORE INTO "labelled" ("name", "body") SELECT DISTINCT d0."name", d0."body" FROM "__frontier_label" d0 WHERE d0."_phase" >= 0 RETURNING "name", "body"`, selectSql: `SELECT "name", "body" FROM "labelled"`, recomputeSql: `DELETE FROM "labelled";
-INSERT OR IGNORE INTO "labelled" ("name", "body") SELECT b0."name", b0."body" FROM "label" b0`, supportSql: [`DELETE FROM "__support_next_labelled"`, `INSERT INTO "__support_next_labelled" ("name", "body", "__refcount") SELECT "name", "body", sum("__refcount") FROM (SELECT b0."name" AS "name", b0."body" AS "body", count(*) AS "__refcount" FROM "label" b0 GROUP BY b0."name", b0."body") GROUP BY "name", "body"`, `UPDATE "labelled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_labelled" n WHERE n."name" = h."name" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "name", "body") SELECT -1, row_number() OVER () - 1, "name", "body" FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_labelled"`, `INSERT INTO "__new_labelled" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_labelled" n LEFT JOIN "labelled" h ON n."name" = h."name" AND n."body" = h."body" WHERE h."name" IS NULL`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "name", "body") SELECT 1, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT INTO "__frontier_labelled" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT INTO "__next_frontier_labelled" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT OR IGNORE INTO "labelled" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_labelled" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "echoed", rule_id: "json_top_level_scalar_document_is_a_value:echoed/2#1", head_delta_table_name: "__delta_echoed", head_columns: ["name", "body"], insert_sql: `INSERT OR IGNORE INTO "echoed" ("name", "body") SELECT DISTINCT d0."name", d0."body" FROM "__frontier_payload" d0 WHERE d0."_phase" >= 0 RETURNING "name", "body"`, select_sql: `SELECT "name", "body" FROM "echoed"`, recompute_sql: `DELETE FROM "echoed";
+INSERT OR IGNORE INTO "echoed" ("name", "body") SELECT b0."name", b0."body" FROM "payload" b0`, support_sql: [`DELETE FROM "__support_next_echoed"`, `INSERT INTO "__support_next_echoed" ("name", "body", "__refcount") SELECT "name", "body", sum("__refcount") FROM (SELECT b0."name" AS "name", b0."body" AS "body", count(*) AS "__refcount" FROM "payload" b0 GROUP BY b0."name", b0."body") GROUP BY "name", "body"`, `UPDATE "echoed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_echoed" n WHERE n."name" = h."name" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "name", "body") SELECT -1, row_number() OVER () - 1, "name", "body" FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "echoed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_echoed"`, `INSERT INTO "__new_echoed" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_echoed" n LEFT JOIN "echoed" h ON n."name" = h."name" AND n."body" = h."body" WHERE h."name" IS NULL`, `INSERT INTO "__delta_echoed" ("_sign", "_sequence", "name", "body") SELECT 1, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT INTO "__frontier_echoed" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT INTO "__next_frontier_echoed" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_echoed"`, `INSERT OR IGNORE INTO "echoed" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_echoed" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "labelled", rule_id: "json_top_level_scalar_document_is_a_value:labelled/2#1", head_delta_table_name: "__delta_labelled", head_columns: ["name", "body"], insert_sql: `INSERT OR IGNORE INTO "labelled" ("name", "body") SELECT DISTINCT d0."name", d0."body" FROM "__frontier_label" d0 WHERE d0."_phase" >= 0 RETURNING "name", "body"`, select_sql: `SELECT "name", "body" FROM "labelled"`, recompute_sql: `DELETE FROM "labelled";
+INSERT OR IGNORE INTO "labelled" ("name", "body") SELECT b0."name", b0."body" FROM "label" b0`, support_sql: [`DELETE FROM "__support_next_labelled"`, `INSERT INTO "__support_next_labelled" ("name", "body", "__refcount") SELECT "name", "body", sum("__refcount") FROM (SELECT b0."name" AS "name", b0."body" AS "body", count(*) AS "__refcount" FROM "label" b0 GROUP BY b0."name", b0."body") GROUP BY "name", "body"`, `UPDATE "labelled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_labelled" n WHERE n."name" = h."name" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "name", "body") SELECT -1, row_number() OVER () - 1, "name", "body" FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_labelled"`, `INSERT INTO "__new_labelled" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_labelled" n LEFT JOIN "labelled" h ON n."name" = h."name" AND n."body" = h."body" WHERE h."name" IS NULL`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "name", "body") SELECT 1, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT INTO "__frontier_labelled" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT INTO "__next_frontier_labelled" ("_phase", "_sequence", "name", "body") SELECT ?, "rowid" - 1, "name", "body" FROM "__new_labelled"`, `INSERT OR IGNORE INTO "labelled" ("name", "body", "__refcount") SELECT n."name", n."body", n."__refcount" FROM "__support_next_labelled" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "echoed";
 INSERT OR IGNORE INTO "echoed" ("name", "body") SELECT b0."name", b0."body" FROM "payload" b0;
 DELETE FROM "labelled";
@@ -297,11 +297,11 @@ INSERT OR IGNORE INTO "labelled" ("name", "body") SELECT b0."name", b0."body" FR
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const echoed = multisetDiff(before.echoed, after.echoed);
-  const label = multisetDiff(before.label, after.label);
-  const labelled = multisetDiff(before.labelled, after.labelled);
-  const payload = multisetDiff(before.payload, after.payload);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const echoed = multiset_diff(before.echoed, after.echoed);
+  const label = multiset_diff(before.label, after.label);
+  const labelled = multiset_diff(before.labelled, after.labelled);
+  const payload = multiset_diff(before.payload, after.payload);
   return {
     rels: [
       { rel: "echoed", add: echoed.add, del: echoed.del },
@@ -309,15 +309,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "labelled", add: labelled.add, del: labelled.del },
       { rel: "payload", add: payload.add, del: payload.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // json_top_level_scalar_document_is_a_value: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -331,38 +331,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -371,16 +371,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "json_top_level_scalar_document_is_a_value",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

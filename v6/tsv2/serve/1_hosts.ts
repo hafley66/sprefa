@@ -44,7 +44,7 @@ import {
   toArray,
 } from "rxjs";
 
-import { selectRows } from "../runtime/rows.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalRow,
   IHostColumnPlan,
@@ -74,7 +74,7 @@ export const WitnessCache: IWitnessCache = {
     ];
   },
 
-  clearDeadLocks(seam: ISqlSeam): Observable<void> {
+  clear_dead_locks(seam: ISqlSeam): Observable<void> {
     return seam.runner
       .execute(seam.db, `DELETE FROM "${WITNESS_TABLE}" WHERE "state" = 'pending'`)
       .pipe(map(() => undefined));
@@ -89,13 +89,13 @@ export const WitnessCache: IWitnessCache = {
       .pipe(map((result) => new Set(result.rows.map((row) => String(row.witness_digest)))));
   },
 
-  claim(seam: ISqlSeam, host: string, witnessDigest: string): Observable<void> {
+  claim(seam: ISqlSeam, host: string, witness_digest: string): Observable<void> {
     return seam.runner
       .execute(seam.db, {
         sql:
           `INSERT INTO "${WITNESS_TABLE}" ("host", "witness_digest", "state") VALUES (?, ?, 'pending') ` +
           `ON CONFLICT("host", "witness_digest") DO NOTHING`,
-        args: [host, witnessDigest],
+        args: [host, witness_digest],
       })
       .pipe(map(() => undefined));
   },
@@ -103,7 +103,7 @@ export const WitnessCache: IWitnessCache = {
   settle(
     seam: ISqlSeam,
     host: string,
-    witnessDigest: string,
+    witness_digest: string,
     state: "done" | "error",
     rows: number,
   ): Observable<void> {
@@ -113,7 +113,7 @@ export const WitnessCache: IWitnessCache = {
           `INSERT INTO "${WITNESS_TABLE}" ("host", "witness_digest", "state", "response_rows") VALUES (?, ?, ?, ?) ` +
           `ON CONFLICT("host", "witness_digest") DO UPDATE SET "state" = excluded."state", ` +
           `"response_rows" = excluded."response_rows"`,
-        args: [host, witnessDigest, state, BigInt(rows)],
+        args: [host, witness_digest, state, BigInt(rows)],
       })
       .pipe(map(() => undefined));
   },
@@ -128,7 +128,7 @@ export const WitnessCache: IWitnessCache = {
 // the reference set).
 // ─────────────────────────────────────────────────────────────────────────────
 
-function shellText(value: IRowValue): string {
+function shell_text(value: IRowValue): string {
   return String(value);
 }
 
@@ -162,7 +162,7 @@ type QuoteContext = "bare" | "single" | "double";
  * A value carrying no metacharacters comes out unchanged in all three, which is
  * what keeps every shipped template's output byte identical.
  */
-function escapeForShell(value: string, context: QuoteContext): string {
+function escape_for_shell(value: string, context: QuoteContext): string {
   if (context === "single") return value.split("'").join(`'\\''`);
   if (context === "double") return value.replace(/[\\$`"]/g, (character) => `\\${character}`);
   return `'${value.split("'").join(`'\\''`)}'`;
@@ -206,7 +206,7 @@ function fillTemplate(template: string, inputs: ReadonlyMap<string, IRowValue>):
       const name = close === -1 ? null : template.slice(index + 1, close);
       const value = name === null ? undefined : inputs.get(name);
       if (value !== undefined) {
-        filled += escapeForShell(shellText(value), context);
+        filled += escape_for_shell(shell_text(value), context);
         index = close + 1;
         continue;
       }
@@ -219,7 +219,7 @@ function fillTemplate(template: string, inputs: ReadonlyMap<string, IRowValue>):
 
 function envForInputs(inputs: ReadonlyMap<string, IRowValue>): Record<string, string> {
   const variables: Record<string, string> = {};
-  for (const [name, value] of inputs) variables[name] = shellText(value);
+  for (const [name, value] of inputs) variables[name] = shell_text(value);
   return variables;
 }
 
@@ -441,7 +441,7 @@ function decodeOutput(host: string, stdout: string, outputs: readonly IHostColum
 /** One demand row, already split into the parts the run needs. */
 type HostDemand = {
   readonly plan: IHostPlan;
-  readonly witnessDigest: string;
+  readonly witness_digest: string;
   readonly inputs: ReadonlyMap<string, IRowValue>;
 };
 
@@ -535,17 +535,17 @@ export class HostRunner implements IHostRunner {
    *  already answered. `defer` holds the scan to subscribe time. */
   private bootDemand$(plans: readonly IHostPlan[]): Observable<readonly HostDemand[]> {
     return defer(() =>
-      WitnessCache.clearDeadLocks(this.seam).pipe(
+      WitnessCache.clear_dead_locks(this.seam).pipe(
         concatMap(() => from(plans)),
         concatMap((plan) =>
           WitnessCache.answered(this.seam, plan.name).pipe(
             concatMap((answered) =>
-              this.engine.rows(plan.demandRel).pipe(
+              this.engine.rows(plan.demand_rel).pipe(
                 concatMap((rows) => from(rows.map((row) => this.demandOf(plan, row)))),
                 filter((demand) => {
-                  if (!answered.has(demand.witnessDigest)) return true;
+                  if (!answered.has(demand.witness_digest)) return true;
                   this.claimOnce(demand);
-                  ServeTrace.effect(plan.name, demand.witnessDigest, "cache_hit", 0, 0);
+                  ServeTrace.effect(plan.name, demand.witness_digest, "cache_hit", 0, 0);
                   return false;
                 }),
               ),
@@ -559,7 +559,7 @@ export class HostRunner implements IHostRunner {
 
   /** The live half: this tick's +deltas on each demand rel. */
   private liveDemand$(plans: readonly IHostPlan[]): Observable<readonly HostDemand[]> {
-    const planByRel = new Map(plans.map((plan) => [plan.demandRel, plan]));
+    const planByRel = new Map(plans.map((plan) => [plan.demand_rel, plan]));
     return this.engine.ticks$.pipe(
       map((outcome) =>
         outcome.deltas.rels.flatMap((delta) => {
@@ -572,32 +572,32 @@ export class HostRunner implements IHostRunner {
   }
 
   private demandOf(plan: IHostPlan, row: IRow): HostDemand {
-    const columns = this.engine.program.relColumns[plan.demandRel] ?? [];
+    const columns = this.engine.program.rel_columns[plan.demand_rel] ?? [];
     const inputs = new Map<string, IRowValue>();
     for (const input of plan.inputs) {
       const index = columns.indexOf(input.name);
       inputs.set(input.name, index >= 0 ? (row[index] ?? "") : "");
     }
-    const witnessIndex = columns.indexOf("witness_digest");
-    return { plan, witnessDigest: String(row[witnessIndex] ?? ""), inputs };
+    const witness_index = columns.indexOf("witness_digest");
+    return { plan, witness_digest: String(row[witness_index] ?? ""), inputs };
   }
 
   private claimOnce(demand: HostDemand): boolean {
-    const key = `${demand.plan.name}|${demand.witnessDigest}`;
+    const key = `${demand.plan.name}|${demand.witness_digest}`;
     if (this.claimed.has(key)) return false;
     this.claimed.add(key);
     return true;
   }
 
   private project(demand: HostDemand, stdout: string): HostProjection {
-    const { plan, witnessDigest } = demand;
+    const { plan, witness_digest: witnessDigest } = demand;
     try {
       const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
-      const responseColumns = this.engine.program.relColumns[plan.responseRel] ?? [];
+      const response_columns = this.engine.program.rel_columns[plan.response_rel] ?? [];
       const arrivals: IArrivalRow[] = outputRows.map((outputRow, ordinal) => ({
-        rel: plan.responseRel,
+        rel: plan.response_rel,
         sign: "add" as const,
-        row: responseColumns.map((column) => {
+        row: response_columns.map((column) => {
           if (column === "witness_digest") return witnessDigest;
           if (column === "ordinal") return ordinal;
           const input = demand.inputs.get(column);
@@ -612,7 +612,7 @@ export class HostRunner implements IHostRunner {
   }
 
   private settleProjection(projection: HostProjection, startedAt: number): Observable<IHostEffectDone> {
-    const { plan, witnessDigest } = projection.demand;
+    const { plan, witness_digest: witnessDigest } = projection.demand;
     const outcome: "done" | "error" = projection.failure === undefined ? "done" : "error";
     const rows = projection.failure === undefined ? projection.arrivals.length : 0;
     return WitnessCache.settle(this.seam, plan.name, witnessDigest, outcome, rows).pipe(
@@ -625,7 +625,7 @@ export class HostRunner implements IHostRunner {
           performance.now() - startedAt,
           projection.failure,
         );
-        return { host: plan.name, witnessDigest, responseRows: rows, outcome };
+        return { host: plan.name, witness_digest: witnessDigest, response_rows: rows, outcome };
       }),
       catchError((settleFailure: unknown) => {
         ServeTrace.effect(
@@ -638,8 +638,8 @@ export class HostRunner implements IHostRunner {
         );
         return of({
           host: plan.name,
-          witnessDigest,
-          responseRows: 0,
+          witness_digest: witnessDigest,
+          response_rows: 0,
           outcome: "error" as const,
         });
       }),
@@ -667,7 +667,7 @@ export class HostRunner implements IHostRunner {
     const startedAt = performance.now();
     return from(invocation.demands).pipe(
       concatMap((demand) =>
-        WitnessCache.claim(this.seam, demand.plan.name, demand.witnessDigest),
+        WitnessCache.claim(this.seam, demand.plan.name, demand.witness_digest),
       ),
       toArray(),
       concatMap(() => {
@@ -702,7 +702,7 @@ export class HostRunner implements IHostRunner {
  *  endurance receipt, which reads the witness table directly to prove a cached
  *  witness did not refire. */
 export const witnessRows: IWitnessRows = (seam: ISqlSeam): Observable<readonly IRow[]> =>
-  selectRows(
+  select_rows(
     seam,
     `SELECT "host", "witness_digest", "state", "response_rows" FROM "${WITNESS_TABLE}" ORDER BY "host", "witness_digest"`,
     ["host", "witness_digest", "state", "response_rows"],

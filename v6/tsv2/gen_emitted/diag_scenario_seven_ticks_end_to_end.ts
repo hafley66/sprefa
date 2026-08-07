@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: diag_scenario_seven_ticks_end_to_end.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -234,7 +234,7 @@ const ddl: readonly string[] = [
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   diag_history: ["path", "line", "code", "opened_at"],
   diagnostic: ["path", "line", "code", "col4"],
   file_line: ["path", "line", "code"],
@@ -246,7 +246,7 @@ const relColumns: Record<string, readonly string[]> = {
   violation: ["code", "count", "allowed"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   diag_history: ["text", "int", "text", "int"],
   diagnostic: ["text", "int", "text", "text"],
   file_line: ["text", "int", "text"],
@@ -258,55 +258,55 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   violation: ["text", "int", "int"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "diag_scenario_seven_ticks_end_to_end", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "66c965addf71e1c5", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "diag_history", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "7b7c71272a2dbba1", hSchema: "5a601684de0c3671", hRule: "c1056feb3b833e1a" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8e4dc96a7c770421", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "line", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "16ba32d74a16ce5c", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 7, ordinal: 3, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "71dd92043088ff67", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 7, ordinal: 4, localName: "opened_at", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "d33a7a3c28bdc083", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 6, ordinal: 0, localName: "diagnostic", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "d3dd9bb9e9e7e770", hSchema: "623feea399d23b9c", hRule: "b2bccb2cde0a9d81" },
-  { relId: 13, parentId: 12, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5ab90e5a2567a3cd", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 12, ordinal: 2, localName: "line", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "58efcb0b68865909", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 12, ordinal: 3, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e4e534452c5362d9", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 12, ordinal: 4, localName: "col4", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c76a4122e69ea367", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 6, ordinal: 0, localName: "file_line", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "6f9f5fb63d9a6205", hSchema: "989daec0c6185a5b", hRule: "" },
-  { relId: 18, parentId: 17, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "914b14d2b786fbfc", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 17, ordinal: 2, localName: "line", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "d1783acb854c4f2a", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 17, ordinal: 3, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "914f17579d1bb82c", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 6, ordinal: 0, localName: "hook_window", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "7ae5248fc6966ae1", hSchema: "3f270d64f44285e7", hRule: "" },
-  { relId: 22, parentId: 21, ordinal: 1, localName: "turn", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2f4803310a02ce97", hSchema: "", hRule: "" },
-  { relId: 23, parentId: 21, ordinal: 2, localName: "since", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ffdf1e9dac8bb238", hSchema: "", hRule: "" },
-  { relId: 24, parentId: 6, ordinal: 0, localName: "lint_count", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "18db30b90fc73ab0", hSchema: "78a8731663ef8841", hRule: "9e0917ba490d9bc1" },
-  { relId: 25, parentId: 24, ordinal: 1, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c8aa8d2c390c0843", hSchema: "", hRule: "" },
-  { relId: 26, parentId: 24, ordinal: 2, localName: "count", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "9cff1f7cc41bac37", hSchema: "", hRule: "" },
-  { relId: 27, parentId: 6, ordinal: 0, localName: "ratchet", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "dc78f683e2d29652", hSchema: "40563a457ad28d90", hRule: "" },
-  { relId: 28, parentId: 27, ordinal: 1, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e63ad2d4ce2fe859", hSchema: "", hRule: "" },
-  { relId: 29, parentId: 27, ordinal: 2, localName: "allowed", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "4cd2e4e36c207d61", hSchema: "", hRule: "" },
-  { relId: 30, parentId: 6, ordinal: 0, localName: "turn_diag", kind: "rel", typeId: 0, arity: 5, moduleId: 6, hId: "5709b20f0a588b54", hSchema: "a0efd6d936f97d54", hRule: "d8c675e74e086957" },
-  { relId: 31, parentId: 30, ordinal: 1, localName: "turn", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f73e95f7c9b72a2c", hSchema: "", hRule: "" },
-  { relId: 32, parentId: 30, ordinal: 2, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "89386e59959e27e2", hSchema: "", hRule: "" },
-  { relId: 33, parentId: 30, ordinal: 3, localName: "line", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e6999a9a22d4cfbb", hSchema: "", hRule: "" },
-  { relId: 34, parentId: 30, ordinal: 4, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8810b165779ee77e", hSchema: "", hRule: "" },
-  { relId: 35, parentId: 30, ordinal: 5, localName: "opened_at", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "a737ded8e3b9747f", hSchema: "", hRule: "" },
-  { relId: 36, parentId: 6, ordinal: 0, localName: "unratcheted_lint", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "d5a7c9bc8d4361ca", hSchema: "78a8731663ef8841", hRule: "e90b06a5dc41997f" },
-  { relId: 37, parentId: 36, ordinal: 1, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "400bcd0c7dc882be", hSchema: "", hRule: "" },
-  { relId: 38, parentId: 36, ordinal: 2, localName: "count", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ce917e1f1b810580", hSchema: "", hRule: "" },
-  { relId: 39, parentId: 6, ordinal: 0, localName: "violation", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "e370e68c643bc197", hSchema: "8d9d8ed3c760d9b2", hRule: "8cfac5fceb4750dd" },
-  { relId: 40, parentId: 39, ordinal: 1, localName: "code", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d499678025eace78", hSchema: "", hRule: "" },
-  { relId: 41, parentId: 39, ordinal: 2, localName: "count", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "62fd8ccace087f95", hSchema: "", hRule: "" },
-  { relId: 42, parentId: 39, ordinal: 3, localName: "allowed", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "5ffb2479a5175090", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "diag_scenario_seven_ticks_end_to_end", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "66c965addf71e1c5", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "diag_history", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "7b7c71272a2dbba1", h_schema: "5a601684de0c3671", h_rule: "c1056feb3b833e1a" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8e4dc96a7c770421", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "line", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "16ba32d74a16ce5c", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "71dd92043088ff67", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 4, local_name: "opened_at", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d33a7a3c28bdc083", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "diagnostic", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "d3dd9bb9e9e7e770", h_schema: "623feea399d23b9c", h_rule: "b2bccb2cde0a9d81" },
+  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "5ab90e5a2567a3cd", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "line", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "58efcb0b68865909", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 12, ordinal: 3, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "e4e534452c5362d9", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 12, ordinal: 4, local_name: "col4", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c76a4122e69ea367", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 6, ordinal: 0, local_name: "file_line", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "6f9f5fb63d9a6205", h_schema: "989daec0c6185a5b", h_rule: "" },
+  { rel_id: 18, parent_id: 17, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "914b14d2b786fbfc", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 17, ordinal: 2, local_name: "line", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d1783acb854c4f2a", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 17, ordinal: 3, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "914f17579d1bb82c", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 6, ordinal: 0, local_name: "hook_window", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "7ae5248fc6966ae1", h_schema: "3f270d64f44285e7", h_rule: "" },
+  { rel_id: 22, parent_id: 21, ordinal: 1, local_name: "turn", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "2f4803310a02ce97", h_schema: "", h_rule: "" },
+  { rel_id: 23, parent_id: 21, ordinal: 2, local_name: "since", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ffdf1e9dac8bb238", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 6, ordinal: 0, local_name: "lint_count", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "18db30b90fc73ab0", h_schema: "78a8731663ef8841", h_rule: "9e0917ba490d9bc1" },
+  { rel_id: 25, parent_id: 24, ordinal: 1, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c8aa8d2c390c0843", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 24, ordinal: 2, local_name: "count", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "9cff1f7cc41bac37", h_schema: "", h_rule: "" },
+  { rel_id: 27, parent_id: 6, ordinal: 0, local_name: "ratchet", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "dc78f683e2d29652", h_schema: "40563a457ad28d90", h_rule: "" },
+  { rel_id: 28, parent_id: 27, ordinal: 1, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "e63ad2d4ce2fe859", h_schema: "", h_rule: "" },
+  { rel_id: 29, parent_id: 27, ordinal: 2, local_name: "allowed", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4cd2e4e36c207d61", h_schema: "", h_rule: "" },
+  { rel_id: 30, parent_id: 6, ordinal: 0, local_name: "turn_diag", kind: "rel", type_id: 0, arity: 5, module_id: 6, h_id: "5709b20f0a588b54", h_schema: "a0efd6d936f97d54", h_rule: "d8c675e74e086957" },
+  { rel_id: 31, parent_id: 30, ordinal: 1, local_name: "turn", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f73e95f7c9b72a2c", h_schema: "", h_rule: "" },
+  { rel_id: 32, parent_id: 30, ordinal: 2, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "89386e59959e27e2", h_schema: "", h_rule: "" },
+  { rel_id: 33, parent_id: 30, ordinal: 3, local_name: "line", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e6999a9a22d4cfbb", h_schema: "", h_rule: "" },
+  { rel_id: 34, parent_id: 30, ordinal: 4, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8810b165779ee77e", h_schema: "", h_rule: "" },
+  { rel_id: 35, parent_id: 30, ordinal: 5, local_name: "opened_at", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "a737ded8e3b9747f", h_schema: "", h_rule: "" },
+  { rel_id: 36, parent_id: 6, ordinal: 0, local_name: "unratcheted_lint", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "d5a7c9bc8d4361ca", h_schema: "78a8731663ef8841", h_rule: "e90b06a5dc41997f" },
+  { rel_id: 37, parent_id: 36, ordinal: 1, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "400bcd0c7dc882be", h_schema: "", h_rule: "" },
+  { rel_id: 38, parent_id: 36, ordinal: 2, local_name: "count", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ce917e1f1b810580", h_schema: "", h_rule: "" },
+  { rel_id: 39, parent_id: 6, ordinal: 0, local_name: "violation", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "e370e68c643bc197", h_schema: "8d9d8ed3c760d9b2", h_rule: "8cfac5fceb4750dd" },
+  { rel_id: 40, parent_id: 39, ordinal: 1, local_name: "code", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d499678025eace78", h_schema: "", h_rule: "" },
+  { rel_id: 41, parent_id: 39, ordinal: 2, local_name: "count", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "62fd8ccace087f95", h_schema: "", h_rule: "" },
+  { rel_id: 42, parent_id: 39, ordinal: 3, local_name: "allowed", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "5ffb2479a5175090", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["file_line", "hook_window", "ratchet"];
+const arrival_targets: readonly string[] = ["file_line", "hook_window", "ratchet"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "diagnostic", sql: `DELETE FROM "diagnostic"`, params: [] },
@@ -333,21 +333,21 @@ type Snapshot = {
   readonly violation: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    diag_history: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at" FROM "diag_history"`, relColumns.diag_history!, relColumnTypes.diag_history!),
-    diagnostic: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' AND json_type("col4", '$.fn') = 'text' AND json_type("col4", '$.args') = 'array' THEN json_extract("col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col4", '$.args')), '') || ')' ELSE "col4" END AS "col4" FROM "diagnostic"`, relColumns.diagnostic!, relColumnTypes.diagnostic!),
-    file_line: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code" FROM "file_line"`, relColumns.file_line!, relColumnTypes.file_line!),
-    hook_window: selectRows(seam, `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", "since" FROM "hook_window"`, relColumns.hook_window!, relColumnTypes.hook_window!),
-    lint_count: selectRows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count" FROM "lint_count"`, relColumns.lint_count!, relColumnTypes.lint_count!),
-    ratchet: selectRows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "allowed" FROM "ratchet"`, relColumns.ratchet!, relColumnTypes.ratchet!),
-    turn_diag: selectRows(seam, `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at" FROM "turn_diag"`, relColumns.turn_diag!, relColumnTypes.turn_diag!),
-    unratcheted_lint: selectRows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count" FROM "unratcheted_lint"`, relColumns.unratcheted_lint!, relColumnTypes.unratcheted_lint!),
-    violation: selectRows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "allowed" FROM "violation"`, relColumns.violation!, relColumnTypes.violation!),
+    diag_history: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at" FROM "diag_history"`, rel_columns.diag_history!, rel_column_types.diag_history!),
+    diagnostic: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' AND json_type("col4", '$.fn') = 'text' AND json_type("col4", '$.args') = 'array' THEN json_extract("col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col4", '$.args')), '') || ')' ELSE "col4" END AS "col4" FROM "diagnostic"`, rel_columns.diagnostic!, rel_column_types.diagnostic!),
+    file_line: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code" FROM "file_line"`, rel_columns.file_line!, rel_column_types.file_line!),
+    hook_window: select_rows(seam, `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", "since" FROM "hook_window"`, rel_columns.hook_window!, rel_column_types.hook_window!),
+    lint_count: select_rows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count" FROM "lint_count"`, rel_columns.lint_count!, rel_column_types.lint_count!),
+    ratchet: select_rows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "allowed" FROM "ratchet"`, rel_columns.ratchet!, rel_column_types.ratchet!),
+    turn_diag: select_rows(seam, `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at" FROM "turn_diag"`, rel_columns.turn_diag!, rel_column_types.turn_diag!),
+    unratcheted_lint: select_rows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count" FROM "unratcheted_lint"`, rel_columns.unratcheted_lint!, rel_column_types.unratcheted_lint!),
+    violation: select_rows(seam, `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "allowed" FROM "violation"`, rel_columns.violation!, rel_column_types.violation!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   diag_history: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at" FROM "diag_history"`,
   diagnostic: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' AND json_type("col4", '$.fn') = 'text' AND json_type("col4", '$.args') = 'array' THEN json_extract("col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col4", '$.args')), '') || ')' ELSE "col4" END AS "col4" FROM "diagnostic"`,
   file_line: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code" FROM "file_line"`,
@@ -359,13 +359,13 @@ const finalSelect: Record<string, string> = {
   violation: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "allowed" FROM "violation"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  file_line: { kind: "set", addSql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") VALUES (?, ?, ?)`, delSql: `DELETE FROM "file_line" WHERE "path" = ? AND "line" = ? AND "code" = ?` },
-  hook_window: { kind: "set", addSql: `INSERT INTO "hook_window" ("turn", "since") VALUES (?, ?) ON CONFLICT ("turn") DO UPDATE SET "since" = excluded."since"`, delSql: `DELETE FROM "hook_window" WHERE "turn" = ? AND "since" = ?` },
-  ratchet: { kind: "set", addSql: `INSERT INTO "ratchet" ("code", "allowed") VALUES (?, ?) ON CONFLICT ("code") DO UPDATE SET "allowed" = excluded."allowed"`, delSql: `DELETE FROM "ratchet" WHERE "code" = ? AND "allowed" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  file_line: { kind: "set", add_sql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "file_line" WHERE "path" = ? AND "line" = ? AND "code" = ?` },
+  hook_window: { kind: "set", add_sql: `INSERT INTO "hook_window" ("turn", "since") VALUES (?, ?) ON CONFLICT ("turn") DO UPDATE SET "since" = excluded."since"`, del_sql: `DELETE FROM "hook_window" WHERE "turn" = ? AND "since" = ?` },
+  ratchet: { kind: "set", add_sql: `INSERT INTO "ratchet" ("code", "allowed") VALUES (?, ?) ON CONFLICT ("code") DO UPDATE SET "allowed" = excluded."allowed"`, del_sql: `DELETE FROM "ratchet" WHERE "code" = ? AND "allowed" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`diag_scenario_seven_ticks_end_to_end: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -374,46 +374,46 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`diag_scenario_seven_ticks_end_to_end: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`diag_scenario_seven_ticks_end_to_end: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "diag_history", kind: "log", tableName: "diag_history", deltaTableName: "__delta_diag_history", frontierTableName: "__frontier_diag_history", nextFrontierTableName: "__next_frontier_diag_history", columns: ["path", "line", "code", "opened_at"], columnTypes: ["text", "int", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_history" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "opened_at", "_sign"`, ruleObservers: ["turn_diag/5"] },
-  { rel: "diagnostic", kind: "set", tableName: "diagnostic", deltaTableName: "__delta_diagnostic", frontierTableName: "__frontier_diagnostic", nextFrontierTableName: "__next_frontier_diagnostic", columns: ["path", "line", "code", "col4"], columnTypes: ["text", "int", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' AND json_type("col4", '$.fn') = 'text' AND json_type("col4", '$.args') = 'array' THEN json_extract("col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col4", '$.args')), '') || ')' ELSE "col4" END AS "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diagnostic" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "col4", "_sign"`, ruleObservers: ["diag_history/4", "lint_count/2", "turn_diag/5"] },
-  { rel: "file_line", kind: "set", tableName: "file_line", deltaTableName: "__delta_file_line", frontierTableName: "__frontier_file_line", nextFrontierTableName: "__next_frontier_file_line", columns: ["path", "line", "code"], columnTypes: ["text", "int", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "code"`, arrivalDelSql: `DELETE FROM "file_line" WHERE ("path", "line", "code") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "code"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "_sign"`, ruleObservers: ["diagnostic/4"] },
-  { rel: "hook_window", kind: "set", tableName: "hook_window", deltaTableName: "__delta_hook_window", frontierTableName: "__frontier_hook_window", nextFrontierTableName: "__next_frontier_hook_window", columns: ["turn", "since"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: `INSERT INTO "hook_window" ("turn", "since") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("turn") DO UPDATE SET "since" = excluded."since" RETURNING "turn", "since"`, arrivalDelSql: `DELETE FROM "hook_window" WHERE ("turn", "since") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "turn", "since"`, boundarySql: `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", "since", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hook_window" WHERE "_sign" IN (-1, 1) GROUP BY "turn", "since", "_sign"`, ruleObservers: ["turn_diag/5"] },
-  { rel: "lint_count", kind: "set", tableName: "lint_count", deltaTableName: "__delta_lint_count", frontierTableName: "__frontier_lint_count", nextFrontierTableName: "__next_frontier_lint_count", columns: ["code", "count"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_lint_count" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "_sign"`, ruleObservers: ["unratcheted_lint/2", "violation/3"] },
-  { rel: "ratchet", kind: "set", tableName: "ratchet", deltaTableName: "__delta_ratchet", frontierTableName: "__frontier_ratchet", nextFrontierTableName: "__next_frontier_ratchet", columns: ["code", "allowed"], columnTypes: ["text", "int"], keyIndices: [0], arrivalAddSql: `INSERT INTO "ratchet" ("code", "allowed") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("code") DO UPDATE SET "allowed" = excluded."allowed" RETURNING "code", "allowed"`, arrivalDelSql: `DELETE FROM "ratchet" WHERE ("code", "allowed") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "code", "allowed"`, boundarySql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "allowed", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ratchet" WHERE "_sign" IN (-1, 1) GROUP BY "code", "allowed", "_sign"`, ruleObservers: ["violation/3"] },
-  { rel: "turn_diag", kind: "set", tableName: "turn_diag", deltaTableName: "__delta_turn_diag", frontierTableName: "__frontier_turn_diag", nextFrontierTableName: "__next_frontier_turn_diag", columns: ["turn", "path", "line", "code", "opened_at"], columnTypes: ["text", "text", "int", "text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_turn_diag" WHERE "_sign" IN (-1, 1) GROUP BY "turn", "path", "line", "code", "opened_at", "_sign"`, ruleObservers: [] },
-  { rel: "unratcheted_lint", kind: "set", tableName: "unratcheted_lint", deltaTableName: "__delta_unratcheted_lint", frontierTableName: "__frontier_unratcheted_lint", nextFrontierTableName: "__next_frontier_unratcheted_lint", columns: ["code", "count"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_unratcheted_lint" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "_sign"`, ruleObservers: [] },
-  { rel: "violation", kind: "set", tableName: "violation", deltaTableName: "__delta_violation", frontierTableName: "__frontier_violation", nextFrontierTableName: "__next_frontier_violation", columns: ["code", "count", "allowed"], columnTypes: ["text", "int", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "allowed", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_violation" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "allowed", "_sign"`, ruleObservers: [] },
+  { rel: "diag_history", kind: "log", table_name: "diag_history", delta_table_name: "__delta_diag_history", frontier_table_name: "__frontier_diag_history", next_frontier_table_name: "__next_frontier_diag_history", columns: ["path", "line", "code", "opened_at"], column_types: ["text", "int", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diag_history" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "opened_at", "_sign"`, rule_observers: ["turn_diag/5"] },
+  { rel: "diagnostic", kind: "set", table_name: "diagnostic", delta_table_name: "__delta_diagnostic", frontier_table_name: "__frontier_diagnostic", next_frontier_table_name: "__next_frontier_diagnostic", columns: ["path", "line", "code", "col4"], column_types: ["text", "int", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", CASE WHEN json_valid("col4") AND json_type("col4") = 'object' AND json_type("col4", '$.fn') = 'text' AND json_type("col4", '$.args') = 'array' THEN json_extract("col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col4", '$.args')), '') || ')' ELSE "col4" END AS "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_diagnostic" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "col4", "_sign"`, rule_observers: ["diag_history/4", "lint_count/2", "turn_diag/5"] },
+  { rel: "file_line", kind: "set", table_name: "file_line", delta_table_name: "__delta_file_line", frontier_table_name: "__frontier_file_line", next_frontier_table_name: "__next_frontier_file_line", columns: ["path", "line", "code"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "file_line" ("path", "line", "code") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "code"`, arrival_del_sql: `DELETE FROM "file_line" WHERE ("path", "line", "code") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "code"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "code", "_sign"`, rule_observers: ["diagnostic/4"] },
+  { rel: "hook_window", kind: "set", table_name: "hook_window", delta_table_name: "__delta_hook_window", frontier_table_name: "__frontier_hook_window", next_frontier_table_name: "__next_frontier_hook_window", columns: ["turn", "since"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "hook_window" ("turn", "since") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("turn") DO UPDATE SET "since" = excluded."since" RETURNING "turn", "since"`, arrival_del_sql: `DELETE FROM "hook_window" WHERE ("turn", "since") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "turn", "since"`, boundary_sql: `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", "since", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hook_window" WHERE "_sign" IN (-1, 1) GROUP BY "turn", "since", "_sign"`, rule_observers: ["turn_diag/5"] },
+  { rel: "lint_count", kind: "set", table_name: "lint_count", delta_table_name: "__delta_lint_count", frontier_table_name: "__frontier_lint_count", next_frontier_table_name: "__next_frontier_lint_count", columns: ["code", "count"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_lint_count" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "_sign"`, rule_observers: ["unratcheted_lint/2", "violation/3"] },
+  { rel: "ratchet", kind: "set", table_name: "ratchet", delta_table_name: "__delta_ratchet", frontier_table_name: "__frontier_ratchet", next_frontier_table_name: "__next_frontier_ratchet", columns: ["code", "allowed"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "ratchet" ("code", "allowed") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("code") DO UPDATE SET "allowed" = excluded."allowed" RETURNING "code", "allowed"`, arrival_del_sql: `DELETE FROM "ratchet" WHERE ("code", "allowed") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "code", "allowed"`, boundary_sql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "allowed", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ratchet" WHERE "_sign" IN (-1, 1) GROUP BY "code", "allowed", "_sign"`, rule_observers: ["violation/3"] },
+  { rel: "turn_diag", kind: "set", table_name: "turn_diag", delta_table_name: "__delta_turn_diag", frontier_table_name: "__frontier_turn_diag", next_frontier_table_name: "__next_frontier_turn_diag", columns: ["turn", "path", "line", "code", "opened_at"], column_types: ["text", "text", "int", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn") AND json_type("turn") = 'object' AND json_type("turn", '$.fn') = 'text' AND json_type("turn", '$.args') = 'array' THEN json_extract("turn", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn", '$.args')), '') || ')' ELSE "turn" END AS "turn", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "opened_at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_turn_diag" WHERE "_sign" IN (-1, 1) GROUP BY "turn", "path", "line", "code", "opened_at", "_sign"`, rule_observers: [] },
+  { rel: "unratcheted_lint", kind: "set", table_name: "unratcheted_lint", delta_table_name: "__delta_unratcheted_lint", frontier_table_name: "__frontier_unratcheted_lint", next_frontier_table_name: "__next_frontier_unratcheted_lint", columns: ["code", "count"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_unratcheted_lint" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "_sign"`, rule_observers: [] },
+  { rel: "violation", kind: "set", table_name: "violation", delta_table_name: "__delta_violation", frontier_table_name: "__frontier_violation", next_frontier_table_name: "__next_frontier_violation", columns: ["code", "count", "allowed"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("code") AND json_type("code") = 'object' AND json_type("code", '$.fn') = 'text' AND json_type("code", '$.args') = 'array' THEN json_extract("code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("code", '$.args')), '') || ')' ELSE "code" END AS "code", "count", "allowed", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_violation" WHERE "_sign" IN (-1, 1) GROUP BY "code", "count", "allowed", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "diag_history", ruleId: "diag_scenario_seven_ticks_end_to_end:diag_history/4#1", headKind: "log", headTableName: "diag_history", headDeltaTableName: "__delta_diag_history", headColumns: ["path", "line", "code", "opened_at"], keyIndices: [], projectSql: `SELECT d0."path" AS "path", d0."line" AS "line", d0."code" AS "code", (SELECT "n" FROM "__tick") AS "opened_at" FROM "__frontier_diagnostic" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "diag_history", rule_id: "diag_scenario_seven_ticks_end_to_end:diag_history/4#1", head_kind: "log", head_table_name: "diag_history", head_delta_table_name: "__delta_diag_history", head_columns: ["path", "line", "code", "opened_at"], key_indices: [], project_sql: `SELECT d0."path" AS "path", d0."line" AS "line", d0."code" AS "code", (SELECT "n" FROM "__tick") AS "opened_at" FROM "__frontier_diagnostic" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "diagnostic", ruleId: "diag_scenario_seven_ticks_end_to_end:diagnostic/4#1", headDeltaTableName: "__delta_diagnostic", headColumns: ["path", "line", "code", "col4"], insertSql: `INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT DISTINCT d0."path", d0."line", d0."code", 'warning' FROM "__frontier_file_line" d0 WHERE d0."_phase" >= 0 AND (d0."code" <> 'none') RETURNING "path", "line", "code", "col4"`, selectSql: `SELECT "path", "line", "code", "col4" FROM "diagnostic"`, recomputeSql: `DELETE FROM "diagnostic";
-INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT b0."path", b0."line", b0."code", 'warning' FROM "file_line" b0 WHERE (b0."code" <> 'none')`, supportSql: [`DELETE FROM "__support_next_diagnostic"`, `INSERT INTO "__support_next_diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT "path", "line", "code", "col4", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."line" AS "line", b0."code" AS "code", 'warning' AS "col4", count(*) AS "__refcount" FROM "file_line" b0 WHERE (b0."code" <> 'none') GROUP BY b0."path", b0."line", b0."code", 'warning') GROUP BY "path", "line", "code", "col4"`, `UPDATE "diagnostic" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_diagnostic" n WHERE n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."col4" = h."col4"), 0)`, `INSERT INTO "__delta_diagnostic" ("_sign", "_sequence", "path", "line", "code", "col4") SELECT -1, row_number() OVER () - 1, "path", "line", "code", "col4" FROM "diagnostic" WHERE "__refcount" <= 0`, `DELETE FROM "diagnostic" WHERE "__refcount" <= 0`, `DELETE FROM "__new_diagnostic"`, `INSERT INTO "__new_diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT n."path", n."line", n."code", n."col4", n."__refcount" FROM "__support_next_diagnostic" n LEFT JOIN "diagnostic" h ON n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."col4" = h."col4" WHERE h."path" IS NULL`, `INSERT INTO "__delta_diagnostic" ("_sign", "_sequence", "path", "line", "code", "col4") SELECT 1, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT INTO "__frontier_diagnostic" ("_phase", "_sequence", "path", "line", "code", "col4") SELECT ?, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT INTO "__next_frontier_diagnostic" ("_phase", "_sequence", "path", "line", "code", "col4") SELECT ?, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT n."path", n."line", n."code", n."col4", n."__refcount" FROM "__support_next_diagnostic" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "turn_diag", ruleId: "diag_scenario_seven_ticks_end_to_end:turn_diag/5#1", headDeltaTableName: "__delta_turn_diag", headColumns: ["turn", "path", "line", "code", "opened_at"], insertSql: `INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT DISTINCT d0."turn", b0."path", b0."line", b0."code", b1."opened_at" FROM "__frontier_hook_window" d0, "diagnostic" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = b0."path" AND b1."line" = b0."line" AND b1."code" = b0."code" AND (b1."opened_at" > d0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", b1."opened_at" FROM "__frontier_diagnostic" d0, "hook_window" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (b1."opened_at" > b0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", d0."opened_at" FROM "__frontier_diag_history" d0, "hook_window" b0, "diagnostic" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (d0."opened_at" > b0."since") RETURNING "turn", "path", "line", "code", "opened_at"`, selectSql: `SELECT "turn", "path", "line", "code", "opened_at" FROM "turn_diag"`, recomputeSql: `DELETE FROM "turn_diag";
-INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT b0."turn", b1."path", b1."line", b1."code", b2."opened_at" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since")`, supportSql: [`DELETE FROM "__support_next_turn_diag"`, `INSERT INTO "__support_next_turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT "turn", "path", "line", "code", "opened_at", sum("__refcount") FROM (SELECT b0."turn" AS "turn", b1."path" AS "path", b1."line" AS "line", b1."code" AS "code", b2."opened_at" AS "opened_at", count(*) AS "__refcount" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since") GROUP BY b0."turn", b1."path", b1."line", b1."code", b2."opened_at") GROUP BY "turn", "path", "line", "code", "opened_at"`, `UPDATE "turn_diag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_turn_diag" n WHERE n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at"), 0)`, `INSERT INTO "__delta_turn_diag" ("_sign", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT -1, row_number() OVER () - 1, "turn", "path", "line", "code", "opened_at" FROM "turn_diag" WHERE "__refcount" <= 0`, `DELETE FROM "turn_diag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_turn_diag"`, `INSERT INTO "__new_turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT n."turn", n."path", n."line", n."code", n."opened_at", n."__refcount" FROM "__support_next_turn_diag" n LEFT JOIN "turn_diag" h ON n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at" WHERE h."turn" IS NULL`, `INSERT INTO "__delta_turn_diag" ("_sign", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT 1, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT INTO "__frontier_turn_diag" ("_phase", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT ?, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT INTO "__next_frontier_turn_diag" ("_phase", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT ?, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT n."turn", n."path", n."line", n."code", n."opened_at", n."__refcount" FROM "__support_next_turn_diag" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "lint_count", ruleId: "diag_scenario_seven_ticks_end_to_end:lint_count/2#1", headDeltaTableName: "__delta_lint_count", headColumns: ["code", "count"], insertSql: null, selectSql: `SELECT "code", "count" FROM "lint_count"`, recomputeSql: `DELETE FROM "lint_count";
-INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 GROUP BY b0."code" HAVING count(*) > 0`, supportSql: null, expandSql: null, dredSql: null, aggregateSql: { scopeClearSql: `DELETE FROM "__agg_scope_lint_count"`, scopeSeedSql: [`INSERT OR IGNORE INTO "__agg_scope_lint_count" ("code") SELECT DISTINCT d0."code" FROM "__delta_diagnostic" d0 WHERE d0."_sign" IN (-1, 1)`], deleteScopedSql: `DELETE FROM "lint_count" WHERE ("code") IN (SELECT "code" FROM "__agg_scope_lint_count") RETURNING "code", "count"`, insertScopedSql: [`INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 WHERE (b0."code") IN (SELECT "code" FROM "__agg_scope_lint_count") GROUP BY b0."code" HAVING count(*) > 0 RETURNING "code", "count"`], deltaMaintained: false } },
-  { headRel: "unratcheted_lint", ruleId: "diag_scenario_seven_ticks_end_to_end:unratcheted_lint/2#1", headDeltaTableName: "__delta_unratcheted_lint", headColumns: ["code", "count"], insertSql: `INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT DISTINCT d0."code", d0."count" FROM "__frontier_lint_count" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = d0."code") RETURNING "code", "count"`, selectSql: `SELECT "code", "count" FROM "unratcheted_lint"`, recomputeSql: `DELETE FROM "unratcheted_lint";
-INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT b0."code", b0."count" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code")`, supportSql: [`DELETE FROM "__support_next_unratcheted_lint"`, `INSERT INTO "__support_next_unratcheted_lint" ("code", "count", "__refcount") SELECT "code", "count", sum("__refcount") FROM (SELECT b0."code" AS "code", b0."count" AS "count", count(*) AS "__refcount" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code") GROUP BY b0."code", b0."count") GROUP BY "code", "count"`, `UPDATE "unratcheted_lint" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_unratcheted_lint" n WHERE n."code" = h."code" AND n."count" = h."count"), 0)`, `INSERT INTO "__delta_unratcheted_lint" ("_sign", "_sequence", "code", "count") SELECT -1, row_number() OVER () - 1, "code", "count" FROM "unratcheted_lint" WHERE "__refcount" <= 0`, `DELETE FROM "unratcheted_lint" WHERE "__refcount" <= 0`, `DELETE FROM "__new_unratcheted_lint"`, `INSERT INTO "__new_unratcheted_lint" ("code", "count", "__refcount") SELECT n."code", n."count", n."__refcount" FROM "__support_next_unratcheted_lint" n LEFT JOIN "unratcheted_lint" h ON n."code" = h."code" AND n."count" = h."count" WHERE h."code" IS NULL`, `INSERT INTO "__delta_unratcheted_lint" ("_sign", "_sequence", "code", "count") SELECT 1, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT INTO "__frontier_unratcheted_lint" ("_phase", "_sequence", "code", "count") SELECT ?, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT INTO "__next_frontier_unratcheted_lint" ("_phase", "_sequence", "code", "count") SELECT ?, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count", "__refcount") SELECT n."code", n."count", n."__refcount" FROM "__support_next_unratcheted_lint" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "violation", ruleId: "diag_scenario_seven_ticks_end_to_end:violation/3#1", headDeltaTableName: "__delta_violation", headColumns: ["code", "count", "allowed"], insertSql: `INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT DISTINCT d0."code", d0."count", b0."allowed" FROM "__frontier_lint_count" d0, "ratchet" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (d0."count" > b0."allowed") UNION ALL SELECT DISTINCT d0."code", b0."count", d0."allowed" FROM "__frontier_ratchet" d0, "lint_count" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (b0."count" > d0."allowed") RETURNING "code", "count", "allowed"`, selectSql: `SELECT "code", "count", "allowed" FROM "violation"`, recomputeSql: `DELETE FROM "violation";
-INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT b0."code", b0."count", b1."allowed" FROM "lint_count" b0, "ratchet" b1 WHERE b1."code" = b0."code" AND (b0."count" > b1."allowed")`, supportSql: [`DELETE FROM "__support_next_violation"`, `INSERT INTO "__support_next_violation" ("code", "count", "allowed", "__refcount") SELECT "code", "count", "allowed", sum("__refcount") FROM (SELECT b0."code" AS "code", b0."count" AS "count", b1."allowed" AS "allowed", count(*) AS "__refcount" FROM "lint_count" b0, "ratchet" b1 WHERE b1."code" = b0."code" AND (b0."count" > b1."allowed") GROUP BY b0."code", b0."count", b1."allowed") GROUP BY "code", "count", "allowed"`, `UPDATE "violation" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_violation" n WHERE n."code" = h."code" AND n."count" = h."count" AND n."allowed" = h."allowed"), 0)`, `INSERT INTO "__delta_violation" ("_sign", "_sequence", "code", "count", "allowed") SELECT -1, row_number() OVER () - 1, "code", "count", "allowed" FROM "violation" WHERE "__refcount" <= 0`, `DELETE FROM "violation" WHERE "__refcount" <= 0`, `DELETE FROM "__new_violation"`, `INSERT INTO "__new_violation" ("code", "count", "allowed", "__refcount") SELECT n."code", n."count", n."allowed", n."__refcount" FROM "__support_next_violation" n LEFT JOIN "violation" h ON n."code" = h."code" AND n."count" = h."count" AND n."allowed" = h."allowed" WHERE h."code" IS NULL`, `INSERT INTO "__delta_violation" ("_sign", "_sequence", "code", "count", "allowed") SELECT 1, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT INTO "__frontier_violation" ("_phase", "_sequence", "code", "count", "allowed") SELECT ?, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT INTO "__next_frontier_violation" ("_phase", "_sequence", "code", "count", "allowed") SELECT ?, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT OR IGNORE INTO "violation" ("code", "count", "allowed", "__refcount") SELECT n."code", n."count", n."allowed", n."__refcount" FROM "__support_next_violation" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "diagnostic", rule_id: "diag_scenario_seven_ticks_end_to_end:diagnostic/4#1", head_delta_table_name: "__delta_diagnostic", head_columns: ["path", "line", "code", "col4"], insert_sql: `INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT DISTINCT d0."path", d0."line", d0."code", 'warning' FROM "__frontier_file_line" d0 WHERE d0."_phase" >= 0 AND (d0."code" <> 'none') RETURNING "path", "line", "code", "col4"`, select_sql: `SELECT "path", "line", "code", "col4" FROM "diagnostic"`, recompute_sql: `DELETE FROM "diagnostic";
+INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT b0."path", b0."line", b0."code", 'warning' FROM "file_line" b0 WHERE (b0."code" <> 'none')`, support_sql: [`DELETE FROM "__support_next_diagnostic"`, `INSERT INTO "__support_next_diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT "path", "line", "code", "col4", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."line" AS "line", b0."code" AS "code", 'warning' AS "col4", count(*) AS "__refcount" FROM "file_line" b0 WHERE (b0."code" <> 'none') GROUP BY b0."path", b0."line", b0."code", 'warning') GROUP BY "path", "line", "code", "col4"`, `UPDATE "diagnostic" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_diagnostic" n WHERE n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."col4" = h."col4"), 0)`, `INSERT INTO "__delta_diagnostic" ("_sign", "_sequence", "path", "line", "code", "col4") SELECT -1, row_number() OVER () - 1, "path", "line", "code", "col4" FROM "diagnostic" WHERE "__refcount" <= 0`, `DELETE FROM "diagnostic" WHERE "__refcount" <= 0`, `DELETE FROM "__new_diagnostic"`, `INSERT INTO "__new_diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT n."path", n."line", n."code", n."col4", n."__refcount" FROM "__support_next_diagnostic" n LEFT JOIN "diagnostic" h ON n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."col4" = h."col4" WHERE h."path" IS NULL`, `INSERT INTO "__delta_diagnostic" ("_sign", "_sequence", "path", "line", "code", "col4") SELECT 1, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT INTO "__frontier_diagnostic" ("_phase", "_sequence", "path", "line", "code", "col4") SELECT ?, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT INTO "__next_frontier_diagnostic" ("_phase", "_sequence", "path", "line", "code", "col4") SELECT ?, "rowid" - 1, "path", "line", "code", "col4" FROM "__new_diagnostic"`, `INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4", "__refcount") SELECT n."path", n."line", n."code", n."col4", n."__refcount" FROM "__support_next_diagnostic" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "turn_diag", rule_id: "diag_scenario_seven_ticks_end_to_end:turn_diag/5#1", head_delta_table_name: "__delta_turn_diag", head_columns: ["turn", "path", "line", "code", "opened_at"], insert_sql: `INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT DISTINCT d0."turn", b0."path", b0."line", b0."code", b1."opened_at" FROM "__frontier_hook_window" d0, "diagnostic" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = b0."path" AND b1."line" = b0."line" AND b1."code" = b0."code" AND (b1."opened_at" > d0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", b1."opened_at" FROM "__frontier_diagnostic" d0, "hook_window" b0, "diag_history" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (b1."opened_at" > b0."since") UNION ALL SELECT DISTINCT b0."turn", d0."path", d0."line", d0."code", d0."opened_at" FROM "__frontier_diag_history" d0, "hook_window" b0, "diagnostic" b1 WHERE d0."_phase" >= 0 AND b1."path" = d0."path" AND b1."line" = d0."line" AND b1."code" = d0."code" AND (d0."opened_at" > b0."since") RETURNING "turn", "path", "line", "code", "opened_at"`, select_sql: `SELECT "turn", "path", "line", "code", "opened_at" FROM "turn_diag"`, recompute_sql: `DELETE FROM "turn_diag";
+INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at") SELECT b0."turn", b1."path", b1."line", b1."code", b2."opened_at" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since")`, support_sql: [`DELETE FROM "__support_next_turn_diag"`, `INSERT INTO "__support_next_turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT "turn", "path", "line", "code", "opened_at", sum("__refcount") FROM (SELECT b0."turn" AS "turn", b1."path" AS "path", b1."line" AS "line", b1."code" AS "code", b2."opened_at" AS "opened_at", count(*) AS "__refcount" FROM "hook_window" b0, "diagnostic" b1, "diag_history" b2 WHERE b2."path" = b1."path" AND b2."line" = b1."line" AND b2."code" = b1."code" AND (b2."opened_at" > b0."since") GROUP BY b0."turn", b1."path", b1."line", b1."code", b2."opened_at") GROUP BY "turn", "path", "line", "code", "opened_at"`, `UPDATE "turn_diag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_turn_diag" n WHERE n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at"), 0)`, `INSERT INTO "__delta_turn_diag" ("_sign", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT -1, row_number() OVER () - 1, "turn", "path", "line", "code", "opened_at" FROM "turn_diag" WHERE "__refcount" <= 0`, `DELETE FROM "turn_diag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_turn_diag"`, `INSERT INTO "__new_turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT n."turn", n."path", n."line", n."code", n."opened_at", n."__refcount" FROM "__support_next_turn_diag" n LEFT JOIN "turn_diag" h ON n."turn" = h."turn" AND n."path" = h."path" AND n."line" = h."line" AND n."code" = h."code" AND n."opened_at" = h."opened_at" WHERE h."turn" IS NULL`, `INSERT INTO "__delta_turn_diag" ("_sign", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT 1, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT INTO "__frontier_turn_diag" ("_phase", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT ?, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT INTO "__next_frontier_turn_diag" ("_phase", "_sequence", "turn", "path", "line", "code", "opened_at") SELECT ?, "rowid" - 1, "turn", "path", "line", "code", "opened_at" FROM "__new_turn_diag"`, `INSERT OR IGNORE INTO "turn_diag" ("turn", "path", "line", "code", "opened_at", "__refcount") SELECT n."turn", n."path", n."line", n."code", n."opened_at", n."__refcount" FROM "__support_next_turn_diag" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "lint_count", rule_id: "diag_scenario_seven_ticks_end_to_end:lint_count/2#1", head_delta_table_name: "__delta_lint_count", head_columns: ["code", "count"], insert_sql: null, select_sql: `SELECT "code", "count" FROM "lint_count"`, recompute_sql: `DELETE FROM "lint_count";
+INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 GROUP BY b0."code" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_lint_count"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_lint_count" ("code") SELECT DISTINCT d0."code" FROM "__delta_diagnostic" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "lint_count" WHERE ("code") IN (SELECT "code" FROM "__agg_scope_lint_count") RETURNING "code", "count"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "lint_count" ("code", "count") SELECT b0."code", count(*) FROM "diagnostic" b0 WHERE (b0."code") IN (SELECT "code" FROM "__agg_scope_lint_count") GROUP BY b0."code" HAVING count(*) > 0 RETURNING "code", "count"`], delta_maintained: false } },
+  { head_rel: "unratcheted_lint", rule_id: "diag_scenario_seven_ticks_end_to_end:unratcheted_lint/2#1", head_delta_table_name: "__delta_unratcheted_lint", head_columns: ["code", "count"], insert_sql: `INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT DISTINCT d0."code", d0."count" FROM "__frontier_lint_count" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = d0."code") RETURNING "code", "count"`, select_sql: `SELECT "code", "count" FROM "unratcheted_lint"`, recompute_sql: `DELETE FROM "unratcheted_lint";
+INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count") SELECT b0."code", b0."count" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code")`, support_sql: [`DELETE FROM "__support_next_unratcheted_lint"`, `INSERT INTO "__support_next_unratcheted_lint" ("code", "count", "__refcount") SELECT "code", "count", sum("__refcount") FROM (SELECT b0."code" AS "code", b0."count" AS "count", count(*) AS "__refcount" FROM "lint_count" b0 WHERE NOT EXISTS (SELECT 1 FROM "ratchet" n0 WHERE n0."code" = b0."code") GROUP BY b0."code", b0."count") GROUP BY "code", "count"`, `UPDATE "unratcheted_lint" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_unratcheted_lint" n WHERE n."code" = h."code" AND n."count" = h."count"), 0)`, `INSERT INTO "__delta_unratcheted_lint" ("_sign", "_sequence", "code", "count") SELECT -1, row_number() OVER () - 1, "code", "count" FROM "unratcheted_lint" WHERE "__refcount" <= 0`, `DELETE FROM "unratcheted_lint" WHERE "__refcount" <= 0`, `DELETE FROM "__new_unratcheted_lint"`, `INSERT INTO "__new_unratcheted_lint" ("code", "count", "__refcount") SELECT n."code", n."count", n."__refcount" FROM "__support_next_unratcheted_lint" n LEFT JOIN "unratcheted_lint" h ON n."code" = h."code" AND n."count" = h."count" WHERE h."code" IS NULL`, `INSERT INTO "__delta_unratcheted_lint" ("_sign", "_sequence", "code", "count") SELECT 1, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT INTO "__frontier_unratcheted_lint" ("_phase", "_sequence", "code", "count") SELECT ?, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT INTO "__next_frontier_unratcheted_lint" ("_phase", "_sequence", "code", "count") SELECT ?, "rowid" - 1, "code", "count" FROM "__new_unratcheted_lint"`, `INSERT OR IGNORE INTO "unratcheted_lint" ("code", "count", "__refcount") SELECT n."code", n."count", n."__refcount" FROM "__support_next_unratcheted_lint" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "violation", rule_id: "diag_scenario_seven_ticks_end_to_end:violation/3#1", head_delta_table_name: "__delta_violation", head_columns: ["code", "count", "allowed"], insert_sql: `INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT DISTINCT d0."code", d0."count", b0."allowed" FROM "__frontier_lint_count" d0, "ratchet" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (d0."count" > b0."allowed") UNION ALL SELECT DISTINCT d0."code", b0."count", d0."allowed" FROM "__frontier_ratchet" d0, "lint_count" b0 WHERE d0."_phase" >= 0 AND b0."code" = d0."code" AND (b0."count" > d0."allowed") RETURNING "code", "count", "allowed"`, select_sql: `SELECT "code", "count", "allowed" FROM "violation"`, recompute_sql: `DELETE FROM "violation";
+INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT b0."code", b0."count", b1."allowed" FROM "lint_count" b0, "ratchet" b1 WHERE b1."code" = b0."code" AND (b0."count" > b1."allowed")`, support_sql: [`DELETE FROM "__support_next_violation"`, `INSERT INTO "__support_next_violation" ("code", "count", "allowed", "__refcount") SELECT "code", "count", "allowed", sum("__refcount") FROM (SELECT b0."code" AS "code", b0."count" AS "count", b1."allowed" AS "allowed", count(*) AS "__refcount" FROM "lint_count" b0, "ratchet" b1 WHERE b1."code" = b0."code" AND (b0."count" > b1."allowed") GROUP BY b0."code", b0."count", b1."allowed") GROUP BY "code", "count", "allowed"`, `UPDATE "violation" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_violation" n WHERE n."code" = h."code" AND n."count" = h."count" AND n."allowed" = h."allowed"), 0)`, `INSERT INTO "__delta_violation" ("_sign", "_sequence", "code", "count", "allowed") SELECT -1, row_number() OVER () - 1, "code", "count", "allowed" FROM "violation" WHERE "__refcount" <= 0`, `DELETE FROM "violation" WHERE "__refcount" <= 0`, `DELETE FROM "__new_violation"`, `INSERT INTO "__new_violation" ("code", "count", "allowed", "__refcount") SELECT n."code", n."count", n."allowed", n."__refcount" FROM "__support_next_violation" n LEFT JOIN "violation" h ON n."code" = h."code" AND n."count" = h."count" AND n."allowed" = h."allowed" WHERE h."code" IS NULL`, `INSERT INTO "__delta_violation" ("_sign", "_sequence", "code", "count", "allowed") SELECT 1, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT INTO "__frontier_violation" ("_phase", "_sequence", "code", "count", "allowed") SELECT ?, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT INTO "__next_frontier_violation" ("_phase", "_sequence", "code", "count", "allowed") SELECT ?, "rowid" - 1, "code", "count", "allowed" FROM "__new_violation"`, `INSERT OR IGNORE INTO "violation" ("code", "count", "allowed", "__refcount") SELECT n."code", n."count", n."allowed", n."__refcount" FROM "__support_next_violation" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
 const EDGE_DIAG_HISTORY_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "line", ?3 AS "code", (SELECT "n" FROM "__tick") AS "opened_at"`;
@@ -421,15 +421,15 @@ const EDGE_DIAG_HISTORY_0_WRITE_SQL = `INSERT INTO "diag_history" ("path", "line
 const EDGE_DIAG_HISTORY_0_HEAD_COLUMNS: readonly string[] = ["path", "line", "code", "opened_at"];
 
 function resolveDiagHistory_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("set", "diagnostic", before.diagnostic, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DIAG_HISTORY_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("set", "diagnostic", before.diagnostic, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DIAG_HISTORY_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_DIAG_HISTORY_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_DIAG_HISTORY_0_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_DIAG_HISTORY_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_DIAG_HISTORY_0_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -437,7 +437,7 @@ function resolveDiagHistory_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: 
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "diagnostic";
 INSERT OR IGNORE INTO "diagnostic" ("path", "line", "code", "col4") SELECT b0."path", b0."line", b0."code", 'warning' FROM "file_line" b0 WHERE (b0."code" <> 'none');
 DELETE FROM "turn_diag";
@@ -451,16 +451,16 @@ INSERT OR IGNORE INTO "violation" ("code", "count", "allowed") SELECT b0."code",
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const diag_history = multisetDiff(before.diag_history, after.diag_history);
-  const diagnostic = multisetDiff(before.diagnostic, after.diagnostic);
-  const file_line = multisetDiff(before.file_line, after.file_line);
-  const hook_window = multisetDiff(before.hook_window, after.hook_window);
-  const lint_count = multisetDiff(before.lint_count, after.lint_count);
-  const ratchet = multisetDiff(before.ratchet, after.ratchet);
-  const turn_diag = multisetDiff(before.turn_diag, after.turn_diag);
-  const unratcheted_lint = multisetDiff(before.unratcheted_lint, after.unratcheted_lint);
-  const violation = multisetDiff(before.violation, after.violation);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const diag_history = multiset_diff(before.diag_history, after.diag_history);
+  const diagnostic = multiset_diff(before.diagnostic, after.diagnostic);
+  const file_line = multiset_diff(before.file_line, after.file_line);
+  const hook_window = multiset_diff(before.hook_window, after.hook_window);
+  const lint_count = multiset_diff(before.lint_count, after.lint_count);
+  const ratchet = multiset_diff(before.ratchet, after.ratchet);
+  const turn_diag = multiset_diff(before.turn_diag, after.turn_diag);
+  const unratcheted_lint = multiset_diff(before.unratcheted_lint, after.unratcheted_lint);
+  const violation = multiset_diff(before.violation, after.violation);
   return {
     rels: [
       { rel: "diag_history", add: diag_history.add, del: diag_history.del },
@@ -473,27 +473,27 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "unratcheted_lint", add: unratcheted_lint.add, del: unratcheted_lint.del },
       { rel: "violation", add: violation.add, del: violation.del },
     ],
-    carryPending: diag_history.add.length > 0 || diag_history.del.length > 0,
+    carry_pending: diag_history.add.length > 0 || diag_history.del.length > 0,
   };
 }
 
-function advanceTick(seam: ISqlSeam): Observable<void> {
+function advance_tick(seam: ISqlSeam): Observable<void> {
   return seam.runner.execute(seam.db, `UPDATE "__tick" SET "n" = "n" + 1`).pipe(map(() => undefined));
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => advanceTick(seam).pipe(map(() => before))),
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => advance_tick(seam).pipe(map(() => before))),
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveDiagHistory_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // diag_scenario_seven_ticks_end_to_end: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -507,39 +507,39 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => advanceTick(seam)),
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => advance_tick(seam)),
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   // Derived edge triggers consume the P1 current/next frontier, including drain carry.
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -548,16 +548,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "diag_scenario_seven_ticks_end_to_end",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

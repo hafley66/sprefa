@@ -73,8 +73,8 @@ const SKIP_REL = "enabled_name";
 
 /** A statement-shaped arrival batch for `source` rows: distinct names, all
  *  enabled, so the derived head actually grows with the source. */
-function arrivals(valueCount: number): readonly IArrivalRow[] {
-  return Array.from({ length: valueCount }, (_, index) => ({
+function arrivals(value_count: number): readonly IArrivalRow[] {
+  return Array.from({ length: value_count }, (_, index) => ({
     rel: "flag",
     sign: "add",
     row: [`name_${index}`, true],
@@ -84,7 +84,7 @@ function arrivals(valueCount: number): readonly IArrivalRow[] {
 /** Counts SQL per runner call, the way SqlRunner increments stmt_counter:
  *  execute/scalar one each, executeMultiple one per `;`-split part, batch one
  *  per statement. The seam's real runner is wrapped without changing it. */
-function countingRunner(counter: { n: number }): ISqlRunner {
+function counting_runner(counter: { n: number }): ISqlRunner {
   const inner = SqlRunner;
   const split = (sql: string): number =>
     sql
@@ -114,23 +114,23 @@ function countingRunner(counter: { n: number }): ISqlRunner {
   };
 }
 
-function seamWith(unobserved: boolean): { seam: ISqlSeam; counter: { n: number } } {
+function seam_with(unobserved: boolean): { seam: ISqlSeam; counter: { n: number } } {
   const base = ScratchStore.open(":memory:");
   const counter = { n: 0 };
   const seam = unobserved
-    ? { ...base, runner: countingRunner(counter), unobservedRels: new Set([SKIP_REL]) }
-    : { ...base, runner: countingRunner(counter) };
+    ? { ...base, runner: counting_runner(counter), unobserved_rels: new Set([SKIP_REL]) }
+    : { ...base, runner: counting_runner(counter) };
   return { seam, counter };
 }
 
-async function runOneTick(valueCount: number, unobserved: boolean) {
-  const { seam, counter } = seamWith(unobserved);
+async function run_one_tick(value_count: number, unobserved: boolean) {
+  const { seam, counter } = seam_with(unobserved);
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   counter.n = 0;
-  await firstValueFrom(program.tick(seam, arrivals(valueCount)));
+  await firstValueFrom(program.tick(seam, arrivals(value_count)));
   const statements = counter.n;
   const final = await firstValueFrom(
-    seam.runner.execute(seam.db, program.finalSelect[SKIP_REL]!),
+    seam.runner.execute(seam.db, program.final_select[SKIP_REL]!),
   );
   const head = final.rows
     .map((row) => String((row as Record<string, unknown>).name))
@@ -140,8 +140,8 @@ async function runOneTick(valueCount: number, unobserved: boolean) {
 }
 
 test("the unobserved-rel skip cuts exactly the copy statements, flat in source rows", async () => {
-  const small = { active: await runOneTick(5, true), inactive: await runOneTick(5, false) };
-  const large = { active: await runOneTick(100, true), inactive: await runOneTick(100, false) };
+  const small = { active: await run_one_tick(5, true), inactive: await run_one_tick(5, false) };
+  const large = { active: await run_one_tick(100, true), inactive: await run_one_tick(100, false) };
 
   for (const [label, pair] of [
     ["5 rows", small],

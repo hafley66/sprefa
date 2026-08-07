@@ -51,7 +51,7 @@ import {
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
 import { BootRunner } from "../runtime/2_boot.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { select_rows } from "../runtime/rows.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import type {
   IArrivalBatch,
@@ -76,16 +76,16 @@ type QueuedBatch = {
 
 /** Private fold state, mirroring tickLoop.ts's own `FoldStep`. */
 type FoldStep = {
-  readonly tickNumber: number;
+  readonly tick_number: number;
   readonly deltas: ITickDeltas | null;
-  readonly drainsUsed: number;
+  readonly drains_used: number;
 };
 
-function hasDeltas(step: FoldStep): step is FoldStep & { deltas: ITickDeltas } {
+function has_deltas(step: FoldStep): step is FoldStep & { deltas: ITickDeltas } {
   return step.deltas !== null;
 }
 
-function deltaRowCount(deltas: ITickDeltas): number {
+function delta_row_count(deltas: ITickDeltas): number {
   return deltas.rels.reduce((total, rel) => total + rel.add.length + rel.del.length, 0);
 }
 
@@ -93,8 +93,8 @@ export class LiveEngine implements ILiveEngine {
   readonly ticks$: Observable<ITickOutcome>;
 
   private readonly arrivals = new Subject<QueuedBatch>();
-  private tickNumber = 0;
-  private queuedBatches = 0;
+  private tick_number = 0;
+  private queued_batches = 0;
   private running = false;
 
   constructor(
@@ -102,7 +102,7 @@ export class LiveEngine implements ILiveEngine {
     private readonly seam: ISqlSeam,
   ) {
     this.ticks$ = this.arrivals.pipe(
-      concatMap((queued) => this.runBatch(queued)),
+      concatMap((queued) => this.run_batch(queued)),
       tap({
         subscribe: () => {
           this.running = true;
@@ -127,48 +127,48 @@ export class LiveEngine implements ILiveEngine {
         subscriber.error(new Error("tsv2 engine is not running: nothing subscribes ticks$"));
         return;
       }
-      this.queuedBatches += 1;
+      this.queued_batches += 1;
       this.arrivals.next({ arrivals, subscriber });
     });
   }
 
   rows(rel: string): Observable<readonly IRow[]> {
-    const sql = this.program.finalSelect[rel];
-    const columns = this.program.relColumns[rel];
+    const sql = this.program.final_select[rel];
+    const columns = this.program.rel_columns[rel];
     if (sql === undefined || columns === undefined) {
       return throwError(() => new Error(`unknown rel '${rel}' in program '${this.program.name}'`));
     }
-    return selectRows(this.seam, sql, columns, this.program.relColumnTypes?.[rel]);
+    return select_rows(this.seam, sql, columns, this.program.rel_column_types?.[rel]);
   }
 
   /** One queued batch: its own tick, then drain ticks while the program carries
    *  AND nothing else waits behind it. Emits every tick it caused, to the
    *  submitter and (through `ticks$`) to the app. */
-  private runBatch(queued: QueuedBatch): Observable<ITickOutcome> {
-    const boot: FoldStep = { tickNumber: this.tickNumber, deltas: null, drainsUsed: 0 };
-    this.queuedBatches -= 1;
+  private run_batch(queued: QueuedBatch): Observable<ITickOutcome> {
+    const boot: FoldStep = { tick_number: this.tick_number, deltas: null, drains_used: 0 };
+    this.queued_batches -= 1;
     return of(boot).pipe(
       expand((step) => {
-        if (step.deltas === null) return this.tickOnce(step, queued.arrivals);
-        if (!step.deltas.carryPending || this.queuedBatches > 0) return EMPTY;
-        if (step.drainsUsed >= DRAIN_CAP) {
+        if (step.deltas === null) return this.tick_once(step, queued.arrivals);
+        if (!step.deltas.carry_pending || this.queued_batches > 0) return EMPTY;
+        if (step.drains_used >= DRAIN_CAP) {
           throw new Error(`tsv2 drain overflow: ${this.program.name} exceeded ${DRAIN_CAP} drain ticks`);
         }
-        return this.tickOnce(step, []);
+        return this.tick_once(step, []);
       }),
-      filter(hasDeltas),
+      filter(has_deltas),
       tap((step) => {
-        this.tickNumber = step.tickNumber;
+        this.tick_number = step.tick_number;
       }),
       map((step): ITickOutcome => {
         const outcome = {
-          tick: step.tickNumber,
+          tick: step.tick_number,
           // The served log and the fixture-replay log are the SAME contract, so
           // this passes the program's column types exactly as tickLoop.ts does.
           // Without them a `json` or `ref` column prints as a JSON string here
           // and as a JSON value there, and the served leg's whole reason to
           // exist is that the two agree byte for byte.
-          line: TickLogEmitter.line(step.tickNumber, step.deltas, this.program.relColumnTypes),
+          line: TickLogEmitter.line(step.tick_number, step.deltas, this.program.rel_column_types),
           deltas: step.deltas,
         };
         queued.subscriber.next(outcome);
@@ -182,8 +182,8 @@ export class LiveEngine implements ILiveEngine {
       // re-throw here, and an error inside `concatMap` terminates the OUTER
       // observable: `ticks$` died on the first bad tick, `tap({ finalize })`
       // flipped `running` false so every later submit failed with "engine is not
-      // running", and because `runProgram$` merges `ticks$` into the app graph
-      // the error reached serveTsv2's single subscriber and killed the process
+      // running", and because `run_program$` merges `ticks$` into the app graph
+      // the error reached serve_tsv2's single subscriber and killed the process
       // (measured: the whole server went ECONNREFUSED). Receipt:
       // tests/engineFault.test.ts, red-first output in its header.
       catchError((failure: unknown) => {
@@ -193,23 +193,23 @@ export class LiveEngine implements ILiveEngine {
     );
   }
 
-  private tickOnce(step: FoldStep, arrivals: IArrivalBatch): Observable<FoldStep> {
-    const startedAt = performance.now();
-    const statementsBefore = stmt_counter.get();
+  private tick_once(step: FoldStep, arrivals: IArrivalBatch): Observable<FoldStep> {
+    const started_at = performance.now();
+    const statements_before = stmt_counter.get();
     return this.program.tick(this.seam, arrivals).pipe(
       map((deltas): FoldStep => {
-        const tickNumber = step.tickNumber + 1;
+        const tick_number = step.tick_number + 1;
         ServeTrace.tick(
-          tickNumber,
+          tick_number,
           deltas.rels.length,
-          deltaRowCount(deltas),
-          stmt_counter.get() - statementsBefore,
-          performance.now() - startedAt,
+          delta_row_count(deltas),
+          stmt_counter.get() - statements_before,
+          performance.now() - started_at,
         );
         return {
-          tickNumber,
+          tick_number,
           deltas,
-          drainsUsed: step.deltas === null ? 0 : step.drainsUsed + 1,
+          drains_used: step.deltas === null ? 0 : step.drains_used + 1,
         };
       }),
     );
@@ -221,11 +221,11 @@ export class LiveEngine implements ILiveEngine {
 // boot statements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function isAlreadyExists(failure: unknown): boolean {
+function is_already_exists(failure: unknown): boolean {
   return failure instanceof Error && /already exists/i.test(failure.message);
 }
 
-export const bootServedProgram: IBootServedProgram = (
+export const boot_served_program: IBootServedProgram = (
   seam: ISqlSeam,
   program: IServedProgram,
 ): Observable<void> => {
@@ -233,7 +233,7 @@ export const bootServedProgram: IBootServedProgram = (
   return from(statements).pipe(
     concatMap((sql) =>
       seam.runner.execute(seam.db, sql).pipe(
-        catchError((failure: unknown) => (isAlreadyExists(failure) ? of(undefined) : throwError(() => failure))),
+        catchError((failure: unknown) => (is_already_exists(failure) ? of(undefined) : throwError(() => failure))),
       ),
     ),
     toArray(),

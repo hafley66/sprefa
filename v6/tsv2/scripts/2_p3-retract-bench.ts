@@ -20,7 +20,7 @@ type Args = {
   readonly layers: number;
   readonly width: number;
   readonly stride: number;
-  readonly dbPath: string;
+  readonly db_path: string;
 };
 
 type NodeAddress = {
@@ -30,21 +30,21 @@ type NodeAddress = {
 };
 
 const EXPECTED = new Map([
-  ["DAG:6:10000:0", { inputHash: "e711731b974e1703", survivors: 50_002 }],
-  ["DAG:6:40000:0", { inputHash: "db02ab7cd976622b", survivors: 200_002 }],
-  ["DAG:6:160000:0", { inputHash: "ef153ee39296ef0f", survivors: 800_002 }],
-  ["CYC:6:10000:7", { inputHash: "4ce3fce20608f808", survivors: 51_430 }],
-  ["CYC:6:160000:7", { inputHash: "a10c4ce974755186", survivors: 815_240 }],
+  ["DAG:6:10000:0", { input_hash: "e711731b974e1703", survivors: 50_002 }],
+  ["DAG:6:40000:0", { input_hash: "db02ab7cd976622b", survivors: 200_002 }],
+  ["DAG:6:160000:0", { input_hash: "ef153ee39296ef0f", survivors: 800_002 }],
+  ["CYC:6:10000:7", { input_hash: "4ce3fce20608f808", survivors: 51_430 }],
+  ["CYC:6:160000:7", { input_hash: "a10c4ce974755186", survivors: 815_240 }],
 ]);
 
-function parseArgs(): Args {
-  const [, , shapeText, layersText, widthText, strideText, dbPath] = process.argv;
-  if (shapeText !== "DAG" && shapeText !== "CYC") {
+function parse_args(): Args {
+  const [, , shape_text, layers_text, width_text, stride_text, db_path] = process.argv;
+  if (shape_text !== "DAG" && shape_text !== "CYC") {
     throw new Error("2_p3-retract-bench: shape must be DAG or CYC");
   }
-  const layers = Number(layersText);
-  const width = Number(widthText);
-  const stride = Number(strideText);
+  const layers = Number(layers_text);
+  const width = Number(width_text);
+  const stride = Number(stride_text);
   if (
     !Number.isInteger(layers) ||
     !Number.isInteger(width) ||
@@ -55,56 +55,56 @@ function parseArgs(): Args {
   ) {
     throw new Error("2_p3-retract-bench: invalid layers, width, or stride");
   }
-  if (shapeText === "DAG" && stride !== 0) {
+  if (shape_text === "DAG" && stride !== 0) {
     throw new Error("2_p3-retract-bench: DAG requires stride 0");
   }
-  if (shapeText === "CYC" && stride === 0) {
+  if (shape_text === "CYC" && stride === 0) {
     throw new Error("2_p3-retract-bench: CYC requires a positive stride");
   }
-  if (dbPath === undefined || dbPath.length === 0) {
+  if (db_path === undefined || db_path.length === 0) {
     throw new Error("2_p3-retract-bench: missing scratch database path");
   }
-  return { shape: shapeText, layers, width, stride, dbPath };
+  return { shape: shape_text, layers, width, stride, db_path };
 }
 
-function tagOfTier(tier: number): number {
+function tag_of_tier(tier: number): number {
   return tier % 3;
 }
 
-function localId(layers: number, width: number, tier: number, offset: number): number {
+function local_id(layers: number, width: number, tier: number, offset: number): number {
   if (tier === 0) return offset;
-  const tag = tagOfTier(tier);
-  let earlierTierCount = 0;
+  const tag = tag_of_tier(tier);
+  let earlier_tier_count = 0;
   for (let candidate = 1; candidate < tier; candidate += 1) {
-    if (tagOfTier(candidate) === tag) earlierTierCount += 1;
+    if (tag_of_tier(candidate) === tag) earlier_tier_count += 1;
   }
-  return (tag === 0 ? 2 : 0) + earlierTierCount * width + offset;
+  return (tag === 0 ? 2 : 0) + earlier_tier_count * width + offset;
 }
 
-function keyOf(layers: number, width: number, tier: number, offset: number): number {
-  return tagOfTier(tier) * TAG_STRIDE + localId(layers, width, tier, offset);
+function key_of(layers: number, width: number, tier: number, offset: number): number {
+  return tag_of_tier(tier) * TAG_STRIDE + local_id(layers, width, tier, offset);
 }
 
-function globalId(width: number, tier: number, offset: number): number {
+function global_id(width: number, tier: number, offset: number): number {
   return tier === 0 ? offset : 2 + (tier - 1) * width + offset;
 }
 
-function* nodesInKeyOrder(layers: number, width: number): Generator<NodeAddress> {
+function* nodes_in_key_order(layers: number, width: number): Generator<NodeAddress> {
   for (let tag = 0; tag < 3; tag += 1) {
     if (tag === 0) {
       yield { tier: 0, offset: 0, key: 0 };
       yield { tier: 0, offset: 1, key: 1 };
     }
     for (let tier = 1; tier <= layers; tier += 1) {
-      if (tagOfTier(tier) !== tag) continue;
+      if (tag_of_tier(tier) !== tag) continue;
       for (let offset = 0; offset < width; offset += 1) {
-        yield { tier, offset, key: keyOf(layers, width, tier, offset) };
+        yield { tier, offset, key: key_of(layers, width, tier, offset) };
       }
     }
   }
 }
 
-function updateI64Pair(hash: HashState, parent: number, child: number): void {
+function update_i64_pair(hash: HashState, parent: number, child: number): void {
   const bytes = new Uint8Array(16);
   const view = new DataView(bytes.buffer);
   view.setBigInt64(0, BigInt(parent), true);
@@ -112,7 +112,7 @@ function updateI64Pair(hash: HashState, parent: number, child: number): void {
   hash.update(bytes);
 }
 
-function updateI64(hash: HashState, key: number): void {
+function update_i64(hash: HashState, key: number): void {
   const bytes = new Uint8Array(8);
   new DataView(bytes.buffer).setBigInt64(0, BigInt(key), true);
   hash.update(bytes);
@@ -122,7 +122,7 @@ async function execute(seam: ISqlSeam, statement: SqlStatement): Promise<QueryRe
   return firstValueFrom(seam.runner.execute(seam.db, statement));
 }
 
-async function flushRows(
+async function flush_rows(
   seam: ISqlSeam,
   rows: Array<readonly [number, number]>,
 ): Promise<void> {
@@ -136,7 +136,7 @@ async function flushRows(
   rows.length = 0;
 }
 
-async function flushEdges(
+async function flush_edges(
   seam: ISqlSeam,
   edges: Array<readonly [number, number]>,
 ): Promise<void> {
@@ -150,59 +150,59 @@ async function flushEdges(
   edges.length = 0;
 }
 
-function rowWeight(args: Args, tier: number, offset: number): number {
+function row_weight(args: Args, tier: number, offset: number): number {
   if (tier === 0) return 1;
   let weight = tier === 1 ? 1 + (offset % 3 === 0 ? 1 : 0) : 2;
   if (
     args.stride > 0 &&
     tier < args.layers &&
-    globalId(args.width, tier + 1, offset) % args.stride === 0
+    global_id(args.width, tier + 1, offset) % args.stride === 0
   ) {
     weight += 1;
   }
   return weight;
 }
 
-async function loadRows(seam: ISqlSeam, args: Args): Promise<void> {
+async function load_rows(seam: ISqlSeam, args: Args): Promise<void> {
   const rows: Array<readonly [number, number]> = [];
-  for (const node of nodesInKeyOrder(args.layers, args.width)) {
-    rows.push([node.key, rowWeight(args, node.tier, node.offset)]);
-    if (rows.length === INSERT_CHUNK) await flushRows(seam, rows);
+  for (const node of nodes_in_key_order(args.layers, args.width)) {
+    rows.push([node.key, row_weight(args, node.tier, node.offset)]);
+    if (rows.length === INSERT_CHUNK) await flush_rows(seam, rows);
   }
-  await flushRows(seam, rows);
+  await flush_rows(seam, rows);
 }
 
-async function addEdge(
+async function add_edge(
   seam: ISqlSeam,
   edges: Array<readonly [number, number]>,
-  inputHash: HashState,
+  input_hash: HashState,
   parent: number,
   child: number,
 ): Promise<number> {
   edges.push([parent, child]);
-  updateI64Pair(inputHash, parent, child);
-  if (edges.length === INSERT_CHUNK) await flushEdges(seam, edges);
+  update_i64_pair(input_hash, parent, child);
+  if (edges.length === INSERT_CHUNK) await flush_edges(seam, edges);
   return 1;
 }
 
-async function loadEdges(
+async function load_edges(
   seam: ISqlSeam,
   args: Args,
-): Promise<{ readonly edgeCount: number; readonly inputHash: string }> {
+): Promise<{ readonly edge_count: number; readonly input_hash: string }> {
   const edges: Array<readonly [number, number]> = [];
-  const inputHash = blake3.create();
-  let edgeCount = 0;
-  for (const node of nodesInKeyOrder(args.layers, args.width)) {
+  const input_hash = blake3.create();
+  let edge_count = 0;
+  for (const node of nodes_in_key_order(args.layers, args.width)) {
     if (node.tier === 0) {
       const start = node.offset === 0 ? 0 : 0;
       const step = node.offset === 0 ? 1 : 3;
-      for (let childOffset = start; childOffset < args.width; childOffset += step) {
-        edgeCount += await addEdge(
+      for (let child_offset = start; child_offset < args.width; child_offset += step) {
+        edge_count += await add_edge(
           seam,
           edges,
-          inputHash,
+          input_hash,
           node.key,
-          keyOf(args.layers, args.width, 1, childOffset),
+          key_of(args.layers, args.width, 1, child_offset),
         );
       }
       continue;
@@ -210,8 +210,8 @@ async function loadEdges(
     const children: number[] = [];
     if (node.tier < args.layers) {
       children.push(
-        keyOf(args.layers, args.width, node.tier + 1, node.offset),
-        keyOf(
+        key_of(args.layers, args.width, node.tier + 1, node.offset),
+        key_of(
           args.layers,
           args.width,
           node.tier + 1,
@@ -222,17 +222,17 @@ async function loadEdges(
     if (
       args.stride > 0 &&
       node.tier >= 2 &&
-      globalId(args.width, node.tier, node.offset) % args.stride === 0
+      global_id(args.width, node.tier, node.offset) % args.stride === 0
     ) {
-      children.push(keyOf(args.layers, args.width, node.tier - 1, node.offset));
+      children.push(key_of(args.layers, args.width, node.tier - 1, node.offset));
     }
     children.sort((left, right) => left - right);
     for (const child of children) {
-      edgeCount += await addEdge(seam, edges, inputHash, node.key, child);
+      edge_count += await add_edge(seam, edges, input_hash, node.key, child);
     }
   }
-  await flushEdges(seam, edges);
-  return { edgeCount, inputHash: bytesToHex(inputHash.digest()).slice(0, 16) };
+  await flush_edges(seam, edges);
+  return { edge_count, input_hash: bytesToHex(input_hash.digest()).slice(0, 16) };
 }
 
 async function boot(seam: ISqlSeam): Promise<void> {
@@ -261,19 +261,19 @@ async function boot(seam: ISqlSeam): Promise<void> {
   );
 }
 
-function heapSampler(): { readonly sample: () => void; readonly peakMb: () => number } {
+function heap_sampler(): { readonly sample: () => void; readonly peak_mb: () => number } {
   let peak = process.memoryUsage().heapUsed;
   return {
     sample(): void {
       peak = Math.max(peak, process.memoryUsage().heapUsed);
     },
-    peakMb(): number {
+    peak_mb(): number {
       return peak / 1_048_576;
     },
   };
 }
 
-async function retractCount(
+async function retract_count(
   seam: ISqlSeam,
   sample: () => void,
 ): Promise<void> {
@@ -290,11 +290,11 @@ async function retractCount(
     );
     sample();
     while (true) {
-      const frontierCount = Number(
+      const frontier_count = Number(
         (await execute(seam, `SELECT count(*) AS n FROM ${frontier}`)).rows[0]?.n ?? 0,
       );
       sample();
-      if (frontierCount === 0) break;
+      if (frontier_count === 0) break;
       await execute(seam, "DELETE FROM cx_hits");
       await execute(
         seam,
@@ -327,7 +327,7 @@ async function retractCount(
   }
 }
 
-async function retractRecursiveCte(
+async function retract_recursive_cte(
   seam: ISqlSeam,
   sample: () => void,
 ): Promise<void> {
@@ -367,7 +367,7 @@ async function retractRecursiveCte(
   sample();
 }
 
-async function survivorReceipt(
+async function survivor_receipt(
   seam: ISqlSeam,
 ): Promise<{ readonly count: number; readonly hash: string }> {
   const result = await execute(
@@ -375,7 +375,7 @@ async function survivorReceipt(
     "SELECT key FROM cx_row WHERE weight>0 ORDER BY key",
   );
   const hash = blake3.create();
-  for (const row of result.rows) updateI64(hash, Number(row.key));
+  for (const row of result.rows) update_i64(hash, Number(row.key));
   return {
     count: result.rows.length,
     hash: bytesToHex(hash.digest()).slice(0, 16),
@@ -383,62 +383,62 @@ async function survivorReceipt(
 }
 
 async function main(): Promise<void> {
-  const args = parseArgs();
-  const expectedKey = `${args.shape}:${args.layers}:${args.width}:${args.stride}`;
-  const expected = EXPECTED.get(expectedKey);
+  const args = parse_args();
+  const expected_key = `${args.shape}:${args.layers}:${args.width}:${args.stride}`;
+  const expected = EXPECTED.get(expected_key);
   if (expected === undefined) {
-    throw new Error(`2_p3-retract-bench: no perf input-hash gate for ${expectedKey}`);
+    throw new Error(`2_p3-retract-bench: no perf input-hash gate for ${expected_key}`);
   }
-  const seam = ScratchStore.open(`file:${args.dbPath}`);
+  const seam = ScratchStore.open(`file:${args.db_path}`);
   await boot(seam);
-  await loadRows(seam, args);
-  const { edgeCount, inputHash } = await loadEdges(seam, args);
-  if (inputHash !== expected.inputHash) {
+  await load_rows(seam, args);
+  const { edge_count, input_hash } = await load_edges(seam, args);
+  if (input_hash !== expected.input_hash) {
     throw new Error(
-      `2_p3-retract-bench: INPUT-MISMATCH expected=${expected.inputHash} actual=${inputHash}`,
+      `2_p3-retract-bench: INPUT-MISMATCH expected=${expected.input_hash} actual=${input_hash}`,
     );
   }
 
   stmt_counter.reset();
-  const heap = heapSampler();
-  const markerPath = process.env.P3_MEASURE_MARKER;
-  if (markerPath !== undefined) writeFileSync(markerPath, "measured\n");
+  const heap = heap_sampler();
+  const marker_path = process.env.P3_MEASURE_MARKER;
+  if (marker_path !== undefined) writeFileSync(marker_path, "measured\n");
   const started = process.hrtime.bigint();
-  if (args.shape === "DAG") await retractCount(seam, heap.sample);
-  else await retractRecursiveCte(seam, heap.sample);
-  const retractMs = Number(process.hrtime.bigint() - started) / 1_000_000;
+  if (args.shape === "DAG") await retract_count(seam, heap.sample);
+  else await retract_recursive_cte(seam, heap.sample);
+  const retract_ms = Number(process.hrtime.bigint() - started) / 1_000_000;
   const statements = stmt_counter.get();
-  const survivors = await survivorReceipt(seam);
+  const survivors = await survivor_receipt(seam);
   const correct = survivors.count === expected.survivors;
   await execute(seam, "PRAGMA wal_checkpoint(TRUNCATE)");
-  const dbMb = statSync(args.dbPath).size / 1_048_576;
+  const db_mb = statSync(args.db_path).size / 1_048_576;
   const nodes = 2 + args.layers * args.width;
   const result = {
     engine: "tsv2",
     shape: args.shape,
     nodes,
-    edges: edgeCount,
+    edges: edge_count,
     survivors: survivors.count,
     correct,
-    input_hash: inputHash,
+    input_hash: input_hash,
     output_hash: survivors.hash,
     retraction_guard:
       args.shape === "DAG" ? "plain-count-acyclic" : "recursive-cte-reseed",
-    retract_ms: retractMs,
+    retract_ms: retract_ms,
     statements,
-    host_peak_mb: heap.peakMb(),
+    host_peak_mb: heap.peak_mb(),
     process_rss_mb: process.memoryUsage().rss / 1_048_576,
     sqlite_hw_mb: "N/A",
     sqlite_hw_reason:
       "@libsql/client Client and ResultSet expose no sqlite3_memory_highwater binding or allocator-status API",
-    db_mb: dbMb,
+    db_mb: db_mb,
   };
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.stderr.write(
-    `CSV,tsv2,${nodes},${edgeCount},${nodes - survivors.count},0,${retractMs.toFixed(3)},${statements},RSS_FROM_TIME,${heap.peakMb().toFixed(2)},N/A,${dbMb.toFixed(2)}\n`,
+    `CSV,tsv2,${nodes},${edge_count},${nodes - survivors.count},0,${retract_ms.toFixed(3)},${statements},RSS_FROM_TIME,${heap.peak_mb().toFixed(2)},N/A,${db_mb.toFixed(2)}\n`,
   );
   seam.db.close();
-  if (process.env.P3_KEEP_DB !== "1") unlinkSync(args.dbPath);
+  if (process.env.P3_KEEP_DB !== "1") unlinkSync(args.db_path);
   if (!correct) process.exitCode = 1;
 }
 

@@ -308,7 +308,7 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
             sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
             SnapshotDeletes),
     length(SnapshotDeletes, 1),
-    once(sub_atom(Text, _, _, _, 'function orderedPreWriteStatement')),
+    once(sub_atom(Text, _, _, _, 'function ordered_pre_write_statement')),
     \+ sub_atom(Text, _, _, _, 'refreshOrderedPre').
 
 ddl_for_table(Table, Ddl) :-
@@ -1091,13 +1091,13 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
-    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.applyLevelsBeforeEdges')),
-    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recomputeLevelsBeforeEdges')),
-    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.applyEdges')),
+    once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
+    once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
+    once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.apply_edges')),
     BeforeAt < ReconcileAt, ReconcileAt < EdgesAt,
     % The naive referee's own freeze: recomputeLevels once before the edge
     % batch and once after (engine.pl's two level closures).
-    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recomputeLevels(seam)'), RecomputeAts),
+    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recompute_levels(seam)'), RecomputeAts),
     length(RecomputeAts, 2), !.
 
 % The narrowing that keeps exhaust_policy compiled: a level rel whose own
@@ -1959,7 +1959,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
-    once(sub_atom(Text, _, _, _, 'export const hostPlans')),
+    once(sub_atom(Text, _, _, _, 'export const host_plans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
     % terms now carry the executor the served runtime dispatches on. The bind's
     % `literals` list is EMPTY for this fixture on purpose -- it declares
@@ -1968,7 +1968,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     once(sub_atom(Text, _, _, _, 'execution: "shell"')),
     once(sub_atom(Text, _, _, _, 'literals: [], execution: "live_interval"')),
     once(sub_atom(Text, _, _, _,
-                  'export const unsupportedExecution: readonly string[] = [];')),
+                  'export const unsupported_execution: readonly string[] = [];')),
     once(sub_atom(Text, _, _, _,
                   'CREATE TABLE "__host_demand_tree_sitter"')),
     once(sub_atom(Text, _, _, _,

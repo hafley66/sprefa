@@ -65,7 +65,7 @@ function run(seam: ISqlSeam, sql: string) {
 
 /** What serve/3_engine.ts:228 does on a program swap: replay the DDL, swallow
  *  "already exists" per statement. */
-async function replayDdl(seam: ISqlSeam) {
+async function replay_ddl(seam: ISqlSeam) {
   for (const sql of CATALOG_DDL) {
     try {
       await run(seam, sql);
@@ -113,7 +113,7 @@ test("a column is a child row of its rel", async () => {
 test("replaying the DDL mints no duplicate rows", async () => {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, CATALOG_DDL));
-  await replayDdl(seam);
+  await replay_ddl(seam);
 
   const count = await run(seam, `SELECT count(*) AS c FROM "__rel"`);
   assert.equal(Number(count.rows[0]!.c), 12, "re-running the DDL must not double the catalog rows");
@@ -134,11 +134,11 @@ test("exactly one module row with a non-empty h_id", async () => {
     `SELECT rel_id AS id, local_name AS name, h_id AS h FROM "__rel" WHERE kind = 'module'`,
   );
   assert.equal(modules.rows.length, 1, "there must be exactly one module row");
-  const theModule = modules.rows[0]!;
-  assert.equal(Number(theModule.id), 6, "the module row owns rel_id 6");
-  assert.equal(theModule.name, "catalog", "the module row carries the program name");
-  assert.equal(typeof theModule.h, "string", "the module h_id must be text");
-  assert.equal(String(theModule.h).length, 16, "the module h_id must be 16 hex characters");
+  const the_module = modules.rows[0]!;
+  assert.equal(Number(the_module.id), 6, "the module row owns rel_id 6");
+  assert.equal(the_module.name, "catalog", "the module row carries the program name");
+  assert.equal(typeof the_module.h, "string", "the module h_id must be text");
+  assert.equal(String(the_module.h).length, 16, "the module h_id must be 16 hex characters");
 });
 
 test("the parent index is used, never a scan", async () => {

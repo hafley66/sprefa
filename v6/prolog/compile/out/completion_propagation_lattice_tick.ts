@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: completion_propagation_lattice_tick.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -225,7 +225,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "live_inner_zero" ON "live_inner" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   closed_inner: ["outer_id", "inner_id"],
   closed_outer: ["outer_id"],
   end_a_signal: ["outer_id"],
@@ -237,7 +237,7 @@ const relColumns: Record<string, readonly string[]> = {
   open_outer: ["outer_id"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   closed_inner: ["text", "text"],
   closed_outer: ["text"],
   end_a_signal: ["text"],
@@ -249,40 +249,40 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   open_outer: ["text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "completion_propagation_lattice_tick", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "722b0f0664e29ac4", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "closed_inner", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "9e2cc28df63394a5", hSchema: "ea460993729cd607", hRule: "caf333c5d0b6d75d" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "af6fef14669e023c", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "inner_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "aca5933964d2f7fa", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "closed_outer", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "13c43353df146fd1", hSchema: "6dd0b67c218fc444", hRule: "f34840838f6f025c" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f9237740c5da7fbc", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 6, ordinal: 0, localName: "end_a_signal", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "2e13de8fdbd398b2", hSchema: "6dd0b67c218fc444", hRule: "" },
-  { relId: 13, parentId: 12, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ad2c4d22f9601142", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 6, ordinal: 0, localName: "end_b_signal", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "2f3860e4048ec44d", hSchema: "6dd0b67c218fc444", hRule: "" },
-  { relId: 15, parentId: 14, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1170fbfff8b05634", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 6, ordinal: 0, localName: "end_c_signal", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "61e34c011f255041", hSchema: "26235a947a709662", hRule: "" },
-  { relId: 17, parentId: 16, ordinal: 1, localName: "inner_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "30eaa44f4bca3c3d", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 6, ordinal: 0, localName: "live_inner", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "af2496201cd4d73f", hSchema: "ea460993729cd607", hRule: "5bc95d5a6c12c481" },
-  { relId: 19, parentId: 18, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d0ee309c6017118f", hSchema: "", hRule: "" },
-  { relId: 20, parentId: 18, ordinal: 2, localName: "inner_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "806fcaf90d60fe48", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 6, ordinal: 0, localName: "live_outer", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "bcdfc96752ac3ff6", hSchema: "6dd0b67c218fc444", hRule: "15b99402e954caf3" },
-  { relId: 22, parentId: 21, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d577deafa3b0f0f8", hSchema: "", hRule: "" },
-  { relId: 23, parentId: 6, ordinal: 0, localName: "open_inner", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "66751430700b598e", hSchema: "aeb20090c9adbfc7", hRule: "" },
-  { relId: 24, parentId: 23, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c350332bd56136d2", hSchema: "", hRule: "" },
-  { relId: 25, parentId: 23, ordinal: 2, localName: "inner_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "112c819365009c2c", hSchema: "", hRule: "" },
-  { relId: 26, parentId: 6, ordinal: 0, localName: "open_outer", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "820db7b5f0272eeb", hSchema: "7eff4b79a79eb5a0", hRule: "" },
-  { relId: 27, parentId: 26, ordinal: 1, localName: "outer_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5b21683aaf367839", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "completion_propagation_lattice_tick", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "722b0f0664e29ac4", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "closed_inner", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "9e2cc28df63394a5", h_schema: "ea460993729cd607", h_rule: "caf333c5d0b6d75d" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "af6fef14669e023c", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "inner_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "aca5933964d2f7fa", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "closed_outer", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "13c43353df146fd1", h_schema: "6dd0b67c218fc444", h_rule: "f34840838f6f025c" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f9237740c5da7fbc", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "end_a_signal", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "2e13de8fdbd398b2", h_schema: "6dd0b67c218fc444", h_rule: "" },
+  { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ad2c4d22f9601142", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 6, ordinal: 0, local_name: "end_b_signal", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "2f3860e4048ec44d", h_schema: "6dd0b67c218fc444", h_rule: "" },
+  { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1170fbfff8b05634", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "end_c_signal", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "61e34c011f255041", h_schema: "26235a947a709662", h_rule: "" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "inner_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "30eaa44f4bca3c3d", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 6, ordinal: 0, local_name: "live_inner", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "af2496201cd4d73f", h_schema: "ea460993729cd607", h_rule: "5bc95d5a6c12c481" },
+  { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d0ee309c6017118f", h_schema: "", h_rule: "" },
+  { rel_id: 20, parent_id: 18, ordinal: 2, local_name: "inner_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "806fcaf90d60fe48", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 6, ordinal: 0, local_name: "live_outer", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "bcdfc96752ac3ff6", h_schema: "6dd0b67c218fc444", h_rule: "15b99402e954caf3" },
+  { rel_id: 22, parent_id: 21, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d577deafa3b0f0f8", h_schema: "", h_rule: "" },
+  { rel_id: 23, parent_id: 6, ordinal: 0, local_name: "open_inner", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "66751430700b598e", h_schema: "aeb20090c9adbfc7", h_rule: "" },
+  { rel_id: 24, parent_id: 23, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c350332bd56136d2", h_schema: "", h_rule: "" },
+  { rel_id: 25, parent_id: 23, ordinal: 2, local_name: "inner_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "112c819365009c2c", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 6, ordinal: 0, local_name: "open_outer", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "820db7b5f0272eeb", h_schema: "7eff4b79a79eb5a0", h_rule: "" },
+  { rel_id: 27, parent_id: 26, ordinal: 1, local_name: "outer_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "5b21683aaf367839", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["end_a_signal", "end_b_signal", "end_c_signal", "open_inner", "open_outer"];
+const arrival_targets: readonly string[] = ["end_a_signal", "end_b_signal", "end_c_signal", "open_inner", "open_outer"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "open_inner", sql: `INSERT OR IGNORE INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?)`, params: ["outer_x", "inner_x"] },
@@ -307,21 +307,21 @@ type Snapshot = {
   readonly open_outer: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    closed_inner: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "closed_inner"`, relColumns.closed_inner!, relColumnTypes.closed_inner!),
-    closed_outer: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "closed_outer"`, relColumns.closed_outer!, relColumnTypes.closed_outer!),
-    end_a_signal: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "end_a_signal"`, relColumns.end_a_signal!, relColumnTypes.end_a_signal!),
-    end_b_signal: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "end_b_signal"`, relColumns.end_b_signal!, relColumnTypes.end_b_signal!),
-    end_c_signal: selectRows(seam, `SELECT CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "end_c_signal"`, relColumns.end_c_signal!, relColumnTypes.end_c_signal!),
-    live_inner: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "live_inner"`, relColumns.live_inner!, relColumnTypes.live_inner!),
-    live_outer: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "live_outer"`, relColumns.live_outer!, relColumnTypes.live_outer!),
-    open_inner: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "open_inner"`, relColumns.open_inner!, relColumnTypes.open_inner!),
-    open_outer: selectRows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "open_outer"`, relColumns.open_outer!, relColumnTypes.open_outer!),
+    closed_inner: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "closed_inner"`, rel_columns.closed_inner!, rel_column_types.closed_inner!),
+    closed_outer: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "closed_outer"`, rel_columns.closed_outer!, rel_column_types.closed_outer!),
+    end_a_signal: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "end_a_signal"`, rel_columns.end_a_signal!, rel_column_types.end_a_signal!),
+    end_b_signal: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "end_b_signal"`, rel_columns.end_b_signal!, rel_column_types.end_b_signal!),
+    end_c_signal: select_rows(seam, `SELECT CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "end_c_signal"`, rel_columns.end_c_signal!, rel_column_types.end_c_signal!),
+    live_inner: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "live_inner"`, rel_columns.live_inner!, rel_column_types.live_inner!),
+    live_outer: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "live_outer"`, rel_columns.live_outer!, rel_column_types.live_outer!),
+    open_inner: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "open_inner"`, rel_columns.open_inner!, rel_column_types.open_inner!),
+    open_outer: select_rows(seam, `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "open_outer"`, rel_columns.open_outer!, rel_column_types.open_outer!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   closed_inner: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id" FROM "closed_inner"`,
   closed_outer: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "closed_outer"`,
   end_a_signal: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "end_a_signal"`,
@@ -333,15 +333,15 @@ const finalSelect: Record<string, string> = {
   open_outer: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id" FROM "open_outer"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  end_a_signal: { kind: "log", addSql: `INSERT INTO "end_a_signal" ("outer_id") VALUES (?)`, delSql: null },
-  end_b_signal: { kind: "log", addSql: `INSERT INTO "end_b_signal" ("outer_id") VALUES (?)`, delSql: null },
-  end_c_signal: { kind: "log", addSql: `INSERT INTO "end_c_signal" ("inner_id") VALUES (?)`, delSql: null },
-  open_inner: { kind: "set", addSql: `INSERT INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?) ON CONFLICT ("outer_id", "inner_id") DO NOTHING`, delSql: `DELETE FROM "open_inner" WHERE "outer_id" = ? AND "inner_id" = ?` },
-  open_outer: { kind: "set", addSql: `INSERT INTO "open_outer" ("outer_id") VALUES (?) ON CONFLICT ("outer_id") DO NOTHING`, delSql: `DELETE FROM "open_outer" WHERE "outer_id" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  end_a_signal: { kind: "log", add_sql: `INSERT INTO "end_a_signal" ("outer_id") VALUES (?)`, del_sql: null },
+  end_b_signal: { kind: "log", add_sql: `INSERT INTO "end_b_signal" ("outer_id") VALUES (?)`, del_sql: null },
+  end_c_signal: { kind: "log", add_sql: `INSERT INTO "end_c_signal" ("inner_id") VALUES (?)`, del_sql: null },
+  open_inner: { kind: "set", add_sql: `INSERT INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?) ON CONFLICT ("outer_id", "inner_id") DO NOTHING`, del_sql: `DELETE FROM "open_inner" WHERE "outer_id" = ? AND "inner_id" = ?` },
+  open_outer: { kind: "set", add_sql: `INSERT INTO "open_outer" ("outer_id") VALUES (?) ON CONFLICT ("outer_id") DO NOTHING`, del_sql: `DELETE FROM "open_outer" WHERE "outer_id" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`completion_propagation_lattice_tick: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -350,43 +350,43 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`completion_propagation_lattice_tick: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`completion_propagation_lattice_tick: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "closed_inner", kind: "log", tableName: "closed_inner", deltaTableName: "__delta_closed_inner", frontierTableName: "__frontier_closed_inner", nextFrontierTableName: "__next_frontier_closed_inner", columns: ["outer_id", "inner_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, ruleObservers: [] },
-  { rel: "closed_outer", kind: "log", tableName: "closed_outer", deltaTableName: "__delta_closed_outer", frontierTableName: "__frontier_closed_outer", nextFrontierTableName: "__next_frontier_closed_outer", columns: ["outer_id"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, ruleObservers: [] },
-  { rel: "end_a_signal", kind: "log", tableName: "end_a_signal", deltaTableName: "__delta_end_a_signal", frontierTableName: "__frontier_end_a_signal", nextFrontierTableName: "__next_frontier_end_a_signal", columns: ["outer_id"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "end_a_signal" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "outer_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_a_signal" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, ruleObservers: ["closed_outer/1"] },
-  { rel: "end_b_signal", kind: "log", tableName: "end_b_signal", deltaTableName: "__delta_end_b_signal", frontierTableName: "__frontier_end_b_signal", nextFrontierTableName: "__next_frontier_end_b_signal", columns: ["outer_id"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "end_b_signal" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "outer_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_b_signal" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, ruleObservers: ["closed_outer/1"] },
-  { rel: "end_c_signal", kind: "log", tableName: "end_c_signal", deltaTableName: "__delta_end_c_signal", frontierTableName: "__frontier_end_c_signal", nextFrontierTableName: "__next_frontier_end_c_signal", columns: ["inner_id"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT INTO "end_c_signal" ("inner_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "inner_id"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_c_signal" WHERE "_sign" IN (-1, 1) GROUP BY "inner_id", "_sign"`, ruleObservers: ["closed_inner/2"] },
-  { rel: "live_inner", kind: "set", tableName: "live_inner", deltaTableName: "__delta_live_inner", frontierTableName: "__frontier_live_inner", nextFrontierTableName: "__next_frontier_live_inner", columns: ["outer_id", "inner_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, ruleObservers: [] },
-  { rel: "live_outer", kind: "set", tableName: "live_outer", deltaTableName: "__delta_live_outer", frontierTableName: "__frontier_live_outer", nextFrontierTableName: "__next_frontier_live_outer", columns: ["outer_id"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, ruleObservers: ["live_inner/2"] },
-  { rel: "open_inner", kind: "set", tableName: "open_inner", deltaTableName: "__delta_open_inner", frontierTableName: "__frontier_open_inner", nextFrontierTableName: "__next_frontier_open_inner", columns: ["outer_id", "inner_id"], columnTypes: ["text", "text"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "open_inner" ("outer_id", "inner_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("outer_id", "inner_id") DO NOTHING RETURNING "outer_id", "inner_id"`, arrivalDelSql: `DELETE FROM "open_inner" WHERE ("outer_id", "inner_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "outer_id", "inner_id"`, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, ruleObservers: ["live_inner/2"] },
-  { rel: "open_outer", kind: "set", tableName: "open_outer", deltaTableName: "__delta_open_outer", frontierTableName: "__frontier_open_outer", nextFrontierTableName: "__next_frontier_open_outer", columns: ["outer_id"], columnTypes: ["text"], keyIndices: [0], arrivalAddSql: `INSERT INTO "open_outer" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("outer_id") DO NOTHING RETURNING "outer_id"`, arrivalDelSql: `DELETE FROM "open_outer" WHERE ("outer_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "outer_id"`, boundarySql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, ruleObservers: ["closed_outer/1", "live_outer/1"] },
+  { rel: "closed_inner", kind: "log", table_name: "closed_inner", delta_table_name: "__delta_closed_inner", frontier_table_name: "__frontier_closed_inner", next_frontier_table_name: "__next_frontier_closed_inner", columns: ["outer_id", "inner_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, rule_observers: [] },
+  { rel: "closed_outer", kind: "log", table_name: "closed_outer", delta_table_name: "__delta_closed_outer", frontier_table_name: "__frontier_closed_outer", next_frontier_table_name: "__next_frontier_closed_outer", columns: ["outer_id"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_closed_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, rule_observers: [] },
+  { rel: "end_a_signal", kind: "log", table_name: "end_a_signal", delta_table_name: "__delta_end_a_signal", frontier_table_name: "__frontier_end_a_signal", next_frontier_table_name: "__next_frontier_end_a_signal", columns: ["outer_id"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "end_a_signal" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "outer_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_a_signal" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, rule_observers: ["closed_outer/1"] },
+  { rel: "end_b_signal", kind: "log", table_name: "end_b_signal", delta_table_name: "__delta_end_b_signal", frontier_table_name: "__frontier_end_b_signal", next_frontier_table_name: "__next_frontier_end_b_signal", columns: ["outer_id"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "end_b_signal" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "outer_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_b_signal" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, rule_observers: ["closed_outer/1"] },
+  { rel: "end_c_signal", kind: "log", table_name: "end_c_signal", delta_table_name: "__delta_end_c_signal", frontier_table_name: "__frontier_end_c_signal", next_frontier_table_name: "__next_frontier_end_c_signal", columns: ["inner_id"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "end_c_signal" ("inner_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "inner_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_end_c_signal" WHERE "_sign" IN (-1, 1) GROUP BY "inner_id", "_sign"`, rule_observers: ["closed_inner/2"] },
+  { rel: "live_inner", kind: "set", table_name: "live_inner", delta_table_name: "__delta_live_inner", frontier_table_name: "__frontier_live_inner", next_frontier_table_name: "__next_frontier_live_inner", columns: ["outer_id", "inner_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, rule_observers: [] },
+  { rel: "live_outer", kind: "set", table_name: "live_outer", delta_table_name: "__delta_live_outer", frontier_table_name: "__frontier_live_outer", next_frontier_table_name: "__next_frontier_live_outer", columns: ["outer_id"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_live_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, rule_observers: ["live_inner/2"] },
+  { rel: "open_inner", kind: "set", table_name: "open_inner", delta_table_name: "__delta_open_inner", frontier_table_name: "__frontier_open_inner", next_frontier_table_name: "__next_frontier_open_inner", columns: ["outer_id", "inner_id"], column_types: ["text", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "open_inner" ("outer_id", "inner_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("outer_id", "inner_id") DO NOTHING RETURNING "outer_id", "inner_id"`, arrival_del_sql: `DELETE FROM "open_inner" WHERE ("outer_id", "inner_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "outer_id", "inner_id"`, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", CASE WHEN json_valid("inner_id") AND json_type("inner_id") = 'object' AND json_type("inner_id", '$.fn') = 'text' AND json_type("inner_id", '$.args') = 'array' THEN json_extract("inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("inner_id", '$.args')), '') || ')' ELSE "inner_id" END AS "inner_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_inner" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "inner_id", "_sign"`, rule_observers: ["live_inner/2"] },
+  { rel: "open_outer", kind: "set", table_name: "open_outer", delta_table_name: "__delta_open_outer", frontier_table_name: "__frontier_open_outer", next_frontier_table_name: "__next_frontier_open_outer", columns: ["outer_id"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "open_outer" ("outer_id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("outer_id") DO NOTHING RETURNING "outer_id"`, arrival_del_sql: `DELETE FROM "open_outer" WHERE ("outer_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "outer_id"`, boundary_sql: `SELECT CASE WHEN json_valid("outer_id") AND json_type("outer_id") = 'object' AND json_type("outer_id", '$.fn') = 'text' AND json_type("outer_id", '$.args') = 'array' THEN json_extract("outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("outer_id", '$.args')), '') || ')' ELSE "outer_id" END AS "outer_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_outer" WHERE "_sign" IN (-1, 1) GROUP BY "outer_id", "_sign"`, rule_observers: ["closed_outer/1", "live_outer/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "closed_outer", ruleId: "completion_propagation_lattice_tick:closed_outer/1#1", headKind: "log", headTableName: "closed_outer", headDeltaTableName: "__delta_closed_outer", headColumns: ["outer_id"], keyIndices: [], projectSql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_end_a_signal" d0, "end_b_signal" b0, "open_outer" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "closed_outer", ruleId: "completion_propagation_lattice_tick:closed_outer/1#2", headKind: "log", headTableName: "closed_outer", headDeltaTableName: "__delta_closed_outer", headColumns: ["outer_id"], keyIndices: [], projectSql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_end_b_signal" d0, "end_a_signal" b0, "open_outer" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "closed_outer", ruleId: "completion_propagation_lattice_tick:closed_outer/1#3", headKind: "log", headTableName: "closed_outer", headDeltaTableName: "__delta_closed_outer", headColumns: ["outer_id"], keyIndices: [], projectSql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_open_outer" d0, "end_a_signal" b0, "end_b_signal" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { headRel: "closed_inner", ruleId: "completion_propagation_lattice_tick:closed_inner/2#1", headKind: "log", headTableName: "closed_inner", headDeltaTableName: "__delta_closed_inner", headColumns: ["outer_id", "inner_id"], keyIndices: [], projectSql: `SELECT b0."outer_id" AS "outer_id", d0."inner_id" AS "inner_id" FROM "__frontier_end_c_signal" d0, "open_inner" b0 WHERE d0."_phase" >= 0 AND b0."inner_id" = d0."inner_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "closed_outer", rule_id: "completion_propagation_lattice_tick:closed_outer/1#1", head_kind: "log", head_table_name: "closed_outer", head_delta_table_name: "__delta_closed_outer", head_columns: ["outer_id"], key_indices: [], project_sql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_end_a_signal" d0, "end_b_signal" b0, "open_outer" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "closed_outer", rule_id: "completion_propagation_lattice_tick:closed_outer/1#2", head_kind: "log", head_table_name: "closed_outer", head_delta_table_name: "__delta_closed_outer", head_columns: ["outer_id"], key_indices: [], project_sql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_end_b_signal" d0, "end_a_signal" b0, "open_outer" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "closed_outer", rule_id: "completion_propagation_lattice_tick:closed_outer/1#3", head_kind: "log", head_table_name: "closed_outer", head_delta_table_name: "__delta_closed_outer", head_columns: ["outer_id"], key_indices: [], project_sql: `SELECT d0."outer_id" AS "outer_id" FROM "__frontier_open_outer" d0, "end_a_signal" b0, "end_b_signal" b1 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND b1."outer_id" = d0."outer_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "closed_inner", rule_id: "completion_propagation_lattice_tick:closed_inner/2#1", head_kind: "log", head_table_name: "closed_inner", head_delta_table_name: "__delta_closed_inner", head_columns: ["outer_id", "inner_id"], key_indices: [], project_sql: `SELECT b0."outer_id" AS "outer_id", d0."inner_id" AS "inner_id" FROM "__frontier_end_c_signal" d0, "open_inner" b0 WHERE d0."_phase" >= 0 AND b0."inner_id" = d0."inner_id" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "live_outer", ruleId: "completion_propagation_lattice_tick:live_outer/1#1", headDeltaTableName: "__delta_live_outer", headColumns: ["outer_id"], insertSql: `INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT DISTINCT d0."outer_id" FROM "__frontier_open_outer" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = d0."outer_id") RETURNING "outer_id"`, selectSql: `SELECT "outer_id" FROM "live_outer"`, recomputeSql: `DELETE FROM "live_outer";
-INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id")`, supportSql: [`DELETE FROM "__support_next_live_outer"`, `INSERT INTO "__support_next_live_outer" ("outer_id", "__refcount") SELECT "outer_id", sum("__refcount") FROM (SELECT b0."outer_id" AS "outer_id", count(*) AS "__refcount" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id") GROUP BY b0."outer_id") GROUP BY "outer_id"`, `UPDATE "live_outer" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_outer" n WHERE n."outer_id" = h."outer_id"), 0)`, `INSERT INTO "__delta_live_outer" ("_sign", "_sequence", "outer_id") SELECT -1, row_number() OVER () - 1, "outer_id" FROM "live_outer" WHERE "__refcount" <= 0`, `DELETE FROM "live_outer" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_outer"`, `INSERT INTO "__new_live_outer" ("outer_id", "__refcount") SELECT n."outer_id", n."__refcount" FROM "__support_next_live_outer" n LEFT JOIN "live_outer" h ON n."outer_id" = h."outer_id" WHERE h."outer_id" IS NULL`, `INSERT INTO "__delta_live_outer" ("_sign", "_sequence", "outer_id") SELECT 1, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT INTO "__frontier_live_outer" ("_phase", "_sequence", "outer_id") SELECT ?, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT INTO "__next_frontier_live_outer" ("_phase", "_sequence", "outer_id") SELECT ?, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT OR IGNORE INTO "live_outer" ("outer_id", "__refcount") SELECT n."outer_id", n."__refcount" FROM "__support_next_live_outer" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "live_inner", ruleId: "completion_propagation_lattice_tick:live_inner/2#1", headDeltaTableName: "__delta_live_inner", headColumns: ["outer_id", "inner_id"], insertSql: `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT DISTINCT d0."outer_id", d0."inner_id" FROM "__frontier_open_inner" d0, "live_outer" b0 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = d0."outer_id" AND n0."inner_id" = d0."inner_id") UNION ALL SELECT DISTINCT d0."outer_id", b0."inner_id" FROM "__frontier_live_outer" d0, "open_inner" b0 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = d0."outer_id" AND n0."inner_id" = b0."inner_id") RETURNING "outer_id", "inner_id"`, selectSql: `SELECT "outer_id", "inner_id" FROM "live_inner"`, recomputeSql: `DELETE FROM "live_inner";
-INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, supportSql: [`DELETE FROM "__support_next_live_inner"`, `INSERT INTO "__support_next_live_inner" ("outer_id", "inner_id", "__refcount") SELECT "outer_id", "inner_id", sum("__refcount") FROM (SELECT b0."outer_id" AS "outer_id", b0."inner_id" AS "inner_id", count(*) AS "__refcount" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id") GROUP BY b0."outer_id", b0."inner_id") GROUP BY "outer_id", "inner_id"`, `UPDATE "live_inner" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_inner" n WHERE n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id"), 0)`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT -1, row_number() OVER () - 1, "outer_id", "inner_id" FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_inner"`, `INSERT INTO "__new_live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n LEFT JOIN "live_inner" h ON n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id" WHERE h."outer_id" IS NULL`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT 1, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__next_frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "live_outer", rule_id: "completion_propagation_lattice_tick:live_outer/1#1", head_delta_table_name: "__delta_live_outer", head_columns: ["outer_id"], insert_sql: `INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT DISTINCT d0."outer_id" FROM "__frontier_open_outer" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = d0."outer_id") RETURNING "outer_id"`, select_sql: `SELECT "outer_id" FROM "live_outer"`, recompute_sql: `DELETE FROM "live_outer";
+INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id")`, support_sql: [`DELETE FROM "__support_next_live_outer"`, `INSERT INTO "__support_next_live_outer" ("outer_id", "__refcount") SELECT "outer_id", sum("__refcount") FROM (SELECT b0."outer_id" AS "outer_id", count(*) AS "__refcount" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id") GROUP BY b0."outer_id") GROUP BY "outer_id"`, `UPDATE "live_outer" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_outer" n WHERE n."outer_id" = h."outer_id"), 0)`, `INSERT INTO "__delta_live_outer" ("_sign", "_sequence", "outer_id") SELECT -1, row_number() OVER () - 1, "outer_id" FROM "live_outer" WHERE "__refcount" <= 0`, `DELETE FROM "live_outer" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_outer"`, `INSERT INTO "__new_live_outer" ("outer_id", "__refcount") SELECT n."outer_id", n."__refcount" FROM "__support_next_live_outer" n LEFT JOIN "live_outer" h ON n."outer_id" = h."outer_id" WHERE h."outer_id" IS NULL`, `INSERT INTO "__delta_live_outer" ("_sign", "_sequence", "outer_id") SELECT 1, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT INTO "__frontier_live_outer" ("_phase", "_sequence", "outer_id") SELECT ?, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT INTO "__next_frontier_live_outer" ("_phase", "_sequence", "outer_id") SELECT ?, "rowid" - 1, "outer_id" FROM "__new_live_outer"`, `INSERT OR IGNORE INTO "live_outer" ("outer_id", "__refcount") SELECT n."outer_id", n."__refcount" FROM "__support_next_live_outer" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "live_inner", rule_id: "completion_propagation_lattice_tick:live_inner/2#1", head_delta_table_name: "__delta_live_inner", head_columns: ["outer_id", "inner_id"], insert_sql: `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT DISTINCT d0."outer_id", d0."inner_id" FROM "__frontier_open_inner" d0, "live_outer" b0 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = d0."outer_id" AND n0."inner_id" = d0."inner_id") UNION ALL SELECT DISTINCT d0."outer_id", b0."inner_id" FROM "__frontier_live_outer" d0, "open_inner" b0 WHERE d0."_phase" >= 0 AND b0."outer_id" = d0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = d0."outer_id" AND n0."inner_id" = b0."inner_id") RETURNING "outer_id", "inner_id"`, select_sql: `SELECT "outer_id", "inner_id" FROM "live_inner"`, recompute_sql: `DELETE FROM "live_inner";
+INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, support_sql: [`DELETE FROM "__support_next_live_inner"`, `INSERT INTO "__support_next_live_inner" ("outer_id", "inner_id", "__refcount") SELECT "outer_id", "inner_id", sum("__refcount") FROM (SELECT b0."outer_id" AS "outer_id", b0."inner_id" AS "inner_id", count(*) AS "__refcount" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id") GROUP BY b0."outer_id", b0."inner_id") GROUP BY "outer_id", "inner_id"`, `UPDATE "live_inner" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_inner" n WHERE n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id"), 0)`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT -1, row_number() OVER () - 1, "outer_id", "inner_id" FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_inner"`, `INSERT INTO "__new_live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n LEFT JOIN "live_inner" h ON n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id" WHERE h."outer_id" IS NULL`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT 1, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__next_frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
 const EDGE_CLOSED_OUTER_0_PROJECT_SQL = `SELECT ?1 AS "outer_id" FROM "end_b_signal" b0, "open_outer" b1 WHERE b0."outer_id" = ?1 AND b1."outer_id" = ?1`;
@@ -406,15 +406,15 @@ const EDGE_CLOSED_INNER_3_WRITE_SQL = `INSERT INTO "closed_inner" ("outer_id", "
 const EDGE_CLOSED_INNER_3_HEAD_COLUMNS: readonly string[] = ["outer_id", "inner_id"];
 
 function resolveClosedOuter_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "end_a_signal", before.end_a_signal, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "end_a_signal", before.end_a_signal, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CLOSED_OUTER_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_0_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_CLOSED_OUTER_0_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -423,15 +423,15 @@ function resolveClosedOuter_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: 
 }
 
 function resolveClosedOuter_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "end_b_signal", before.end_b_signal, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_1_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "end_b_signal", before.end_b_signal, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CLOSED_OUTER_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_1_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_CLOSED_OUTER_1_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -440,15 +440,15 @@ function resolveClosedOuter_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: 
 }
 
 function resolveClosedOuter_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("set", "open_outer", before.open_outer, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_2_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("set", "open_outer", before.open_outer, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CLOSED_OUTER_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_2_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_CLOSED_OUTER_2_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -457,15 +457,15 @@ function resolveClosedOuter_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: 
 }
 
 function resolveClosedInner_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "end_c_signal", before.end_c_signal, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_INNER_3_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "end_c_signal", before.end_c_signal, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_INNER_3_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const written: SqlStatement[] = [];
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CLOSED_INNER_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          written.push({ sql: EDGE_CLOSED_INNER_3_WRITE_SQL, args: bindArgs(projectedRow) });
+        const projected_rows = result.rows.map((row) => EDGE_CLOSED_INNER_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          written.push({ sql: EDGE_CLOSED_INNER_3_WRITE_SQL, args: bind_args(projected_row) });
         }
       }
       return written;
@@ -473,7 +473,7 @@ function resolveClosedInner_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: 
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "live_outer";
 INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id");
 DELETE FROM "live_inner";
@@ -481,16 +481,16 @@ INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id"
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const closed_inner = multisetDiff(before.closed_inner, after.closed_inner);
-  const closed_outer = multisetDiff(before.closed_outer, after.closed_outer);
-  const end_a_signal = multisetDiff(before.end_a_signal, after.end_a_signal);
-  const end_b_signal = multisetDiff(before.end_b_signal, after.end_b_signal);
-  const end_c_signal = multisetDiff(before.end_c_signal, after.end_c_signal);
-  const live_inner = multisetDiff(before.live_inner, after.live_inner);
-  const live_outer = multisetDiff(before.live_outer, after.live_outer);
-  const open_inner = multisetDiff(before.open_inner, after.open_inner);
-  const open_outer = multisetDiff(before.open_outer, after.open_outer);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const closed_inner = multiset_diff(before.closed_inner, after.closed_inner);
+  const closed_outer = multiset_diff(before.closed_outer, after.closed_outer);
+  const end_a_signal = multiset_diff(before.end_a_signal, after.end_a_signal);
+  const end_b_signal = multiset_diff(before.end_b_signal, after.end_b_signal);
+  const end_c_signal = multiset_diff(before.end_c_signal, after.end_c_signal);
+  const live_inner = multiset_diff(before.live_inner, after.live_inner);
+  const live_outer = multiset_diff(before.live_outer, after.live_outer);
+  const open_inner = multiset_diff(before.open_inner, after.open_inner);
+  const open_outer = multiset_diff(before.open_outer, after.open_outer);
   return {
     rels: [
       { rel: "closed_inner", add: closed_inner.add, del: closed_inner.del },
@@ -503,22 +503,22 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "open_inner", add: open_inner.add, del: open_inner.del },
       { rel: "open_outer", add: open_outer.add, del: open_outer.del },
     ],
-    carryPending: closed_inner.add.length > 0 || closed_inner.del.length > 0 || closed_outer.add.length > 0 || closed_outer.del.length > 0,
+    carry_pending: closed_inner.add.length > 0 || closed_inner.del.length > 0 || closed_outer.add.length > 0 || closed_outer.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       forkJoin([resolveClosedOuter_0Writes(seam, before, arrivals), resolveClosedOuter_1Writes(seam, before, arrivals), resolveClosedOuter_2Writes(seam, before, arrivals), resolveClosedInner_3Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // completion_propagation_lattice_tick: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -532,40 +532,40 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -574,16 +574,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "completion_propagation_lattice_tick",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

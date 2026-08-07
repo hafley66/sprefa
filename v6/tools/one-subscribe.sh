@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TRACE_CHANNEL_HANDLES='(sqlChannel|effectChannel|bindChannel|watchChannel|ingestChannel|tickChannel|ruleChannel)\.subscribe\('
+TRACE_CHANNEL_HANDLES='(sqlChannel|effectChannel|bindChannel|watchChannel|ingestChannel|tickChannel|ruleChannel|sql_channel|effect_channel|bind_channel|watch_channel|ingest_channel|tick_channel|rule_channel)\.subscribe\('
 status=0
 
 check_app() {

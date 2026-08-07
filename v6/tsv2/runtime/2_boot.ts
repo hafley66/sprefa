@@ -16,7 +16,7 @@ import type { IBootStatement, IBootRunner, IRowValue, ISqlSeam } from "./types.t
  *  emit_ts.pl's emitted `bindArgs` helper and 1_incremental.ts's own; the boot
  *  path was the one seam still binding raw. Harmless against an INTEGER
  *  column, which round-trips either form. */
-function bootArgs(params: readonly IRowValue[]): (string | number | bigint)[] {
+function boot_args(params: readonly IRowValue[]): (string | number | bigint)[] {
   return params.map((param) =>
     typeof param === "boolean"
       ? BigInt(param ? 1 : 0)
@@ -31,7 +31,7 @@ export const BootRunner: IBootRunner = {
     if (statements.length === 0) return of(undefined);
     return from(statements).pipe(
       concatMap((statement) =>
-        seam.runner.execute(seam.db, { sql: statement.sql, args: bootArgs(statement.params) }),
+        seam.runner.execute(seam.db, { sql: statement.sql, args: boot_args(statement.params) }),
       ),
       toArray(),
       map(() => undefined),

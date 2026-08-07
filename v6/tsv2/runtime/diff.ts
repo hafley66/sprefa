@@ -14,36 +14,36 @@
 
 import type { IMultisetDiff, IRow, IRowDiff } from "./types.ts";
 
-function rowKey(row: IRow): string {
+function row_key(row: IRow): string {
   return JSON.stringify(row);
 }
 
 /** `prevRows` / `nextRows` are the FULL row lists (duplicates allowed) for
  *  one rel, read before and after one tick's writes. */
-export const multisetDiff: IMultisetDiff = (prevRows: readonly IRow[], nextRows: readonly IRow[]): IRowDiff => {
-  const prevCounts = new Map<string, { row: IRow; count: number }>();
-  for (const row of prevRows) {
-    const key = rowKey(row);
-    const existing = prevCounts.get(key);
+export const multiset_diff: IMultisetDiff = (prev_rows: readonly IRow[], next_rows: readonly IRow[]): IRowDiff => {
+  const prev_counts = new Map<string, { row: IRow; count: number }>();
+  for (const row of prev_rows) {
+    const key = row_key(row);
+    const existing = prev_counts.get(key);
     if (existing) existing.count += 1;
-    else prevCounts.set(key, { row, count: 1 });
+    else prev_counts.set(key, { row, count: 1 });
   }
-  const nextCounts = new Map<string, { row: IRow; count: number }>();
-  for (const row of nextRows) {
-    const key = rowKey(row);
-    const existing = nextCounts.get(key);
+  const next_counts = new Map<string, { row: IRow; count: number }>();
+  for (const row of next_rows) {
+    const key = row_key(row);
+    const existing = next_counts.get(key);
     if (existing) existing.count += 1;
-    else nextCounts.set(key, { row, count: 1 });
+    else next_counts.set(key, { row, count: 1 });
   }
 
   const add: IRow[] = [];
-  for (const [key, entry] of nextCounts) {
-    const before = prevCounts.get(key)?.count ?? 0;
+  for (const [key, entry] of next_counts) {
+    const before = prev_counts.get(key)?.count ?? 0;
     for (let extra = before; extra < entry.count; extra += 1) add.push(entry.row);
   }
   const del: IRow[] = [];
-  for (const [key, entry] of prevCounts) {
-    const after = nextCounts.get(key)?.count ?? 0;
+  for (const [key, entry] of prev_counts) {
+    const after = next_counts.get(key)?.count ?? 0;
     for (let extra = after; extra < entry.count; extra += 1) del.push(entry.row);
   }
   return { add, del };

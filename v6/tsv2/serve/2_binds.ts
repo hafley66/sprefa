@@ -57,7 +57,7 @@
  * membership is decided for boot and for live by the same `matchesWatchGlob`
  * call. The boot==live property is covered by tests/watchGlobDialect.test.ts.
  *
- * The coalesce window is 100ms by default (`IServeConfig.watchCoalesceMs`), on the
+ * The coalesce window is 100ms by default (`IServeConfig.watch_coalesce_ms`), on the
  * injected scheduler so a test drives it on virtual time. `bufferTime` and not
  * `debounceTime`: a debounce never emits while a large `git checkout` keeps
  * firing, while a fixed window is bounded on BOTH sides -- a 2-second checkout
@@ -67,7 +67,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
-import { watch as watchDirectory } from "node:fs/promises";
+import { watch as watch_directory } from "node:fs/promises";
 
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
@@ -110,8 +110,8 @@ import type {
 } from "../runtime/types.ts";
 import { ServeTrace } from "./0_trace.ts";
 
-function bucketFor(periodSecs: number): number {
-  return Math.floor(Date.now() / 1000 / periodSecs);
+function bucket_for(period_secs: number): number {
+  return Math.floor(Date.now() / 1000 / period_secs);
 }
 
 /** The `interval` bind's row is (period, bucket) by registry definition
@@ -119,15 +119,15 @@ function bucketFor(periodSecs: number): number {
  *  plan's own declared columns: first column carries the period, second the
  *  bucket. A future bind with another column shape needs its own row builder
  *  and would be refused by name below rather than filled by guess. */
-function bucketRow(plan: IBindPlan, periodSecs: number): readonly IRowValue[] {
-  return plan.columns.map((_column, index) => (index === 0 ? periodSecs : bucketFor(periodSecs)));
+function bucket_row(plan: IBindPlan, period_secs: number): readonly IRowValue[] {
+  return plan.columns.map((_column, index) => (index === 0 ? period_secs : bucket_for(period_secs)));
 }
 
 /** `interval`'s configuration column is `period: int`, so a non-integer literal
  *  there is a program the compiler's own column typing should already have
  *  rejected. Named rather than filtered: a silently dropped cadence is a timer
  *  that never fires and a program that looks like it is running. */
-function intervalPeriods(plan: IBindPlan): readonly number[] {
+function interval_periods(plan: IBindPlan): readonly number[] {
   return plan.literals.map((literal) => {
     if (typeof literal !== "number" || !Number.isInteger(literal)) {
       throw new Error(`bind '${plan.name}' read a non-integer period literal ${JSON.stringify(literal)}`);
@@ -151,9 +151,9 @@ export class IntervalBindRunner implements IIntervalBindRunner {
       if (plan.columns.length !== 2) {
         throw new Error(`bind '${plan.name}' has ${plan.columns.length} columns; the interval row shape is (period, bucket)`);
       }
-      return intervalPeriods(plan).map((periodSecs) =>
-        interval(periodSecs * 1000, scheduler).pipe(
-          map((): IArrivalRow => ({ rel: plan.name, sign: "add", row: bucketRow(plan, periodSecs) })),
+      return interval_periods(plan).map((period_secs) =>
+        interval(period_secs * 1000, scheduler).pipe(
+          map((): IArrivalRow => ({ rel: plan.name, sign: "add", row: bucket_row(plan, period_secs) })),
           mergeMap((arrival) =>
             // One firing is one reported value: `take(1)` keeps the SETTLE tick
             // and lets any drain ticks the batch causes flow out on `ticks$`
@@ -163,8 +163,8 @@ export class IntervalBindRunner implements IIntervalBindRunner {
               take(1),
               map((outcome): IBindFired => {
                 const bucket = Number(arrival.row[1] ?? 0);
-                ServeTrace.bind(plan.name, periodSecs, bucket);
-                return { rel: plan.name, period: periodSecs, bucket, tick: outcome.tick };
+                ServeTrace.bind(plan.name, period_secs, bucket);
+                return { rel: plan.name, period: period_secs, bucket, tick: outcome.tick };
               }),
             ),
           ),
@@ -183,12 +183,12 @@ export class IntervalBindRunner implements IIntervalBindRunner {
  *  the only subtree the watcher has to open: `v6/tsv2/**\/*.ts` watches
  *  `v6/tsv2`, not the repo. A glob with magic in its first segment watches the
  *  root, which is honest and loud in the trace rather than a silent narrowing. */
-export const watchRootOf: IWatchRootOf = (root: string, glob: string): string => {
+export const watch_root_of: IWatchRootOf = (root: string, glob: string): string => {
   const magic = glob.search(/[*?[\]{}]/);
-  const literalPrefix = magic < 0 ? glob : glob.slice(0, magic);
-  const lastSlash = literalPrefix.lastIndexOf("/");
-  const relativeDirectory = lastSlash < 0 ? "" : literalPrefix.slice(0, lastSlash);
-  return path.resolve(root, relativeDirectory);
+  const literal_prefix = magic < 0 ? glob : glob.slice(0, magic);
+  const last_slash = literal_prefix.lastIndexOf("/");
+  const relative_directory = last_slash < 0 ? "" : literal_prefix.slice(0, last_slash);
+  return path.resolve(root, relative_directory);
 };
 
 /**
@@ -210,7 +210,7 @@ export class NodeWatchSource implements IWatchSource {
   watch(root: string): Observable<string> {
     return defer(() => {
       const controller = new AbortController();
-      return from(watchDirectory(root, { recursive: true, signal: controller.signal })).pipe(
+      return from(watch_directory(root, { recursive: true, signal: controller.signal })).pipe(
         map((event) => path.resolve(root, event.filename ?? "")),
         // The abort we ourselves just performed comes back out of the iterator
         // as an error; it is this stream ENDING, not a fault to propagate.
@@ -226,10 +226,10 @@ export class NodeWatchSource implements IWatchSource {
 /** Content digest of one path, or null when it is not a readable file. Sync on
  *  purpose ("sync stays sync"): this runs inside a `map` over one bounded
  *  coalesce window, so there is no Promise to lift and nothing to interleave. */
-function digestOf(absolutePath: string): string | null {
+function digest_of(absolute_path: string): string | null {
   try {
-    if (!statSync(absolutePath).isFile()) return null;
-    return bytesToHex(sha256(readFileSync(absolutePath)));
+    if (!statSync(absolute_path).isFile()) return null;
+    return bytesToHex(sha256(readFileSync(absolute_path)));
   } catch {
     return null;
   }
@@ -268,8 +268,8 @@ function digestOf(absolutePath: string): string | null {
  * host, so swapping the matcher would be wrong), which is a different change on
  * a different plane -- filed, not smuggled in here.
  */
-export const matchesWatchGlob: IMatchesWatchGlob = (relativePath: string, glob: string): boolean =>
-  path.matchesGlob(relativePath, glob);
+export const matches_watch_glob: IMatchesWatchGlob = (relative_path: string, glob: string): boolean =>
+  path.matchesGlob(relative_path, glob);
 
 /** The tracked worktree, WHOLE: `git ls-files` with no pathspec, because the
  *  glob is not git's business any more (ruling above). Enumerating everything
@@ -284,7 +284,7 @@ export const matchesWatchGlob: IMatchesWatchGlob = (relativePath: string, glob: 
  *  pathspec call it replaces; what grows is the string list it returns (this
  *  repo: 3,906 tracked paths). Filtering happens BEFORE `digestOf`, so the
  *  number of files READ and hashed is still only the number the glob selects. */
-function trackedPaths(root: string): readonly string[] {
+function tracked_paths(root: string): readonly string[] {
   const result = spawnSync("git", ["ls-files", "-z"], {
     cwd: root,
     encoding: "utf8",
@@ -298,7 +298,7 @@ function trackedPaths(root: string): readonly string[] {
  *  per path, which is what makes a retraction possible (the `-` arrival needs
  *  the exact row that is there) and what makes an unchanged save free. */
 class GlobWatch {
-  private readonly lastDigest = new Map<string, string>();
+  private readonly last_digest = new Map<string, string>();
 
   constructor(
     readonly glob: string,
@@ -309,38 +309,38 @@ class GlobWatch {
   /** Durable engine rows versus the tracked worktree at subscribe. The map is
    *  replaced with the reconciled state before the batch is returned, so an
    *  empty difference still seeds later live deletions. */
-  bootBatch(storedRows: readonly IRow[]): IArrivalBatch {
+  boot_batch(stored_rows: readonly IRow[]): IArrivalBatch {
     const stored = new Map<string, string>();
-    for (const row of storedRows) {
+    for (const row of stored_rows) {
       if (row[0] !== this.glob) continue;
       stored.set(String(row[1] ?? ""), String(row[2] ?? ""));
     }
 
     const disk = new Map<string, string>();
-    for (const relativePath of trackedPaths(this.root)) {
-      if (!matchesWatchGlob(relativePath, this.glob)) continue;
-      const digest = digestOf(path.resolve(this.root, relativePath));
-      if (digest !== null) disk.set(relativePath, digest);
+    for (const relative_path of tracked_paths(this.root)) {
+      if (!matches_watch_glob(relative_path, this.glob)) continue;
+      const digest = digest_of(path.resolve(this.root, relative_path));
+      if (digest !== null) disk.set(relative_path, digest);
     }
 
     const arrivals: IArrivalRow[] = [];
-    this.lastDigest.clear();
-    for (const [relativePath, previous] of [...stored].sort(([left], [right]) => left.localeCompare(right))) {
-      const current = disk.get(relativePath);
+    this.last_digest.clear();
+    for (const [relative_path, previous] of [...stored].sort(([left], [right]) => left.localeCompare(right))) {
+      const current = disk.get(relative_path);
       if (current === previous) {
-        this.lastDigest.set(relativePath, current);
+        this.last_digest.set(relative_path, current);
       } else {
-        arrivals.push({ rel: this.rel, sign: "del", row: [this.glob, relativePath, previous] });
+        arrivals.push({ rel: this.rel, sign: "del", row: [this.glob, relative_path, previous] });
         if (current !== undefined) {
-          arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relativePath, current] });
-          this.lastDigest.set(relativePath, current);
+          arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relative_path, current] });
+          this.last_digest.set(relative_path, current);
         }
       }
-      disk.delete(relativePath);
+      disk.delete(relative_path);
     }
-    for (const [relativePath, current] of [...disk].sort(([left], [right]) => left.localeCompare(right))) {
-      arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relativePath, current] });
-      this.lastDigest.set(relativePath, current);
+    for (const [relative_path, current] of [...disk].sort(([left], [right]) => left.localeCompare(right))) {
+      arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relative_path, current] });
+      this.last_digest.set(relative_path, current);
     }
     return arrivals;
   }
@@ -348,22 +348,22 @@ class GlobWatch {
   /** One coalesce window's paths -> the arrival batch it owes. Duplicated paths
    *  inside the window collapse first (a save is several fs events), so a file
    *  is read and hashed at most once per window. */
-  batchFor(paths: readonly string[]): IArrivalBatch {
+  batch_for(paths: readonly string[]): IArrivalBatch {
     const arrivals: IArrivalRow[] = [];
-    for (const absolutePath of new Set(paths)) {
-      const relativePath = path.relative(this.root, absolutePath);
-      if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) continue;
-      if (!matchesWatchGlob(relativePath, this.glob)) continue;
-      const previous = this.lastDigest.get(relativePath);
-      const current = digestOf(absolutePath);
+    for (const absolute_path of new Set(paths)) {
+      const relative_path = path.relative(this.root, absolute_path);
+      if (relative_path.startsWith("..") || path.isAbsolute(relative_path)) continue;
+      if (!matches_watch_glob(relative_path, this.glob)) continue;
+      const previous = this.last_digest.get(relative_path);
+      const current = digest_of(absolute_path);
       if (current === previous) continue;
       if (previous !== undefined) {
-        arrivals.push({ rel: this.rel, sign: "del", row: [this.glob, relativePath, previous] });
-        this.lastDigest.delete(relativePath);
+        arrivals.push({ rel: this.rel, sign: "del", row: [this.glob, relative_path, previous] });
+        this.last_digest.delete(relative_path);
       }
       if (current !== null) {
-        arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relativePath, current] });
-        this.lastDigest.set(relativePath, current);
+        arrivals.push({ rel: this.rel, sign: "add", row: [this.glob, relative_path, current] });
+        this.last_digest.set(relative_path, current);
       }
     }
     return arrivals;
@@ -378,7 +378,7 @@ export class WatchBindRunner implements IWatchBindRunner {
     plans: readonly IBindPlan[],
     options: {
       readonly root: string;
-      readonly coalesceMs: number;
+      readonly coalesce_ms: number;
       readonly scheduler: SchedulerLike;
       readonly source: IWatchSource;
     },
@@ -402,14 +402,14 @@ export class WatchBindRunner implements IWatchBindRunner {
             }),
           );
         const boot = defer(() => engine.rows(plan.name)).pipe(
-          map((rows) => ({ kind: "boot" as const, batch: state.bootBatch(rows) })),
+          map((rows) => ({ kind: "boot" as const, batch: state.boot_batch(rows) })),
         );
-        const liveWindows = options.source.watch(watchRootOf(options.root, glob)).pipe(
-          bufferTime(options.coalesceMs, options.scheduler),
+        const live_windows = options.source.watch(watch_root_of(options.root, glob)).pipe(
+          bufferTime(options.coalesce_ms, options.scheduler),
           filter((paths) => paths.length > 0),
           map((paths) => ({ kind: "paths" as const, paths })),
         );
-        return merge(liveWindows, boot).pipe(
+        return merge(live_windows, boot).pipe(
           scan(
             (
               folded: {
@@ -426,10 +426,10 @@ export class WatchBindRunner implements IWatchBindRunner {
                 return {
                   booted: true,
                   pending: [],
-                  batches: [input.batch, ...folded.pending.map((paths) => state.batchFor(paths))],
+                  batches: [input.batch, ...folded.pending.map((paths) => state.batch_for(paths))],
                 };
               }
-              return { booted: true, pending: [], batches: [state.batchFor(input.paths)] };
+              return { booted: true, pending: [], batches: [state.batch_for(input.paths)] };
             },
             { booted: false, pending: [], batches: [] } as {
               readonly booted: boolean;
@@ -449,7 +449,7 @@ export class WatchBindRunner implements IWatchBindRunner {
 
 /** The executor split, by name, so an unknown one is refused rather than run as
  *  something else. `4_http.ts` asks this before constructing either runner. */
-export const bindPlansFor: IBindPlansFor = (
+export const bind_plans_for: IBindPlansFor = (
   plans: readonly IBindPlan[],
   execution: string,
 ): readonly IBindPlan[] => {

@@ -50,26 +50,26 @@ function arrivals(): readonly IArrivalRow[] {
   ];
 }
 
-async function tickWithTrace(): Promise<readonly IServeRuleEvent[]> {
+async function tick_with_trace(): Promise<readonly IServeRuleEvent[]> {
   const channel = diagnostics_channel.channel(RUNTIME_CHANNEL_NAMES.rule);
   const captured: IServeRuleEvent[] = [];
-  const onRule = (message: unknown): void => {
+  const on_rule = (message: unknown): void => {
     captured.push(message as IServeRuleEvent);
   };
-  channel.subscribe(onRule);
+  channel.subscribe(on_rule);
   try {
     const seam = ScratchStore.open(":memory:");
     await firstValueFrom(ScratchStore.boot(seam, program.ddl));
     await firstValueFrom(program.tick(seam, arrivals()));
     seam.db.close();
   } finally {
-    channel.unsubscribe(onRule);
+    channel.unsubscribe(on_rule);
   }
   return captured;
 }
 
 test("a tick publishes one record per emitted statement that ran", async () => {
-  const records = await tickWithTrace();
+  const records = await tick_with_trace();
   assert.ok(records.length > 0, "a tick over two rels published no rule records at all");
   for (const record of records) {
     assert.match(
@@ -83,18 +83,18 @@ test("a tick publishes one record per emitted statement that ran", async () => {
 });
 
 test("two arms of one head are two different rules in the log", async () => {
-  const records = await tickWithTrace();
-  const outArms = [...new Set(records.map((record) => record.rule).filter((rule) => rule.includes(":out/")))].sort();
+  const records = await tick_with_trace();
+  const out_arms = [...new Set(records.map((record) => record.rule).filter((rule) => rule.includes(":out/")))].sort();
 
   assert.deepEqual(
-    outArms,
+    out_arms,
     ["merge_batches_per_tick:out/1#1", "merge_batches_per_tick:out/1#2"],
     "the event_a arm and the event_b arm must be distinguishable in the trace",
   );
 });
 
 test("the records account for the rows the tick actually derived", async () => {
-  const records = await tickWithTrace();
+  const records = await tick_with_trace();
   const derived = records
     .filter((record) => record.rule.includes(":out/"))
     .reduce((total, record) => total + record.rows, 0);

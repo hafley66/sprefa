@@ -13,7 +13,7 @@
  * the ticks$ refcount is a defect fix independent of this pole").
  *
  * Engine level, no http, because the claim is about `ticks$` itself: over http
- * the server's own `runProgram$` subscription never drops while a program is
+ * the server's own `run_program$` subscription never drops while a program is
  * loaded, so the http leg cannot see this.
  *
  * RED FIRST, verbatim, before the fix (`node --test
@@ -34,36 +34,36 @@ import { test } from "node:test";
 
 import { firstValueFrom, toArray } from "rxjs";
 
-import { program as switchProgram } from "../gen_emitted/switch_as_keyed_replace.ts";
+import { program as switch_program } from "../gen_emitted/switch_as_keyed_replace.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IArrivalBatch, IServedProgram } from "../runtime/types.ts";
 
-import { LiveEngine, bootServedProgram } from "../serve/3_engine.ts";
+import { LiveEngine, boot_served_program } from "../serve/3_engine.ts";
 
-function routeChange(routeId: string): IArrivalBatch {
-  return [{ rel: "route_change", sign: "add", row: ["session_one", routeId] }];
+function route_change(route_id: string): IArrivalBatch {
+  return [{ rel: "route_change", sign: "add", row: ["session_one", route_id] }];
 }
 
 test("a submit with no ticks$ reader still ticks, and a late reader sees the state it left", async () => {
   const seam = ScratchStore.open(":memory:");
-  const engine = new LiveEngine(switchProgram as unknown as IServedProgram, seam);
+  const engine = new LiveEngine(switch_program as unknown as IServedProgram, seam);
   try {
-    await firstValueFrom(bootServedProgram(seam, switchProgram as unknown as IServedProgram));
+    await firstValueFrom(boot_served_program(seam, switch_program as unknown as IServedProgram));
 
     const early = engine.ticks$.subscribe();
     early.unsubscribe();
 
-    const unwatched = await firstValueFrom(engine.submit(routeChange("settings")).pipe(toArray()));
+    const unwatched = await firstValueFrom(engine.submit(route_change("settings")).pipe(toArray()));
     assert.ok(unwatched.length > 0, "the submitter is owed its own ticks with nobody watching ticks$");
 
     // The tick really ran against the seam, not just against the submitter.
     assert.deepEqual(await firstValueFrom(engine.rows("open_scope")), [["session_one", "route_data(settings)"]]);
 
-    const lateTicks: number[] = [];
-    const late = engine.ticks$.subscribe((outcome) => lateTicks.push(outcome.tick));
+    const late_ticks: number[] = [];
+    const late = engine.ticks$.subscribe((outcome) => late_ticks.push(outcome.tick));
     try {
-      await firstValueFrom(engine.submit(routeChange("profile")).pipe(toArray()));
-      assert.ok(lateTicks.length > 0, "a reader that arrives after the gap still sees later ticks");
+      await firstValueFrom(engine.submit(route_change("profile")).pipe(toArray()));
+      assert.ok(late_ticks.length > 0, "a reader that arrives after the gap still sees later ticks");
       assert.deepEqual(await firstValueFrom(engine.rows("open_scope")), [["session_one", "route_data(profile)"]]);
       // Both route_changes are in the log: the unwatched one was not replayed
       // into the late reader's view of the world either.
@@ -81,25 +81,25 @@ test("a submit with no ticks$ reader still ticks, and a late reader sees the sta
 
 test("tick numbering does not restart when the readers leave and come back", async () => {
   const seam = ScratchStore.open(":memory:");
-  const engine = new LiveEngine(switchProgram as unknown as IServedProgram, seam);
+  const engine = new LiveEngine(switch_program as unknown as IServedProgram, seam);
   try {
-    await firstValueFrom(bootServedProgram(seam, switchProgram as unknown as IServedProgram));
+    await firstValueFrom(boot_served_program(seam, switch_program as unknown as IServedProgram));
 
     const first = engine.ticks$.subscribe();
-    const watched = await firstValueFrom(engine.submit(routeChange("settings")).pipe(toArray()));
+    const watched = await firstValueFrom(engine.submit(route_change("settings")).pipe(toArray()));
     first.unsubscribe();
 
-    const unwatched = await firstValueFrom(engine.submit(routeChange("profile")).pipe(toArray()));
+    const unwatched = await firstValueFrom(engine.submit(route_change("profile")).pipe(toArray()));
 
-    const lateTicks: number[] = [];
-    const late = engine.ticks$.subscribe((outcome) => lateTicks.push(outcome.tick));
+    const late_ticks: number[] = [];
+    const late = engine.ticks$.subscribe((outcome) => late_ticks.push(outcome.tick));
     try {
-      const rewatched = await firstValueFrom(engine.submit(routeChange("settings")).pipe(toArray()));
+      const rewatched = await firstValueFrom(engine.submit(route_change("settings")).pipe(toArray()));
       const numbers = [...watched, ...unwatched, ...rewatched].map((outcome) => outcome.tick);
       // The oracle grades the tick log by number; a gap or a restart across a
       // reader change would break that comparison.
       assert.deepEqual(numbers, [...Array(numbers.length).keys()].map((index) => index + 1));
-      assert.deepEqual(lateTicks, rewatched.map((outcome) => outcome.tick));
+      assert.deepEqual(late_ticks, rewatched.map((outcome) => outcome.tick));
     } finally {
       late.unsubscribe();
     }

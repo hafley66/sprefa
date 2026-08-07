@@ -3,26 +3,26 @@ import { appendFileSync } from "node:fs";
 import { firstValueFrom } from "rxjs";
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
-import { incrementalPlan, program } from "../gen/scale_generated.ts";
+import { incremental_plan, program } from "../gen/scale_generated.ts";
 import {
-  incrementalPlan as switchIncrementalPlan,
-  program as switchProgram,
+  incremental_plan as switch_incremental_plan,
+  program as switch_program,
 } from "../gen_emitted/switch_as_keyed_replace.ts";
 import {
-  incrementalPlan as retractionIncrementalPlan,
-  program as retractionProgram,
+  incremental_plan as retraction_incremental_plan,
+  program as retraction_program,
 } from "../gen_emitted/retraction_only_tick_retracts_level_view.ts";
 import {
-  incrementalPlan as sharedIncrementalPlan,
-  program as sharedProgram,
+  incremental_plan as shared_incremental_plan,
+  program as shared_program,
 } from "../gen_emitted/shared_demand_refcount.ts";
 import {
-  incrementalPlan as negativeIncrementalPlan,
-  program as negativeProgram,
+  incremental_plan as negative_incremental_plan,
+  program as negative_program,
 } from "../gen_emitted/merge_policy.ts";
 import {
-  incrementalPlan as edgeCarryIncrementalPlan,
-  program as edgeCarryProgram,
+  incremental_plan as edge_carry_incremental_plan,
+  program as edge_carry_program,
 } from "../gen_emitted/edge_chain_hops_tick_per_stage.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
@@ -48,7 +48,7 @@ type Shape =
   | "p3-negative"
   | "p2-edge-carry";
 
-function scheduleFor(shape: Shape, rows: number): readonly IArrivalBatch[] {
+function schedule_for(shape: Shape, rows: number): readonly IArrivalBatch[] {
   if (shape === "p2-edge-carry") {
     return [
       Array.from({ length: rows }, (_, index) => ({
@@ -135,46 +135,46 @@ type ProgramWithBoot = IGenProgram & {
   readonly boot: readonly IBootStatement[];
 };
 
-async function runBoot(seam: ISqlSeam, selectedProgram: ProgramWithBoot): Promise<void> {
-  await firstValueFrom(ScratchStore.boot(seam, selectedProgram.ddl));
-  for (const statement of selectedProgram.boot) {
+async function run_boot(seam: ISqlSeam, selected_program: ProgramWithBoot): Promise<void> {
+  await firstValueFrom(ScratchStore.boot(seam, selected_program.ddl));
+  for (const statement of selected_program.boot) {
     await firstValueFrom(
       seam.runner.execute(seam.db, { sql: statement.sql, args: [...statement.params] }),
     );
   }
 }
 
-async function explainEdge(
+async function explain_edge(
   seam: ISqlSeam,
   statement: IIncrementalEdgeStatement,
-): Promise<{ readonly headRel: string; readonly details: readonly string[] }> {
+): Promise<{ readonly head_rel: string; readonly details: readonly string[] }> {
   const result = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${statement.projectSql}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${statement.project_sql}`),
   );
   return {
-    headRel: statement.headRel,
+    head_rel: statement.head_rel,
     details: result.rows.map((row) => String(row.detail)),
   };
 }
 
-async function explainLevel(
+async function explain_level(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
-): Promise<{ readonly headRel: string; readonly details: readonly string[] }> {
+): Promise<{ readonly head_rel: string; readonly details: readonly string[] }> {
   const result = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${statement.insertSql}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${statement.insert_sql}`),
   );
   return {
-    headRel: statement.headRel,
+    head_rel: statement.head_rel,
     details: result.rows.map((row) => String(row.detail)),
   };
 }
 
-async function explainRefCount(
+async function explain_ref_count(
   seam: ISqlSeam,
   statement: IIncrementalLevelStatement,
 ): Promise<{
-  readonly headRel: string;
+  readonly head_rel: string;
   readonly statements: readonly {
     readonly index: number;
     readonly details: readonly string[];
@@ -186,22 +186,22 @@ async function explainRefCount(
   // aggregate heads, so an empty list here is unreachable in practice and the
   // narrowing is the honest way to say so rather than a `!`.
   const statements = await Promise.all(
-    (statement.supportSql ?? []).map(async (sql, index) => {
+    (statement.support_sql ?? []).map(async (sql, index) => {
       const result = await firstValueFrom(
         seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`),
       );
       return { index, details: result.rows.map((row) => String(row.detail)) };
     }),
   );
-  return { headRel: statement.headRel, statements };
+  return { head_rel: statement.head_rel, statements };
 }
 
-async function explainBoundary(
+async function explain_boundary(
   seam: ISqlSeam,
   relation: IIncrementalRelationPlan,
 ): Promise<{ readonly rel: string; readonly details: readonly string[] }> {
   const result = await firstValueFrom(
-    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${relation.boundarySql}`),
+    seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${relation.boundary_sql}`),
   );
   return {
     rel: relation.rel,
@@ -210,20 +210,20 @@ async function explainBoundary(
 }
 
 async function main(): Promise<void> {
-  const [, , shapeArg, rowsArg, recordPath] = process.argv;
+  const [, , shape_arg, rows_arg, record_path] = process.argv;
   if (
-    shapeArg !== "s1" &&
-    shapeArg !== "s2" &&
-    shapeArg !== "s3" &&
-    shapeArg !== "p2-switch" &&
-    shapeArg !== "p3-retraction" &&
-    shapeArg !== "p3-shared" &&
-    shapeArg !== "p3-negative" &&
-    shapeArg !== "p2-edge-carry"
+    shape_arg !== "s1" &&
+    shape_arg !== "s2" &&
+    shape_arg !== "s3" &&
+    shape_arg !== "p2-switch" &&
+    shape_arg !== "p3-retraction" &&
+    shape_arg !== "p3-shared" &&
+    shape_arg !== "p3-negative" &&
+    shape_arg !== "p2-edge-carry"
   ) {
     throw new Error("p1-receipts: unknown receipt shape");
   }
-  const rows = Number(rowsArg);
+  const rows = Number(rows_arg);
   if (
     !Number.isInteger(rows) ||
     rows < BATCH_SIZE ||
@@ -231,90 +231,90 @@ async function main(): Promise<void> {
   ) {
     throw new Error("p1-receipts: rows must be a positive multiple of 100");
   }
-  const selected = shapeArg === "p2-switch"
-    ? { plan: switchIncrementalPlan, program: switchProgram }
-    : shapeArg === "p2-edge-carry"
-    ? { plan: edgeCarryIncrementalPlan, program: edgeCarryProgram }
-    : shapeArg === "p3-retraction"
-    ? { plan: retractionIncrementalPlan, program: retractionProgram }
-    : shapeArg === "p3-shared"
-    ? { plan: sharedIncrementalPlan, program: sharedProgram }
-    : shapeArg === "p3-negative"
-    ? { plan: negativeIncrementalPlan, program: negativeProgram }
-    : { plan: incrementalPlan, program };
-  const selectedPlan: IIncrementalProgramPlan = selected.plan;
-  const selectedProgram: ProgramWithBoot = selected.program;
-  if (!selectedPlan.safe) throw new Error(`p1-receipts: ${shapeArg} lowered as unsafe`);
+  const selected = shape_arg === "p2-switch"
+    ? { plan: switch_incremental_plan, program: switch_program }
+    : shape_arg === "p2-edge-carry"
+    ? { plan: edge_carry_incremental_plan, program: edge_carry_program }
+    : shape_arg === "p3-retraction"
+    ? { plan: retraction_incremental_plan, program: retraction_program }
+    : shape_arg === "p3-shared"
+    ? { plan: shared_incremental_plan, program: shared_program }
+    : shape_arg === "p3-negative"
+    ? { plan: negative_incremental_plan, program: negative_program }
+    : { plan: incremental_plan, program };
+  const selected_plan: IIncrementalProgramPlan = selected.plan;
+  const selected_program: ProgramWithBoot = selected.program;
+  if (!selected_plan.safe) throw new Error(`p1-receipts: ${shape_arg} lowered as unsafe`);
 
-  const explainSeam = ScratchStore.open(":memory:");
-  await runBoot(explainSeam, selectedProgram);
+  const explain_seam = ScratchStore.open(":memory:");
+  await run_boot(explain_seam, selected_program);
   const plans = await Promise.all(
-    selectedPlan.levels.map((statement) => explainLevel(explainSeam, statement)),
+    selected_plan.levels.map((statement) => explain_level(explain_seam, statement)),
   );
-  const refCountPlans = await Promise.all(
-    selectedPlan.levels.map((statement) => explainRefCount(explainSeam, statement)),
+  const ref_count_plans = await Promise.all(
+    selected_plan.levels.map((statement) => explain_ref_count(explain_seam, statement)),
   );
-  const edgePlans = await Promise.all(
-    selectedPlan.edges.map((statement) => explainEdge(explainSeam, statement)),
+  const edge_plans = await Promise.all(
+    selected_plan.edges.map((statement) => explain_edge(explain_seam, statement)),
   );
-  const boundaryPlans = await Promise.all(
-    selectedPlan.relations.map((relation) => explainBoundary(explainSeam, relation)),
+  const boundary_plans = await Promise.all(
+    selected_plan.relations.map((relation) => explain_boundary(explain_seam, relation)),
   );
-  const frontierDetails = [...plans, ...edgePlans]
+  const frontier_details = [...plans, ...edge_plans]
     .flatMap((plan) => plan.details)
     .filter((detail) => detail.includes("__frontier_"));
   if (
-    frontierDetails.length === 0 ||
-    frontierDetails.some((detail) => detail.startsWith("SCAN ")) ||
-    !frontierDetails.some((detail) => detail.startsWith("SEARCH "))
+    frontier_details.length === 0 ||
+    frontier_details.some((detail) => detail.startsWith("SCAN ")) ||
+    !frontier_details.some((detail) => detail.startsWith("SEARCH "))
   ) {
-    throw new Error(`p1-receipts: frontier plan is not indexed: ${frontierDetails.join(" | ")}`);
+    throw new Error(`p1-receipts: frontier plan is not indexed: ${frontier_details.join(" | ")}`);
   }
-  explainSeam.db.close();
+  explain_seam.db.close();
 
   const seam = ScratchStore.open(":memory:");
-  await runBoot(seam, selectedProgram);
-  const statementCounts: number[] = [];
-  const drainStatementCounts: number[] = [];
-  let lastCarryPending = false;
-  let drainCount = 0;
+  await run_boot(seam, selected_program);
+  const statement_counts: number[] = [];
+  const drain_statement_counts: number[] = [];
+  let last_carry_pending = false;
+  let drain_count = 0;
   const drain = async (): Promise<void> => {
-    while (lastCarryPending) {
-      if (drainCount >= 100) throw new Error("p1-receipts: drain overflow");
+    while (last_carry_pending) {
+      if (drain_count >= 100) throw new Error("p1-receipts: drain overflow");
       stmt_counter.reset();
-      const deltas = await firstValueFrom(selectedProgram.tick(seam, []));
-      drainStatementCounts.push(stmt_counter.get());
-      lastCarryPending = deltas.carryPending;
-      drainCount += 1;
+      const deltas = await firstValueFrom(selected_program.tick(seam, []));
+      drain_statement_counts.push(stmt_counter.get());
+      last_carry_pending = deltas.carry_pending;
+      drain_count += 1;
     }
   };
-  for (const arrivals of scheduleFor(shapeArg, rows)) {
+  for (const arrivals of schedule_for(shape_arg, rows)) {
     stmt_counter.reset();
-    const deltas = await firstValueFrom(selectedProgram.tick(seam, arrivals));
-    statementCounts.push(stmt_counter.get());
-    lastCarryPending = deltas.carryPending;
-    if (shapeArg === "p2-switch" || shapeArg === "p2-edge-carry") await drain();
+    const deltas = await firstValueFrom(selected_program.tick(seam, arrivals));
+    statement_counts.push(stmt_counter.get());
+    last_carry_pending = deltas.carry_pending;
+    if (shape_arg === "p2-switch" || shape_arg === "p2-edge-carry") await drain();
   }
   await drain();
   const receipt = {
-    shape: shapeArg,
+    shape: shape_arg,
     rows,
-    tickCount: statementCounts.length,
-    statementCounts: [...new Set(statementCounts)].sort((left, right) => left - right),
-    drainTickCount: drainStatementCounts.length,
-    drainStatementCounts: [...new Set(drainStatementCounts)].sort(
+    tick_count: statement_counts.length,
+    statement_counts: [...new Set(statement_counts)].sort((left, right) => left - right),
+    drain_tick_count: drain_statement_counts.length,
+    drain_statement_counts: [...new Set(drain_statement_counts)].sort(
       (left, right) => left - right,
     ),
     plans,
-    edgePlans,
-    boundaryPlans,
-    refCountPlans,
-    incrementalSafe: selectedPlan.safe,
-    reconcileEveryTick: selectedPlan.reconcileEveryTick,
-    retractionGuard: selectedPlan.retractionGuard,
+    edge_plans,
+    boundary_plans,
+    ref_count_plans,
+    incremental_safe: selected_plan.safe,
+    reconcile_every_tick: selected_plan.reconcile_every_tick,
+    retraction_guard: selected_plan.retraction_guard,
   };
   const line = JSON.stringify(receipt);
-  if (recordPath !== undefined) appendFileSync(recordPath, `${line}\n`);
+  if (record_path !== undefined) appendFileSync(record_path, `${line}\n`);
   process.stdout.write(`${line}\n`);
 }
 

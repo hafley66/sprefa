@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: fill_as_cache_update_swr.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -134,17 +134,17 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
+function trigger_occurrences(
   kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
+  rel_name: string,
+  before_rows: readonly IRow[],
   arrivals: IArrivalBatch,
 ): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
+  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
+  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
   const occurrences: IArrivalRow[] = [];
   for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
+    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
     const key = JSON.stringify(arrival.row);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -197,7 +197,7 @@ const ddl: readonly string[] = [
   `CREATE INDEX "feed_view_zero" ON "feed_view" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   cache_row: ["target", "body"],
   demanded: ["target", "session_id"],
   feed_view: ["target", "body"],
@@ -205,7 +205,7 @@ const relColumns: Record<string, readonly string[]> = {
   open_feed: ["session_id", "target"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   cache_row: ["text", "text"],
   demanded: ["text", "text"],
   feed_view: ["text", "text"],
@@ -213,34 +213,34 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   open_feed: ["text", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "fill_as_cache_update_swr", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "f01df8dd28018a7b", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "cache_row", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "0c18b34968079c9a", hSchema: "5ae56460986f3ba5", hRule: "12fdef60e4f9a259" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "target", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "221ab5035cb6f5d3", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6c0c21b13621432b", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 6, ordinal: 0, localName: "demanded", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "a966a850402d3f02", hSchema: "85876050038dda66", hRule: "dc9508da10085d1d" },
-  { relId: 11, parentId: 10, ordinal: 1, localName: "target", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "deed8667798c9a1d", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 10, ordinal: 2, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "70c50d974483e364", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 6, ordinal: 0, localName: "feed_view", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "32cd7c42fb806080", hSchema: "16a91d6a61421ff4", hRule: "5c84e5327434e8a9" },
-  { relId: 14, parentId: 13, ordinal: 1, localName: "target", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e6858ff114550182", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 13, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "dbc8b4450339aec1", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 6, ordinal: 0, localName: "fill_arrived", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "f73bed8bac8ed4f6", hSchema: "16a91d6a61421ff4", hRule: "" },
-  { relId: 17, parentId: 16, ordinal: 1, localName: "target", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4c3f9cadfd044e59", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 16, ordinal: 2, localName: "body", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d845f08695ec5657", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 6, ordinal: 0, localName: "open_feed", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "8a2dac77213a0610", hSchema: "dc3f391546105339", hRule: "" },
-  { relId: 20, parentId: 19, ordinal: 1, localName: "session_id", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "74d203dfaf2d1309", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 19, ordinal: 2, localName: "target", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "516c4e7acab20946", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "fill_as_cache_update_swr", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "f01df8dd28018a7b", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "cache_row", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "0c18b34968079c9a", h_schema: "5ae56460986f3ba5", h_rule: "12fdef60e4f9a259" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "target", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "221ab5035cb6f5d3", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "6c0c21b13621432b", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "demanded", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "a966a850402d3f02", h_schema: "85876050038dda66", h_rule: "dc9508da10085d1d" },
+  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "target", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "deed8667798c9a1d", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "70c50d974483e364", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "feed_view", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "32cd7c42fb806080", h_schema: "16a91d6a61421ff4", h_rule: "5c84e5327434e8a9" },
+  { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "target", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "e6858ff114550182", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 13, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "dbc8b4450339aec1", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "fill_arrived", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "f73bed8bac8ed4f6", h_schema: "16a91d6a61421ff4", h_rule: "" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "target", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "4c3f9cadfd044e59", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 16, ordinal: 2, local_name: "body", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d845f08695ec5657", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 6, ordinal: 0, local_name: "open_feed", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "8a2dac77213a0610", h_schema: "dc3f391546105339", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "session_id", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "74d203dfaf2d1309", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 19, ordinal: 2, local_name: "target", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "516c4e7acab20946", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
 };
 
-const arrivalTargets: readonly string[] = ["fill_arrived", "open_feed"];
+const arrival_targets: readonly string[] = ["fill_arrived", "open_feed"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "demanded", sql: `DELETE FROM "demanded"`, params: [] },
@@ -257,17 +257,17 @@ type Snapshot = {
   readonly open_feed: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    cache_row: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "cache_row"`, relColumns.cache_row!, relColumnTypes.cache_row!),
-    demanded: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, relColumns.demanded!, relColumnTypes.demanded!),
-    feed_view: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "feed_view"`, relColumns.feed_view!, relColumnTypes.feed_view!),
-    fill_arrived: selectRows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "fill_arrived"`, relColumns.fill_arrived!, relColumnTypes.fill_arrived!),
-    open_feed: selectRows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "open_feed"`, relColumns.open_feed!, relColumnTypes.open_feed!),
+    cache_row: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "cache_row"`, rel_columns.cache_row!, rel_column_types.cache_row!),
+    demanded: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
+    feed_view: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "feed_view"`, rel_columns.feed_view!, rel_column_types.feed_view!),
+    fill_arrived: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "fill_arrived"`, rel_columns.fill_arrived!, rel_column_types.fill_arrived!),
+    open_feed: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "open_feed"`, rel_columns.open_feed!, rel_column_types.open_feed!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   cache_row: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "cache_row"`,
   demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
   feed_view: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "feed_view"`,
@@ -275,12 +275,12 @@ const finalSelect: Record<string, string> = {
   open_feed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "open_feed"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  fill_arrived: { kind: "log", addSql: `INSERT INTO "fill_arrived" ("target", "body") VALUES (?, ?)`, delSql: null },
-  open_feed: { kind: "set", addSql: `INSERT INTO "open_feed" ("session_id", "target") VALUES (?, ?) ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target"`, delSql: `DELETE FROM "open_feed" WHERE "session_id" = ? AND "target" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  fill_arrived: { kind: "log", add_sql: `INSERT INTO "fill_arrived" ("target", "body") VALUES (?, ?)`, del_sql: null },
+  open_feed: { kind: "set", add_sql: `INSERT INTO "open_feed" ("session_id", "target") VALUES (?, ?) ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target"`, del_sql: `DELETE FROM "open_feed" WHERE "session_id" = ? AND "target" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`fill_as_cache_update_swr: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -289,36 +289,36 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`fill_as_cache_update_swr: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`fill_as_cache_update_swr: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "cache_row", kind: "set", tableName: "cache_row", deltaTableName: "__delta_cache_row", frontierTableName: "__frontier_cache_row", nextFrontierTableName: "__next_frontier_cache_row", columns: ["target", "body"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_cache_row" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, ruleObservers: ["feed_view/2"] },
-  { rel: "demanded", kind: "set", tableName: "demanded", deltaTableName: "__delta_demanded", frontierTableName: "__frontier_demanded", nextFrontierTableName: "__next_frontier_demanded", columns: ["target", "session_id"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"`, ruleObservers: ["feed_view/2"] },
-  { rel: "feed_view", kind: "set", tableName: "feed_view", deltaTableName: "__delta_feed_view", frontierTableName: "__frontier_feed_view", nextFrontierTableName: "__next_frontier_feed_view", columns: ["target", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_feed_view" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, ruleObservers: [] },
-  { rel: "fill_arrived", kind: "log", tableName: "fill_arrived", deltaTableName: "__delta_fill_arrived", frontierTableName: "__frontier_fill_arrived", nextFrontierTableName: "__next_frontier_fill_arrived", columns: ["target", "body"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: `INSERT INTO "fill_arrived" ("target", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "target", "body"`, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fill_arrived" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, ruleObservers: ["cache_row/2"] },
-  { rel: "open_feed", kind: "set", tableName: "open_feed", deltaTableName: "__delta_open_feed", frontierTableName: "__frontier_open_feed", nextFrontierTableName: "__next_frontier_open_feed", columns: ["session_id", "target"], columnTypes: ["text", "text"], keyIndices: [0], arrivalAddSql: `INSERT INTO "open_feed" ("session_id", "target") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"`, arrivalDelSql: `DELETE FROM "open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "session_id", "target"`, boundarySql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_feed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"`, ruleObservers: ["demanded/2"] },
+  { rel: "cache_row", kind: "set", table_name: "cache_row", delta_table_name: "__delta_cache_row", frontier_table_name: "__frontier_cache_row", next_frontier_table_name: "__next_frontier_cache_row", columns: ["target", "body"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_cache_row" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, rule_observers: ["feed_view/2"] },
+  { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"`, rule_observers: ["feed_view/2"] },
+  { rel: "feed_view", kind: "set", table_name: "feed_view", delta_table_name: "__delta_feed_view", frontier_table_name: "__frontier_feed_view", next_frontier_table_name: "__next_frontier_feed_view", columns: ["target", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_feed_view" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, rule_observers: [] },
+  { rel: "fill_arrived", kind: "log", table_name: "fill_arrived", delta_table_name: "__delta_fill_arrived", frontier_table_name: "__frontier_fill_arrived", next_frontier_table_name: "__next_frontier_fill_arrived", columns: ["target", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "fill_arrived" ("target", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "target", "body"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fill_arrived" WHERE "_sign" IN (-1, 1) GROUP BY "target", "body", "_sign"`, rule_observers: ["cache_row/2"] },
+  { rel: "open_feed", kind: "set", table_name: "open_feed", delta_table_name: "__delta_open_feed", frontier_table_name: "__frontier_open_feed", next_frontier_table_name: "__next_frontier_open_feed", columns: ["session_id", "target"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "open_feed" ("session_id", "target") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"`, arrival_del_sql: `DELETE FROM "open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "session_id", "target"`, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_feed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"`, rule_observers: ["demanded/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { headRel: "cache_row", ruleId: "fill_as_cache_update_swr:cache_row/2#1", headKind: "set", headTableName: "cache_row", headDeltaTableName: "__delta_cache_row", headColumns: ["target", "body"], keyIndices: [0], projectSql: `SELECT d0."target" AS "target", d0."body" AS "body" FROM "__frontier_fill_arrived" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "cache_row", rule_id: "fill_as_cache_update_swr:cache_row/2#1", head_kind: "set", head_table_name: "cache_row", head_delta_table_name: "__delta_cache_row", head_columns: ["target", "body"], key_indices: [0], project_sql: `SELECT d0."target" AS "target", d0."body" AS "body" FROM "__frontier_fill_arrived" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "demanded", ruleId: "fill_as_cache_update_swr:demanded/2#1", headDeltaTableName: "__delta_demanded", headColumns: ["target", "session_id"], insertSql: `INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__frontier_open_feed" d0 WHERE d0."_phase" >= 0 RETURNING "target", "session_id"`, selectSql: `SELECT "target", "session_id" FROM "demanded"`, recomputeSql: `DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0`, supportSql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("target", "session_id", "__refcount") SELECT "target", "session_id", sum("__refcount") FROM (SELECT b0."target" AS "target", b0."session_id" AS "session_id", count(*) AS "__refcount" FROM "open_feed" b0 GROUP BY b0."target", b0."session_id") GROUP BY "target", "session_id"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."target" = h."target" AND n."session_id" = h."session_id"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "target", "session_id") SELECT -1, row_number() OVER () - 1, "target", "session_id" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("target", "session_id", "__refcount") SELECT n."target", n."session_id", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."target" = h."target" AND n."session_id" = h."session_id" WHERE h."target" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "target", "session_id") SELECT 1, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "target", "session_id") SELECT ?, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "target", "session_id") SELECT ?, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("target", "session_id", "__refcount") SELECT n."target", n."session_id", n."__refcount" FROM "__support_next_demanded" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "feed_view", ruleId: "fill_as_cache_update_swr:feed_view/2#1", headDeltaTableName: "__delta_feed_view", headColumns: ["target", "body"], insertSql: `INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT DISTINCT d0."target", b0."body" FROM "__frontier_demanded" d0, "cache_row" b0 WHERE d0."_phase" >= 0 AND b0."target" = d0."target" UNION ALL SELECT DISTINCT d0."target", d0."body" FROM "__frontier_cache_row" d0, "demanded" b0 WHERE d0."_phase" >= 0 AND b0."target" = d0."target" RETURNING "target", "body"`, selectSql: `SELECT "target", "body" FROM "feed_view"`, recomputeSql: `DELETE FROM "feed_view";
-INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT b0."target", b1."body" FROM "demanded" b0, "cache_row" b1 WHERE b1."target" = b0."target"`, supportSql: [`DELETE FROM "__support_next_feed_view"`, `INSERT INTO "__support_next_feed_view" ("target", "body", "__refcount") SELECT "target", "body", sum("__refcount") FROM (SELECT b0."target" AS "target", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "cache_row" b1 WHERE b1."target" = b0."target" GROUP BY b0."target", b1."body") GROUP BY "target", "body"`, `UPDATE "feed_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_feed_view" n WHERE n."target" = h."target" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_feed_view" ("_sign", "_sequence", "target", "body") SELECT -1, row_number() OVER () - 1, "target", "body" FROM "feed_view" WHERE "__refcount" <= 0`, `DELETE FROM "feed_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_feed_view"`, `INSERT INTO "__new_feed_view" ("target", "body", "__refcount") SELECT n."target", n."body", n."__refcount" FROM "__support_next_feed_view" n LEFT JOIN "feed_view" h ON n."target" = h."target" AND n."body" = h."body" WHERE h."target" IS NULL`, `INSERT INTO "__delta_feed_view" ("_sign", "_sequence", "target", "body") SELECT 1, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT INTO "__frontier_feed_view" ("_phase", "_sequence", "target", "body") SELECT ?, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT INTO "__next_frontier_feed_view" ("_phase", "_sequence", "target", "body") SELECT ?, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT OR IGNORE INTO "feed_view" ("target", "body", "__refcount") SELECT n."target", n."body", n."__refcount" FROM "__support_next_feed_view" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "demanded", rule_id: "fill_as_cache_update_swr:demanded/2#1", head_delta_table_name: "__delta_demanded", head_columns: ["target", "session_id"], insert_sql: `INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT DISTINCT d0."target", d0."session_id" FROM "__frontier_open_feed" d0 WHERE d0."_phase" >= 0 RETURNING "target", "session_id"`, select_sql: `SELECT "target", "session_id" FROM "demanded"`, recompute_sql: `DELETE FROM "demanded";
+INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0`, support_sql: [`DELETE FROM "__support_next_demanded"`, `INSERT INTO "__support_next_demanded" ("target", "session_id", "__refcount") SELECT "target", "session_id", sum("__refcount") FROM (SELECT b0."target" AS "target", b0."session_id" AS "session_id", count(*) AS "__refcount" FROM "open_feed" b0 GROUP BY b0."target", b0."session_id") GROUP BY "target", "session_id"`, `UPDATE "demanded" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_demanded" n WHERE n."target" = h."target" AND n."session_id" = h."session_id"), 0)`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "target", "session_id") SELECT -1, row_number() OVER () - 1, "target", "session_id" FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "demanded" WHERE "__refcount" <= 0`, `DELETE FROM "__new_demanded"`, `INSERT INTO "__new_demanded" ("target", "session_id", "__refcount") SELECT n."target", n."session_id", n."__refcount" FROM "__support_next_demanded" n LEFT JOIN "demanded" h ON n."target" = h."target" AND n."session_id" = h."session_id" WHERE h."target" IS NULL`, `INSERT INTO "__delta_demanded" ("_sign", "_sequence", "target", "session_id") SELECT 1, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT INTO "__frontier_demanded" ("_phase", "_sequence", "target", "session_id") SELECT ?, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT INTO "__next_frontier_demanded" ("_phase", "_sequence", "target", "session_id") SELECT ?, "rowid" - 1, "target", "session_id" FROM "__new_demanded"`, `INSERT OR IGNORE INTO "demanded" ("target", "session_id", "__refcount") SELECT n."target", n."session_id", n."__refcount" FROM "__support_next_demanded" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "feed_view", rule_id: "fill_as_cache_update_swr:feed_view/2#1", head_delta_table_name: "__delta_feed_view", head_columns: ["target", "body"], insert_sql: `INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT DISTINCT d0."target", b0."body" FROM "__frontier_demanded" d0, "cache_row" b0 WHERE d0."_phase" >= 0 AND b0."target" = d0."target" UNION ALL SELECT DISTINCT d0."target", d0."body" FROM "__frontier_cache_row" d0, "demanded" b0 WHERE d0."_phase" >= 0 AND b0."target" = d0."target" RETURNING "target", "body"`, select_sql: `SELECT "target", "body" FROM "feed_view"`, recompute_sql: `DELETE FROM "feed_view";
+INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT b0."target", b1."body" FROM "demanded" b0, "cache_row" b1 WHERE b1."target" = b0."target"`, support_sql: [`DELETE FROM "__support_next_feed_view"`, `INSERT INTO "__support_next_feed_view" ("target", "body", "__refcount") SELECT "target", "body", sum("__refcount") FROM (SELECT b0."target" AS "target", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "cache_row" b1 WHERE b1."target" = b0."target" GROUP BY b0."target", b1."body") GROUP BY "target", "body"`, `UPDATE "feed_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_feed_view" n WHERE n."target" = h."target" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_feed_view" ("_sign", "_sequence", "target", "body") SELECT -1, row_number() OVER () - 1, "target", "body" FROM "feed_view" WHERE "__refcount" <= 0`, `DELETE FROM "feed_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_feed_view"`, `INSERT INTO "__new_feed_view" ("target", "body", "__refcount") SELECT n."target", n."body", n."__refcount" FROM "__support_next_feed_view" n LEFT JOIN "feed_view" h ON n."target" = h."target" AND n."body" = h."body" WHERE h."target" IS NULL`, `INSERT INTO "__delta_feed_view" ("_sign", "_sequence", "target", "body") SELECT 1, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT INTO "__frontier_feed_view" ("_phase", "_sequence", "target", "body") SELECT ?, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT INTO "__next_frontier_feed_view" ("_phase", "_sequence", "target", "body") SELECT ?, "rowid" - 1, "target", "body" FROM "__new_feed_view"`, `INSERT OR IGNORE INTO "feed_view" ("target", "body", "__refcount") SELECT n."target", n."body", n."__refcount" FROM "__support_next_feed_view" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
 const EDGE_CACHE_ROW_0_PROJECT_SQL = `SELECT ?1 AS "target", ?2 AS "body"`;
@@ -327,24 +327,24 @@ const EDGE_CACHE_ROW_0_HEAD_COLUMNS: readonly string[] = ["target", "body"];
 const EDGE_CACHE_ROW_0_KEY_INDICES: readonly number[] = [0];
 
 function resolveCacheRow_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "fill_arrived", before.fill_arrived, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CACHE_ROW_0_PROJECT_SQL, args: bindArgs(arrival.row) }))).pipe(
+  const trigger_rows = trigger_occurrences("log", "fill_arrived", before.fill_arrived, arrivals);
+  if (trigger_rows.length === 0) return of([]);
+  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CACHE_ROW_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
     map((results) => {
       const resolved = new Map<string, IRow>();
       for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_CACHE_ROW_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_CACHE_ROW_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
+        const projected_rows = result.rows.map((row) => EDGE_CACHE_ROW_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
+        for (const projected_row of projected_rows) {
+          const key = JSON.stringify(EDGE_CACHE_ROW_0_KEY_INDICES.map((index) => projected_row[index]));
+          resolved.set(key, projected_row);
         }
       }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_CACHE_ROW_0_WRITE_SQL, args: bindArgs(row) }));
+      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_CACHE_ROW_0_WRITE_SQL, args: bind_args(row) }));
     }),
   );
 }
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "demanded";
 INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0;
 DELETE FROM "feed_view";
@@ -352,12 +352,12 @@ INSERT OR IGNORE INTO "feed_view" ("target", "body") SELECT b0."target", b1."bod
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const cache_row = multisetDiff(before.cache_row, after.cache_row);
-  const demanded = multisetDiff(before.demanded, after.demanded);
-  const feed_view = multisetDiff(before.feed_view, after.feed_view);
-  const fill_arrived = multisetDiff(before.fill_arrived, after.fill_arrived);
-  const open_feed = multisetDiff(before.open_feed, after.open_feed);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const cache_row = multiset_diff(before.cache_row, after.cache_row);
+  const demanded = multiset_diff(before.demanded, after.demanded);
+  const feed_view = multiset_diff(before.feed_view, after.feed_view);
+  const fill_arrived = multiset_diff(before.fill_arrived, after.fill_arrived);
+  const open_feed = multiset_diff(before.open_feed, after.open_feed);
   return {
     rels: [
       { rel: "cache_row", add: cache_row.add, del: cache_row.del },
@@ -366,22 +366,22 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "fill_arrived", add: fill_arrived.add, del: fill_arrived.del },
       { rel: "open_feed", add: open_feed.add, del: open_feed.del },
     ],
-    carryPending: cache_row.add.length > 0 || cache_row.del.length > 0,
+    carry_pending: cache_row.add.length > 0 || cache_row.del.length > 0,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
       resolveCacheRow_0Writes(seam, before, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // fill_as_cache_update_swr: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -395,40 +395,40 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.mergeNextIntoCurrent(seam, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.merge_next_into_current(seam, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
   ).pipe(
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -437,16 +437,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "fill_as_cache_update_swr",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

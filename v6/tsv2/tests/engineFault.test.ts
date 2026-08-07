@@ -6,8 +6,8 @@
  * reported a tick fault to its submitter and then RE-THREW it into that shared
  * lane. An error inside `concatMap` terminates the outer observable, so `ticks$`
  * was dead from that moment: `tap({ finalize })` flipped `running` false and
- * every later `submit` failed with "tsv2 engine is not running". `runProgram$`
- * merges `ticks$` into the app graph, so the error also reached `serveTsv2`'s
+ * every later `submit` failed with "tsv2 engine is not running". `run_program$`
+ * merges `ticks$` into the app graph, so the error also reached `serve_tsv2`'s
  * single subscriber and `serve/main.ts` exited. `serve/4_http.ts:315-316` states
  * the opposite law in its own comment ("one bad request cannot end the app").
  *
@@ -39,7 +39,7 @@
  * ECONNREFUSED is SHARPER than the review's own probe reported. The review saw
  * "tsv2 engine is not running" because it held `LiveEngine` directly. Through
  * the real server the error does not stop at the engine: it travels up the
- * merge in `runProgram$` to `serveTsv2`'s single subscriber, unsubscribes the
+ * merge in `run_program$` to `serve_tsv2`'s single subscriber, unsubscribes the
  * `httpServer$` teardown, and closes the listening socket. One well-formed POST
  * took the whole process down before it could answer the request that caused it.
  *
@@ -76,17 +76,17 @@ import { fileURLToPath } from "node:url";
 
 import { firstValueFrom, toArray } from "rxjs";
 
-import { program as switchProgram } from "../gen_emitted/switch_as_keyed_replace.ts";
+import { program as switch_program } from "../gen_emitted/switch_as_keyed_replace.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { IServedProgram } from "../runtime/types.ts";
-import { LiveEngine, bootServedProgram } from "../serve/3_engine.ts";
-import { postProgram, request, startServed, tickEvents } from "./serveHelpers.ts";
+import { LiveEngine, boot_served_program } from "../serve/3_engine.ts";
+import { post_program, request, start_served, tick_events } from "./serveHelpers.ts";
 
 const SWITCH_DL6 = fileURLToPath(new URL("../../prolog/compile/dl_view/switch_as_keyed_replace.dl6", import.meta.url));
 
 /** A well-formed batch against a log rel's declared arrival target. */
-function goodBatch(routeId: string): string {
-  return JSON.stringify({ batch: [{ rel: "route_change", sign: "add", row: ["session_one", routeId] }] });
+function good_batch(route_id: string): string {
+  return JSON.stringify({ batch: [{ rel: "route_change", sign: "add", row: ["session_one", route_id] }] });
 }
 
 /** Same rel, same width, same declared target -- and a sign the engine refuses
@@ -97,11 +97,11 @@ const FAULTING_BATCH = JSON.stringify({
 
 test("a tick fault answers its own submitter and the lane keeps turning", async () => {
   const source = readFileSync(SWITCH_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
 
-    const first = await request(served.port, "/edb/events", "POST", goodBatch("settings"));
+    const first = await request(served.port, "/edb/events", "POST", good_batch("settings"));
     assert.equal(first.statusCode, 200, first.body);
 
     const faulted = await request(served.port, "/edb/events", "POST", FAULTING_BATCH);
@@ -112,7 +112,7 @@ test("a tick fault answers its own submitter and the lane keeps turning", async 
       `the fault must reach ITS OWN submitter naming the rel: ${faulted.body}`,
     );
 
-    const third = await request(served.port, "/edb/events", "POST", goodBatch("profile"));
+    const third = await request(served.port, "/edb/events", "POST", good_batch("profile"));
     assert.equal(third.statusCode, 200, `POST /edb/events after a faulting tick -> ${third.statusCode} ${third.body}`);
     const ticks = (JSON.parse(third.body) as { readonly ticks: readonly unknown[] }).ticks;
     assert.ok(ticks.length > 0, `the third post must produce real ticks: ${third.body}`);
@@ -127,45 +127,45 @@ test("a tick fault answers its own submitter and the lane keeps turning", async 
 
 test("the app graph survives a tick fault", async () => {
   // Engine level, no http: the claim is about `ticks$` itself, which is what
-  // `runProgram$` merges into the app graph. A lane that errored would take
-  // `serveTsv2`'s single subscriber down with it.
+  // `run_program$` merges into the app graph. A lane that errored would take
+  // `serve_tsv2`'s single subscriber down with it.
   const seam = ScratchStore.open(":memory:");
-  const engine = new LiveEngine(switchProgram as unknown as IServedProgram, seam);
-  let laneErrored = false;
-  let laneCompleted = false;
+  const engine = new LiveEngine(switch_program as unknown as IServedProgram, seam);
+  let lane_errored = false;
+  let lane_completed = false;
   const seen: number[] = [];
   const watching = engine.ticks$.subscribe({
     next: (outcome) => seen.push(outcome.tick),
     error: () => {
-      laneErrored = true;
+      lane_errored = true;
     },
     complete: () => {
-      laneCompleted = true;
+      lane_completed = true;
     },
   });
   try {
-    await firstValueFrom(bootServedProgram(seam, switchProgram as unknown as IServedProgram));
+    await firstValueFrom(boot_served_program(seam, switch_program as unknown as IServedProgram));
 
     await firstValueFrom(
       engine.submit([{ rel: "route_change", sign: "add", row: ["session_one", "settings"] }]).pipe(toArray()),
     );
-    const beforeFault = seen.length;
+    const before_fault = seen.length;
 
-    const submitterSaw = await firstValueFrom(
+    const submitter_saw = await firstValueFrom(
       engine.submit([{ rel: "route_change", sign: "del", row: ["session_one", "settings"] }]).pipe(toArray()),
     ).then(
       () => null,
       (failure: unknown) => (failure instanceof Error ? failure.message : String(failure)),
     );
-    assert.match(String(submitterSaw), /retract from log rel/, "the submitter is owed the failure");
+    assert.match(String(submitter_saw), /retract from log rel/, "the submitter is owed the failure");
 
-    assert.equal(laneErrored, false, "ticks$ must still be live after a fault");
-    assert.equal(laneCompleted, false, "ticks$ must not complete on a fault");
+    assert.equal(lane_errored, false, "ticks$ must still be live after a fault");
+    assert.equal(lane_completed, false, "ticks$ must not complete on a fault");
 
     await firstValueFrom(
       engine.submit([{ rel: "route_change", sign: "add", row: ["session_one", "profile"] }]).pipe(toArray()),
     );
-    assert.ok(seen.length > beforeFault, `the lane must keep emitting: ticks seen ${seen.join(",")}`);
+    assert.ok(seen.length > before_fault, `the lane must keep emitting: ticks seen ${seen.join(",")}`);
     // A faulted tick advances no tick number: the numbering the oracle grades
     // against must not have a hole in it.
     assert.deepEqual(seen, [...Array(seen.length).keys()].map((index) => index + 1));
@@ -180,15 +180,15 @@ test("a program swap after a tick fault still loads and ticks", async () => {
   // either: `switchMap` over accepted loads is what makes a swap work, and an
   // errored inner would have already ended the merge it sits in.
   const source = readFileSync(SWITCH_DL6, "utf8");
-  const served = await startServed();
+  const served = await start_served();
   try {
-    assert.equal((await postProgram(served.port, source)).statusCode, 200);
+    assert.equal((await post_program(served.port, source)).statusCode, 200);
     assert.equal((await request(served.port, "/edb/events", "POST", FAULTING_BATCH)).statusCode, 500);
 
-    assert.equal((await postProgram(served.port, source)).statusCode, 200, "a swap after a fault must be accepted");
-    const afterSwap = await request(served.port, "/edb/events", "POST", goodBatch("settings"));
-    assert.equal(afterSwap.statusCode, 200, afterSwap.body);
-    assert.ok(tickEvents(served.events).length > 0, "the fresh program's ticks reach the app graph");
+    assert.equal((await post_program(served.port, source)).statusCode, 200, "a swap after a fault must be accepted");
+    const after_swap = await request(served.port, "/edb/events", "POST", good_batch("settings"));
+    assert.equal(after_swap.statusCode, 200, after_swap.body);
+    assert.ok(tick_events(served.events).length > 0, "the fresh program's ticks reach the app graph");
   } finally {
     await served.stop();
   }

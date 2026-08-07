@@ -74,8 +74,8 @@ import type {
   SqlStatement,
 } from "../runtime/types.ts";
 
-import * as orderA from "../gen_emitted/struct_intern_order_a.ts";
-import * as orderB from "../gen_emitted/struct_intern_order_b.ts";
+import * as order_a from "../gen_emitted/struct_intern_order_a.ts";
+import * as order_b from "../gen_emitted/struct_intern_order_b.ts";
 import * as shared from "../gen_emitted/struct_shared_child_survives_one_release.ts";
 
 type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
@@ -89,14 +89,14 @@ const ORDER_B_SCHEDULE: readonly IArrivalBatch[] = [
   [{ rel: "mark", sign: "add", row: [{ end: 2, start: 1 } as unknown as string] }],
 ];
 
-function bootedSeam(program: EmittedProgram, path = ":memory:"): Promise<ISqlSeam> {
+function booted_seam(program: EmittedProgram, path = ":memory:"): Promise<ISqlSeam> {
   const seam = ScratchStore.open(path);
   return firstValueFrom(
     ScratchStore.boot(seam, program.ddl).pipe(concatMap(() => BootRunner.run(seam, program.boot))),
   ).then(() => seam);
 }
 
-function runSchedule(
+function run_schedule(
   program: EmittedProgram,
   seam: ISqlSeam,
   schedule: readonly IArrivalBatch[],
@@ -107,11 +107,11 @@ function runSchedule(
 /** The delta payload of each line with the tick NUMBER dropped. Two build
  *  orders of the same value set legitimately place a value on different
  *  ticks; what must not differ is what the value renders as. */
-function deltaPayloads(lines: readonly string[]): string[] {
+function delta_payloads(lines: readonly string[]): string[] {
   return lines.map((line) => line.replace(/^\{"tick":\d+,/, "{"));
 }
 
-function denseIds(seam: ISqlSeam, table: string, columns: readonly string[]): Promise<Record<string, number>> {
+function dense_ids(seam: ISqlSeam, table: string, columns: readonly string[]): Promise<Record<string, number>> {
   const tuple = `json_array(${columns.map((column) => `"${column}"`).join(", ")})`;
   return firstValueFrom(
     seam.runner.execute(seam.db, `SELECT ${tuple} AS "__tuple", "__id" FROM "${table}"`).pipe(
@@ -127,28 +127,28 @@ function denseIds(seam: ISqlSeam, table: string, columns: readonly string[]): Pr
 // ── EDGE 1: the tick log prints values, never ids ────────────────────────────
 
 test("edge 1: two build orders render identically while their dense ids differ", async () => {
-  const seamA = await bootedSeam(orderA.program as EmittedProgram);
-  const linesA = await runSchedule(orderA.program as EmittedProgram, seamA, ORDER_A_SCHEDULE);
-  const idsA = await denseIds(seamA, "span", ["start", "end"]);
+  const seam_a = await booted_seam(order_a.program as EmittedProgram);
+  const lines_a = await run_schedule(order_a.program as EmittedProgram, seam_a, ORDER_A_SCHEDULE);
+  const ids_a = await dense_ids(seam_a, "span", ["start", "end"]);
 
-  const seamB = await bootedSeam(orderB.program as EmittedProgram);
-  const linesB = await runSchedule(orderB.program as EmittedProgram, seamB, ORDER_B_SCHEDULE);
-  const idsB = await denseIds(seamB, "span", ["start", "end"]);
+  const seam_b = await booted_seam(order_b.program as EmittedProgram);
+  const lines_b = await run_schedule(order_b.program as EmittedProgram, seam_b, ORDER_B_SCHEDULE);
+  const ids_b = await dense_ids(seam_b, "span", ["start", "end"]);
 
   const shared_semantic = "[1,2]";
   assert.notEqual(
-    idsA[shared_semantic],
-    idsB[shared_semantic],
+    ids_a[shared_semantic],
+    ids_b[shared_semantic],
     "this pair is only a receipt if the two runs assign DIFFERENT dense ids to the same value; " +
-      `both gave ${String(idsA[shared_semantic])}`,
+      `both gave ${String(ids_a[shared_semantic])}`,
   );
 
   assert.deepEqual(
-    deltaPayloads(linesA).sort(),
-    deltaPayloads(linesB).sort(),
+    delta_payloads(lines_a).sort(),
+    delta_payloads(lines_b).sort(),
     "the two build orders must render the same values",
   );
-  for (const line of linesA) {
+  for (const line of lines_a) {
     assert.ok(
       !/"mark":\{"add":\[\[\d/.test(line),
       `a ref column printed a bare number, i.e. an id: ${line}`,
@@ -159,8 +159,8 @@ test("edge 1: two build orders render identically while their dense ids differ",
 // ── EDGE 2: nested targets are ordinary same-tick relation arrivals ──────────
 
 test("edge 2: the nested target and parent are public arrivals in one tick", async () => {
-  const seam = await bootedSeam(shared.program as EmittedProgram);
-  const lines = await runSchedule(shared.program as EmittedProgram, seam, [
+  const seam = await booted_seam(shared.program as EmittedProgram);
+  const lines = await run_schedule(shared.program as EmittedProgram, seam, [
     [
       { rel: "hit", sign: "add", row: ["left", { end: 2, start: 1 } as unknown as string] },
       { rel: "hit", sign: "add", row: ["right", { end: 2, start: 1 } as unknown as string] },
@@ -179,10 +179,10 @@ test("edge 2: the nested target and parent are public arrivals in one tick", asy
     ["hit", "span"],
     "the normalized target must use the same public relation clock as authored arrivals",
   );
-  const firstTick = JSON.parse(lines[0]!) as {
+  const first_tick = JSON.parse(lines[0]!) as {
     deltas: Record<string, { add: readonly IRow[]; del: readonly IRow[] }>;
   };
-  assert.deepEqual(firstTick.deltas, {
+  assert.deepEqual(first_tick.deltas, {
     hit: {
       add: [
         ["left", { end: 2, start: 1 }],
@@ -193,7 +193,7 @@ test("edge 2: the nested target and parent are public arrivals in one tick", asy
     span: { add: [[1, 2]], del: [] },
   });
   assert.deepEqual(
-    Object.keys(shared.program.relColumns).sort(),
+    Object.keys(shared.program.rel_columns).sort(),
     ["hit", "span"],
     "the referenced target is an ordinary queryable relation",
   );
@@ -211,7 +211,7 @@ test("edge 2: the nested target and parent are public arrivals in one tick", asy
 
 // ── COST: statements flat in the number of arriving values ───────────────────
 
-function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
+function counting_seam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } {
   const statements: string[] = [];
   const record = (statement: string | SqlStatement): void => {
     statements.push(typeof statement === "string" ? statement : statement.sql);
@@ -234,20 +234,20 @@ function countingSeam(seam: ISqlSeam): { seam: ISqlSeam; statements: string[] } 
   return { seam: { db: seam.db, runner }, statements };
 }
 
-const SPAN_TYPES: readonly IStructTypePlan[] = orderA.STRUCT_TYPES;
-const SPAN_REF_COLUMNS: IStructRefColumns = orderA.STRUCT_REF_COLUMNS;
+const SPAN_TYPES: readonly IStructTypePlan[] = order_a.STRUCT_TYPES;
+const SPAN_REF_COLUMNS: IStructRefColumns = order_a.STRUCT_REF_COLUMNS;
 const USER_TYPES: readonly IStructTypePlan[] = [{
   name: "user",
   columns: ["id", "name"],
   refs: [null, null],
-  keyIndices: [0],
-  conflictSql: `SELECT i.value AS "__requested", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]') WHERE json_array(t."id", t."name") <> i.value`,
-  internSql: `INSERT OR IGNORE INTO "user" ("id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`,
-  lookupSql: `SELECT i.value AS "__lookup", t."__id", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]')`,
+  key_indices: [0],
+  conflict_sql: `SELECT i.value AS "__requested", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]') WHERE json_array(t."id", t."name") <> i.value`,
+  intern_sql: `INSERT OR IGNORE INTO "user" ("id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)`,
+  lookup_sql: `SELECT i.value AS "__lookup", t."__id", json_array(t."id", t."name") AS "__stored" FROM json_each(?) i JOIN "user" t ON t."id" = json_extract(i.value, '$[0]')`,
 }];
 const USER_REF_COLUMNS: IStructRefColumns = { post: ["user"] };
 
-async function userSeam(): Promise<ISqlSeam> {
+async function user_seam(): Promise<ISqlSeam> {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, [
     `CREATE TABLE "user" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "name" TEXT NOT NULL, UNIQUE ("id"))`,
@@ -255,7 +255,7 @@ async function userSeam(): Promise<ISqlSeam> {
   return seam;
 }
 
-function userBatch(...users: readonly { readonly id: number; readonly name: string }[]): IArrivalBatch {
+function user_batch(...users: readonly { readonly id: number; readonly name: string }[]): IArrivalBatch {
   return users.map((user) => ({
     rel: "post",
     sign: "add" as const,
@@ -263,7 +263,7 @@ function userBatch(...users: readonly { readonly id: number; readonly name: stri
   }));
 }
 
-function markBatch(count: number): IArrivalBatch {
+function mark_batch(count: number): IArrivalBatch {
   return Array.from({ length: count }, (_unused, index) => ({
     rel: "mark",
     sign: "add" as const,
@@ -271,63 +271,63 @@ function markBatch(count: number): IArrivalBatch {
   }));
 }
 
-async function internStatementCount(count: number): Promise<number> {
-  const base = await bootedSeam(orderA.program as EmittedProgram);
-  const { seam, statements } = countingSeam(base);
-  await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(count)));
+async function intern_statement_count(count: number): Promise<number> {
+  const base = await booted_seam(order_a.program as EmittedProgram);
+  const { seam, statements } = counting_seam(base);
+  await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, mark_batch(count)));
   return statements.length;
 }
 
 test("count: resolving is three statements per target relation, flat in the number of values", async () => {
-  const three = await internStatementCount(3);
-  const fifty = await internStatementCount(50);
+  const three = await intern_statement_count(3);
+  const fifty = await intern_statement_count(50);
   assert.equal(three, 3, `three values must resolve in three statements, got ${three}`);
   assert.equal(fifty, three, `fifty values must cost what three did, got ${fifty} vs ${three}`);
 });
 
 test("count: a tick carrying no nested relation value runs zero normalization statements", async () => {
-  const base = await bootedSeam(orderA.program as EmittedProgram);
-  const { seam, statements } = countingSeam(base);
+  const base = await booted_seam(order_a.program as EmittedProgram);
+  const { seam, statements } = counting_seam(base);
   await firstValueFrom(StructPlane.intern(seam, SPAN_TYPES, SPAN_REF_COLUMNS, []));
   assert.equal(statements.length, 0, `a tick with no nested relation value must run zero normalization statements: ${statements.length}`);
 });
 
 test("key: equal key and equal row reuse one target id", async () => {
-  const seam = await userSeam();
+  const seam = await user_seam();
   const rewritten = await firstValueFrom(
     StructPlane.intern(
       seam,
       USER_TYPES,
       USER_REF_COLUMNS,
-      userBatch({ id: 7, name: "Ada" }, { id: 7, name: "Ada" }),
+      user_batch({ id: 7, name: "Ada" }, { id: 7, name: "Ada" }),
     ),
   );
   assert.equal(rewritten[0]!.row[0], rewritten[1]!.row[0]);
-  const ids = await denseIds(seam, "user", ["id", "name"]);
+  const ids = await dense_ids(seam, "user", ["id", "name"]);
   assert.deepEqual(Object.keys(ids), ['[7,"Ada"]']);
 });
 
 test("key: an existing key with different non-key fields refuses before insertion", async () => {
-  const seam = await userSeam();
+  const seam = await user_seam();
   await firstValueFrom(
-    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Ada" })),
+    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, user_batch({ id: 7, name: "Ada" })),
   );
   await assert.rejects(
     firstValueFrom(
-      StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Grace" })),
+      StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, user_batch({ id: 7, name: "Grace" })),
     ),
     /relation_reference_conflict\(user,/,
   );
-  const ids = await denseIds(seam, "user", ["id", "name"]);
+  const ids = await dense_ids(seam, "user", ["id", "name"]);
   assert.deepEqual(Object.keys(ids), ['[7,"Ada"]']);
 });
 
 test("key: an UPSERT replacement preserves the target id held by parents", async () => {
-  const seam = await userSeam();
+  const seam = await user_seam();
   const first = await firstValueFrom(
-    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, userBatch({ id: 7, name: "Ada" })),
+    StructPlane.intern(seam, USER_TYPES, USER_REF_COLUMNS, user_batch({ id: 7, name: "Ada" })),
   );
-  const targetId = Number(first[0]!.row[0]);
+  const target_id = Number(first[0]!.row[0]);
   await firstValueFrom(seam.runner.execute(
     seam.db,
     { sql: `INSERT INTO "user" ("id", "name") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name"`, args: [7, "Grace"] },
@@ -335,30 +335,30 @@ test("key: an UPSERT replacement preserves the target id held by parents", async
   const row = await firstValueFrom(
     seam.runner.execute(seam.db, `SELECT "__id", "name" FROM "user" WHERE "id" = 7`),
   );
-  assert.equal(Number(row.rows[0]!["__id"]), targetId);
+  assert.equal(Number(row.rows[0]!["__id"]), target_id);
   assert.equal(row.rows[0]!["name"], "Grace");
 });
 
 test("key: two different rows with one key in the same batch refuse before SQL", async () => {
-  const base = await userSeam();
-  const { seam, statements } = countingSeam(base);
+  const base = await user_seam();
+  const { seam, statements } = counting_seam(base);
   await assert.rejects(
     firstValueFrom(StructPlane.intern(
       seam,
       USER_TYPES,
       USER_REF_COLUMNS,
-      userBatch({ id: 7, name: "Ada" }, { id: 7, name: "Grace" }),
+      user_batch({ id: 7, name: "Ada" }, { id: 7, name: "Grace" }),
     )),
     /relation_reference_conflict\(user,/,
   );
   assert.equal(statements.length, 0);
-  const ids = await denseIds(seam, "user", ["id", "name"]);
+  const ids = await dense_ids(seam, "user", ["id", "name"]);
   assert.deepEqual(ids, {});
 });
 
 test("plan: the boundary render of a ref column SEARCHes the target view by rowid", async () => {
-  const seam = await bootedSeam(orderA.program as EmittedProgram);
-  const sql = orderA.incrementalPlan.relations.find((relation) => relation.rel === "mark")!.boundarySql;
+  const seam = await booted_seam(order_a.program as EmittedProgram);
+  const sql = order_a.incremental_plan.relations.find((relation) => relation.rel === "mark")!.boundary_sql;
   assert.ok(sql.includes('"__ref_span"'), `this fixture's boundary read must touch the target view: ${sql}`);
   const plan = await firstValueFrom(
     seam.runner
@@ -382,10 +382,10 @@ test("crash: standalone resolution replay follows ordinary duplicate-arrival sem
     // safe -- the target is written FIRST, so the only residue is a row
     // nothing references. A parent row without its target row, the
     // direction that WOULD break the boundary render, is unreachable.
-    const crashed = await bootedSeam(orderA.program as EmittedProgram, path);
-    await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, markBatch(1)));
-    const orphanIds = await denseIds(crashed, "span", ["start", "end"]);
-    assert.deepEqual(Object.keys(orphanIds), ["[1,2]"]);
+    const crashed = await booted_seam(order_a.program as EmittedProgram, path);
+    await firstValueFrom(StructPlane.intern(crashed, SPAN_TYPES, SPAN_REF_COLUMNS, mark_batch(1)));
+    const orphan_ids = await dense_ids(crashed, "span", ["start", "end"]);
+    assert.deepEqual(Object.keys(orphan_ids), ["[1,2]"]);
     const marks = await firstValueFrom(
       crashed.runner.execute(crashed.db, `SELECT count(*) AS n FROM "mark"`).pipe(map((r) => Number(r.rows[0]!["n"]))),
     );
@@ -395,16 +395,16 @@ test("crash: standalone resolution replay follows ordinary duplicate-arrival sem
     // the orphan harmless: the retry finds the existing row, does not mint a
     // second one. As with replaying any ordinary set arrival, the standing
     // target has no second add delta; the parent still arrives at this tick.
-    const replayed = await runSchedule(orderA.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
-    const afterIds = await denseIds(crashed, "span", ["start", "end"]);
+    const replayed = await run_schedule(order_a.program as EmittedProgram, crashed, ORDER_A_SCHEDULE);
+    const after_ids = await dense_ids(crashed, "span", ["start", "end"]);
     assert.equal(
-      Object.keys(afterIds).length,
+      Object.keys(after_ids).length,
       2,
-      `the replay must reuse the orphan, not mint a duplicate: ${JSON.stringify(afterIds)}`,
+      `the replay must reuse the orphan, not mint a duplicate: ${JSON.stringify(after_ids)}`,
     );
 
     assert.deepEqual(
-      deltaPayloads(replayed),
+      delta_payloads(replayed),
       [
         '{"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]}}}',
         '{"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]},"span":{"add":[[3,4]],"del":[]}}}',
@@ -417,10 +417,10 @@ test("crash: standalone resolution replay follows ordinary duplicate-arrival sem
 });
 
 test("canonicalText is sorted-keys-no-whitespace, the ruled cross-target encoding", () => {
-  assert.equal(StructPlane.canonicalText({ start: 3, end: 9 }), '{"end":9,"start":3}');
+  assert.equal(StructPlane.canonical_text({ start: 3, end: 9 }), '{"end":9,"start":3}');
   assert.equal(
-    StructPlane.canonicalText({ file: "a.rs", at: { start: 3, end: 9 } }),
+    StructPlane.canonical_text({ file: "a.rs", at: { start: 3, end: 9 } }),
     '{"at":{"end":9,"start":3},"file":"a.rs"}',
   );
-  assert.equal(StructPlane.canonicalText({ b: 1, a: 2 }), '{"a":2,"b":1}');
+  assert.equal(StructPlane.canonical_text({ b: 1, a: 2 }), '{"a":2,"b":1}');
 });

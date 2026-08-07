@@ -43,7 +43,7 @@ import type {
   ISqliteStatsSnapshot,
 } from "./types.ts";
 
-function pragmaScalar(seam: ISqlSeam, name: string): Observable<number> {
+function pragma_scalar(seam: ISqlSeam, name: string): Observable<number> {
   return seam.runner.scalar(seam.db, `PRAGMA ${name}`);
 }
 
@@ -55,15 +55,15 @@ interface DbstatRead {
 /** Empty `tableNames` is answered without a round trip: `dbstat` is treated
  *  as available (nothing was asked of it, so nothing failed) with zero
  *  objects, never a guess either way. */
-function objectBytes(seam: ISqlSeam, tableNames: readonly string[]): Observable<DbstatRead> {
-  if (tableNames.length === 0) return of({ available: true, objects: [] });
+function object_bytes(seam: ISqlSeam, table_names: readonly string[]): Observable<DbstatRead> {
+  if (table_names.length === 0) return of({ available: true, objects: [] });
   return seam.runner
     .execute(seam.db, {
       sql:
         "SELECT s.name AS name, s.bytes AS bytes FROM " +
         "(SELECT name, sum(pgsize) AS bytes FROM dbstat GROUP BY name) s " +
         "WHERE s.name IN (SELECT value FROM json_each(?))",
-      args: [JSON.stringify(tableNames)],
+      args: [JSON.stringify(table_names)],
     })
     .pipe(
       map(
@@ -80,29 +80,29 @@ function objectBytes(seam: ISqlSeam, tableNames: readonly string[]): Observable<
 }
 
 export const ServeStats: IServeStats = {
-  sqliteSnapshot(seam: ISqlSeam, tableNames: readonly string[]): Observable<ISqliteStatsSnapshot> {
+  sqlite_snapshot(seam: ISqlSeam, table_names: readonly string[]): Observable<ISqliteStatsSnapshot> {
     return forkJoin({
-      pageCount: pragmaScalar(seam, "page_count"),
-      pageSize: pragmaScalar(seam, "page_size"),
-      freelistCount: pragmaScalar(seam, "freelist_count"),
-      dbstat: objectBytes(seam, tableNames),
+      page_count: pragma_scalar(seam, "page_count"),
+      page_size: pragma_scalar(seam, "page_size"),
+      freelist_count: pragma_scalar(seam, "freelist_count"),
+      dbstat: object_bytes(seam, table_names),
     }).pipe(
       map(
-        ({ pageCount, pageSize, freelistCount, dbstat }): ISqliteStatsSnapshot => ({
-          pageCount,
-          pageSize,
-          freelistCount,
-          dbBytes: pageCount * pageSize,
-          freelistBytes: freelistCount * pageSize,
-          dbstatAvailable: dbstat.available,
-          objectBytes: dbstat.objects,
+        ({ page_count, page_size, freelist_count, dbstat }): ISqliteStatsSnapshot => ({
+          page_count,
+          page_size,
+          freelist_count,
+          db_bytes: page_count * page_size,
+          freelist_bytes: freelist_count * page_size,
+          dbstat_available: dbstat.available,
+          object_bytes: dbstat.objects,
         }),
       ),
     );
   },
 
-  processMemory(): IProcessMemorySnapshot {
+  process_memory(): IProcessMemorySnapshot {
     const usage = process.memoryUsage();
-    return { rssBytes: usage.rss, heapUsedBytes: usage.heapUsed, externalBytes: usage.external };
+    return { rss_bytes: usage.rss, heap_used_bytes: usage.heapUsed, external_bytes: usage.external };
   },
 };

@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: probe_output_comparison_guard.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [{ name: "score", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "score", type: "int" }], template: "score {path}", demandRel: "__host_demand_score", responseRel: "__host_response_score", execution: "shell" }];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [{ name: "score", inputs: [{ name: "path", type: "text" }], outputs: [{ name: "score", type: "int" }], template: "score {path}", demand_rel: "__host_demand_score", response_rel: "__host_response_score", execution: "shell" }];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -171,51 +171,51 @@ const ddl: readonly string[] = [
   `CREATE INDEX "accepted_zero" ON "accepted" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   __host_demand_score: ["identity_digest", "witness_digest", "path"],
   __host_response_score: ["witness_digest", "ordinal", "path", "score"],
   accepted: ["path", "score"],
   input: ["path"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   __host_demand_score: ["text", "text", "text"],
   __host_response_score: ["text", "int", "text", "int"],
   accepted: ["text", "int"],
   input: ["text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "probe_output_comparison_guard", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "0bf7dbd89eb6c54d", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "__host_demand_score", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "a2051e325323b410", hSchema: "d7578c4861905528", hRule: "deac07903928f07c" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "identity_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "022f9cea9506ccef", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0082c0bb340f985d", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 7, ordinal: 3, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fdc402c3bc17d5ab", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 6, ordinal: 0, localName: "__host_response_score", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "9151d2a5e2e74d76", hSchema: "61e0ff0c3609bed5", hRule: "" },
-  { relId: 12, parentId: 11, ordinal: 1, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f74f8735813d26e5", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 11, ordinal: 2, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "6d4658a300879836", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 11, ordinal: 3, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9b6c5af120416981", hSchema: "", hRule: "" },
-  { relId: 15, parentId: 11, ordinal: 4, localName: "score", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e401f4bfcf660bc6", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 6, ordinal: 0, localName: "accepted", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "b90bd45f631a2bd0", hSchema: "db0ab72429e7c72f", hRule: "bc5f4fb856866cac" },
-  { relId: 17, parentId: 16, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "0437dc8888e9fa12", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 16, ordinal: 2, localName: "score", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "fb0a637851bfecd3", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 6, ordinal: 0, localName: "input", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "22f0276fbc685c7e", hSchema: "8596fa45d0ad8be0", hRule: "" },
-  { relId: 20, parentId: 19, ordinal: 1, localName: "path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "bae36b39d30e6cb5", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "probe_output_comparison_guard", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "0bf7dbd89eb6c54d", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "__host_demand_score", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "a2051e325323b410", h_schema: "d7578c4861905528", h_rule: "deac07903928f07c" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "identity_digest", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "022f9cea9506ccef", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "witness_digest", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "0082c0bb340f985d", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "fdc402c3bc17d5ab", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "__host_response_score", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "9151d2a5e2e74d76", h_schema: "61e0ff0c3609bed5", h_rule: "" },
+  { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "witness_digest", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f74f8735813d26e5", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "ordinal", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "6d4658a300879836", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 11, ordinal: 3, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "9b6c5af120416981", h_schema: "", h_rule: "" },
+  { rel_id: 15, parent_id: 11, ordinal: 4, local_name: "score", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e401f4bfcf660bc6", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 6, ordinal: 0, local_name: "accepted", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "b90bd45f631a2bd0", h_schema: "db0ab72429e7c72f", h_rule: "bc5f4fb856866cac" },
+  { rel_id: 17, parent_id: 16, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "0437dc8888e9fa12", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 16, ordinal: 2, local_name: "score", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "fb0a637851bfecd3", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 6, ordinal: 0, local_name: "input", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "22f0276fbc685c7e", h_schema: "8596fa45d0ad8be0", h_rule: "" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "bae36b39d30e6cb5", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   __host_demand_score: ["text", "text", "text"],
   __host_response_score: ["text", "int", "text", "int"],
   accepted: ["text", "int"],
   input: ["text"],
 };
 
-const arrivalTargets: readonly string[] = ["__host_response_score", "input"];
+const arrival_targets: readonly string[] = ["__host_response_score", "input"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "input", sql: `INSERT OR IGNORE INTO "input" ("path") VALUES (?)`, params: ["a"] },
@@ -232,28 +232,28 @@ type Snapshot = {
   readonly input: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __host_demand_score: selectRows(seam, `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' AND json_type("identity_digest", '$.fn') = 'text' AND json_type("identity_digest", '$.args') = 'array' THEN json_extract("identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')), '') || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__host_demand_score"`, relColumns.__host_demand_score!, relColumnTypes.__host_demand_score!),
-    __host_response_score: selectRows(seam, `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "__host_response_score"`, relColumns.__host_response_score!, relColumnTypes.__host_response_score!),
-    accepted: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "accepted"`, relColumns.accepted!, relColumnTypes.accepted!),
-    input: selectRows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "input"`, relColumns.input!, relColumnTypes.input!),
+    __host_demand_score: select_rows(seam, `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' AND json_type("identity_digest", '$.fn') = 'text' AND json_type("identity_digest", '$.args') = 'array' THEN json_extract("identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')), '') || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__host_demand_score"`, rel_columns.__host_demand_score!, rel_column_types.__host_demand_score!),
+    __host_response_score: select_rows(seam, `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "__host_response_score"`, rel_columns.__host_response_score!, rel_column_types.__host_response_score!),
+    accepted: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "accepted"`, rel_columns.accepted!, rel_column_types.accepted!),
+    input: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "input"`, rel_columns.input!, rel_column_types.input!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   __host_demand_score: `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' AND json_type("identity_digest", '$.fn') = 'text' AND json_type("identity_digest", '$.args') = 'array' THEN json_extract("identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')), '') || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__host_demand_score"`,
   __host_response_score: `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "__host_response_score"`,
   accepted: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score" FROM "accepted"`,
   input: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "input"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  __host_response_score: { kind: "set", addSql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") VALUES (?, ?, ?, ?) ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score"`, delSql: `DELETE FROM "__host_response_score" WHERE "witness_digest" = ? AND "ordinal" = ? AND "path" = ? AND "score" = ?` },
-  input: { kind: "set", addSql: `INSERT OR IGNORE INTO "input" ("path") VALUES (?)`, delSql: `DELETE FROM "input" WHERE "path" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  __host_response_score: { kind: "set", add_sql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") VALUES (?, ?, ?, ?) ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score"`, del_sql: `DELETE FROM "__host_response_score" WHERE "witness_digest" = ? AND "ordinal" = ? AND "path" = ? AND "score" = ?` },
+  input: { kind: "set", add_sql: `INSERT OR IGNORE INTO "input" ("path") VALUES (?)`, del_sql: `DELETE FROM "input" WHERE "path" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`probe_output_comparison_guard: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -262,37 +262,37 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`probe_output_comparison_guard: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`probe_output_comparison_guard: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__host_demand_score", kind: "set", tableName: "__host_demand_score", deltaTableName: "__delta___host_demand_score", frontierTableName: "__frontier___host_demand_score", nextFrontierTableName: "__next_frontier___host_demand_score", columns: ["identity_digest", "witness_digest", "path"], columnTypes: ["text", "text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' AND json_type("identity_digest", '$.fn') = 'text' AND json_type("identity_digest", '$.args') = 'array' THEN json_extract("identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')), '') || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_demand_score" WHERE "_sign" IN (-1, 1) GROUP BY "identity_digest", "witness_digest", "path", "_sign"`, ruleObservers: [] },
-  { rel: "__host_response_score", kind: "set", tableName: "__host_response_score", deltaTableName: "__delta___host_response_score", frontierTableName: "__frontier___host_response_score", nextFrontierTableName: "__next_frontier___host_response_score", columns: ["witness_digest", "ordinal", "path", "score"], columnTypes: ["text", "int", "text", "int"], keyIndices: [0, 1], arrivalAddSql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) WHERE true ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score" RETURNING "witness_digest", "ordinal", "path", "score"`, arrivalDelSql: `DELETE FROM "__host_response_score" WHERE ("witness_digest", "ordinal", "path", "score") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "witness_digest", "ordinal", "path", "score"`, boundarySql: `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_response_score" WHERE "_sign" IN (-1, 1) GROUP BY "witness_digest", "ordinal", "path", "score", "_sign"`, ruleObservers: ["accepted/2"] },
-  { rel: "accepted", kind: "set", tableName: "accepted", deltaTableName: "__delta_accepted", frontierTableName: "__frontier_accepted", nextFrontierTableName: "__next_frontier_accepted", columns: ["path", "score"], columnTypes: ["text", "int"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_accepted" WHERE "_sign" IN (-1, 1) GROUP BY "path", "score", "_sign"`, ruleObservers: [] },
-  { rel: "input", kind: "set", tableName: "input", deltaTableName: "__delta_input", frontierTableName: "__frontier_input", nextFrontierTableName: "__next_frontier_input", columns: ["path"], columnTypes: ["text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "input" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrivalDelSql: `DELETE FROM "input" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundarySql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_input" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, ruleObservers: ["__host_demand_score/3", "accepted/2"] },
+  { rel: "__host_demand_score", kind: "set", table_name: "__host_demand_score", delta_table_name: "__delta___host_demand_score", frontier_table_name: "__frontier___host_demand_score", next_frontier_table_name: "__next_frontier___host_demand_score", columns: ["identity_digest", "witness_digest", "path"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("identity_digest") AND json_type("identity_digest") = 'object' AND json_type("identity_digest", '$.fn') = 'text' AND json_type("identity_digest", '$.args') = 'array' THEN json_extract("identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("identity_digest", '$.args')), '') || ')' ELSE "identity_digest" END AS "identity_digest", CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_demand_score" WHERE "_sign" IN (-1, 1) GROUP BY "identity_digest", "witness_digest", "path", "_sign"`, rule_observers: [] },
+  { rel: "__host_response_score", kind: "set", table_name: "__host_response_score", delta_table_name: "__delta___host_response_score", frontier_table_name: "__frontier___host_response_score", next_frontier_table_name: "__next_frontier___host_response_score", columns: ["witness_digest", "ordinal", "path", "score"], column_types: ["text", "int", "text", "int"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__host_response_score" ("witness_digest", "ordinal", "path", "score") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) WHERE true ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "path" = excluded."path", "score" = excluded."score" RETURNING "witness_digest", "ordinal", "path", "score"`, arrival_del_sql: `DELETE FROM "__host_response_score" WHERE ("witness_digest", "ordinal", "path", "score") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "witness_digest", "ordinal", "path", "score"`, boundary_sql: `SELECT CASE WHEN json_valid("witness_digest") AND json_type("witness_digest") = 'object' AND json_type("witness_digest", '$.fn') = 'text' AND json_type("witness_digest", '$.args') = 'array' THEN json_extract("witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("witness_digest", '$.args')), '') || ')' ELSE "witness_digest" END AS "witness_digest", "ordinal", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___host_response_score" WHERE "_sign" IN (-1, 1) GROUP BY "witness_digest", "ordinal", "path", "score", "_sign"`, rule_observers: ["accepted/2"] },
+  { rel: "accepted", kind: "set", table_name: "accepted", delta_table_name: "__delta_accepted", frontier_table_name: "__frontier_accepted", next_frontier_table_name: "__next_frontier_accepted", columns: ["path", "score"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "score", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_accepted" WHERE "_sign" IN (-1, 1) GROUP BY "path", "score", "_sign"`, rule_observers: [] },
+  { rel: "input", kind: "set", table_name: "input", delta_table_name: "__delta_input", frontier_table_name: "__frontier_input", next_frontier_table_name: "__next_frontier_input", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "input" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrival_del_sql: `DELETE FROM "input" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_input" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, rule_observers: ["__host_demand_score/3", "accepted/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "__host_demand_score", ruleId: "probe_output_comparison_guard:__host_demand_score/3#1", headDeltaTableName: "__delta___host_demand_score", headColumns: ["identity_digest", "witness_digest", "path"], insertSql: `INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path") SELECT DISTINCT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path"), d0."path" FROM "__frontier_input" d0 WHERE d0."_phase" >= 0 RETURNING "identity_digest", "witness_digest", "path"`, selectSql: `SELECT "identity_digest", "witness_digest", "path" FROM "__host_demand_score"`, recomputeSql: `DELETE FROM "__host_demand_score";
-INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path") SELECT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path" FROM "input" b0`, supportSql: [`DELETE FROM "__support_next___host_demand_score"`, `INSERT INTO "__support_next___host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT "identity_digest", "witness_digest", "path", sum("__refcount") FROM (SELECT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AS "identity_digest", ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AS "witness_digest", b0."path" AS "path", count(*) AS "__refcount" FROM "input" b0 GROUP BY ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path") GROUP BY "identity_digest", "witness_digest", "path"`, `UPDATE "__host_demand_score" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next___host_demand_score" n WHERE n."identity_digest" = h."identity_digest" AND n."witness_digest" = h."witness_digest" AND n."path" = h."path"), 0)`, `INSERT INTO "__delta___host_demand_score" ("_sign", "_sequence", "identity_digest", "witness_digest", "path") SELECT -1, row_number() OVER () - 1, "identity_digest", "witness_digest", "path" FROM "__host_demand_score" WHERE "__refcount" <= 0`, `DELETE FROM "__host_demand_score" WHERE "__refcount" <= 0`, `DELETE FROM "__new___host_demand_score"`, `INSERT INTO "__new___host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT n."identity_digest", n."witness_digest", n."path", n."__refcount" FROM "__support_next___host_demand_score" n LEFT JOIN "__host_demand_score" h ON n."identity_digest" = h."identity_digest" AND n."witness_digest" = h."witness_digest" AND n."path" = h."path" WHERE h."identity_digest" IS NULL`, `INSERT INTO "__delta___host_demand_score" ("_sign", "_sequence", "identity_digest", "witness_digest", "path") SELECT 1, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT INTO "__frontier___host_demand_score" ("_phase", "_sequence", "identity_digest", "witness_digest", "path") SELECT ?, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT INTO "__next_frontier___host_demand_score" ("_phase", "_sequence", "identity_digest", "witness_digest", "path") SELECT ?, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT n."identity_digest", n."witness_digest", n."path", n."__refcount" FROM "__support_next___host_demand_score" n`], expandSql: null, dredSql: null, aggregateSql: null },
-  { headRel: "accepted", ruleId: "probe_output_comparison_guard:accepted/2#1", headDeltaTableName: "__delta_accepted", headColumns: ["path", "score"], insertSql: `INSERT OR IGNORE INTO "accepted" ("path", "score") SELECT DISTINCT d0."path", b0."score" FROM "__frontier_input" d0, "__host_response_score" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path") AND (b0."score" > 10) UNION ALL SELECT DISTINCT d0."path", d0."score" FROM "__frontier___host_response_score" d0, "input" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND d0."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path") AND (d0."score" > 10) RETURNING "path", "score"`, selectSql: `SELECT "path", "score" FROM "accepted"`, recomputeSql: `DELETE FROM "accepted";
-INSERT OR IGNORE INTO "accepted" ("path", "score") SELECT b0."path", b1."score" FROM "input" b0, "__host_response_score" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AND (b1."score" > 10)`, supportSql: [`DELETE FROM "__support_next_accepted"`, `INSERT INTO "__support_next_accepted" ("path", "score", "__refcount") SELECT "path", "score", sum("__refcount") FROM (SELECT b0."path" AS "path", b1."score" AS "score", count(*) AS "__refcount" FROM "input" b0, "__host_response_score" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AND (b1."score" > 10) GROUP BY b0."path", b1."score") GROUP BY "path", "score"`, `UPDATE "accepted" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_accepted" n WHERE n."path" = h."path" AND n."score" = h."score"), 0)`, `INSERT INTO "__delta_accepted" ("_sign", "_sequence", "path", "score") SELECT -1, row_number() OVER () - 1, "path", "score" FROM "accepted" WHERE "__refcount" <= 0`, `DELETE FROM "accepted" WHERE "__refcount" <= 0`, `DELETE FROM "__new_accepted"`, `INSERT INTO "__new_accepted" ("path", "score", "__refcount") SELECT n."path", n."score", n."__refcount" FROM "__support_next_accepted" n LEFT JOIN "accepted" h ON n."path" = h."path" AND n."score" = h."score" WHERE h."path" IS NULL`, `INSERT INTO "__delta_accepted" ("_sign", "_sequence", "path", "score") SELECT 1, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT INTO "__frontier_accepted" ("_phase", "_sequence", "path", "score") SELECT ?, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT INTO "__next_frontier_accepted" ("_phase", "_sequence", "path", "score") SELECT ?, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT OR IGNORE INTO "accepted" ("path", "score", "__refcount") SELECT n."path", n."score", n."__refcount" FROM "__support_next_accepted" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "__host_demand_score", rule_id: "probe_output_comparison_guard:__host_demand_score/3#1", head_delta_table_name: "__delta___host_demand_score", head_columns: ["identity_digest", "witness_digest", "path"], insert_sql: `INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path") SELECT DISTINCT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path"), d0."path" FROM "__frontier_input" d0 WHERE d0."_phase" >= 0 RETURNING "identity_digest", "witness_digest", "path"`, select_sql: `SELECT "identity_digest", "witness_digest", "path" FROM "__host_demand_score"`, recompute_sql: `DELETE FROM "__host_demand_score";
+INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path") SELECT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path" FROM "input" b0`, support_sql: [`DELETE FROM "__support_next___host_demand_score"`, `INSERT INTO "__support_next___host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT "identity_digest", "witness_digest", "path", sum("__refcount") FROM (SELECT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AS "identity_digest", ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AS "witness_digest", b0."path" AS "path", count(*) AS "__refcount" FROM "input" b0 GROUP BY ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path") GROUP BY "identity_digest", "witness_digest", "path"`, `UPDATE "__host_demand_score" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next___host_demand_score" n WHERE n."identity_digest" = h."identity_digest" AND n."witness_digest" = h."witness_digest" AND n."path" = h."path"), 0)`, `INSERT INTO "__delta___host_demand_score" ("_sign", "_sequence", "identity_digest", "witness_digest", "path") SELECT -1, row_number() OVER () - 1, "identity_digest", "witness_digest", "path" FROM "__host_demand_score" WHERE "__refcount" <= 0`, `DELETE FROM "__host_demand_score" WHERE "__refcount" <= 0`, `DELETE FROM "__new___host_demand_score"`, `INSERT INTO "__new___host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT n."identity_digest", n."witness_digest", n."path", n."__refcount" FROM "__support_next___host_demand_score" n LEFT JOIN "__host_demand_score" h ON n."identity_digest" = h."identity_digest" AND n."witness_digest" = h."witness_digest" AND n."path" = h."path" WHERE h."identity_digest" IS NULL`, `INSERT INTO "__delta___host_demand_score" ("_sign", "_sequence", "identity_digest", "witness_digest", "path") SELECT 1, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT INTO "__frontier___host_demand_score" ("_phase", "_sequence", "identity_digest", "witness_digest", "path") SELECT ?, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT INTO "__next_frontier___host_demand_score" ("_phase", "_sequence", "identity_digest", "witness_digest", "path") SELECT ?, "rowid" - 1, "identity_digest", "witness_digest", "path" FROM "__new___host_demand_score"`, `INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path", "__refcount") SELECT n."identity_digest", n."witness_digest", n."path", n."__refcount" FROM "__support_next___host_demand_score" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
+  { head_rel: "accepted", rule_id: "probe_output_comparison_guard:accepted/2#1", head_delta_table_name: "__delta_accepted", head_columns: ["path", "score"], insert_sql: `INSERT OR IGNORE INTO "accepted" ("path", "score") SELECT DISTINCT d0."path", b0."score" FROM "__frontier_input" d0, "__host_response_score" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b0."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path") AND (b0."score" > 10) UNION ALL SELECT DISTINCT d0."path", d0."score" FROM "__frontier___host_response_score" d0, "input" b0 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND d0."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || d0."path") AND (d0."score" > 10) RETURNING "path", "score"`, select_sql: `SELECT "path", "score" FROM "accepted"`, recompute_sql: `DELETE FROM "accepted";
+INSERT OR IGNORE INTO "accepted" ("path", "score") SELECT b0."path", b1."score" FROM "input" b0, "__host_response_score" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AND (b1."score" > 10)`, support_sql: [`DELETE FROM "__support_next_accepted"`, `INSERT INTO "__support_next_accepted" ("path", "score", "__refcount") SELECT "path", "score", sum("__refcount") FROM (SELECT b0."path" AS "path", b1."score" AS "score", count(*) AS "__refcount" FROM "input" b0, "__host_response_score" b1 WHERE b1."path" = b0."path" AND b1."witness_digest" = ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path") AND (b1."score" > 10) GROUP BY b0."path", b1."score") GROUP BY "path", "score"`, `UPDATE "accepted" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_accepted" n WHERE n."path" = h."path" AND n."score" = h."score"), 0)`, `INSERT INTO "__delta_accepted" ("_sign", "_sequence", "path", "score") SELECT -1, row_number() OVER () - 1, "path", "score" FROM "accepted" WHERE "__refcount" <= 0`, `DELETE FROM "accepted" WHERE "__refcount" <= 0`, `DELETE FROM "__new_accepted"`, `INSERT INTO "__new_accepted" ("path", "score", "__refcount") SELECT n."path", n."score", n."__refcount" FROM "__support_next_accepted" n LEFT JOIN "accepted" h ON n."path" = h."path" AND n."score" = h."score" WHERE h."path" IS NULL`, `INSERT INTO "__delta_accepted" ("_sign", "_sequence", "path", "score") SELECT 1, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT INTO "__frontier_accepted" ("_phase", "_sequence", "path", "score") SELECT ?, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT INTO "__next_frontier_accepted" ("_phase", "_sequence", "path", "score") SELECT ?, "rowid" - 1, "path", "score" FROM "__new_accepted"`, `INSERT OR IGNORE INTO "accepted" ("path", "score", "__refcount") SELECT n."path", n."score", n."__refcount" FROM "__support_next_accepted" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "__host_demand_score";
 INSERT OR IGNORE INTO "__host_demand_score" ("identity_digest", "witness_digest", "path") SELECT ('identity|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), ('witness|score' || '|' || 'path' || ':' || 'text' || '=' || b0."path"), b0."path" FROM "input" b0;
 DELETE FROM "accepted";
@@ -300,11 +300,11 @@ INSERT OR IGNORE INTO "accepted" ("path", "score") SELECT b0."path", b1."score" 
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __host_demand_score = multisetDiff(before.__host_demand_score, after.__host_demand_score);
-  const __host_response_score = multisetDiff(before.__host_response_score, after.__host_response_score);
-  const accepted = multisetDiff(before.accepted, after.accepted);
-  const input = multisetDiff(before.input, after.input);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const __host_demand_score = multiset_diff(before.__host_demand_score, after.__host_demand_score);
+  const __host_response_score = multiset_diff(before.__host_response_score, after.__host_response_score);
+  const accepted = multiset_diff(before.accepted, after.accepted);
+  const input = multiset_diff(before.input, after.input);
   return {
     rels: [
       { rel: "__host_demand_score", add: __host_demand_score.add, del: __host_demand_score.del },
@@ -312,15 +312,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "accepted", add: accepted.add, del: accepted.del },
       { rel: "input", add: input.add, del: input.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // probe_output_comparison_guard: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -334,38 +334,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -374,16 +374,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "probe_output_comparison_guard",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

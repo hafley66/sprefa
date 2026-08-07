@@ -59,7 +59,7 @@ import { fileURLToPath } from "node:url";
 
 import { VirtualTimeScheduler } from "rxjs";
 
-import { postArrivals, postProgram, request, reservePort, startServed } from "./serveHelpers.ts";
+import { post_arrivals, post_program, request, reserve_port, start_served } from "./serveHelpers.ts";
 
 const HOST_CLOCK_DL6 = fileURLToPath(new URL("../../dl/fixtures/served-host-clock.dl6", import.meta.url));
 
@@ -78,7 +78,7 @@ interface SseClient {
 }
 
 /** An SSE client that stays attached and collects every event it is sent. */
-function sseClient(port: number): Promise<SseClient> {
+function sse_client(port: number): Promise<SseClient> {
   return new Promise((resolve, reject) => {
     const lines: string[] = [];
     const outgoing = http.request(
@@ -97,8 +97,8 @@ function sseClient(port: number): Promise<SseClient> {
   });
 }
 
-async function waitUntil(predicate: () => boolean, what: string, timeoutMs = 10_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function wait_until(predicate: () => boolean, what: string, timeout_ms = 10_000): Promise<void> {
+  const deadline = Date.now() + timeout_ms;
   while (!predicate()) {
     if (Date.now() >= deadline) throw new Error(`timeout waiting for ${what}`);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
@@ -107,14 +107,14 @@ async function waitUntil(predicate: () => boolean, what: string, timeoutMs = 10_
 
 test("the program outlives close() while a request is still being served, and is dropped only after", async () => {
   const scheduler = new VirtualTimeScheduler();
-  const served = await startServed(0, scheduler);
+  const served = await start_served(0, scheduler);
   const source = readFileSync(HOST_CLOCK_DL6, "utf8");
-  assert.equal((await postProgram(served.port, source)).statusCode, 200);
-  await postArrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
-  await waitUntil(() => scheduler.actions.length >= 1, "the interval bind to register");
+  assert.equal((await post_program(served.port, source)).statusCode, 200);
+  await post_arrivals(served.port, [{ rel: "seed", sign: "add", row: ["alpha"] }]);
+  await wait_until(() => scheduler.actions.length >= 1, "the interval bind to register");
 
-  const client = await sseClient(served.port);
-  await waitUntil(() => served.activeSubscribeCount() === 1, "the SSE client to be accepted server-side");
+  const client = await sse_client(served.port);
+  await wait_until(() => served.active_subscribe_count() === 1, "the SSE client to be accepted server-side");
 
   // close() begins here and must NOT resolve: one connection is still live.
   let resolved = false;
@@ -129,7 +129,7 @@ test("the program outlives close() while a request is still being served, and is
   const before = client.lines.length;
   scheduler.maxFrames = scheduler.frame + 1000;
   scheduler.flush();
-  await waitUntil(() => client.lines.length > before, "a tick to reach the SSE client after close() began");
+  await wait_until(() => client.lines.length > before, "a tick to reach the SSE client after close() began");
 
   client.drop();
   await closed;
@@ -143,14 +143,14 @@ test("the program outlives close() while a request is still being served, and is
 });
 
 test("stop() resolves only after the port is actually released, so the next server can take it", async () => {
-  const first = await startServed();
+  const first = await start_served();
   const port = first.port;
-  assert.equal((await postProgram(port, PROGRAM)).statusCode, 200);
+  assert.equal((await post_program(port, PROGRAM)).statusCode, 200);
   await first.stop();
 
   // The old stop() unsubscribed and slept 25ms; nothing guaranteed the listener
   // was gone. Rebinding the SAME port is the discriminating check.
-  const second = await startServed(port);
+  const second = await start_served(port);
   try {
     assert.equal(second.port, port);
   } finally {
@@ -159,7 +159,7 @@ test("stop() resolves only after the port is actually released, so the next serv
 });
 
 test("servers started with no port asked for never collide", async () => {
-  const servers = await Promise.all([startServed(), startServed(), startServed()]);
+  const servers = await Promise.all([start_served(), start_served(), start_served()]);
   try {
     const ports = servers.map((served) => served.port);
     assert.equal(new Set(ports).size, ports.length, `ephemeral ports repeated: ${ports.join(",")}`);
@@ -170,7 +170,7 @@ test("servers started with no port asked for never collide", async () => {
 });
 
 test("reservePort hands back an address nothing is listening on", async () => {
-  const idle = await reservePort();
+  const idle = await reserve_port();
   assert.ok(idle > 0);
   await assert.rejects(
     () => request(idle, "/idb/current", "GET"),

@@ -57,15 +57,15 @@ const EXTRACT_STDOUT = [
 
 type Executor = (
   host: string,
-  commandLine: string,
+  command_line: string,
   env: Record<string, string>,
 ) => Observable<string>;
 
 type Scenario = {
   readonly effects: readonly IHostEffectDone[];
   readonly submitted: readonly IArrivalBatch[];
-  readonly hostRuns: number;
-  readonly extractorRuns: number;
+  readonly host_runs: number;
+  readonly extractor_runs: number;
 };
 
 function columns(...names: string[]) {
@@ -84,20 +84,20 @@ function plan(
     template,
     inputs: columns("path", "digest"),
     outputs,
-    demandRel: `__host_demand_${name}`,
-    responseRel: `__host_response_${name}`,
+    demand_rel: `__host_demand_${name}`,
+    response_rel: `__host_response_${name}`,
   };
 }
 
-function programFor(plans: readonly IHostPlan[]): IServedProgram {
-  const relColumns: Record<string, readonly string[]> = {};
+function program_for(plans: readonly IHostPlan[]): IServedProgram {
+  const rel_columns: Record<string, readonly string[]> = {};
   for (const current of plans) {
-    relColumns[current.demandRel] = [
+    rel_columns[current.demand_rel] = [
       "identity_digest",
       "witness_digest",
       ...current.inputs.map((input) => input.name),
     ];
-    relColumns[current.responseRel] = [
+    rel_columns[current.response_rel] = [
       "witness_digest",
       "ordinal",
       "path",
@@ -107,17 +107,17 @@ function programFor(plans: readonly IHostPlan[]): IServedProgram {
   return {
     ddl: [],
     statements: [],
-    relColumns,
-    relKinds: {},
-    relKeys: {},
-    relRefColumns: {},
-    relStructColumns: {},
+    rel_columns,
+    rel_kinds: {},
+    rel_keys: {},
+    rel_ref_columns: {},
+    rel_struct_columns: {},
     boot: [],
-    finalSelect: {},
-    hostPlans: plans,
-    bindPlans: [],
-    queryPlans: [],
-    unsupportedExecution: [],
+    final_select: {},
+    host_plans: plans,
+    bind_plans: [],
+    query_plans: [],
+    unsupported_execution: [],
   } as unknown as IServedProgram;
 }
 
@@ -135,7 +135,7 @@ function tick(
     },
     deltas: {
       rels: plans.map((current) => ({
-        rel: current.demandRel,
+        rel: current.demand_rel,
         add:
           sign === "add"
             ? inputs.map(([path, digest]) => [
@@ -160,15 +160,15 @@ function tick(
   } as unknown as ITickOutcome;
 }
 
-async function runScenario(
+async function run_scenario(
   plans: readonly IHostPlan[],
   ticks: readonly ITickOutcome[],
-  expectedEffects: number,
+  expected_effects: number,
   options: {
-    readonly bootRows?: Readonly<Record<string, readonly IRow[]>>;
+    readonly boot_rows?: Readonly<Record<string, readonly IRow[]>>;
     readonly answered?: readonly {
       readonly host: string;
-      readonly witnessDigest: string;
+      readonly witness_digest: string;
     }[];
   } = {},
 ): Promise<Scenario> {
@@ -179,39 +179,39 @@ async function runScenario(
       WitnessCache.settle(
         seam,
         answered.host,
-        answered.witnessDigest,
+        answered.witness_digest,
         "done",
         1,
       ),
     );
   }
-  const tickSource = new Subject<ITickOutcome>();
+  const tick_source = new Subject<ITickOutcome>();
   const submitted: IArrivalBatch[] = [];
-  let hostRuns = 0;
-  let extractorRuns = 0;
+  let host_runs = 0;
+  let extractor_runs = 0;
 
   const executors = new Map<string, Executor>([
     [
       "shell",
       (host) => {
-        hostRuns += 1;
-        if (host === "resolve_at") extractorRuns += 1;
+        host_runs += 1;
+        if (host === "resolve_at") extractor_runs += 1;
         return of("");
       },
     ],
     [
       "sprefa_extract",
       () => {
-        hostRuns += 1;
-        extractorRuns += 1;
+        host_runs += 1;
+        extractor_runs += 1;
         return of(EXTRACT_STDOUT);
       },
     ],
   ]);
   const engine = {
-    program: programFor(plans),
-    ticks$: tickSource,
-    rows: (rel: string) => of(options.bootRows?.[rel] ?? []),
+    program: program_for(plans),
+    ticks$: tick_source,
+    rows: (rel: string) => of(options.boot_rows?.[rel] ?? []),
     submit: (arrivals: IArrivalBatch) => {
       submitted.push(arrivals);
       return of({
@@ -223,17 +223,17 @@ async function runScenario(
   } as ILiveEngine;
 
   try {
-    const effectsPromise = firstValueFrom(
+    const effects_promise = firstValueFrom(
       new HostRunner(engine, seam, plans, executors).effects$.pipe(
-        take(expectedEffects),
+        take(expected_effects),
         toArray(),
       ),
     );
     await new Promise<void>((resolve) => setImmediate(resolve));
-    for (const outcome of ticks) tickSource.next(outcome);
-    const effects = await effectsPromise;
-    tickSource.complete();
-    return { effects, submitted, hostRuns, extractorRuns };
+    for (const outcome of ticks) tick_source.next(outcome);
+    const effects = await effects_promise;
+    tick_source.complete();
+    return { effects, submitted, host_runs, extractor_runs };
   } finally {
     seam.db.close();
   }
@@ -245,44 +245,44 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
     ["b.ts", "b1"],
     ["c.ts", "c1"],
   ] as const;
-  const filesAt = plan("files_at", "shell", columns("found"), "files_at {path}");
-  const callPlans = [
+  const files_at = plan("files_at", "shell", columns("found"), "files_at {path}");
+  const call_plans = [
     plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
     plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
   ];
-  const callgraph = await runScenario(
-    [filesAt, ...callPlans],
+  const callgraph = await run_scenario(
+    [files_at, ...call_plans],
     [
-      tick(1, [filesAt], [["repo", "rev"]]),
-      tick(2, callPlans, files),
+      tick(1, [files_at], [["repo", "rev"]]),
+      tick(2, call_plans, files),
     ],
-    1 + callPlans.length * files.length,
+    1 + call_plans.length * files.length,
   );
   assert.deepEqual(
     {
-      hostRuns: callgraph.hostRuns,
-      extractorRuns: callgraph.extractorRuns,
-      responseBatches: callgraph.submitted.length,
+      host_runs: callgraph.host_runs,
+      extractor_runs: callgraph.extractor_runs,
+      response_batches: callgraph.submitted.length,
     },
-    { hostRuns: 1 + files.length, extractorRuns: files.length, responseBatches: files.length },
+    { host_runs: 1 + files.length, extractor_runs: files.length, response_batches: files.length },
   );
 
-  const diag = await runScenario(
-    callPlans,
-    [tick(1, callPlans, files)],
-    callPlans.length * files.length,
+  const diag = await run_scenario(
+    call_plans,
+    [tick(1, call_plans, files)],
+    call_plans.length * files.length,
   );
   assert.deepEqual(
     {
-      hostRuns: diag.hostRuns,
-      extractorRuns: diag.extractorRuns,
-      responseBatches: diag.submitted.length,
+      host_runs: diag.host_runs,
+      extractor_runs: diag.extractor_runs,
+      response_batches: diag.submitted.length,
     },
-    { hostRuns: files.length, extractorRuns: files.length, responseBatches: files.length },
+    { host_runs: files.length, extractor_runs: files.length, response_batches: files.length },
   );
 
   const resolve = plan("resolve_at", "shell", columns("edge"), "resolve {path}");
-  const flowPlans = [
+  const flow_plans = [
     plan("df_node_at", "sprefa_extract", columns("record", "family", "span", "kind")),
     plan("df_edge_at", "sprefa_extract", columns("record", "family", "kind", "from", "to")),
     plan("df_param_at", "sprefa_extract", columns("record", "family", "span", "pos")),
@@ -291,24 +291,24 @@ test("callgraph, diagnostics, and flow obey one extractor process per path and d
     plan("type_node_at", "sprefa_extract", columns("record", "family", "span", "kind", "name")),
     plan("sig_at", "sprefa_extract", columns("record", "family", "owner_start", "owner_end", "slot", "pos", "ty")),
   ];
-  const flow = await runScenario(
-    [filesAt, resolve, ...flowPlans],
+  const flow = await run_scenario(
+    [files_at, resolve, ...flow_plans],
     [
-      tick(1, [filesAt, resolve], [["repo", "rev"]]),
-      tick(2, flowPlans, files),
+      tick(1, [files_at, resolve], [["repo", "rev"]]),
+      tick(2, flow_plans, files),
     ],
-    2 + flowPlans.length * files.length,
+    2 + flow_plans.length * files.length,
   );
   assert.deepEqual(
     {
-      hostRuns: flow.hostRuns,
-      extractorRuns: flow.extractorRuns,
-      responseBatches: flow.submitted.length,
+      host_runs: flow.host_runs,
+      extractor_runs: flow.extractor_runs,
+      response_batches: flow.submitted.length,
     },
     {
-      hostRuns: 2 + files.length,
-      extractorRuns: 1 + files.length,
-      responseBatches: files.length,
+      host_runs: 2 + files.length,
+      extractor_runs: 1 + files.length,
+      response_batches: files.length,
     },
   );
 });
@@ -318,21 +318,21 @@ test("extractor batching is frontier-local, digest-separated, and ignores demand
     plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
     plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
   ];
-  const oldInput = [["a.ts", "old"]] as const;
-  const nextInput = [["a.ts", "next"]] as const;
-  const result = await runScenario(
+  const old_input = [["a.ts", "old"]] as const;
+  const next_input = [["a.ts", "next"]] as const;
+  const result = await run_scenario(
     projections,
     [
-      tick(1, projections, oldInput),
-      tick(2, projections, oldInput, "del"),
-      tick(3, projections, oldInput),
-      tick(4, projections, nextInput),
+      tick(1, projections, old_input),
+      tick(2, projections, old_input, "del"),
+      tick(3, projections, old_input),
+      tick(4, projections, next_input),
     ],
     projections.length * 2,
   );
 
-  assert.equal(result.hostRuns, 2);
-  assert.equal(result.extractorRuns, 2);
+  assert.equal(result.host_runs, 2);
+  assert.equal(result.extractor_runs, 2);
   assert.equal(result.submitted.length, 2);
   assert.deepEqual(
     result.submitted.map((batch) => [...new Set(batch.map((arrival) => arrival.rel))].sort()),
@@ -342,29 +342,29 @@ test("extractor batching is frontier-local, digest-separated, and ignores demand
     ],
   );
   assert.deepEqual(
-    result.effects.map(({ host, witnessDigest, outcome }) => ({ host, witnessDigest, outcome })),
+    result.effects.map(({ host, witness_digest, outcome }) => ({ host, witness_digest, outcome })),
     [
-      { host: "call_node", witnessDigest: "witness|call_node|a.ts|old", outcome: "done" },
-      { host: "call_ref", witnessDigest: "witness|call_ref|a.ts|old", outcome: "done" },
-      { host: "call_node", witnessDigest: "witness|call_node|a.ts|next", outcome: "done" },
-      { host: "call_ref", witnessDigest: "witness|call_ref|a.ts|next", outcome: "done" },
+      { host: "call_node", witness_digest: "witness|call_node|a.ts|old", outcome: "done" },
+      { host: "call_ref", witness_digest: "witness|call_ref|a.ts|old", outcome: "done" },
+      { host: "call_node", witness_digest: "witness|call_node|a.ts|next", outcome: "done" },
+      { host: "call_ref", witness_digest: "witness|call_ref|a.ts|next", outcome: "done" },
     ],
   );
 });
 
 test("generic shell demands remain one process per witness", async () => {
-  const shellPlans = [
+  const shell_plans = [
     plan("left_shell", "shell", [], "same {path}"),
     plan("right_shell", "shell", [], "same {path}"),
   ];
-  const result = await runScenario(
-    shellPlans,
-    [tick(1, shellPlans, [["a.ts", "same"]])],
+  const result = await run_scenario(
+    shell_plans,
+    [tick(1, shell_plans, [["a.ts", "same"]])],
     2,
   );
   assert.deepEqual(
-    { hostRuns: result.hostRuns, extractorRuns: result.extractorRuns },
-    { hostRuns: 2, extractorRuns: 0 },
+    { host_runs: result.host_runs, extractor_runs: result.extractor_runs },
+    { host_runs: 2, extractor_runs: 0 },
   );
 });
 
@@ -373,43 +373,43 @@ test("a cached projection is omitted while its unanswered sibling still runs", a
     plan("call_node", "sprefa_extract", columns("record", "family", "kind", "name")),
     plan("call_ref", "sprefa_extract", columns("record", "family", "callee")),
   ];
-  const nodeWitness = "witness|call_node|a.ts|same";
-  const refWitness = "witness|call_ref|a.ts|same";
-  const result = await runScenario(projections, [], 1, {
-    answered: [{ host: "call_node", witnessDigest: nodeWitness }],
-    bootRows: {
+  const node_witness = "witness|call_node|a.ts|same";
+  const ref_witness = "witness|call_ref|a.ts|same";
+  const result = await run_scenario(projections, [], 1, {
+    answered: [{ host: "call_node", witness_digest: node_witness }],
+    boot_rows: {
       __host_demand_call_node: [
-        ["identity|call_node|a.ts", nodeWitness, "a.ts", "same"],
+        ["identity|call_node|a.ts", node_witness, "a.ts", "same"],
       ],
       __host_demand_call_ref: [
-        ["identity|call_ref|a.ts", refWitness, "a.ts", "same"],
+        ["identity|call_ref|a.ts", ref_witness, "a.ts", "same"],
       ],
     },
   });
   assert.deepEqual(
     {
-      hostRuns: result.hostRuns,
-      extractorRuns: result.extractorRuns,
-      effects: result.effects.map(({ host, witnessDigest, outcome }) => ({
+      host_runs: result.host_runs,
+      extractor_runs: result.extractor_runs,
+      effects: result.effects.map(({ host, witness_digest, outcome }) => ({
         host,
-        witnessDigest,
+        witness_digest,
         outcome,
       })),
-      responseRels: result.submitted.flatMap((batch) =>
+      response_rels: result.submitted.flatMap((batch) =>
         batch.map((arrival) => arrival.rel),
       ),
     },
     {
-      hostRuns: 1,
-      extractorRuns: 1,
+      host_runs: 1,
+      extractor_runs: 1,
       effects: [
         {
           host: "call_ref",
-          witnessDigest: refWitness,
+          witness_digest: ref_witness,
           outcome: "done",
         },
       ],
-      responseRels: ["__host_response_call_ref"],
+      response_rels: ["__host_response_call_ref"],
     },
   );
 });

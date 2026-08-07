@@ -33,7 +33,7 @@ import { TRACE_SCHEMA } from "../runtime/0_traceSchema.ts";
 const EMITTER_PL = fileURLToPath(new URL("../../prolog/compile/3_emit_trace_schema.pl", import.meta.url));
 const SCHEMA_TS = fileURLToPath(new URL("../runtime/0_traceSchema.ts", import.meta.url));
 
-function eventFields(name: string): readonly string[] {
+function event_fields(name: string): readonly string[] {
   const event = TRACE_SCHEMA.find((candidate) => candidate.name === name);
   assert.ok(event, `no trace_event row named ${name}`);
   return event.fields.map((field) => field.key);
@@ -65,30 +65,30 @@ test("every wire key is lower snake case and every elapsed value ends _ms", () =
 });
 
 test("the tick and effect records the runtime publishes carry exactly the schema's keys, in order", () => {
-  const tickChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.tick);
-  const effectChannel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.effect);
+  const tick_channel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.tick);
+  const effect_channel = diagnostics_channel.channel(SERVE_CHANNEL_NAMES.effect);
   const published: Record<string, readonly string[]> = {};
 
-  const onTick = (message: unknown): void => {
+  const on_tick = (message: unknown): void => {
     published.tick = Object.keys(message as object);
   };
-  const onEffect = (message: unknown): void => {
+  const on_effect = (message: unknown): void => {
     published.effect = Object.keys(message as object);
   };
-  tickChannel.subscribe(onTick);
-  effectChannel.subscribe(onEffect);
+  tick_channel.subscribe(on_tick);
+  effect_channel.subscribe(on_effect);
   try {
     ServeTrace.tick(7, 4, 312, 18, 41);
     ServeTrace.effect("weigh", "abc123", "done", 1, 2, undefined);
   } finally {
-    tickChannel.unsubscribe(onTick);
-    effectChannel.unsubscribe(onEffect);
+    tick_channel.unsubscribe(on_tick);
+    effect_channel.unsubscribe(on_effect);
   }
 
   // The tick LINE adds the envelope (actor, seam) and the drained arrays after
   // the tick's own fields; the tick EVENT is that prefix, which is what the
   // channel carries.
-  const tickLineKeys = eventFields("tick_line");
-  assert.deepEqual(published.tick, tickLineKeys.slice(0, tickLineKeys.indexOf("actor")));
-  assert.deepEqual(published.effect, eventFields("effect"));
+  const tick_line_keys = event_fields("tick_line");
+  assert.deepEqual(published.tick, tick_line_keys.slice(0, tick_line_keys.indexOf("actor")));
+  assert.deepEqual(published.effect, event_fields("effect"));
 });

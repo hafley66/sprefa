@@ -27,7 +27,7 @@
  * names for itself: the law binds runtime code above the SqlRunner seam, not
  * a one-shot CLI process entry. Nothing in `runtime/` or `serve/` gains a
  * `Promise` because of this file; `run`/`serve` compose the existing cold
- * `serveTsv2` unchanged and this file's only job is the one terminal
+ * `serve_tsv2` unchanged and this file's only job is the one terminal
  * `.subscribe()` plus a couple of `fetch` calls around it.
  *
  * `fetch` is node's own global;
@@ -44,19 +44,19 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 
 import { CLI_COMMANDS, HTTP_ROUTES } from "./0_inventory.ts";
-import { serveTsv2 } from "../serve/4_http.ts";
+import { serve_tsv2 } from "../serve/4_http.ts";
 import type { IRow, IServeEvent } from "../runtime/types.ts";
 
 const BOP_CHECK_PL = fileURLToPath(new URL("../../prolog/compile/scripts/bop_check.pl", import.meta.url));
 const DEFAULT_PORT = 17500;
 
-function commandSummary(verb: string): string {
+function command_summary(verb: string): string {
   const command = CLI_COMMANDS.find((entry) => entry.verb === verb);
   if (!command) throw new Error(`generated CLI inventory has no '${verb}' command`);
   return command.summary;
 }
 
-function routePath(method: string, template: string, values: Readonly<Record<string, string>> = {}): string {
+function route_path(method: string, template: string, values: Readonly<Record<string, string>> = {}): string {
   const route = HTTP_ROUTES.find((entry) => entry.method === method && entry.path === template);
   if (!route) throw new Error(`generated HTTP inventory has no '${method} ${template}' route`);
   return Object.entries(values).reduce((path, [name, value]) => path.replace(`:${name}`, encodeURIComponent(value)), route.path);
@@ -86,7 +86,7 @@ const NAMED_REASON_FUNCTORS = [
   "unmapped_feature",
 ] as const;
 
-function classifyCompileFailureText(text: string): 1 | 2 {
+function classify_compile_failure_text(text: string): 1 | 2 {
   // Three shapes: raw term `functor(...)`, rendered trailer `(functor)`,
   // rendered heading `functor: ...` (0_refusal_messages.pl one-liners).
   return NAMED_REASON_FUNCTORS.some(
@@ -97,7 +97,7 @@ function classifyCompileFailureText(text: string): 1 | 2 {
   ) ? 2 : 1;
 }
 
-function writeErrorLine(text: string): void {
+function write_error_line(text: string): void {
   process.stderr.write(text.endsWith("\n") ? text : `${text}\n`);
 }
 
@@ -109,13 +109,13 @@ function writeErrorLine(text: string): void {
  *  code IS the answer; bop_check.pl already writes finding/refusal/broken
  *  lines to its own stderr, inherited straight through. */
 function check(file: string): void {
-  const absolutePath = resolve(file);
+  const absolute_path = resolve(file);
   const result = spawnSync("swipl", ["-q", "-l", BOP_CHECK_PL, "-g", "bop_check_env", "-g", "halt"], {
     stdio: "inherit",
-    env: { ...process.env, BOP_CHECK_FILE: absolutePath },
+    env: { ...process.env, BOP_CHECK_FILE: absolute_path },
   });
   if (result.error) {
-    writeErrorLine(`broken: could not run swipl: ${result.error.message}`);
+    write_error_line(`broken: could not run swipl: ${result.error.message}`);
     process.exitCode = 1;
     return;
   }
@@ -131,10 +131,10 @@ function check(file: string): void {
  *  commander's option parsing instead of raw env vars. */
 function serve(options: { readonly port: string; readonly db: string }): void {
   const port = Number(options.port);
-  const dbUrl = options.db;
-  serveTsv2({ dbUrl, port }).subscribe({
+  const db_url = options.db;
+  serve_tsv2({ db_url, port }).subscribe({
     next: (event: IServeEvent) => {
-      if (event.kind === "listening") process.stdout.write(`tsv2 serving on ${event.port} (db ${dbUrl})\n`);
+      if (event.kind === "listening") process.stdout.write(`tsv2 serving on ${event.port} (db ${db_url})\n`);
       if (event.kind === "loaded") process.stdout.write(`program loaded: ${event.program}\n`);
       if (event.kind === "tick") process.stdout.write(`${event.outcome.line}\n`);
       if (event.kind === "watch") {
@@ -142,7 +142,7 @@ function serve(options: { readonly port: string; readonly db: string }): void {
       }
     },
     error: (failure: unknown) => {
-      writeErrorLine(failure instanceof Error ? (failure.stack ?? failure.message) : String(failure));
+      write_error_line(failure instanceof Error ? (failure.stack ?? failure.message) : String(failure));
       process.exit(1);
     },
   });
@@ -173,30 +173,30 @@ function serve(options: { readonly port: string; readonly db: string }): void {
 function run(file: string, options: { readonly ticks?: string; readonly port?: string }): void {
   const source = readFileSync(file, "utf8");
   const port = options.port !== undefined ? Number(options.port) : 0;
-  const ticksLimit = options.ticks !== undefined ? Number(options.ticks) : undefined;
-  const idleMs = Number(process.env.BOP_RUN_IDLE_MS ?? "2000");
+  const ticks_limit = options.ticks !== undefined ? Number(options.ticks) : undefined;
+  const idle_ms = Number(process.env.BOP_RUN_IDLE_MS ?? "2000");
 
-  let ticksSeen = 0;
-  let loadRequested = false;
-  let idleTimer: NodeJS.Timeout | undefined;
+  let ticks_seen = 0;
+  let load_requested = false;
+  let idle_timer: NodeJS.Timeout | undefined;
 
-  const subscription = serveTsv2({ dbUrl: ":memory:", port }).subscribe({
+  const subscription = serve_tsv2({ db_url: ":memory:", port }).subscribe({
     next: (event: IServeEvent) => {
-      if (idleTimer !== undefined) clearTimeout(idleTimer);
+      if (idle_timer !== undefined) clearTimeout(idle_timer);
 
-      if (event.kind === "listening" && !loadRequested) {
-        loadRequested = true;
-        fetch(`http://127.0.0.1:${event.port}${routePath("POST", "/program")}`, { method: "POST", body: source }).then(
+      if (event.kind === "listening" && !load_requested) {
+        load_requested = true;
+        fetch(`http://127.0.0.1:${event.port}${route_path("POST", "/program")}`, { method: "POST", body: source }).then(
           async (response) => {
             if (response.status !== 200) {
               const text = await response.text();
-              writeErrorLine(text);
-              process.exitCode = classifyCompileFailureText(text);
+              write_error_line(text);
+              process.exitCode = classify_compile_failure_text(text);
               subscription.unsubscribe();
             }
           },
           (failure: unknown) => {
-            writeErrorLine(`broken: ${String(failure)}`);
+            write_error_line(`broken: ${String(failure)}`);
             process.exitCode = 1;
             subscription.unsubscribe();
           },
@@ -205,21 +205,21 @@ function run(file: string, options: { readonly ticks?: string; readonly port?: s
 
       if (event.kind === "tick") {
         process.stdout.write(`${event.outcome.line}\n`);
-        ticksSeen += 1;
-        if (ticksLimit !== undefined && ticksSeen >= ticksLimit) {
+        ticks_seen += 1;
+        if (ticks_limit !== undefined && ticks_seen >= ticks_limit) {
           process.exitCode = 0;
           subscription.unsubscribe();
           return;
         }
       }
 
-      idleTimer = setTimeout(() => {
+      idle_timer = setTimeout(() => {
         process.exitCode = 0;
         subscription.unsubscribe();
-      }, idleMs);
+      }, idle_ms);
     },
     error: (failure: unknown) => {
-      writeErrorLine(failure instanceof Error ? (failure.stack ?? failure.message) : String(failure));
+      write_error_line(failure instanceof Error ? (failure.stack ?? failure.message) : String(failure));
       process.exitCode = 1;
     },
   });
@@ -235,19 +235,19 @@ function run(file: string, options: { readonly ticks?: string; readonly port?: s
 function load(file: string, options: { readonly port: string }): void {
   const source = readFileSync(file, "utf8");
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}${routePath("POST", "/program")}`, { method: "POST", body: source }).then(
+  fetch(`http://127.0.0.1:${port}${route_path("POST", "/program")}`, { method: "POST", body: source }).then(
     async (response) => {
       const text = await response.text();
       if (response.status === 200) {
         process.stdout.write(`${text}\n`);
         process.exitCode = 0;
       } else {
-        writeErrorLine(text);
-        process.exitCode = classifyCompileFailureText(text);
+        write_error_line(text);
+        process.exitCode = classify_compile_failure_text(text);
       }
     },
     (failure: unknown) => {
-      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      write_error_line(`no server listening on port ${port}: ${String(failure)}`);
       process.exitCode = 1;
     },
   );
@@ -263,11 +263,11 @@ function load(file: string, options: { readonly port: string }): void {
  *  one row per line, no header. `--json` prints the raw response body. */
 function query(rel: string, options: { readonly port: string; readonly json?: boolean }): void {
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}${routePath("GET", "/idb/:rel", { rel })}`).then(
+  fetch(`http://127.0.0.1:${port}${route_path("GET", "/idb/:rel", { rel })}`).then(
     async (response) => {
       const text = await response.text();
       if (response.status !== 200) {
-        writeErrorLine(text);
+        write_error_line(text);
         process.exitCode = 1;
         return;
       }
@@ -280,7 +280,7 @@ function query(rel: string, options: { readonly port: string; readonly json?: bo
       process.exitCode = 0;
     },
     (failure: unknown) => {
-      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      write_error_line(`no server listening on port ${port}: ${String(failure)}`);
       process.exitCode = 1;
     },
   );
@@ -288,11 +288,11 @@ function query(rel: string, options: { readonly port: string; readonly json?: bo
 
 function stats(options: { readonly port: string }): void {
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}${routePath("GET", "/stats")}`).then(
+  fetch(`http://127.0.0.1:${port}${route_path("GET", "/stats")}`).then(
     async (response) => {
       const text = await response.text();
       if (response.status !== 200) {
-        writeErrorLine(text);
+        write_error_line(text);
         process.exitCode = 1;
         return;
       }
@@ -300,7 +300,7 @@ function stats(options: { readonly port: string }): void {
       process.exitCode = 0;
     },
     (failure: unknown) => {
-      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      write_error_line(`no server listening on port ${port}: ${String(failure)}`);
       process.exitCode = 1;
     },
   );
@@ -308,10 +308,10 @@ function stats(options: { readonly port: string }): void {
 
 function ticks(options: { readonly port: string }): void {
   const port = Number(options.port);
-  fetch(`http://127.0.0.1:${port}${routePath("GET", "/ticks")}`).then(
+  fetch(`http://127.0.0.1:${port}${route_path("GET", "/ticks")}`).then(
     async (response) => {
       if (response.status !== 200 || response.body === null) {
-        writeErrorLine(await response.text());
+        write_error_line(await response.text());
         process.exitCode = 1;
         return;
       }
@@ -319,7 +319,7 @@ function ticks(options: { readonly port: string }): void {
       process.exitCode = 0;
     },
     (failure: unknown) => {
-      writeErrorLine(`no server listening on port ${port}: ${String(failure)}`);
+      write_error_line(`no server listening on port ${port}: ${String(failure)}`);
       process.exitCode = 1;
     },
   );
@@ -336,7 +336,7 @@ program
 
 program
   .command("serve")
-  .description(commandSummary("serve"))
+  .description(command_summary("serve"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .option("--db <url>", "sqlite db url (default :memory:)", ":memory:")
   .action(serve);
@@ -344,7 +344,7 @@ program
 program
   .command("run")
   .argument("<file>", ".dl6 program")
-  .description(commandSummary("run"))
+  .description(command_summary("run"))
   .option("--ticks <n>", "stop after this many ticks")
   .option("--port <port>", "TCP port (default: ephemeral)")
   .action(run);
@@ -352,33 +352,33 @@ program
 program
   .command("check")
   .argument("<file>", ".dl6 program")
-  .description(commandSummary("check"))
+  .description(command_summary("check"))
   .action(check);
 
 program
   .command("load")
   .argument("<file>", ".dl6 program")
-  .description(commandSummary("load"))
+  .description(command_summary("load"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .action(load);
 
 program
   .command("q")
   .argument("<rel>", "relation name")
-  .description(commandSummary("q"))
+  .description(command_summary("q"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .option("--json", "print raw JSON instead of a table")
   .action(query);
 
 program
   .command("stats")
-  .description(commandSummary("stats"))
+  .description(command_summary("stats"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .action(stats);
 
 program
   .command("ticks")
-  .description(commandSummary("ticks"))
+  .description(command_summary("ticks"))
   .option("--port <port>", "TCP port", String(DEFAULT_PORT))
   .action(ticks);
 

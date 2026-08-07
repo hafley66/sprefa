@@ -2,7 +2,7 @@
 // hand-edit; recompile. Program: flow_arg_param_hop_is_positional_and_site_pinned.
 // Compiles the reference engine's occurrence / keyed-replace / boundary-diff
 // semantics (engine.pl) to SQLite + the real v6/tsv2 runtime seam, not
-// lower/lowerSql.ts's.
+// lower/lower_sql.ts's.
 //
 // The default path stages effective tick changes in indexed TEMP tables,
 // executes emitted frontier-side joins for positive level rules, promotes
@@ -21,8 +21,8 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
-import { multisetDiff } from "../runtime/diff.ts";
-import { selectRows } from "../runtime/rows.ts";
+import { multiset_diff } from "../runtime/diff.ts";
+import { select_rows } from "../runtime/rows.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -42,7 +42,7 @@ import type {
 } from "../runtime/types.ts";
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
-interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demandRel: string; readonly responseRel: string; readonly execution: string }
+interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
 interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
 interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
@@ -52,21 +52,21 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
 
-export const hostPlans: readonly IHostPlanData[] = [];
-export const bindPlans: readonly IBindPlanData[] = [];
-export const queryPlans: readonly IQueryPlanData[] = [];
-export const subscribedRels: readonly string[] = [];
-export const unsupportedExecution: readonly string[] = [];
+export const host_plans: readonly IHostPlanData[] = [];
+export const bind_plans: readonly IBindPlanData[] = [];
+export const query_plans: readonly IQueryPlanData[] = [];
+export const subscribed_rels: readonly string[] = [];
+export const unsupported_execution: readonly string[] = [];
 
-function bindArgs(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
   return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
-function wideIntegerWitness(value: unknown): boolean {
+function wide_integer_witness(value: unknown): boolean {
   if (typeof value === "bigint") return value < -SAFE_INTEGER_LIMIT || value > SAFE_INTEGER_LIMIT;
   if (typeof value === "number") return Number.isInteger(value) && !Number.isSafeInteger(value);
   return false;
@@ -78,29 +78,29 @@ function wideIntegerWitness(value: unknown): boolean {
  *  exactly how the prolog reader parses it. String contents are blanked
  *  first so digits inside a string never read as a number. Unparseable
  *  text is not this scan's business (the json arm below names it). */
-const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+const JSON_NUMBER = /-?\d+(?:\.\d+)?(?:[e_e][+-]?\d+)?/g;
 
-function wideIntegerInJsonText(value: IRowValue): boolean {
-  if (typeof value !== "string") return wideIntegerWitness(value);
-  const withoutStrings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
-  for (const token of withoutStrings.match(JSON_NUMBER) ?? []) {
-    if (/[.eE]/.test(token)) continue;
+function wide_integer_in_json_text(value: IRowValue): boolean {
+  if (typeof value !== "string") return wide_integer_witness(value);
+  const without_strings = value.replace(/"(?:\\.|[^"\\])*"/g, '""');
+  for (const token of without_strings.match(JSON_NUMBER) ?? []) {
+    if (/[.e_e]/.test(token)) continue;
     const parsed = BigInt(token);
     if (parsed < -SAFE_INTEGER_LIMIT || parsed > SAFE_INTEGER_LIMIT) return true;
   }
   return false;
 }
 
-function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
+function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   return arrivals.map((arrival): IArrivalRow => {
-    const types = relColumnTypes[arrival.rel];
+    const types = rel_column_types[arrival.rel];
     if (types === undefined || types.length !== arrival.row.length) throw new Error(`arrival shape mismatch for ${arrival.rel}`);
-    const declared = relDeclaredColumnTypes[arrival.rel];
+    const declared = rel_declared_column_types[arrival.rel];
     const row = arrival.row.map((value, index): IRowValue => {
       const type = declared === undefined ? undefined : declared[index];
-      const scanned = type === "json" ? wideIntegerInJsonText(value)
+      const scanned = type === "json" ? wide_integer_in_json_text(value)
         : type === "float" ? false
-        : wideIntegerWitness(value);
+        : wide_integer_witness(value);
       if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);
       if (type === "bool") {
         if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);
@@ -168,58 +168,58 @@ const ddl: readonly string[] = [
   `CREATE INDEX "flow_edge_zero" ON "flow_edge" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
-const relColumns: Record<string, readonly string[]> = {
+const rel_columns: Record<string, readonly string[]> = {
   df_arg: ["caller_path", "call_start", "call_end", "pos", "arg", "arg_end"],
   df_param: ["callee_path", "param", "pos", "param_end"],
   flow_edge: ["from", "to"],
   resolved_call_edge: ["caller_path", "call_start", "call_end", "callee_path", "callee_name"],
 };
 
-const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
+const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   df_arg: ["text", "int", "int", "int", "text", "int"],
   df_param: ["text", "text", "int", "int"],
   flow_edge: ["text", "text"],
   resolved_call_edge: ["text", "int", "int", "text", "text"],
 };
 
-const relCatalog: readonly IRelCatalogRow[] = [
-  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
-  { relId: 6, parentId: 0, ordinal: 0, localName: "flow_arg_param_hop_is_positional_and_site_pinned", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e9f302d3f1ead613", hSchema: "", hRule: "" },
-  { relId: 7, parentId: 6, ordinal: 0, localName: "df_arg", kind: "rel", typeId: 0, arity: 6, moduleId: 6, hId: "8c10afb93cb9aa9d", hSchema: "63cf3b0b1d7f7993", hRule: "" },
-  { relId: 8, parentId: 7, ordinal: 1, localName: "caller_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4bae401fb21af7bc", hSchema: "", hRule: "" },
-  { relId: 9, parentId: 7, ordinal: 2, localName: "call_start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "52a98b4a483a99b5", hSchema: "", hRule: "" },
-  { relId: 10, parentId: 7, ordinal: 3, localName: "call_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ab2fac334d595dad", hSchema: "", hRule: "" },
-  { relId: 11, parentId: 7, ordinal: 4, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ab5c0e1dbcce98b3", hSchema: "", hRule: "" },
-  { relId: 12, parentId: 7, ordinal: 5, localName: "arg", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c2189d90cea6a70b", hSchema: "", hRule: "" },
-  { relId: 13, parentId: 7, ordinal: 6, localName: "arg_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "4a981c7ca5f6a350", hSchema: "", hRule: "" },
-  { relId: 14, parentId: 6, ordinal: 0, localName: "df_param", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "6291a4d5b9088aa3", hSchema: "bc98d2912dda6d93", hRule: "" },
-  { relId: 15, parentId: 14, ordinal: 1, localName: "callee_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "54a4e4cb35702b76", hSchema: "", hRule: "" },
-  { relId: 16, parentId: 14, ordinal: 2, localName: "param", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "25d699aef36ddf0e", hSchema: "", hRule: "" },
-  { relId: 17, parentId: 14, ordinal: 3, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c5af4097bdb0cb47", hSchema: "", hRule: "" },
-  { relId: 18, parentId: 14, ordinal: 4, localName: "param_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "f8712a95ab5be5b9", hSchema: "", hRule: "" },
-  { relId: 19, parentId: 6, ordinal: 0, localName: "flow_edge", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "60d30c9a4290fbee", hSchema: "1c651d94020e8dba", hRule: "a20d3ea3b0ef351f" },
-  { relId: 20, parentId: 19, ordinal: 1, localName: "from", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3f31a9ea444dcc53", hSchema: "", hRule: "" },
-  { relId: 21, parentId: 19, ordinal: 2, localName: "to", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d5d922adfeb14226", hSchema: "", hRule: "" },
-  { relId: 22, parentId: 6, ordinal: 0, localName: "resolved_call_edge", kind: "rel", typeId: 0, arity: 5, moduleId: 6, hId: "6c0629a7f87b31e3", hSchema: "3c34d6c5f70358d2", hRule: "" },
-  { relId: 23, parentId: 22, ordinal: 1, localName: "caller_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ee2dd29e815f7176", hSchema: "", hRule: "" },
-  { relId: 24, parentId: 22, ordinal: 2, localName: "call_start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0fab8600d4aaafae", hSchema: "", hRule: "" },
-  { relId: 25, parentId: 22, ordinal: 3, localName: "call_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0ef042964a1cbbf7", hSchema: "", hRule: "" },
-  { relId: 26, parentId: 22, ordinal: 4, localName: "callee_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "00ad49f9142a1567", hSchema: "", hRule: "" },
-  { relId: 27, parentId: 22, ordinal: 5, localName: "callee_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1e2f3d98aed6a86d", hSchema: "", hRule: "" },
+const rel_catalog: readonly IRelCatalogRow[] = [
+  { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "flow_arg_param_hop_is_positional_and_site_pinned", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "e9f302d3f1ead613", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "df_arg", kind: "rel", type_id: 0, arity: 6, module_id: 6, h_id: "8c10afb93cb9aa9d", h_schema: "63cf3b0b1d7f7993", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "caller_path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "4bae401fb21af7bc", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "call_start", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "52a98b4a483a99b5", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "call_end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ab2fac334d595dad", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 4, local_name: "pos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ab5c0e1dbcce98b3", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 7, ordinal: 5, local_name: "arg", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c2189d90cea6a70b", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 6, local_name: "arg_end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4a981c7ca5f6a350", h_schema: "", h_rule: "" },
+  { rel_id: 14, parent_id: 6, ordinal: 0, local_name: "df_param", kind: "rel", type_id: 0, arity: 4, module_id: 6, h_id: "6291a4d5b9088aa3", h_schema: "bc98d2912dda6d93", h_rule: "" },
+  { rel_id: 15, parent_id: 14, ordinal: 1, local_name: "callee_path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "54a4e4cb35702b76", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 14, ordinal: 2, local_name: "param", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "25d699aef36ddf0e", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 14, ordinal: 3, local_name: "pos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "c5af4097bdb0cb47", h_schema: "", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 4, local_name: "param_end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "f8712a95ab5be5b9", h_schema: "", h_rule: "" },
+  { rel_id: 19, parent_id: 6, ordinal: 0, local_name: "flow_edge", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "60d30c9a4290fbee", h_schema: "1c651d94020e8dba", h_rule: "a20d3ea3b0ef351f" },
+  { rel_id: 20, parent_id: 19, ordinal: 1, local_name: "from", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "3f31a9ea444dcc53", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 19, ordinal: 2, local_name: "to", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d5d922adfeb14226", h_schema: "", h_rule: "" },
+  { rel_id: 22, parent_id: 6, ordinal: 0, local_name: "resolved_call_edge", kind: "rel", type_id: 0, arity: 5, module_id: 6, h_id: "6c0629a7f87b31e3", h_schema: "3c34d6c5f70358d2", h_rule: "" },
+  { rel_id: 23, parent_id: 22, ordinal: 1, local_name: "caller_path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ee2dd29e815f7176", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 22, ordinal: 2, local_name: "call_start", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0fab8600d4aaafae", h_schema: "", h_rule: "" },
+  { rel_id: 25, parent_id: 22, ordinal: 3, local_name: "call_end", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0ef042964a1cbbf7", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 22, ordinal: 4, local_name: "callee_path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "00ad49f9142a1567", h_schema: "", h_rule: "" },
+  { rel_id: 27, parent_id: 22, ordinal: 5, local_name: "callee_name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1e2f3d98aed6a86d", h_schema: "", h_rule: "" },
 ];
 
-const relDeclaredColumnTypes: Record<string, readonly string[]> = {
+const rel_declared_column_types: Record<string, readonly string[]> = {
   df_arg: ["text", "int", "int", "int", "text", "int"],
   df_param: ["text", "text", "int", "int"],
   flow_edge: ["text", "text"],
   resolved_call_edge: ["text", "int", "int", "text", "text"],
 };
 
-const arrivalTargets: readonly string[] = ["df_arg", "df_param", "resolved_call_edge"];
+const arrival_targets: readonly string[] = ["df_arg", "df_param", "resolved_call_edge"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "flow_edge", sql: `DELETE FROM "flow_edge"`, params: [] },
@@ -233,29 +233,29 @@ type Snapshot = {
   readonly resolved_call_edge: readonly IRow[];
 };
 
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
+function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    df_arg: selectRows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", "pos", CASE WHEN json_valid("arg") AND json_type("arg") = 'object' AND json_type("arg", '$.fn') = 'text' AND json_type("arg", '$.args') = 'array' THEN json_extract("arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("arg", '$.args')), '') || ')' ELSE "arg" END AS "arg", "arg_end" FROM "df_arg"`, relColumns.df_arg!, relColumnTypes.df_arg!),
-    df_param: selectRows(seam, `SELECT CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("param") AND json_type("param") = 'object' AND json_type("param", '$.fn') = 'text' AND json_type("param", '$.args') = 'array' THEN json_extract("param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("param", '$.args')), '') || ')' ELSE "param" END AS "param", "pos", "param_end" FROM "df_param"`, relColumns.df_param!, relColumnTypes.df_param!),
-    flow_edge: selectRows(seam, `SELECT CASE WHEN json_valid("from") AND json_type("from") = 'object' AND json_type("from", '$.fn') = 'text' AND json_type("from", '$.args') = 'array' THEN json_extract("from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("from", '$.args')), '') || ')' ELSE "from" END AS "from", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "flow_edge"`, relColumns.flow_edge!, relColumnTypes.flow_edge!),
-    resolved_call_edge: selectRows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' AND json_type("callee_name", '$.fn') = 'text' AND json_type("callee_name", '$.args') = 'array' THEN json_extract("callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')), '') || ')' ELSE "callee_name" END AS "callee_name" FROM "resolved_call_edge"`, relColumns.resolved_call_edge!, relColumnTypes.resolved_call_edge!),
+    df_arg: select_rows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", "pos", CASE WHEN json_valid("arg") AND json_type("arg") = 'object' AND json_type("arg", '$.fn') = 'text' AND json_type("arg", '$.args') = 'array' THEN json_extract("arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("arg", '$.args')), '') || ')' ELSE "arg" END AS "arg", "arg_end" FROM "df_arg"`, rel_columns.df_arg!, rel_column_types.df_arg!),
+    df_param: select_rows(seam, `SELECT CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("param") AND json_type("param") = 'object' AND json_type("param", '$.fn') = 'text' AND json_type("param", '$.args') = 'array' THEN json_extract("param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("param", '$.args')), '') || ')' ELSE "param" END AS "param", "pos", "param_end" FROM "df_param"`, rel_columns.df_param!, rel_column_types.df_param!),
+    flow_edge: select_rows(seam, `SELECT CASE WHEN json_valid("from") AND json_type("from") = 'object' AND json_type("from", '$.fn') = 'text' AND json_type("from", '$.args') = 'array' THEN json_extract("from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("from", '$.args')), '') || ')' ELSE "from" END AS "from", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "flow_edge"`, rel_columns.flow_edge!, rel_column_types.flow_edge!),
+    resolved_call_edge: select_rows(seam, `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' AND json_type("callee_name", '$.fn') = 'text' AND json_type("callee_name", '$.args') = 'array' THEN json_extract("callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')), '') || ')' ELSE "callee_name" END AS "callee_name" FROM "resolved_call_edge"`, rel_columns.resolved_call_edge!, rel_column_types.resolved_call_edge!),
   });
 }
 
-const finalSelect: Record<string, string> = {
+const final_select: Record<string, string> = {
   df_arg: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", "pos", CASE WHEN json_valid("arg") AND json_type("arg") = 'object' AND json_type("arg", '$.fn') = 'text' AND json_type("arg", '$.args') = 'array' THEN json_extract("arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("arg", '$.args')), '') || ')' ELSE "arg" END AS "arg", "arg_end" FROM "df_arg"`,
   df_param: `SELECT CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("param") AND json_type("param") = 'object' AND json_type("param", '$.fn') = 'text' AND json_type("param", '$.args') = 'array' THEN json_extract("param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("param", '$.args')), '') || ')' ELSE "param" END AS "param", "pos", "param_end" FROM "df_param"`,
   flow_edge: `SELECT CASE WHEN json_valid("from") AND json_type("from") = 'object' AND json_type("from", '$.fn') = 'text' AND json_type("from", '$.args') = 'array' THEN json_extract("from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("from", '$.args')), '') || ')' ELSE "from" END AS "from", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "flow_edge"`,
   resolved_call_edge: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' AND json_type("callee_name", '$.fn') = 'text' AND json_type("callee_name", '$.args') = 'array' THEN json_extract("callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')), '') || ')' ELSE "callee_name" END AS "callee_name" FROM "resolved_call_edge"`,
 };
 
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  df_arg: { kind: "set", addSql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") VALUES (?, ?, ?, ?, ?, ?)`, delSql: `DELETE FROM "df_arg" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "pos" = ? AND "arg" = ? AND "arg_end" = ?` },
-  df_param: { kind: "set", addSql: `INSERT OR IGNORE INTO "df_param" ("callee_path", "param", "pos", "param_end") VALUES (?, ?, ?, ?)`, delSql: `DELETE FROM "df_param" WHERE "callee_path" = ? AND "param" = ? AND "pos" = ? AND "param_end" = ?` },
-  resolved_call_edge: { kind: "set", addSql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "call_start", "call_end", "callee_path", "callee_name") VALUES (?, ?, ?, ?, ?)`, delSql: `DELETE FROM "resolved_call_edge" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "callee_path" = ? AND "callee_name" = ?` },
+const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
+  df_arg: { kind: "set", add_sql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") VALUES (?, ?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "df_arg" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "pos" = ? AND "arg" = ? AND "arg_end" = ?` },
+  df_param: { kind: "set", add_sql: `INSERT OR IGNORE INTO "df_param" ("callee_path", "param", "pos", "param_end") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "df_param" WHERE "callee_path" = ? AND "param" = ? AND "pos" = ? AND "param_end" = ?` },
+  resolved_call_edge: { kind: "set", add_sql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "call_start", "call_end", "callee_path", "callee_name") VALUES (?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "resolved_call_edge" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "callee_path" = ? AND "callee_name" = ?` },
 };
 
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
+function arrival_statement(arrival: IArrivalRow): SqlStatement {
   const template = ARRIVAL_STATEMENTS[arrival.rel];
   if (template === undefined) {
     throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: tick received an arrival for undeclared rel '${arrival.rel}'`);
@@ -264,45 +264,45 @@ function arrivalStatement(arrival: IArrivalRow): SqlStatement {
     if (template.kind === "log") {
       throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
     }
-    if (template.delSql === null) {
+    if (template.del_sql === null) {
       throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: rel '${arrival.rel}' has no delete statement`);
     }
-    return { sql: template.delSql, args: bindArgs(arrival.row) };
+    return { sql: template.del_sql, args: bind_args(arrival.row) };
   }
-  return { sql: template.addSql, args: bindArgs(arrival.row) };
+  return { sql: template.add_sql, args: bind_args(arrival.row) };
 }
 
-function applyArrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
+function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
+  const statements: SqlStatement[] = arrivals.map(arrival_statement);
   return seam.runner.batch(seam.db, statements);
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "df_arg", kind: "set", tableName: "df_arg", deltaTableName: "__delta_df_arg", frontierTableName: "__frontier_df_arg", nextFrontierTableName: "__next_frontier_df_arg", columns: ["caller_path", "call_start", "call_end", "pos", "arg", "arg_end"], columnTypes: ["text", "int", "int", "int", "text", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, arrivalDelSql: `DELETE FROM "df_arg" WHERE ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?)) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, boundarySql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", "pos", CASE WHEN json_valid("arg") AND json_type("arg") = 'object' AND json_type("arg", '$.fn') = 'text' AND json_type("arg", '$.args') = 'array' THEN json_extract("arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("arg", '$.args')), '') || ')' ELSE "arg" END AS "arg", "arg_end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_arg" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "call_start", "call_end", "pos", "arg", "arg_end", "_sign"`, ruleObservers: ["flow_edge/2"] },
-  { rel: "df_param", kind: "set", tableName: "df_param", deltaTableName: "__delta_df_param", frontierTableName: "__frontier_df_param", nextFrontierTableName: "__next_frontier_df_param", columns: ["callee_path", "param", "pos", "param_end"], columnTypes: ["text", "text", "int", "int"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "df_param" ("callee_path", "param", "pos", "param_end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "callee_path", "param", "pos", "param_end"`, arrivalDelSql: `DELETE FROM "df_param" WHERE ("callee_path", "param", "pos", "param_end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "callee_path", "param", "pos", "param_end"`, boundarySql: `SELECT CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("param") AND json_type("param") = 'object' AND json_type("param", '$.fn') = 'text' AND json_type("param", '$.args') = 'array' THEN json_extract("param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("param", '$.args')), '') || ')' ELSE "param" END AS "param", "pos", "param_end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_param" WHERE "_sign" IN (-1, 1) GROUP BY "callee_path", "param", "pos", "param_end", "_sign"`, ruleObservers: ["flow_edge/2"] },
-  { rel: "flow_edge", kind: "set", tableName: "flow_edge", deltaTableName: "__delta_flow_edge", frontierTableName: "__frontier_flow_edge", nextFrontierTableName: "__next_frontier_flow_edge", columns: ["from", "to"], columnTypes: ["text", "text"], keyIndices: [], arrivalAddSql: null, arrivalDelSql: null, boundarySql: `SELECT CASE WHEN json_valid("from") AND json_type("from") = 'object' AND json_type("from", '$.fn') = 'text' AND json_type("from", '$.args') = 'array' THEN json_extract("from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("from", '$.args')), '') || ')' ELSE "from" END AS "from", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_edge" WHERE "_sign" IN (-1, 1) GROUP BY "from", "to", "_sign"`, ruleObservers: [] },
-  { rel: "resolved_call_edge", kind: "set", tableName: "resolved_call_edge", deltaTableName: "__delta_resolved_call_edge", frontierTableName: "__frontier_resolved_call_edge", nextFrontierTableName: "__next_frontier_resolved_call_edge", columns: ["caller_path", "call_start", "call_end", "callee_path", "callee_name"], columnTypes: ["text", "int", "int", "text", "text"], keyIndices: [], arrivalAddSql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "call_start", "call_end", "callee_path", "callee_name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?) RETURNING "caller_path", "call_start", "call_end", "callee_path", "callee_name"`, arrivalDelSql: `DELETE FROM "resolved_call_edge" WHERE ("caller_path", "call_start", "call_end", "callee_path", "callee_name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?)) RETURNING "caller_path", "call_start", "call_end", "callee_path", "callee_name"`, boundarySql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' AND json_type("callee_name", '$.fn') = 'text' AND json_type("callee_name", '$.args') = 'array' THEN json_extract("callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')), '') || ')' ELSE "callee_name" END AS "callee_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resolved_call_edge" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "call_start", "call_end", "callee_path", "callee_name", "_sign"`, ruleObservers: ["flow_edge/2"] },
+  { rel: "df_arg", kind: "set", table_name: "df_arg", delta_table_name: "__delta_df_arg", frontier_table_name: "__frontier_df_arg", next_frontier_table_name: "__next_frontier_df_arg", columns: ["caller_path", "call_start", "call_end", "pos", "arg", "arg_end"], column_types: ["text", "int", "int", "int", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, arrival_del_sql: `DELETE FROM "df_arg" WHERE ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?)) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, boundary_sql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", "pos", CASE WHEN json_valid("arg") AND json_type("arg") = 'object' AND json_type("arg", '$.fn') = 'text' AND json_type("arg", '$.args') = 'array' THEN json_extract("arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("arg", '$.args')), '') || ')' ELSE "arg" END AS "arg", "arg_end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_arg" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "call_start", "call_end", "pos", "arg", "arg_end", "_sign"`, rule_observers: ["flow_edge/2"] },
+  { rel: "df_param", kind: "set", table_name: "df_param", delta_table_name: "__delta_df_param", frontier_table_name: "__frontier_df_param", next_frontier_table_name: "__next_frontier_df_param", columns: ["callee_path", "param", "pos", "param_end"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "df_param" ("callee_path", "param", "pos", "param_end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "callee_path", "param", "pos", "param_end"`, arrival_del_sql: `DELETE FROM "df_param" WHERE ("callee_path", "param", "pos", "param_end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "callee_path", "param", "pos", "param_end"`, boundary_sql: `SELECT CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("param") AND json_type("param") = 'object' AND json_type("param", '$.fn') = 'text' AND json_type("param", '$.args') = 'array' THEN json_extract("param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("param", '$.args')), '') || ')' ELSE "param" END AS "param", "pos", "param_end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_df_param" WHERE "_sign" IN (-1, 1) GROUP BY "callee_path", "param", "pos", "param_end", "_sign"`, rule_observers: ["flow_edge/2"] },
+  { rel: "flow_edge", kind: "set", table_name: "flow_edge", delta_table_name: "__delta_flow_edge", frontier_table_name: "__frontier_flow_edge", next_frontier_table_name: "__next_frontier_flow_edge", columns: ["from", "to"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("from") AND json_type("from") = 'object' AND json_type("from", '$.fn') = 'text' AND json_type("from", '$.args') = 'array' THEN json_extract("from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("from", '$.args')), '') || ')' ELSE "from" END AS "from", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flow_edge" WHERE "_sign" IN (-1, 1) GROUP BY "from", "to", "_sign"`, rule_observers: [] },
+  { rel: "resolved_call_edge", kind: "set", table_name: "resolved_call_edge", delta_table_name: "__delta_resolved_call_edge", frontier_table_name: "__frontier_resolved_call_edge", next_frontier_table_name: "__next_frontier_resolved_call_edge", columns: ["caller_path", "call_start", "call_end", "callee_path", "callee_name"], column_types: ["text", "int", "int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "call_start", "call_end", "callee_path", "callee_name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?) RETURNING "caller_path", "call_start", "call_end", "callee_path", "callee_name"`, arrival_del_sql: `DELETE FROM "resolved_call_edge" WHERE ("caller_path", "call_start", "call_end", "callee_path", "callee_name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?)) RETURNING "caller_path", "call_start", "call_end", "callee_path", "callee_name"`, boundary_sql: `SELECT CASE WHEN json_valid("caller_path") AND json_type("caller_path") = 'object' AND json_type("caller_path", '$.fn') = 'text' AND json_type("caller_path", '$.args') = 'array' THEN json_extract("caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("caller_path", '$.args')), '') || ')' ELSE "caller_path" END AS "caller_path", "call_start", "call_end", CASE WHEN json_valid("callee_path") AND json_type("callee_path") = 'object' AND json_type("callee_path", '$.fn') = 'text' AND json_type("callee_path", '$.args') = 'array' THEN json_extract("callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_path", '$.args')), '') || ')' ELSE "callee_path" END AS "callee_path", CASE WHEN json_valid("callee_name") AND json_type("callee_name") = 'object' AND json_type("callee_name", '$.fn') = 'text' AND json_type("callee_name", '$.args') = 'array' THEN json_extract("callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("callee_name", '$.args')), '') || ')' ELSE "callee_name" END AS "callee_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resolved_call_edge" WHERE "_sign" IN (-1, 1) GROUP BY "caller_path", "call_start", "call_end", "callee_path", "callee_name", "_sign"`, rule_observers: ["flow_edge/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { headRel: "flow_edge", ruleId: "flow_arg_param_hop_is_positional_and_site_pinned:flow_edge/2#1", headDeltaTableName: "__delta_flow_edge", headColumns: ["from", "to"], insertSql: `INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT DISTINCT d0."arg", b1."param" FROM "__frontier_df_arg" d0, "resolved_call_edge" b0, "df_param" b1 WHERE d0."_phase" >= 0 AND b0."caller_path" = d0."caller_path" AND b0."call_start" = d0."call_start" AND b0."call_end" = d0."call_end" AND b1."callee_path" = b0."callee_path" AND b1."pos" = d0."pos" UNION ALL SELECT DISTINCT b0."arg", b1."param" FROM "__frontier_resolved_call_edge" d0, "df_arg" b0, "df_param" b1 WHERE d0."_phase" >= 0 AND b0."caller_path" = d0."caller_path" AND b0."call_start" = d0."call_start" AND b0."call_end" = d0."call_end" AND b1."callee_path" = d0."callee_path" AND b1."pos" = b0."pos" UNION ALL SELECT DISTINCT b0."arg", d0."param" FROM "__frontier_df_param" d0, "df_arg" b0, "resolved_call_edge" b1 WHERE d0."_phase" >= 0 AND b0."pos" = d0."pos" AND b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b1."callee_path" = d0."callee_path" RETURNING "from", "to"`, selectSql: `SELECT "from", "to" FROM "flow_edge"`, recomputeSql: `DELETE FROM "flow_edge";
-INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`, supportSql: [`DELETE FROM "__support_next_flow_edge"`, `INSERT INTO "__support_next_flow_edge" ("from", "to", "__refcount") SELECT "from", "to", sum("__refcount") FROM (SELECT b0."arg" AS "from", b2."param" AS "to", count(*) AS "__refcount" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos" GROUP BY b0."arg", b2."param") GROUP BY "from", "to"`, `UPDATE "flow_edge" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_edge" n WHERE n."from" = h."from" AND n."to" = h."to"), 0)`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT -1, row_number() OVER () - 1, "from", "to" FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_edge"`, `INSERT INTO "__new_flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n LEFT JOIN "flow_edge" h ON n."from" = h."from" AND n."to" = h."to" WHERE h."from" IS NULL`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT 1, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__next_frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT OR IGNORE INTO "flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n`], expandSql: null, dredSql: null, aggregateSql: null },
+  { head_rel: "flow_edge", rule_id: "flow_arg_param_hop_is_positional_and_site_pinned:flow_edge/2#1", head_delta_table_name: "__delta_flow_edge", head_columns: ["from", "to"], insert_sql: `INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT DISTINCT d0."arg", b1."param" FROM "__frontier_df_arg" d0, "resolved_call_edge" b0, "df_param" b1 WHERE d0."_phase" >= 0 AND b0."caller_path" = d0."caller_path" AND b0."call_start" = d0."call_start" AND b0."call_end" = d0."call_end" AND b1."callee_path" = b0."callee_path" AND b1."pos" = d0."pos" UNION ALL SELECT DISTINCT b0."arg", b1."param" FROM "__frontier_resolved_call_edge" d0, "df_arg" b0, "df_param" b1 WHERE d0."_phase" >= 0 AND b0."caller_path" = d0."caller_path" AND b0."call_start" = d0."call_start" AND b0."call_end" = d0."call_end" AND b1."callee_path" = d0."callee_path" AND b1."pos" = b0."pos" UNION ALL SELECT DISTINCT b0."arg", d0."param" FROM "__frontier_df_param" d0, "df_arg" b0, "resolved_call_edge" b1 WHERE d0."_phase" >= 0 AND b0."pos" = d0."pos" AND b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b1."callee_path" = d0."callee_path" RETURNING "from", "to"`, select_sql: `SELECT "from", "to" FROM "flow_edge"`, recompute_sql: `DELETE FROM "flow_edge";
+INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`, support_sql: [`DELETE FROM "__support_next_flow_edge"`, `INSERT INTO "__support_next_flow_edge" ("from", "to", "__refcount") SELECT "from", "to", sum("__refcount") FROM (SELECT b0."arg" AS "from", b2."param" AS "to", count(*) AS "__refcount" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos" GROUP BY b0."arg", b2."param") GROUP BY "from", "to"`, `UPDATE "flow_edge" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_edge" n WHERE n."from" = h."from" AND n."to" = h."to"), 0)`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT -1, row_number() OVER () - 1, "from", "to" FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_edge"`, `INSERT INTO "__new_flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n LEFT JOIN "flow_edge" h ON n."from" = h."from" AND n."to" = h."to" WHERE h."from" IS NULL`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT 1, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__next_frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT OR IGNORE INTO "flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n`], expand_sql: null, dred_sql: null, aggregate_sql: null },
 ];
 
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
+function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "flow_edge";
 INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const df_arg = multisetDiff(before.df_arg, after.df_arg);
-  const df_param = multisetDiff(before.df_param, after.df_param);
-  const flow_edge = multisetDiff(before.flow_edge, after.flow_edge);
-  const resolved_call_edge = multisetDiff(before.resolved_call_edge, after.resolved_call_edge);
+function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
+  const df_arg = multiset_diff(before.df_arg, after.df_arg);
+  const df_param = multiset_diff(before.df_param, after.df_param);
+  const flow_edge = multiset_diff(before.flow_edge, after.flow_edge);
+  const resolved_call_edge = multiset_diff(before.resolved_call_edge, after.resolved_call_edge);
   return {
     rels: [
       { rel: "df_arg", add: df_arg.add, del: df_arg.del },
@@ -310,15 +310,15 @@ function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
       { rel: "flow_edge", add: flow_edge.add, del: flow_edge.del },
       { rel: "resolved_call_edge", add: resolved_call_edge.add, del: resolved_call_edge.del },
     ],
-    carryPending: false,
+    carry_pending: false,
   };
 }
 
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => applyArrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
+function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return read_snapshot(seam).pipe(
+    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
   // flow_arg_param_hop_is_positional_and_site_pinned: no edge rules -- absorb arrivals, recompute levels, diff.
 }
@@ -332,38 +332,38 @@ const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
-const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribedRels, arrivalTargets);
-const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribedRels);
-const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribedRels);
-const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribedRels, arrivalTargets);
+const SUBSCRIBED_RELATIONS = SubscribeCone.relations(SUBSCRIBE_PRUNE, INCREMENTAL_RELATIONS, subscribed_rels, arrival_targets);
+const SUBSCRIBED_EDGE_STATEMENTS = SubscribeCone.edges(SUBSCRIBE_PRUNE, INCREMENTAL_EDGE_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_LEVEL_STATEMENTS = SubscribeCone.levels(SUBSCRIBE_PRUNE, INCREMENTAL_LEVEL_STATEMENTS, subscribed_rels);
+const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rels, arrival_targets);
 
-function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return IncrementalRuntime.prepareTick(seam, SUBSCRIBED_RELATIONS).pipe(
-    concatMap(() => IncrementalRuntime.applyArrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyLevelsBeforeEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
-    concatMap(() => IncrementalRuntime.applyEdges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
+function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
+    concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
-    concatMap(() => IncrementalRuntime.recomputeLevelsAfterEdges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
-    concatMap(() => IncrementalRuntime.readBoundary(seam, SUBSCRIBED_RELATIONS)),
-    concatMap((rels) => IncrementalRuntime.promoteFrontiers(seam, SUBSCRIBED_RELATIONS).pipe(
-      map((carryPending): ITickDeltas => ({ rels, carryPending })),
+    concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
+    concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
+    concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
+      map((carry_pending): ITickDeltas => ({ rels, carry_pending })),
     )),
   );
 }
 
-function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  arrivals = validateArrivals(arrivals);
+function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
+  arrivals = validate_arrivals(arrivals);
   if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
+    return run_naive_tick(seam, arrivals);
   }
-  return runIncrementalTick(seam, arrivals);
+  return run_incremental_tick(seam, arrivals);
 }
 
-export const incrementalPlan: IIncrementalProgramPlan = {
+export const incremental_plan: IIncrementalProgramPlan = {
   safe: INCREMENTAL_PROGRAM_SAFE,
-  reconcileEveryTick: RECONCILE_EVERY_TICK,
-  retractionGuard: "plain-count-acyclic",
+  reconcile_every_tick: RECONCILE_EVERY_TICK,
+  retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
   edges: INCREMENTAL_EDGE_STATEMENTS,
   levels: INCREMENTAL_LEVEL_STATEMENTS,
@@ -372,16 +372,16 @@ export const incrementalPlan: IIncrementalProgramPlan = {
 export const program: IGenProgramWithBoot = {
   name: "flow_arg_param_hop_is_positional_and_site_pinned",
   ddl,
-  relColumns,
-  relColumnTypes,
-  arrivalTargets,
+  rel_columns,
+  rel_column_types,
+  arrival_targets,
   boot: SUBSCRIBED_BOOT,
-  finalSelect,
-  hostPlans,
-  bindPlans,
-  queryPlans,
-  subscribedRels,
-  relCatalog,
-  unsupportedExecution,
-  tick: runTick,
+  final_select,
+  host_plans,
+  bind_plans,
+  query_plans,
+  subscribed_rels,
+  rel_catalog,
+  unsupported_execution,
+  tick: run_tick,
 };

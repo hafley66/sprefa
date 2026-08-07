@@ -104,7 +104,7 @@ const DEPTH3_ARRIVAL: readonly IArrivalBatch[] = [
 /** Boot, then run the arrival so the tables hold real rows: an EXPLAIN over an
  *  empty schema still returns a plan, but a plan taken against populated
  *  tables is the one the runtime actually executes. */
-async function seamWithRows(
+async function seam_with_rows(
   program: EmittedProgram,
   schedule: readonly IArrivalBatch[],
 ): Promise<ISqlSeam> {
@@ -122,15 +122,15 @@ async function seamWithRows(
  *  `string | null` (null exactly when `aggregateSql` is present), and that one
  *  disagreement was all four standing tsgo errors in this package. Every rel
  *  named below is a plain level, so the null is a named assertion, not a cast. */
-function insertSqlFor(plan: IIncrementalProgramPlan, rel: string): string {
-  const level = plan.levels.find((entry) => entry.headRel === rel);
+function insert_sql_for(plan: IIncrementalProgramPlan, rel: string): string {
+  const level = plan.levels.find((entry) => entry.head_rel === rel);
   assert.ok(level, `no emitted level statement for ${rel}`);
-  assert.ok(level.insertSql !== null, `level '${rel}' is an aggregate: it has no insertSql`);
-  return level.insertSql;
+  assert.ok(level.insert_sql !== null, `level '${rel}' is an aggregate: it has no insertSql`);
+  return level.insert_sql;
 }
 
 /** The distinct dictionary views one statement joins. */
-function dictionaryViews(sql: string): string[] {
+function dictionary_views(sql: string): string[] {
   const names = new Set<string>();
   for (const match of sql.matchAll(/"(__ref_[a-z_]+)"/g)) names.add(match[1]!);
   return [...names].sort();
@@ -141,7 +141,7 @@ function dictionaryViews(sql: string): string[] {
  *  insert is a UNION ALL with one arm per changed body atom, and each arm
  *  legitimately repeats the whole chain, so the total is divided by the arm
  *  count rather than compared raw. */
-function dictionaryJoinsPerArm(sql: string): number {
+function dictionary_joins_per_arm(sql: string): number {
   const arms = (sql.match(/ UNION ALL /g) ?? []).length + 1;
   const joins = (sql.match(/"__ref_[a-z_]+" b\d+/g) ?? []).length;
   assert.equal(joins % arms, 0, `every delta arm must carry the same chain: ${sql}`);
@@ -162,14 +162,14 @@ function dictionaryJoinsPerArm(sql: string): number {
  * tables, so that is what is asserted now, name by name (count-test law: the
  * receipt has to be able to see the thing that moved).
  */
-function rowSourcesPerArm(sql: string): string[][] {
+function row_sources_per_arm(sql: string): string[][] {
   return sql.split(" UNION ALL ").map((arm) => {
-    const fromClause = arm.slice(arm.indexOf(' FROM "'));
-    return [...fromClause.matchAll(/"([a-z_0-9]+)" [bdrn]\d+/g)].map((match) => match[1]!);
+    const from_clause = arm.slice(arm.indexOf(' FROM "'));
+    return [...from_clause.matchAll(/"([a-z_0-9]+)" [bdrn]\d+/g)].map((match) => match[1]!);
   });
 }
 
-function queryPlan(seam: ISqlSeam, sql: string): Promise<string[]> {
+function query_plan(seam: ISqlSeam, sql: string): Promise<string[]> {
   return firstValueFrom(
     seam.runner
       .execute(seam.db, `EXPLAIN QUERY PLAN ${sql}`)
@@ -183,7 +183,7 @@ function queryPlan(seam: ISqlSeam, sql: string): Promise<string[]> {
  *  METHOD instead: every table this statement touches is reached by SEARCH,
  *  with at least one such SEARCH per dictionary hop. A SCAN line anywhere is
  *  the failure -- there is no level of this chain that has to be scanned. */
-function assertEveryHopIsIndexed(plan: readonly string[], sql: string, hops: number): void {
+function assert_every_hop_is_indexed(plan: readonly string[], sql: string, hops: number): void {
   const scans = plan.filter((line) => line.startsWith("SCAN"));
   assert.deepEqual(scans, [], `no level of the chain may be scanned: ${plan.join(" | ")}`);
   const searches = plan.filter((line) => line.startsWith("SEARCH"));
@@ -196,11 +196,11 @@ function assertEveryHopIsIndexed(plan: readonly string[], sql: string, hops: num
 /** The sharpest form of the receipt, available where every hop keys on `__id`
  *  (a destructure walks parent -> child through the endpoint): exactly one
  *  INTEGER PRIMARY KEY lookup per level. */
-function rowidSearchCount(plan: readonly string[]): number {
+function rowid_search_count(plan: readonly string[]): number {
   return plan.filter((line) => /SEARCH \w+ USING INTEGER PRIMARY KEY \(rowid=\?\)/.test(line)).length;
 }
 
-function assertNoJsonExtractOverRefColumn(sql: string): void {
+function assert_no_json_extract_over_ref_column(sql: string): void {
   // The exact defect: a ref column is an INTEGER endpoint, and json_extract of
   // an integer is NULL. Any json_extract whose first argument is an aliased
   // column (rather than `value`, which is json_each's own row) is the old
@@ -214,98 +214,98 @@ function assertNoJsonExtractOverRefColumn(sql: string): void {
 // ── depth 2 ──────────────────────────────────────────────────────────────────
 
 test("depth 2 construction joins one dictionary per level, all indexed", async () => {
-  const seam = await seamWithRows(depth2.program as EmittedProgram, DEPTH2_ARRIVAL);
-  const sql = insertSqlFor(depth2.incrementalPlan, "span");
+  const seam = await seam_with_rows(depth2.program as EmittedProgram, DEPTH2_ARRIVAL);
+  const sql = insert_sql_for(depth2.incremental_plan, "span");
 
   // TWO dictionary views, not three: the `file` level is the rule's own
   // target-membership atom, so its endpoint is that atom's `__id` and a
   // `__ref_file` join would be `file` joined to a view of itself.
   assert.deepEqual(
-    dictionaryViews(sql),
+    dictionary_views(sql),
     ["__ref_fpath", "__ref_repo"],
     `span builds file(repo, fpath): the two nested levels, each once. got: ${sql}`,
   );
-  assert.equal(dictionaryJoinsPerArm(sql), 2, `one join per nested level, no repeats: ${sql}`);
+  assert.equal(dictionary_joins_per_arm(sql), 2, `one join per nested level, no repeats: ${sql}`);
   assert.deepEqual(
-    rowSourcesPerArm(sql),
+    row_sources_per_arm(sql),
     [
       ["__frontier_raw", "file", "__ref_repo", "__ref_fpath"],
       ["__frontier_file", "file", "raw", "__ref_repo", "__ref_fpath"],
     ],
     `every table each arm names, no extras: ${sql}`,
   );
-  assertNoJsonExtractOverRefColumn(sql);
-  assertEveryHopIsIndexed(await queryPlan(seam, sql), sql, 3);
+  assert_no_json_extract_over_ref_column(sql);
+  assert_every_hop_is_indexed(await query_plan(seam, sql), sql, 3);
 });
 
 test("depth 2 destructure reads two hops, both keyed on __id", async () => {
-  const seam = await seamWithRows(depth2.program as EmittedProgram, DEPTH2_ARRIVAL);
-  const sql = insertSqlFor(depth2.incrementalPlan, "coord");
+  const seam = await seam_with_rows(depth2.program as EmittedProgram, DEPTH2_ARRIVAL);
+  const sql = insert_sql_for(depth2.incremental_plan, "coord");
 
   // `span(file(_, fpath(Path)), Start, End)` reaches fpath THROUGH file, and
   // never touches repo: the `_` in the repo position must cost no join.
   assert.deepEqual(
-    dictionaryViews(sql),
+    dictionary_views(sql),
     ["__ref_file", "__ref_fpath"],
     `the wildcard repo position must cost no join. got: ${sql}`,
   );
-  assert.equal(dictionaryJoinsPerArm(sql), 2, `one join per level, no repeats: ${sql}`);
+  assert.equal(dictionary_joins_per_arm(sql), 2, `one join per level, no repeats: ${sql}`);
   assert.deepEqual(
-    rowSourcesPerArm(sql),
+    row_sources_per_arm(sql),
     [["__frontier_span", "__ref_fpath", "__ref_file"]],
     `every table the arm names, no extras: ${sql}`,
   );
-  assertNoJsonExtractOverRefColumn(sql);
-  const plan = await queryPlan(seam, sql);
-  assertEveryHopIsIndexed(plan, sql, 2);
-  assert.equal(rowidSearchCount(plan), 2, `two levels, two PK lookups: ${plan.join(" | ")}`);
+  assert_no_json_extract_over_ref_column(sql);
+  const plan = await query_plan(seam, sql);
+  assert_every_hop_is_indexed(plan, sql, 2);
+  assert.equal(rowid_search_count(plan), 2, `two levels, two PK lookups: ${plan.join(" | ")}`);
 });
 
 // ── depth 3 ──────────────────────────────────────────────────────────────────
 
 test("depth 3 destructure reads three hops, all keyed on __id", async () => {
-  const seam = await seamWithRows(depth3.program as EmittedProgram, DEPTH3_ARRIVAL);
-  const sql = insertSqlFor(depth3.incrementalPlan, "found");
+  const seam = await seam_with_rows(depth3.program as EmittedProgram, DEPTH3_ARRIVAL);
+  const sql = insert_sql_for(depth3.incremental_plan, "found");
 
   assert.deepEqual(
-    dictionaryViews(sql),
+    dictionary_views(sql),
     ["__ref_file", "__ref_fpath", "__ref_span"],
     `located -> span -> file -> fpath is three hops. got: ${sql}`,
   );
-  assert.equal(dictionaryJoinsPerArm(sql), 3, `one join per level, no repeats: ${sql}`);
+  assert.equal(dictionary_joins_per_arm(sql), 3, `one join per level, no repeats: ${sql}`);
   assert.deepEqual(
-    rowSourcesPerArm(sql),
+    row_sources_per_arm(sql),
     [["__frontier_located", "__ref_fpath", "__ref_file", "__ref_span"]],
     `every table the arm names, no extras: ${sql}`,
   );
-  assertNoJsonExtractOverRefColumn(sql);
-  const plan = await queryPlan(seam, sql);
-  assertEveryHopIsIndexed(plan, sql, 3);
-  assert.equal(rowidSearchCount(plan), 3, `three levels, three PK lookups: ${plan.join(" | ")}`);
+  assert_no_json_extract_over_ref_column(sql);
+  const plan = await query_plan(seam, sql);
+  assert_every_hop_is_indexed(plan, sql, 3);
+  assert.equal(rowid_search_count(plan), 3, `three levels, three PK lookups: ${plan.join(" | ")}`);
 });
 
 test("depth 3 construction interns each level once", async () => {
-  const seam = await seamWithRows(depth3.program as EmittedProgram, DEPTH3_ARRIVAL);
-  const sql = insertSqlFor(depth3.incrementalPlan, "located");
+  const seam = await seam_with_rows(depth3.program as EmittedProgram, DEPTH3_ARRIVAL);
+  const sql = insert_sql_for(depth3.incremental_plan, "located");
 
   // THREE views for four levels, same reason as depth 2: the outermost level
   // (`span`) is the rule's own target-membership atom.
   assert.deepEqual(
-    dictionaryViews(sql),
+    dictionary_views(sql),
     ["__ref_file", "__ref_fpath", "__ref_repo"],
     `span(file(repo, fpath), Start, End): the three nested levels. got: ${sql}`,
   );
   assert.deepEqual(
-    rowSourcesPerArm(sql),
+    row_sources_per_arm(sql),
     [
       ["__frontier_rawk", "span", "__ref_repo", "__ref_fpath", "__ref_file"],
       ["__frontier_span", "span", "rawk", "__ref_repo", "__ref_fpath", "__ref_file"],
     ],
     `every table each arm names, no extras: ${sql}`,
   );
-  assertNoJsonExtractOverRefColumn(sql);
+  assert_no_json_extract_over_ref_column(sql);
   // A construction keys on the target's identity UNIQUE rather than on __id
   // (the id is the OUTPUT of the lookup), so the receipt here is the absence
   // of scans plus one indexed access per level per compound arm.
-  assertEveryHopIsIndexed(await queryPlan(seam, sql), sql, 4);
+  assert_every_hop_is_indexed(await query_plan(seam, sql), sql, 4);
 });

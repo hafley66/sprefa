@@ -21,17 +21,17 @@ import type { IArrivalBatch, IGenProgram, ISqlSeam, ITickDeltas, ITickFold, ITic
 /** Private fold state, not part of the runtime's public contract — a `type`
  *  alias (not an `interface`), so the I-prefix law does not apply. */
 type FoldStep = {
-  readonly tickNumber: number; // 0 = boot, nothing emitted yet
+  readonly tick_number: number; // 0 = boot, nothing emitted yet
   readonly deltas: ITickDeltas | null;
-  readonly drainsUsed: number;
+  readonly drains_used: number;
 };
 
-function nextArrivals(step: FoldStep, schedule: readonly IArrivalBatch[]): IArrivalBatch | undefined {
-  if (step.tickNumber < schedule.length) return schedule[step.tickNumber];
-  return step.deltas?.carryPending ? [] : undefined;
+function next_arrivals(step: FoldStep, schedule: readonly IArrivalBatch[]): IArrivalBatch | undefined {
+  if (step.tick_number < schedule.length) return schedule[step.tick_number];
+  return step.deltas?.carry_pending ? [] : undefined;
 }
 
-function hasDeltas(step: FoldStep): step is FoldStep & { deltas: ITickDeltas } {
+function has_deltas(step: FoldStep): step is FoldStep & { deltas: ITickDeltas } {
   return step.deltas !== null;
 }
 
@@ -40,29 +40,29 @@ export const TickFold: ITickFold = {
     program: IGenProgram,
     seam: ISqlSeam,
     schedule: readonly IArrivalBatch[],
-    drainCap = 100,
+    drain_cap = 100,
   ): Observable<ITickLogLine> {
-    const boot: FoldStep = { tickNumber: 0, deltas: null, drainsUsed: 0 };
+    const boot: FoldStep = { tick_number: 0, deltas: null, drains_used: 0 };
     return of(boot).pipe(
       expand((step) => {
-        const arrivals = nextArrivals(step, schedule);
+        const arrivals = next_arrivals(step, schedule);
         if (arrivals === undefined) return EMPTY;
-        const isDrainTick = step.tickNumber >= schedule.length;
-        if (isDrainTick && step.drainsUsed >= drainCap) {
-          throw new Error(`tsv2 drain overflow: ${program.name} exceeded ${drainCap} drain ticks`);
+        const is_drain_tick = step.tick_number >= schedule.length;
+        if (is_drain_tick && step.drains_used >= drain_cap) {
+          throw new Error(`tsv2 drain overflow: ${program.name} exceeded ${drain_cap} drain ticks`);
         }
         return program.tick(seam, arrivals).pipe(
           map(
             (deltas): FoldStep => ({
-              tickNumber: step.tickNumber + 1,
+              tick_number: step.tick_number + 1,
               deltas,
-              drainsUsed: isDrainTick ? step.drainsUsed + 1 : step.drainsUsed,
+              drains_used: is_drain_tick ? step.drains_used + 1 : step.drains_used,
             }),
           ),
         );
       }),
-      filter(hasDeltas),
-      map((step) => TickLogEmitter.line(step.tickNumber, step.deltas, program.relColumnTypes)),
+      filter(has_deltas),
+      map((step) => TickLogEmitter.line(step.tick_number, step.deltas, program.rel_column_types)),
     );
   },
 };

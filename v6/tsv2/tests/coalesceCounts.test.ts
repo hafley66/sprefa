@@ -66,13 +66,13 @@ const COMPILE_OUT = join(HERE, "..", "..", "prolog", "compile", "out");
 /** The emitted incremental insert for `repo_latest`, read out of the compiled
  *  module's source text so the plan receipt grades the statement that really
  *  runs rather than a copy of it kept in this file. */
-function emittedRepoLatestInsertSql(): string {
+function emitted_repo_latest_insert_sql(): string {
   const source = readFileSync(join(COMPILE_OUT, "coalesce_defaults_the_absent_row.ts"), "utf8");
   const line = source
     .split("\n")
-    .find((candidate) => candidate.includes(`{ headRel: "repo_latest"`) && candidate.includes("insertSql:"));
+    .find((candidate) => candidate.includes(`{ head_rel: "repo_latest"`) && candidate.includes("insert_sql:"));
   assert.ok(line, "no incremental level statement for repo_latest");
-  return line.match(/insertSql: `([\s\S]*?)`, selectSql:/)![1]!;
+  return line.match(/insert_sql: `([\s\S]*?)`, select_sql:/)![1]!;
 }
 
 /**
@@ -85,10 +85,10 @@ function emittedRepoLatestInsertSql(): string {
  * also what a real per-rel feed produces) is what leaves the rule plane as the
  * only thing this receipt can be measuring.
  */
-function arrivals(repoCount: number): readonly IArrivalRow[] {
+function arrivals(repo_count: number): readonly IArrivalRow[] {
   const repos: IArrivalRow[] = [];
   const commits: IArrivalRow[] = [];
-  for (let index = 0; index < repoCount; index += 1) {
+  for (let index = 0; index < repo_count; index += 1) {
     repos.push({ rel: "repo", sign: "add", row: [`repo_${index}`] });
     // Every third repo has a commit, so the join arm and the default arm both
     // carry rows at both cardinalities.
@@ -109,25 +109,25 @@ function arrivals(repoCount: number): readonly IArrivalRow[] {
  *  went 2,771 ms to 2,166 ms on grid_10000. */
 const STATEMENTS_PER_TICK = 37;
 
-async function runOneTick(repoCount: number) {
+async function run_one_tick(repo_count: number) {
   const seam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   stmt_counter.reset();
-  await firstValueFrom(program.tick(seam, arrivals(repoCount)));
-  const statementCount = stmt_counter.get();
-  const final = await firstValueFrom(seam.runner.execute(seam.db, program.finalSelect.repo_latest!));
+  await firstValueFrom(program.tick(seam, arrivals(repo_count)));
+  const statement_count = stmt_counter.get();
+  const final = await firstValueFrom(seam.runner.execute(seam.db, program.final_select.repo_latest!));
   const defaulted = final.rows.filter((row) => String(row.commit) === "absent").length;
   seam.db.close();
-  return { statementCount, rowCount: final.rows.length, defaulted };
+  return { statement_count, row_count: final.rows.length, defaulted };
 }
 
 test("coalesce statements per tick are flat in the source rel's size", async () => {
-  const small = await runOneTick(5);
-  const large = await runOneTick(100);
-  const huge = await runOneTick(1000);
+  const small = await run_one_tick(5);
+  const large = await run_one_tick(100);
+  const huge = await run_one_tick(1000);
 
   assert.deepEqual(
-    [small.statementCount, large.statementCount, huge.statementCount],
+    [small.statement_count, large.statement_count, huge.statement_count],
     [STATEMENTS_PER_TICK, STATEMENTS_PER_TICK, STATEMENTS_PER_TICK],
     "the defaulting rule must not pay per row across 5 / 100 / 1,000 source rows",
   );
@@ -135,9 +135,9 @@ test("coalesce statements per tick are flat in the source rel's size", async () 
   // over real work rather than over an empty answer.
   assert.deepEqual(
     {
-      small: [small.rowCount, small.defaulted],
-      large: [large.rowCount, large.defaulted],
-      huge: [huge.rowCount, huge.defaulted],
+      small: [small.row_count, small.defaulted],
+      large: [large.row_count, large.defaulted],
+      huge: [huge.row_count, huge.defaulted],
     },
     { small: [5, 3], large: [100, 66], huge: [1000, 666] },
     "both arms must derive at every cardinality",
@@ -145,17 +145,17 @@ test("coalesce statements per tick are flat in the source rel's size", async () 
 });
 
 test("the coalesce default arm SEARCHes the source rel, never SCANs it", async () => {
-  const insertSql = emittedRepoLatestInsertSql();
+  const insert_sql = emitted_repo_latest_insert_sql();
   assert.ok(
-    insertSql.includes(`NOT EXISTS (SELECT 1 FROM "latest_commit" n0`),
-    `the default arm must carry the negation over the source rel, got: ${insertSql}`,
+    insert_sql.includes(`NOT EXISTS (SELECT 1 FROM "latest_commit" n0`),
+    `the default arm must carry the negation over the source rel, got: ${insert_sql}`,
   );
 
   const seam: ISqlSeam = ScratchStore.open(":memory:");
   await firstValueFrom(ScratchStore.boot(seam, program.ddl));
   await firstValueFrom(program.tick(seam, arrivals(100)));
 
-  const plan = await firstValueFrom(seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${insertSql}`));
+  const plan = await firstValueFrom(seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${insert_sql}`));
   const lines = plan.rows.map((row) => String(row.detail));
   seam.db.close();
 
@@ -166,13 +166,13 @@ test("the coalesce default arm SEARCHes the source rel, never SCANs it", async (
     `the coalesce default arm must SEARCH the source rel, got: ${lines.join(" | ")}`,
   );
   assert.ok(
-    !lines.some((line) => /\bSCAN n0\b/.test(line)),
+    !lines.some((line) => /\b_scan n0\b/.test(line)),
     `the coalesce default arm must not SCAN the source rel, got: ${lines.join(" | ")}`,
   );
   // The delta side is the frontier, not the base table: a coalesce rule that
   // read `repo` directly would re-derive every known row every tick.
   assert.ok(
-    lines.every((line) => !/\bSCAN d0\b/.test(line) || /__frontier_/.test(line)),
+    lines.every((line) => !/\b_scan d0\b/.test(line) || /__frontier_/.test(line)),
     `the delta side must stay on the frontier, got: ${lines.join(" | ")}`,
   );
 });

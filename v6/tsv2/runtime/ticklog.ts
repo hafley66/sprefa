@@ -26,11 +26,11 @@ import type {
   ITickLogLine,
 } from "./types.ts";
 
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
+function canonicalize_json(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize_json);
   if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonicalizeJson(record[key])]));
+    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonicalize_json(record[key])]));
   }
   return value;
 }
@@ -42,16 +42,16 @@ function canonicalizeJson(value: unknown): unknown {
  *  rendering rather than throwing -- the arrival gate's
  *  `CHECK (json_valid(...))` is what makes that unreachable, and a log line is
  *  the wrong place to discover it. */
-function canonicalJsonText(value: string): string | null {
+function canonical_json_text(value: string): string | null {
   try {
     const parsed: unknown = JSON.parse(value);
-    return JSON.stringify(canonicalizeJson(parsed));
+    return JSON.stringify(canonicalize_json(parsed));
   } catch {
     return null;
   }
 }
 
-function encodeValue(value: IRowValue, type?: IRowColumnType): string {
+function encode_value(value: IRowValue, type?: IRowColumnType): string {
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`non-finite float at tick boundary: ${String(value)}`);
     return JSON.stringify(value);
@@ -67,39 +67,39 @@ function encodeValue(value: IRowValue, type?: IRowColumnType): string {
   // out. The struct-as-rows header's claim that intern-time text is already
   // canonical is therefore false; that is a named card, and until it moves,
   // canonicalizing here is what the byte contract actually rests on.
-  if (type === "json" || type === "ref") return canonicalJsonText(value) ?? JSON.stringify(value);
+  if (type === "json" || type === "ref") return canonical_json_text(value) ?? JSON.stringify(value);
   return JSON.stringify(value);
 }
 
-function encodeRow(row: IRow, types: readonly IRowColumnType[] | undefined): string {
-  return `[${row.map((value, index) => encodeValue(value, types?.[index])).join(",")}]`;
+function encode_row(row: IRow, types: readonly IRowColumnType[] | undefined): string {
+  return `[${row.map((value, index) => encode_value(value, types?.[index])).join(",")}]`;
 }
 
-function encodeRel(delta: IRelDelta, types: readonly IRowColumnType[] | undefined): string {
-  const add = delta.add.map((row) => encodeRow(row, types)).sort();
-  const del = delta.del.map((row) => encodeRow(row, types)).sort();
+function encode_rel(delta: IRelDelta, types: readonly IRowColumnType[] | undefined): string {
+  const add = delta.add.map((row) => encode_row(row, types)).sort();
+  const del = delta.del.map((row) => encode_row(row, types)).sort();
   return `${JSON.stringify(delta.rel)}:{"add":[${add.join(",")}],"del":[${del.join(",")}]}`;
 }
 
-function byRelNameAscending(left: IRelDelta, right: IRelDelta): number {
+function by_rel_name_ascending(left: IRelDelta, right: IRelDelta): number {
   if (left.rel < right.rel) return -1;
   if (left.rel > right.rel) return 1;
   return 0;
 }
 
 export const TickLogEmitter: ITickLogEmitter = {
-  valueText: encodeValue,
+  value_text: encode_value,
 
   line(
     tick: number,
     deltas: ITickDeltas,
-    relColumnTypes?: Readonly<Record<string, readonly IRowColumnType[]>>,
+    rel_column_types?: Readonly<Record<string, readonly IRowColumnType[]>>,
   ): ITickLogLine {
-    const nonEmpty = deltas.rels.filter((delta) => delta.add.length > 0 || delta.del.length > 0);
-    const relsText = [...nonEmpty]
-      .sort(byRelNameAscending)
-      .map((delta) => encodeRel(delta, relColumnTypes?.[delta.rel]))
+    const non_empty = deltas.rels.filter((delta) => delta.add.length > 0 || delta.del.length > 0);
+    const rels_text = [...non_empty]
+      .sort(by_rel_name_ascending)
+      .map((delta) => encode_rel(delta, rel_column_types?.[delta.rel]))
       .join(",");
-    return `{"tick":${tick},"deltas":{${relsText}}}`;
+    return `{"tick":${tick},"deltas":{${rels_text}}}`;
   },
 };

@@ -56,7 +56,7 @@ import { fileURLToPath } from "node:url";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
-import { postProgram, startServed } from "./serveHelpers.ts";
+import { post_program, start_served } from "./serveHelpers.ts";
 
 const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6", import.meta.url));
 
@@ -73,14 +73,14 @@ const DOOR_DL6 = fileURLToPath(new URL("../../dl/fixtures/door-handwritten.dl6",
  * name matches THIS test's compiler and nothing else. Comments do not reach
  * the compiled program, so the two tests still compile the real door.
  */
-function uniqueDoorSource(tag: string): { readonly source: string; readonly digest: string } {
+function unique_door_source(tag: string): { readonly source: string; readonly digest: string } {
   const source = `${readFileSync(DOOR_DL6, "utf8")}\n# compile-budget receipt ${tag} ${process.pid}\n`;
   return { source, digest: bytesToHex(sha256(new TextEncoder().encode(source))).slice(0, 32) };
 }
 
 /** Running swipl processes whose command line names this source digest. Empty
  *  on no match: pgrep exits 1 with nothing to report, which is not an error. */
-function compilerPidsFor(digest: string): readonly string[] {
+function compiler_pids_for(digest: string): readonly string[] {
   try {
     return execFileSync("pgrep", ["-f", digest], { encoding: "utf8" })
       .split("\n")
@@ -91,9 +91,9 @@ function compilerPidsFor(digest: string): readonly string[] {
   }
 }
 
-function withCompileBudget<T>(budgetMs: number, body: () => Promise<T>): Promise<T> {
+function with_compile_budget<T>(budget_ms: number, body: () => Promise<T>): Promise<T> {
   const previous = process.env.TSV2_COMPILE_BUDGET_MS;
-  process.env.TSV2_COMPILE_BUDGET_MS = String(budgetMs);
+  process.env.TSV2_COMPILE_BUDGET_MS = String(budget_ms);
   return body().finally(() => {
     if (previous === undefined) delete process.env.TSV2_COMPILE_BUDGET_MS;
     else process.env.TSV2_COMPILE_BUDGET_MS = previous;
@@ -101,11 +101,11 @@ function withCompileBudget<T>(budgetMs: number, body: () => Promise<T>): Promise
 }
 
 test("compile budget: a compile that outruns its budget is a NAMED compile_timeout, not a hang", async () => {
-  const { source } = uniqueDoorSource("named");
-  const served = await startServed();
+  const { source } = unique_door_source("named");
+  const served = await start_served();
   try {
     const started = Date.now();
-    const answered = await withCompileBudget(50, () => postProgram(served.port, source));
+    const answered = await with_compile_budget(50, () => post_program(served.port, source));
     const elapsed = Date.now() - started;
 
     assert.equal(answered.statusCode, 400, answered.body);
@@ -121,10 +121,10 @@ test("compile budget: a compile that outruns its budget is a NAMED compile_timeo
 });
 
 test("compile budget: the timed-out compiler's process group is dead, and the server still loads programs", async () => {
-  const { source, digest } = uniqueDoorSource("group");
-  const served = await startServed();
+  const { source, digest } = unique_door_source("group");
+  const served = await start_served();
   try {
-    const answered = await withCompileBudget(50, () => postProgram(served.port, source));
+    const answered = await with_compile_budget(50, () => post_program(served.port, source));
     assert.equal(answered.statusCode, 400, answered.body);
 
     // NOTHING SURVIVED THE KILL. Only the compiler working on THIS source is
@@ -132,11 +132,11 @@ test("compile budget: the timed-out compiler's process group is dead, and the se
     // of this test's business, and the first draft of this assertion went red
     // on three of them.
     await new Promise((resolve) => setTimeout(resolve, 500));
-    const leaked = compilerPidsFor(digest);
+    const leaked = compiler_pids_for(digest);
     assert.deepEqual(leaked, [], `the timed-out compile left swipl process(es) running: ${leaked.join(",")}`);
 
     // THE SERVER SURVIVED. Same source, honest budget, ordinary 200.
-    const loaded = await postProgram(served.port, source);
+    const loaded = await post_program(served.port, source);
     assert.equal(loaded.statusCode, 200, loaded.body);
   } finally {
     await served.stop();

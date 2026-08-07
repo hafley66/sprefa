@@ -1,7 +1,7 @@
 /**
  * serveHelpers.ts — shared plumbing for the served-engine receipts.
  *
- * Each receipt owns ONE `serveTsv2(...)` subscription (the app is cold; a test
+ * Each receipt owns ONE `serve_tsv2(...)` subscription (the app is cold; a test
  * is just another single terminal subscriber, exactly as v6/dl's server tests
  * are). Everything else here is a plain http client and the oracle door.
  */
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { firstValueFrom } from "rxjs";
 import type { SchedulerLike, Subscription } from "rxjs";
 
-import { serveTsv2 } from "../serve/4_http.ts";
+import { serve_tsv2 } from "../serve/4_http.ts";
 import type { IArrivalBatch, IServeEvent, ITickOutcome, IWatchSource } from "../runtime/types.ts";
 
 const DL6_ORACLE_PL = fileURLToPath(new URL("../../prolog/compile/scripts/dl6_oracle.pl", import.meta.url));
@@ -29,7 +29,7 @@ export interface HttpResult {
 export interface ServedFixture {
   readonly port: number;
   readonly events: readonly IServeEvent[];
-  readonly activeSubscribeCount: () => number;
+  readonly active_subscribe_count: () => number;
   /** Drain and close: no new connections accepted, every in-flight request
    *  answered, and only then the program's sqlite handle dropped. Resolves when
    *  node's own `server.close` callback has fired. */
@@ -45,7 +45,7 @@ export interface ServedFixture {
  * was free a moment ago, and closing it hands that name back -- a small race in
  * theory, and strictly better than a constant in practice.
  */
-export function reservePort(): Promise<number> {
+export function reserve_port(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = http.createServer();
     probe.once("error", reject);
@@ -93,7 +93,7 @@ export interface KeepAliveClient {
   readonly close: () => void;
 }
 
-export function keepAliveClient(port: number): KeepAliveClient {
+export function keep_alive_client(port: number): KeepAliveClient {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
   return {
     send: (path, method, body) =>
@@ -121,9 +121,9 @@ export function keepAliveClient(port: number): KeepAliveClient {
  *  driveable one so the watch bind's own logic is graded without waiting on the
  *  OS, the same split the injected scheduler makes for the interval bind. */
 export interface ServeOverrides {
-  readonly watchRoot?: string;
-  readonly watchCoalesceMs?: number;
-  readonly watchSource?: IWatchSource;
+  readonly watch_root?: string;
+  readonly watch_coalesce_ms?: number;
+  readonly watch_source?: IWatchSource;
 }
 
 /**
@@ -134,7 +134,7 @@ export interface ServeOverrides {
  * a collision waiting for a second lane to run the suite in the same tree --
  * which is what EADDRINUSE :::17611 was (bug hostdecode_hardcoded_port_collision;
  * the file even carried a comment claiming its ports were unused "(grepped)",
- * which was true of the tree and not of the machine). `serveTsv2` already
+ * which was true of the tree and not of the machine). `serve_tsv2` already
  * reports the port it actually bound, off `server.address()`, so callers read
  * `served.port` and no constant is needed anywhere.
  *
@@ -143,16 +143,16 @@ export interface ServeOverrides {
  * and sleeping 25ms and hoping. The old shape neither awaited in-flight requests
  * nor closed the sqlite handle deterministically.
  */
-export function startServed(
+export function start_served(
   port = 0,
   scheduler?: SchedulerLike,
-  dbUrl = ":memory:",
+  db_url = ":memory:",
   overrides: ServeOverrides = {},
 ): Promise<ServedFixture & { running: Subscription }> {
   return new Promise((resolve, reject) => {
     const events: IServeEvent[] = [];
     let settled = false;
-    const running = serveTsv2({ dbUrl, port, scheduler, ...overrides }).subscribe({
+    const running = serve_tsv2({ db_url, port, scheduler, ...overrides }).subscribe({
       next: (event) => {
         events.push(event);
         if (event.kind === "listening" && !settled) {
@@ -161,7 +161,7 @@ export function startServed(
           resolve({
             port: event.port,
             events,
-            activeSubscribeCount: event.activeSubscribeCount,
+            active_subscribe_count: event.active_subscribe_count,
             running,
             stop: () =>
               firstValueFrom(close()).then(() => {
@@ -177,7 +177,7 @@ export function startServed(
   });
 }
 
-export function postProgram(port: number, source: string): Promise<HttpResult> {
+export function post_program(port: number, source: string): Promise<HttpResult> {
   return request(port, "/program", "POST", source);
 }
 
@@ -185,7 +185,7 @@ export interface TickReply {
   readonly ticks: readonly { readonly tick: number; readonly line: string }[];
 }
 
-export async function postArrivals(port: number, batch: IArrivalBatch): Promise<TickReply> {
+export async function post_arrivals(port: number, batch: IArrivalBatch): Promise<TickReply> {
   const result = await request(port, "/edb/events", "POST", JSON.stringify({ batch }));
   if (result.statusCode !== 200) throw new Error(`POST /edb/events -> ${result.statusCode} ${result.body}`);
   return JSON.parse(result.body) as TickReply;
@@ -197,15 +197,15 @@ export async function postArrivals(port: number, batch: IArrivalBatch): Promise<
  * conformance/ticklog.pl's own `print_ticklog/3`, so this is the reference
  * engine's answer, not a second implementation of it.
  */
-export function oracleLog(programSource: string, schedule: readonly IArrivalBatch[]): string {
-  const workDir = mkdtempSync(join(tmpdir(), "tsv2-serve-oracle-"));
-  const programPath = join(workDir, "program.dl6");
-  const schedulePath = join(workDir, "schedule.json");
-  writeFileSync(programPath, programSource, "utf8");
-  writeFileSync(schedulePath, JSON.stringify(schedule), "utf8");
+export function oracle_log(program_source: string, schedule: readonly IArrivalBatch[]): string {
+  const work_dir = mkdtempSync(join(tmpdir(), "tsv2-serve-oracle-"));
+  const program_path = join(work_dir, "program.dl6");
+  const schedule_path = join(work_dir, "schedule.json");
+  writeFileSync(program_path, program_source, "utf8");
+  writeFileSync(schedule_path, JSON.stringify(schedule), "utf8");
   const run = spawnSync(
     "swipl",
-    ["-q", "-l", DL6_ORACLE_PL, "-g", `oracle('${programPath}', '${schedulePath}')`, "-g", "halt"],
+    ["-q", "-l", DL6_ORACLE_PL, "-g", `oracle('${program_path}', '${schedule_path}')`, "-g", "halt"],
     { encoding: "utf8" },
   );
   if (run.status !== 0) throw new Error(`dl6_oracle failed (${run.status}): ${run.stderr}`);
@@ -214,15 +214,15 @@ export function oracleLog(programSource: string, schedule: readonly IArrivalBatc
 
 /** The served log as one text, in tick order, exactly as the oracle prints it
  *  (one line per tick, LF terminated). */
-export function servedLog(replies: readonly TickReply[]): string {
+export function served_log(replies: readonly TickReply[]): string {
   return replies.flatMap((reply) => reply.ticks.map((entry) => entry.line)).map((line) => `${line}\n`).join("");
 }
 
-export function tickEvents(events: readonly IServeEvent[]): readonly ITickOutcome[] {
+export function tick_events(events: readonly IServeEvent[]): readonly ITickOutcome[] {
   return events.flatMap((event) => (event.kind === "tick" ? [event.outcome] : []));
 }
 
-export function logOfTicks(outcomes: readonly ITickOutcome[]): string {
+export function log_of_ticks(outcomes: readonly ITickOutcome[]): string {
   return outcomes.map((outcome) => `${outcome.line}\n`).join("");
 }
 
@@ -238,11 +238,11 @@ export function logOfTicks(outcomes: readonly ITickOutcome[]): string {
  * no boundary delta, so it is invisible here. A program whose world pushes
  * duplicate rows needs its schedule recorded at the http seam instead.
  */
-export function scheduleFromTicks(
+export function schedule_from_ticks(
   outcomes: readonly ITickOutcome[],
-  arrivalTargets: readonly string[],
+  arrival_targets: readonly string[],
 ): readonly IArrivalBatch[] {
-  const targets = new Set(arrivalTargets);
+  const targets = new Set(arrival_targets);
   return outcomes.map((outcome) =>
     outcome.deltas.rels
       .filter((delta) => targets.has(delta.rel))
