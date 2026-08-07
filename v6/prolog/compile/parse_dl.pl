@@ -262,9 +262,13 @@ statement_reference(decl, Declarations, Reference) :-
     declaration_source_ref(Declaration, Reference),
     !.
 
+% Clause 3's variable first argument is a candidate for every Kind, so without
+% the cuts each statement doubled parse_dl/4's identical solutions.
 record_statement_source_lines(decl_list, Declarations, RemainingLength) :-
+    !,
     assertz(source_statement_fact(decl, Declarations, RemainingLength)).
 record_statement_source_lines(rule, Rule, RemainingLength) :-
+    !,
     assertz(source_statement_fact(rule, Rule, RemainingLength)).
 record_statement_source_lines(_, _, _).
 

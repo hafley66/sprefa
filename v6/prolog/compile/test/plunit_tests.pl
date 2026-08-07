@@ -4109,6 +4109,25 @@ test(line_table_agrees_with_a_prefix_walk) :-
                                            TableLine-TableColumn))
              ) )).
 
+statement_count_case(1).
+statement_count_case(4).
+statement_count_case(14).
+
+% COUNT rail: identical solutions, one per statement, was 2^statements.
+test(parse_dl_solution_count_is_one_per_statement_count,
+     [forall(statement_count_case(StatementCount))]) :-
+    findall(Line,
+            ( between(1, StatementCount, Index),
+              format(string(Line), "rel r~d(x: int).\n", [Index]) ),
+            Lines),
+    atomics_to_string(Lines, Text),
+    string_codes(Text, Codes),
+    aggregate_all(count, parse_dl(Codes, _Prog, _Bindings, _Findings), Solutions),
+    (   Solutions == 1
+    ->  true
+    ;   throw(parse_dl_nondeterministic(StatementCount, Solutions))
+    ).
+
 :- end_tests(parse_error_positions).
 
 % ═══════════════════════════════════════════════════════════════════════════
