@@ -117,6 +117,24 @@ function verdictFor(module: string, dictText: string, directText: string): IModu
   return { module, unexplained };
 }
 
+/** G11: at intern(dict) EVERY text column is an id. A `TEXT NOT NULL` column
+ *  def outside json, or an IR text column that is not `dict("__str")`, is a
+ *  finding, whatever the A/B says. */
+function uniformityFindings(module: string, dictText: string): readonly string[] {
+  const findings: string[] = [];
+  // The dictionary's own `content` column is the one TEXT storage interning
+  // creates; scanning it would report the mechanism as its own violation.
+  const withoutDictionary = dictText.split("\n").filter((line) => !line.includes(`CREATE TABLE "__str" (`)).join("\n");
+  for (const match of withoutDictionary.matchAll(/"([^"]+)" TEXT NOT NULL(?! CHECK \(json_valid)/g)) {
+    findings.push(`${module}: text-storage column "${match[1]}" survived intern(dict)`);
+  }
+  for (const match of dictText.matchAll(/type: "text", storage: "([a-z]+)", collation: ([^,]+), encoding: (\{[^}]*\})/g)) {
+    if (match[1] === "integer" && match[2] === "null" && match[3] === `{ kind: "dict", rel: "__str" }`) continue;
+    findings.push(`${module}: IR text column reports ${match[1]}/${match[2]}/${match[3]}`);
+  }
+  return findings;
+}
+
 function main(): number {
   const [dictDir, directDir] = process.argv.slice(2);
   if (dictDir === undefined || directDir === undefined) {
@@ -137,6 +155,7 @@ function main(): number {
       readFileSync(join(directDir, module), "utf8"),
     );
     findings.push(...verdict.unexplained);
+    findings.push(...uniformityFindings(module, readFileSync(join(dictDir, module), "utf8")));
   }
   const classLine = [...counts.values()]
     .sort((left, right) => left.name.localeCompare(right.name))

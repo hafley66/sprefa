@@ -126,7 +126,7 @@
             program_text_intern_plan/3,
             % Both halves of the storage decision, exported so one test can
             % compare the DDL's answer against the IR's on ONE run.
-            column_def/4, ir_column_class/4,
+            column_def/4, ir_column_class/4, uniform_text_encoding/1,
             compile_expr/4, compile_comparison/3,
             canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/4,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
@@ -3181,7 +3181,22 @@ ir_rel_storage(Mode, RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
     ir_rel_ref(Ref, IrRef),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    maplist(ir_column_class(Mode), Columns, ColumnTypes, ColumnClasses).
+    maplist(ir_column_class(Mode), Columns, ColumnTypes, ColumnClasses),
+    uniform_text_encoding(ColumnClasses).
+
+% INVARIANT, not a refusal: two encodings on one program's text columns would
+% put the two sides of a text join in different id spaces, silently empty.
+% Unreachable while interned_column/2 is one clause; it exists so that the day
+% a per-column waiver returns, it fires at compile time instead.
+uniform_text_encoding(ColumnClasses) :-
+    findall(Encoding,
+            member(colclass(_, text, _, _, Encoding), ColumnClasses),
+            Encodings),
+    sort(Encodings, Distinct),
+    (   ( Distinct == [] ; Distinct = [_] )
+    ->  true
+    ;   throw(unsupported_construct(mixed_text_encoding(Distinct)))
+    ).
 
 % The comparator, which the declared type does not give: bool and ref(_) both
 % store INTEGER, json stores TEXT (column_def/3:939), and no COLLATE is emitted.

@@ -9,6 +9,7 @@ Append-only. One entry per milestone.
 - [Milestone 2 — I-D](#milestone-2--i-d-the-ir-encoding-slot)
 - [Milestone 3 — I-J](#milestone-3--i-j-the-reserved--namespace)
 - [Milestone 4 — I-B](#milestone-4--i-b-the-ingest-door)
+- [Milestone 5 — I-J rev-3 remainder + G11](#milestone-5--i-j-rev-3-remainder--g11)
 - [Contract defects and ambiguities](#contract-defects-and-ambiguities)
 - [Summary table](#summary-table)
 
@@ -345,6 +346,71 @@ Those four are exactly why `default_intern_mode` is still `direct`.
 
 ---
 
+## Milestone 5 — I-J rev-3 remainder + G11
+
+**2026-08-07T22:31Z.** §20.4 gives I-J a second deliverable I did not close in
+milestone 3: `mixed_encoding_join` leaves the lane's brief and becomes a
+plunit unit test on `uniform_text_encoding/1`. Closing it here, plus the G11
+gate §12.2 names and nothing was running.
+
+### What landed
+
+| # | thing | where |
+|---|---|---|
+| 1 | `uniform_text_encoding/1`, called at `ir_rel_storage/4`, the single place a column's encoding is chosen | `v6/prolog/lower.pl` |
+| 2 | 3 plunit unit tests that CALL the predicate, one of them with a hand-built mixed list | `compile/test/plunit_tests.pl` |
+| 3 | G11 as a running gate inside the A/B script | `v6/tsv2/scripts/intern-ab-classify.ts` |
+
+### Why the invariant has no fixture, and that is the point
+
+§5.6 argues it and I followed it: with `interned_column/2` a single clause, no
+program can produce two text encodings, so a `.dl6` fixture for
+`mixed_text_encoding` could never be RED. A refusal whose fixture cannot fail
+is untested code a reader trusts. The test calls the predicate directly:
+
+```prolog
+uniform_text_encoding([ colclass(path, text, integer, none, dict('__str')),
+                        colclass(name, text, text,    binary, direct) ])
+  -> unsupported_construct(mixed_text_encoding([direct, dict('__str')]))
+```
+
+### G11, and the sabotage that proves it is not vacuous
+
+G11 asserts that at `intern(dict)` every text column is an id: no
+`"x" TEXT NOT NULL` outside a `json_valid` CHECK, and every IR text column
+reporting `storage integer, collation null, encoding dict("__str")`. The
+dictionary's own `content` column is excluded by dropping the `__str` DDL
+line, not by name, so a user column called `content` is still checked.
+
+Fed the DIRECT corpus as if it were the dict one:
+
+```
+INTERN_AB modules=211 ir-encoding=32 mode-stamp=422 unexplained=4738
+  aggregate_count_min_max_track_arrivals_and_retraction.ts:
+    text-storage column "repo" survived intern(dict)
+```
+
+4,738 findings. Fed the real dict corpus: 0.
+
+### Gate outputs
+
+```
+$ cd v6/tsv2 && bash scripts/sweep.sh
+SWEEP total=308 compiled=211 unsupported=97 crash=0
+RUN total=211 identical=210 wrong=0 emitted_crash=0 rejection=1 no_oracle_log=0
+FINAL total=211 final_identical=210 final_wrong=0 no_oracle_final=1
+MANIFEST_REASON_DIFF restated=0 args=0 bucket_moved=0 added=0 removed=0
+
+$ cd v6/prolog/compile && swipl -f none -g "load_files(['test/plunit_tests.pl'], []), run_tests." -t halt
+% All 396 (+46 sub-tests) tests passed in 1.034 seconds
+
+$ cd v6/tsv2 && pnpm exec tsgo --noEmit          -> 0 errors
+$ cd v6/prolog && swipl -g go -t halt ARCH.pl    -> 7 PASS
+$ bash v6/tsv2/scripts/intern-ab.sh              -> unexplained=0  (G9 + G11 in one run)
+```
+
+---
+
 ## Contract defects and ambiguities
 
 | # | where | what | what I did |
@@ -374,4 +440,5 @@ Those four are exactly why `default_intern_mode` is still `direct`.
 | 1 | I-A | sweep wrong=0, plunit 379, tsgo 0, G9 unexplained=0, ARCH pass, tsv2 157/0, store 75/0 | `863fe1d5` |
 | 2 | I-D | sweep wrong=0, plunit 383, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `67a6af43` |
 | 3 | I-J | sweep 308/211 wrong=0 (added=2), plunit 388, tsgo 0, G9 unexplained=0, ARCH 7 PASS | `49b76b26` |
-| 4 | I-B | sweep wrong=0, plunit 393, tsgo 0, tsv2 169/0/1skip, G9 unexplained=0, ARCH 7 PASS | `race: I-B ...` |
+| 4 | I-B | sweep wrong=0, plunit 393, tsgo 0, tsv2 169/0/1skip, G9 unexplained=0, ARCH 7 PASS | `a07030ba` |
+| 5 | I-J remainder + G11 | sweep wrong=0, plunit 396, tsgo 0, G9+G11 unexplained=0, ARCH 7 PASS | `race: I-J ...` |

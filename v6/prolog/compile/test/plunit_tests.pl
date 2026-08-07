@@ -23,7 +23,7 @@
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/4, compile_comparison/3,
                 canonical_column_expr/2, level_ref_count_sql/5,
-                column_def/4, ir_column_class/4,
+                column_def/4, ir_column_class/4, uniform_text_encoding/1,
                 catalog_ddl_contract/2,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
@@ -4917,6 +4917,26 @@ test(no_door_at_direct) :-
     interning_lowered(direct, switch_as_keyed_replace,
                       lowered(_, _, _, _, _, _, RelPlans, _)),
     program_text_intern_plan(direct, RelPlans, none).
+
+% ── the uniform-encoding invariant (contract §5.6) ──────────────────────────
+% Tested by CALLING the predicate, never by a fixture: no program can build a
+% mixed list, and a refusal no fixture can turn red is untested code posing as
+% a guard.
+
+test(uniform_text_encoding_admits_one_encoding) :-
+    uniform_text_encoding([ colclass(path, text, integer, none, dict('__str')),
+                            colclass(name, text, integer, none, dict('__str')),
+                            colclass(line, int, integer, none, direct) ]).
+
+test(uniform_text_encoding_admits_no_text_column) :-
+    uniform_text_encoding([ colclass(line, int, integer, none, direct) ]).
+
+test(uniform_text_encoding_refuses_a_mixed_list) :-
+    catch(uniform_text_encoding(
+              [ colclass(path, text, integer, none, dict('__str')),
+                colclass(name, text, text, binary, direct) ]),
+          Thrown, true),
+    Thrown == unsupported_construct(mixed_text_encoding([direct, dict('__str')])).
 
 % ── the compiler-owned `__` namespace (contract §18) ────────────────────────
 
