@@ -725,6 +725,33 @@ to the coordinator before any IR is written.**
 | **P1-D** | `v6/tsv2/runtime/types.ts` (`ISqlSeam.fixpoint`), `v6/tsv2/runtime/1_incremental.ts` (one branch at `:625`) | Wire the seam: the fourth dispatch arm, base-rel handoff, ordered-row return, existing tail statements unchanged. | full battery + bench table above | **flash4** (the branch point, the statement list, and the tail are all named above) |
 | **P1-E** | `v6/tsv2/scripts/` (new sweep mode) | A sweep mode that forces the offload seam on for every fixture whose level plan carries `fixpointIr`, and diffs tick logs byte-for-byte against the oracle. This is the grading path made routine. | 211/211 identical with the offload forced on | **opus** (a divergence here is a diagnosis job, not a mechanical one) |
 
+### Amendment 2026-08-07 (user word): one-shot batch mode + transport lab
+
+**One-shot mode is in scope.** P1-C ships a CLI entry point beside the library
+API: read a `fixpointIr` JSON plus a facts file (JSONL or CSV, decided in the
+P1-C brief), run the fixpoint to completion, print result tables, exit.
+Souffle's interpreter mode, no server, no SQLite. This costs P1-C only
+argument parsing and a reader/printer; the executor is the same code the seam
+calls. Ahead-of-time codegen (IR -> generated rust -> program-specific binary,
+souffle's compiled mode) is named here as a later phase; the IR is exactly its
+input, nothing in phase 1 blocks it, and it is not scheduled.
+
+**The IR serves many consumers by design (user word: "the logic is gonna be
+multitudinal").** Program transport is settled: the IR crosses every boundary
+as JSON text (risk row 9), read the same way by the TS reference interpreter
+(P1-B), the rust executor (P1-C), and any later backend. Compile-time, cold,
+cheap.
+
+**Row transport is NOT settled and gets a lab (P1-D-T).** `seam.fixpoint` in
+section 4.1(b) is an interface; how the rust executor is reached is a binding
+decision, and rows are the hot path. Candidates to price, each with the same
+grid/chain base-rel volume: (1) in-process N-API addon, rows as typed arrays;
+(2) subprocess + stdio pipes, length-prefixed frames; (3) subprocess + shared
+memory / mmap ring; (4) unix domain socket. Library research first per the
+build-vs-buy law (napi-rs / neon for 1, existing shm ring crates for 3) before
+any bespoke framing. The lab report picks the P1-D binding; the interface
+shape keeps every candidate reachable later.
+
 ### Phase 2: head residency (the part that beats the floor)
 
 Named, not specified. The shape: a level rel whose rows nobody reads at the
