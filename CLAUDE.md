@@ -27,7 +27,7 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   algorithm, not an oracle. Hedge, verify against the code, never tell Chris what
   to do as if settled. If you lack the info, SAY SO and go read the code.
 - **Comments are not the language** (2026-08-06): "does X compile" is answered by
-  `v6/prolog/compile/out/manifest.json` (513 fixtures, `bucket` +
+  `v6/prolog/compile/out/manifest.json` (306 fixtures, `bucket` +
   `reason` each), never by a header. Grep the manifest FIRST. Measured that day:
   `v6/dl/fixtures/ghcacher.dl6`'s header was wrong four times about its own
   grammar (`->`, `bind`, bare host calls, and "array-explode INEXPRESSIBLE"),

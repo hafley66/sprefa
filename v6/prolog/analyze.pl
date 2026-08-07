@@ -17,7 +17,7 @@
             aggregate_head_template/2, rule_is_aggregate/1,
             body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
             program_uses_tick/2, program_uses_catalog/2,
-            program_column_types/7,
+            program_column_types/7, reset_body_use_cache/0,
             literal_witness/1,
             level_body_latest_ref/2, level_body_pre_ref/2,
             listened_departure_refs/2,
@@ -101,6 +101,13 @@ derived_refs(Rules, Refs) :-
 % Collected by recursion and NEVER by findall/3: findall copies its template,
 % which would sever every use/4's Args from the body's own variables and leave
 % lowering to join over fresh holes.
+
+% A variant answer unifies back through the call, so the table keeps Args on
+% the CALLER's variables where findall cannot.
+:- table body_ref_uses/2.
+
+reset_body_use_cache :- abolish_table_subgoals(body_ref_uses(_, _)).
+
 body_ref_uses(Body, Uses) :-
     walk_body(Body, walk_policy(descend_not(true), splice_bare(true)),
               Events),
@@ -464,10 +471,10 @@ literal_witnesses_type(Witnesses, Type) :-
 %      becomes `text`, the unchanged default.
 % A DECLARED col_type/3 always wins and is never revised, so the declaration
 % stays the authority the wave-2 spelling ruling made it.
-program_column_types(Decls, Rules, Initial, Schedule, Bindings, Refs, RefTypes) :-
-    findall(Ref-Columns,
-            ( member(Ref, Refs), rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
-            RefColumns),
+
+% RefColumns comes in because the caller's own rel plan needs the same map, and
+% rel_columns/5 walks every rule body for every column.
+program_column_types(Decls, Rules, Initial, Schedule, Refs, RefColumns, RefTypes) :-
     findall(Ref-Seeds,
             ( member(Ref, Refs),
               memberchk(Ref-Columns, RefColumns),

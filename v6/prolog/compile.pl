@@ -143,6 +143,8 @@ materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
     ).
 
 program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindings, Plan) :-
+    % The body-use table is keyed on body terms, so it belongs to ONE program.
+    reset_body_use_cache,
     prepare_program_for_compiler(SugaredProg, HostProg),
     % Host preparation stays a PRE-PASS (see engine.pl); the sugar phases run
     % in the order 1_expansion.pl declares.
@@ -185,11 +187,15 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % rule's head expression, which now inherits that expression's type
     % instead of falling to the no-witness TEXT default. That default was the
     % TEXT-collapse ("12" vs 12) fail-first check (a) names.
-    program_column_types(Decls, Rules, Initial, Schedule, Bindings, AllRefs, RefTypes),
+    findall(Ref-Columns,
+            ( member(Ref, AllRefs), rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
+            RefColumns),
+    program_column_types(Decls, Rules, Initial, Schedule, AllRefs, RefColumns,
+                         RefTypes),
     findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
-              rel_columns(Decls, Rules, Bindings, Ref, Columns),
+              memberchk(Ref-Columns, RefColumns),
               memberchk(Ref-ColumnTypes, RefTypes),
               ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
             ), RelPlans),
