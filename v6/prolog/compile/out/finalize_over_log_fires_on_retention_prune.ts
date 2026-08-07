@@ -32,6 +32,7 @@ import type {
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
   IIncrementalRetentionStatement,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -52,7 +53,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -186,6 +187,21 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   ev: ["int", "text"],
   gone: ["int", "text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "finalize_over_log_fires_on_retention_prune", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "4bb1d8c16cc5c1ae", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "ev", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "6c61bac623b148c1", hSchema: "86198db6aac4a59c", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b86ad6d5fb351159", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "751c4129214c776d", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "gone", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "29ee4792a805b826", hSchema: "86198db6aac4a59c", hRule: "3c6facd43036ee2d" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "74d69b05c9da2c20", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "payload", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a1dc93cf4424e759", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
@@ -386,6 +402,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

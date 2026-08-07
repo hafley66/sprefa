@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -186,6 +187,24 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   reading: ["text", "int"],
   watched: ["text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "host_free_query_leaves_a_derived_rel_unsubscribed", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "a58c970dc15c567a", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "audit_trail", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "e740908c4f968de2", hSchema: "7e38e778eed579a5", hRule: "1841a8b3de0d744f" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "31b154db082259f8", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 6, ordinal: 0, localName: "audited", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "2de5f7576856447b", hSchema: "7e38e778eed579a5", hRule: "6359291a1fc49835" },
+  { relId: 10, parentId: 9, ordinal: 1, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c0666e6f4a4f2b32", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 6, ordinal: 0, localName: "reading", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "87e6b626bb72591d", hSchema: "5f1fa9247d20ea25", hRule: "" },
+  { relId: 12, parentId: 11, ordinal: 1, localName: "sensor", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "a1fb41614a448557", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 11, ordinal: 2, localName: "value", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "b60c5896f28ce1cb", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 6, ordinal: 0, localName: "watched", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "0195582c6c89f082", hSchema: "16659bd8bbf7000b", hRule: "6359291a1fc49835" },
+  { relId: 15, parentId: 14, ordinal: 1, localName: "sensor", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "94ef31a613bf1638", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   audit_trail: ["int"],
@@ -367,6 +386,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -171,6 +172,24 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   result_ok: ["int", "text"],
   result_tag: ["int", "text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "enum_decl_two_variants_union_in_tag_view", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "f518f044d7d5f35e", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "result_error", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "40bf27cb540e70a7", hSchema: "03ba737723e81545", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e02293b6d3f0535c", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "message", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "6c86d2b4f87bdb0f", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "result_ok", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "b708562b3c58738c", hSchema: "90eee4bc8b3ef9f9", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7b491185fb6e9427", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "value", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f1de04bc603833ce", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 6, ordinal: 0, localName: "result_tag", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "a70af71edb271a12", hSchema: "2901e6f8122ebf0c", hRule: "9cdce11fad0321f4" },
+  { relId: 14, parentId: 13, ordinal: 1, localName: "id", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "505cb3efd54e6e07", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 13, ordinal: 2, localName: "tag", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2cf036f1552c2b0d", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   result_error: ["int", "text"],
@@ -336,6 +355,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

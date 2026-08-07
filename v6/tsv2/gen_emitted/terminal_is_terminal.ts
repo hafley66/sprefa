@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -171,6 +172,25 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   stream_item: ["text", "int", "text"],
   stream_status: ["text", "text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "terminal_is_terminal", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "0f136f5bb64de614", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "stream_end", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "2a3aa4f369db7157", hSchema: "d5ce62a8c7d1fb6a", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "args", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3b6dc3a9d413e574", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c2dde4c1339207ba", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 6, ordinal: 0, localName: "stream_item", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "1fc490924595d3f2", hSchema: "7e04112c925af40b", hRule: "" },
+  { relId: 11, parentId: 10, ordinal: 1, localName: "args", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "9f111c7e8fce5b82", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 10, ordinal: 2, localName: "col2", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "d82571848015e651", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 10, ordinal: 3, localName: "col3", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "39c4d6e998fa1e0f", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 6, ordinal: 0, localName: "stream_status", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "4d689266a264fad1", hSchema: "d5ce62a8c7d1fb6a", hRule: "88d6c81bcdb56e4d" },
+  { relId: 15, parentId: 14, ordinal: 1, localName: "args", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4a55662bd6b89418", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 14, ordinal: 2, localName: "col2", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "31b06159382d8cdb", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
 };
@@ -333,6 +353,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

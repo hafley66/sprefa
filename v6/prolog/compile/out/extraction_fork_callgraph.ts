@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [{ name: "sg", inputs: [{ name: "file_digest", type: "text" }, { name: "query_digest", type: "text" }], outputs: [{ name: "caller", type: "text" }, { name: "callee", type: "text" }, { name: "start_byte", type: "int" }, { name: "end_byte", type: "int" }], template: "sg {file_digest} $query_digest", demandRel: "__host_demand_sg", responseRel: "__host_response_sg", execution: "shell" }];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -204,6 +205,44 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   file: ["text", "text"],
   query_value: ["text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "extraction_fork_callgraph", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e325a21dc811b791", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "__host_demand_sg", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "57636bf054207afd", hSchema: "ed7faa575952f212", hRule: "c42e07b86d37b49b" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "identity_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7ecc2f0ebe02f9a5", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "adbef26c1c17df45", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "file_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "04d34de6d86e9454", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 7, ordinal: 4, localName: "query_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "346941a7c6431a2b", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 6, ordinal: 0, localName: "__host_response_sg", kind: "rel", typeId: 0, arity: 8, moduleId: 6, hId: "097d0f830eff62a9", hSchema: "983ed56484214d76", hRule: "" },
+  { relId: 13, parentId: 12, ordinal: 1, localName: "witness_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "8366a2b774d3b709", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 12, ordinal: 2, localName: "ordinal", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "6d889d9e2ae8de48", hSchema: "", hRule: "" },
+  { relId: 15, parentId: 12, ordinal: 3, localName: "file_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "99cb818751a70461", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 12, ordinal: 4, localName: "query_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e9b27818589e5c8a", hSchema: "", hRule: "" },
+  { relId: 17, parentId: 12, ordinal: 5, localName: "caller", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "fc15935bfbf91061", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 12, ordinal: 6, localName: "callee", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3d9c4133e62692a8", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 12, ordinal: 7, localName: "start_byte", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "e78fa6598679306a", hSchema: "", hRule: "" },
+  { relId: 20, parentId: 12, ordinal: 8, localName: "end_byte", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "20dedc035d491fee", hSchema: "", hRule: "" },
+  { relId: 21, parentId: 6, ordinal: 0, localName: "call_edge", kind: "rel", typeId: 0, arity: 5, moduleId: 6, hId: "022149177a3d99c6", hSchema: "7e370b214a2b1867", hRule: "e190acff84cdb3f3" },
+  { relId: 22, parentId: 21, ordinal: 1, localName: "file", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4343fd4c2f68bbac", hSchema: "", hRule: "" },
+  { relId: 23, parentId: 21, ordinal: 2, localName: "caller", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "2b12ed1612ab64d5", hSchema: "", hRule: "" },
+  { relId: 24, parentId: 21, ordinal: 3, localName: "callee", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1330a4db9df98941", hSchema: "", hRule: "" },
+  { relId: 25, parentId: 21, ordinal: 4, localName: "start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "cc3b232ed12bc318", hSchema: "", hRule: "" },
+  { relId: 26, parentId: 21, ordinal: 5, localName: "end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "7933d3f277692ad1", hSchema: "", hRule: "" },
+  { relId: 27, parentId: 6, ordinal: 0, localName: "call_site", kind: "rel", typeId: 0, arity: 3, moduleId: 6, hId: "70bfb450d9815f18", hSchema: "01a346fd34c73a7b", hRule: "e190acff84cdb3f3" },
+  { relId: 28, parentId: 27, ordinal: 1, localName: "file", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "f4b7ae9e07c70581", hSchema: "", hRule: "" },
+  { relId: 29, parentId: 27, ordinal: 2, localName: "caller", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "e49ccbc888ab1f15", hSchema: "", hRule: "" },
+  { relId: 30, parentId: 27, ordinal: 3, localName: "callee", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "7fee3e7fd0e30d4f", hSchema: "", hRule: "" },
+  { relId: 31, parentId: 6, ordinal: 0, localName: "file", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "aba16912950778f7", hSchema: "b30565000cf2cb38", hRule: "" },
+  { relId: 32, parentId: 31, ordinal: 1, localName: "file", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "586002ad57f3b6a4", hSchema: "", hRule: "" },
+  { relId: 33, parentId: 31, ordinal: 2, localName: "file_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4077518cba3bafd7", hSchema: "", hRule: "" },
+  { relId: 34, parentId: 6, ordinal: 0, localName: "query_value", kind: "rel", typeId: 0, arity: 1, moduleId: 6, hId: "5d65482cc240c609", hSchema: "144a2e7092b151d7", hRule: "" },
+  { relId: 35, parentId: 34, ordinal: 1, localName: "query_digest", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "5bd1093eb5ead5c5", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   __host_demand_sg: ["text", "text", "text", "text"],
@@ -401,6 +440,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };

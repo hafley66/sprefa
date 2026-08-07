@@ -21,6 +21,7 @@
             literal_witness/1,
             level_body_latest_ref/2, level_body_pre_ref/2,
             listened_departure_refs/2, rel_rule_observers/3,
+            rel_rule_observers_map/2,
             reserved_construct_in_body/2, body_forbidden_goal/2 ]).
 
 :- use_module(library(lists)).
@@ -1324,8 +1325,18 @@ body_finalize_ref(Body, Ref) :-
 % tables (__frontier_, __departure_frontier_, __delta_), the compile-time
 % half of the unobserved-rel skip (contract section 4a).
 rel_rule_observers(Rules, Ref, HeadRefs) :-
-    findall(Head, rule_reads_rel(Rules, Ref, Head), All0),
-    sort(All0, HeadRefs).
+    rel_rule_observers_map(Rules, Map),
+    (   memberchk(Ref-Found, Map)
+    ->  HeadRefs = Found
+    ;   HeadRefs = []
+    ).
+
+% Every clause of rule_reads_rel/3 walks every body, so asking per rel walks the
+% whole corpus once per rel; the emitter asks for all of them at once.
+rel_rule_observers_map(Rules, Map) :-
+    findall(Ref-Head, rule_reads_rel(Rules, Ref, Head), Pairs0),
+    sort(Pairs0, Pairs),
+    group_pairs_by_key(Pairs, Map).
 
 % Non-aggregate level head, positive body ref -- the level delta arm reads
 % the body ref's frontier (__frontier_).

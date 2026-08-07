@@ -31,6 +31,7 @@ import type {
   IIncrementalLevelStatement,
   IIncrementalProgramPlan,
   IIncrementalRelationPlan,
+  IRelCatalogRow,
   IRelDelta,
   IRow,
   IRowColumnType,
@@ -51,7 +52,7 @@ interface IBootStatement {
   params: readonly IRowValue[];
 }
 
-type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly unsupportedExecution: readonly string[] };
+type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly finalSelect: Record<string, string>; readonly hostPlans: readonly IHostPlanData[]; readonly bindPlans: readonly IBindPlanData[]; readonly queryPlans: readonly IQueryPlanData[]; readonly subscribedRels: readonly string[]; readonly relCatalog: readonly IRelCatalogRow[]; readonly unsupportedExecution: readonly string[] };
 
 export const hostPlans: readonly IHostPlanData[] = [];
 export const bindPlans: readonly IBindPlanData[] = [];
@@ -180,6 +181,36 @@ const relColumnTypes: Record<string, readonly IRowColumnType[]> = {
   flow_edge: ["text", "text"],
   resolved_call_edge: ["text", "int", "int", "text", "text"],
 };
+
+const relCatalog: readonly IRelCatalogRow[] = [
+  { relId: 1, parentId: 0, ordinal: 0, localName: "text", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 2, parentId: 0, ordinal: 0, localName: "int", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 3, parentId: 0, ordinal: 0, localName: "float", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 4, parentId: 0, ordinal: 0, localName: "bool", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 5, parentId: 0, ordinal: 0, localName: "json", kind: "primitive", typeId: 0, arity: 0, moduleId: 0, hId: "", hSchema: "", hRule: "" },
+  { relId: 6, parentId: 0, ordinal: 0, localName: "flow_arg_param_hop_is_positional_and_site_pinned", kind: "module", typeId: 0, arity: 0, moduleId: 6, hId: "e9f302d3f1ead613", hSchema: "", hRule: "" },
+  { relId: 7, parentId: 6, ordinal: 0, localName: "df_arg", kind: "rel", typeId: 0, arity: 6, moduleId: 6, hId: "8c10afb93cb9aa9d", hSchema: "63cf3b0b1d7f7993", hRule: "" },
+  { relId: 8, parentId: 7, ordinal: 1, localName: "caller_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "4bae401fb21af7bc", hSchema: "", hRule: "" },
+  { relId: 9, parentId: 7, ordinal: 2, localName: "call_start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "52a98b4a483a99b5", hSchema: "", hRule: "" },
+  { relId: 10, parentId: 7, ordinal: 3, localName: "call_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ab2fac334d595dad", hSchema: "", hRule: "" },
+  { relId: 11, parentId: 7, ordinal: 4, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "ab5c0e1dbcce98b3", hSchema: "", hRule: "" },
+  { relId: 12, parentId: 7, ordinal: 5, localName: "arg", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "c2189d90cea6a70b", hSchema: "", hRule: "" },
+  { relId: 13, parentId: 7, ordinal: 6, localName: "arg_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "4a981c7ca5f6a350", hSchema: "", hRule: "" },
+  { relId: 14, parentId: 6, ordinal: 0, localName: "df_param", kind: "rel", typeId: 0, arity: 4, moduleId: 6, hId: "6291a4d5b9088aa3", hSchema: "bc98d2912dda6d93", hRule: "" },
+  { relId: 15, parentId: 14, ordinal: 1, localName: "callee_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "54a4e4cb35702b76", hSchema: "", hRule: "" },
+  { relId: 16, parentId: 14, ordinal: 2, localName: "param", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "25d699aef36ddf0e", hSchema: "", hRule: "" },
+  { relId: 17, parentId: 14, ordinal: 3, localName: "pos", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "c5af4097bdb0cb47", hSchema: "", hRule: "" },
+  { relId: 18, parentId: 14, ordinal: 4, localName: "param_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "f8712a95ab5be5b9", hSchema: "", hRule: "" },
+  { relId: 19, parentId: 6, ordinal: 0, localName: "flow_edge", kind: "rel", typeId: 0, arity: 2, moduleId: 6, hId: "60d30c9a4290fbee", hSchema: "1c651d94020e8dba", hRule: "a20d3ea3b0ef351f" },
+  { relId: 20, parentId: 19, ordinal: 1, localName: "from", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "3f31a9ea444dcc53", hSchema: "", hRule: "" },
+  { relId: 21, parentId: 19, ordinal: 2, localName: "to", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "d5d922adfeb14226", hSchema: "", hRule: "" },
+  { relId: 22, parentId: 6, ordinal: 0, localName: "resolved_call_edge", kind: "rel", typeId: 0, arity: 5, moduleId: 6, hId: "6c0629a7f87b31e3", hSchema: "3c34d6c5f70358d2", hRule: "" },
+  { relId: 23, parentId: 22, ordinal: 1, localName: "caller_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "ee2dd29e815f7176", hSchema: "", hRule: "" },
+  { relId: 24, parentId: 22, ordinal: 2, localName: "call_start", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0fab8600d4aaafae", hSchema: "", hRule: "" },
+  { relId: 25, parentId: 22, ordinal: 3, localName: "call_end", kind: "column", typeId: 2, arity: 0, moduleId: 6, hId: "0ef042964a1cbbf7", hSchema: "", hRule: "" },
+  { relId: 26, parentId: 22, ordinal: 4, localName: "callee_path", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "00ad49f9142a1567", hSchema: "", hRule: "" },
+  { relId: 27, parentId: 22, ordinal: 5, localName: "callee_name", kind: "column", typeId: 1, arity: 0, moduleId: 6, hId: "1e2f3d98aed6a86d", hSchema: "", hRule: "" },
+];
 
 const relDeclaredColumnTypes: Record<string, readonly string[]> = {
   df_arg: ["text", "int", "int", "int", "text", "int"],
@@ -350,6 +381,7 @@ export const program: IGenProgramWithBoot = {
   bindPlans,
   queryPlans,
   subscribedRels,
+  relCatalog,
   unsupportedExecution,
   tick: runTick,
 };
