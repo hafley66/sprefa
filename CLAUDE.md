@@ -63,6 +63,11 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   `claude-research/skills_archive/commands/codex-delegate.md`
   (evidence: plans/2026-08-02-flash-vs-opus-lane-report.md).
 
+## PR-per-arc law (user-set 2026-08-07)
+- Every completed arc reaches origin/main through a posted GitHub PR: push the
+  work as a branch, `gh pr create` with the arc's receipts, merge, delete the
+  branch. Accumulated direct pushes are done (catch-up wave = PR #10).
+
 ## Worktree dispatch law (2026-07-28)
 - Every worktree agent's FIRST action: `git merge --ff-only <sha>` (coordinator
   states the sha). Failure or missing trees = STOP AND REPORT. Working around a

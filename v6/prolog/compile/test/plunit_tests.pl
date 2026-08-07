@@ -526,7 +526,7 @@ test(acyclic_ref_count_statements_are_emitted) :-
     memberchk(levelstmt(effect_call/1, _, _, _,
                         refcountsql(ClearSql, SeedSql, UpdateSql, _,
                                    CollectZeroSql, _, _, _, _, _,
-                                   InsertNewSql, none, none),
+                                   InsertNewSql, none, none, none),
                         none),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
@@ -548,7 +548,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     level_ref_count_sql(
         RelPlans, path/1, Rules,
         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
-                    DredPlan)),
+                    DredPlan, _)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),
@@ -605,8 +605,164 @@ test(negated_body_refuses_the_in_place_plan) :-
     ],
     level_ref_count_sql(
         RelPlans, path/1, Rules,
-        refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none)),
-    ExpandPlan = expandplan(_, _, _, _, _, _, _).
+        refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
+                    FixpointIr)),
+    ExpandPlan = expandplan(_, _, _, _, _, _, _),
+    % The IR is fenced by the SAME predicate: no in-place plan, no IR.
+    FixpointIr == none.
+
+% The backend-neutral spelling of the SAME walks, over the 4-column TEXT
+% reachability head (plans/2026-08-07-plan-ir-offload-contract.md §2.4).
+test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
+    lowered_for('4_flagship_flow.pl', flagship_flow_reach_over_resolved_edges,
+                Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    memberchk(levelstmt(flow_reach/4, _, _, _,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr),
+                        _),
+              LevelStatements),
+    FixpointIr = fixpointir(Storage, Assert, Dred, Revive, Expand),
+    % Every rel any src reads carries its comparator: storage class, collation,
+    % and the encoding slot the interning contract writes.
+    Storage == [
+        relstorage(ref(flow_edge, 4),
+                   [colclass(from_path, text, text, binary, direct),
+                    colclass(from_name, text, text, binary, direct),
+                    colclass(to_path, text, text, binary, direct),
+                    colclass(to_name, text, text, binary, direct)]),
+        relstorage(ref(flow_reach, 4),
+                   [colclass(from_path, text, text, binary, direct),
+                    colclass(from_name, text, text, binary, direct),
+                    colclass(to_path, text, text, binary, direct),
+                    colclass(to_name, text, text, binary, direct)])
+    ],
+    Assert = fixplan(ref(flow_reach, 4),
+                     [from_path, from_name, to_path, to_name],
+                     [text, text, text, text], AssertSeeds, Hops,
+                     stop(probe(absent, head), probe(absent, head)),
+                     order(round_major)),
+    % One seed per (rule, non-self atom): the enumerated atom reads its delta,
+    % the self atom stays a whole-head read.
+    AssertSeeds == [
+        arm([src(0, delta(ref(flow_edge, 4), 1, liveness(present)))], [], [],
+            [col(0, 0), col(0, 1), col(0, 2), col(0, 3)], none),
+        arm([src(0, rel(ref(flow_reach, 4))),
+             src(1, delta(ref(flow_edge, 4), 1, liveness(present)))],
+            [eq(col(1, 0), col(0, 2)), eq(col(1, 1), col(0, 3))], [],
+            [col(0, 0), col(0, 1), col(1, 2), col(1, 3)], none)
+    ],
+    Hops == [
+        arm([src(0, wave(frontier)), src(1, rel(ref(flow_edge, 4)))],
+            [eq(col(1, 0), col(0, 2)), eq(col(1, 1), col(0, 3))], [],
+            [col(0, 0), col(0, 1), col(1, 2), col(1, 3)], 0)
+    ],
+    Dred = fixplan(_, _, _, [_, _], Hops,
+                   stop(probe(present, head), probe(absent, cone)), none),
+    % The revive seed is cone-driven: the cone is its own source, one equality
+    % per head column, and no seed probe.
+    Revive = fixplan(_, _, _, [ReviveSeed | _], Hops,
+                     stop(none, probe(present, cone)), none),
+    ReviveSeed = arm(ReviveSources, ReviveEqualities, [], _, none),
+    ReviveSources == [src(0, rel(ref(flow_edge, 4))), src(1, cone)],
+    ReviveEqualities == [eq(col(0, 0), col(1, 0)), eq(col(0, 1), col(1, 1)),
+                         eq(col(0, 2), col(1, 2)), eq(col(0, 3), col(1, 3))],
+    Expand = fixplan(_, _, _, [ExpandSeed], Hops,
+                     stop(none, probe(absent, ref_count)), order(key_major)),
+    ExpandSeed == arm([src(0, rel(ref(flow_edge, 4)))], [], [],
+                      [col(0, 0), col(0, 1), col(0, 2), col(0, 3)], none).
+
+% The emitted field is additive text beside expandSql/dredSql; a head with no
+% in-place plan prints null rather than an absent key.
+test(fixpoint_ir_emits_beside_the_sql_fields) :-
+    once(( fixture_file('4_flagship_flow.pl', File),
+           read_fixture_term(File, flagship_flow_reach_over_resolved_edges,
+                             Term, Bindings),
+           program_plan(Term-Bindings, Plan),
+           lower_program(Plan, Lowered) )),
+    Term = fixture(_, _, Initial, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
+                 Text),
+    once(sub_atom(Text, _, _, _,
+                  'fixpointIr: { head: { rel: "flow_reach", columns: ["from_path", "from_name", "to_path", "to_name"], types: ["text", "text", "text", "text"] }')),
+    once(sub_atom(Text, _, _, _,
+                  'storage: [{ rel: "flow_edge", arity: 4, columns: [{ name: "from_path", type: "text", storage: "text", collation: "binary", encoding: { kind: "direct" } }')),
+    once(sub_atom(Text, _, _, _,
+                  'hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "flow_edge", arity: 4 } }]')),
+    once(sub_atom(Text, _, _, _,
+                  'stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major"')),
+    once(sub_atom(Text, _, _, _, 'headRel: "flow_edge"')),
+    once(sub_atom(Text, _, _, _, 'dredSql: null, fixpointIr: null')).
+
+% SABOTAGE RECEIPT: with arith/3 carrying no result type (the shape before this
+% test), both walks below emit the SAME `{ kind: "arith", op: "/" }` while the
+% SQL side emits `(a / b)` for one and `(CAST(a AS REAL) / b)` for the other,
+% so an executor reading the IR alone answers 2 where sqlite answers 2.5.
+test(fixpoint_ir_arith_carries_the_int_division_answer) :-
+    fixpoint_ir_share_walk(int, IntIr),
+    once(( fixpoint_ir_first_arith(IntIr, IntArith),
+           IntArith == arith(/, col(0, 1), col(1, 2), int) )),
+    fixpoint_ir_share_walk(float, FloatIr),
+    once(( fixpoint_ir_first_arith(FloatIr, FloatArith),
+           FloatArith == arith(/, col(0, 1), col(1, 2), float) )).
+
+% The same two rules over a `legs` column that is int in one plan, float in the
+% other; nothing else moves.
+fixpoint_ir_share_walk(LegsType, FixpointIr) :-
+    RelPlans = [
+        relplan(share_seed/2, set, [node, total], none, [int, int]),
+        relplan(hop/3, set, [parent, child, legs], none, [int, int, LegsType]),
+        relplan(share/2, set, [node, total], none, [int, int])
+    ],
+    Rules = [
+        (share(Node, Total) <- share_seed(Node, Total)),
+        (share(Child, Each) <-
+           ( share(Parent, Total), hop(Parent, Child, Legs),
+             Each := Total / Legs ))
+    ],
+    level_ref_count_sql(RelPlans, share/2, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)),
+    FixpointIr \== none.
+
+fixpoint_ir_first_arith(fixpointir(_, fixplan(_, _, _, _, Hops, _, _), _, _, _),
+                        Arith) :-
+    member(arm(_, _, _, Project, _), Hops),
+    member(Expr, Project),
+    Expr = arith(_, _, _, _),
+    Arith = Expr.
+
+% Storage class is not the declared type: bool and ref(_) both store INTEGER,
+% and only a text column carries a collation. The head's own types stay inside
+% fixpoint_ir_columns/4's {int,text,float,bool} fence; a SOURCE rel is where the
+% wider domain shows up, and the walk still joins on those columns.
+test(fixpoint_ir_storage_separates_class_from_declared_type) :-
+    RelPlans = [
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(walk/1, set, [node], none, [int])
+    ],
+    Rules = [
+        (walk(Parent) <- edge_row(Parent, _, _, _, _)),
+        (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
+    ],
+    level_ref_count_sql(RelPlans, walk/1, Rules,
+                        refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
+                                    FixpointIr)),
+    FixpointIr = fixpointir(Storage, _, _, _, _),
+    memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
+    ColumnClasses == [
+        colclass(parent, int, integer, none, direct),
+        colclass(child, int, integer, none, direct),
+        colclass(flag, bool, integer, none, direct),
+        colclass(owner, ref, integer, none, dict(node_rel)),
+        colclass(label, text, text, binary, direct)
+    ],
+    memberchk(relstorage(ref(walk, 1), [colclass(node, int, integer, none,
+                                                 direct)]), Storage).
 
 test(set_delete_arrival_is_one_json_batch_statement) :-
     lowered_for(shared_demand_refcount, Lowered),
