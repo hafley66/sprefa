@@ -44,6 +44,7 @@
 | [labs/exec_shootout/dl6/FACTS.dredland.md](labs/exec_shootout/dl6/FACTS.dredland.md) | 84 | In-place recursive-head maintenance: banked numbers |
 | [labs/exec_shootout/dl6/FACTS.md](labs/exec_shootout/dl6/FACTS.md) | 71 | dl6 core benchmark facts |
 | [labs/exec_shootout/dl6/FACTS.unbatched.md](labs/exec_shootout/dl6/FACTS.unbatched.md) | 79 | dl6 core benchmark facts |
+| [labs/exec_shootout/sqlite_raw/REPORT-BATCH.md](labs/exec_shootout/sqlite_raw/REPORT-BATCH.md) | 147 | REPORT-BATCH: can batching or storage tricks beat the sqlite floor? |
 | [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
@@ -593,6 +594,21 @@
 24:## `grid_10000`: where the fixpoint went
 43:## `layered_10000`: where the fixpoint went
 62:## `chain_10000`: where the fixpoint went
+```
+
+### labs/exec_shootout/sqlite_raw/REPORT-BATCH.md
+```
+1:# REPORT-BATCH: can batching or storage tricks beat the sqlite floor?
+8:## Setup note
+17:## The gap being attacked
+25:## Results table
+61:## E1 dispatch-cost bound and statement fusion
+73:## E2 double-hop unroll
+91:## E3 packed single-integer key
+108:## E4 sorted insert order
+119:## E5 best-of combination
+129:## Verdict
+141:## Reproducing
 ```
 
 ### labs/exec_shootout/sqlite_raw/REPORT.md
