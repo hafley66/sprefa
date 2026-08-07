@@ -18,6 +18,8 @@ reference. If you only read one, read this one.
 - [11. Who builds what](#11-who-builds-what)
 - [12. Numbers to hit](#12-numbers-to-hit)
 - [13. Things that will bite](#13-things-that-will-bite)
+- [14. The gun](#14-the-gun)
+- [15. Watching the word bag](#15-watching-the-word-bag)
 
 ---
 
@@ -476,3 +478,282 @@ has mixed two different workloads.
 | **doing the swap in the wrong order** | a word lands in a column declared as a number, the database stores it anyway, and the row is unfindable forever | the door's count rail also asserts the batch it hands onward contains no words in numbered positions |
 | **a new text operator forgets to decode** | it reads a number, matches nothing, ever | a test walks the operator registry and fails the day the operator is added |
 | **the view drifting from the table** | a reader gets fewer columns than the table has | impossible while both are built from the same column list in one function; the reviewer's job is to confirm no second builder appears |
+
+---
+
+## 14. The gun
+
+You asked for a gun. What follows names what it can shoot and how big the hole is.
+
+### The thing that makes this awkward
+
+Interning changes what the tables look like. A column says INTEGER or it says
+TEXT, and that word is baked into the database file the second it is created.
+No switch flipped at runtime can change a word that is already written down.
+
+And a switch that pretended to would be worse than useless:
+
+```
+   flag says "stop interning"
+              │
+              ▼
+   runtime writes  "foo.ts"  into a column declared INTEGER
+              │
+              ▼
+   SQLite shrugs and stores it            ← no error, no warning
+              │
+              ▼
+   every lookup compares "foo.ts" against a pile of numbers
+              │
+              ▼
+   finds nothing, forever, and the only fix is rebuilding the database
+```
+
+So the gun fires at compile time. A runtime switch is banned on purpose, and
+this plan says so in advance so nobody adds one later as a convenience.
+
+### Three triggers, one that does not exist
+
+```
+   ┌─────────────────────────────────────────────────────────────┐
+   │  level 0 ── one column                                      │
+   │     add  direct(body)  to the relation                      │
+   │     blast radius: that column, that program                 │
+   │     cost: edit one line, recompile, rebuild that database   │
+   ├─────────────────────────────────────────────────────────────┤
+   │  level 1 ── one program                                     │
+   │     compile with  --intern=direct                           │
+   │     blast radius: every text column in that program         │
+   │     cost: one flag, recompile, rebuild that database        │
+   ├─────────────────────────────────────────────────────────────┤
+   │  level 2 ── everything                                      │
+   │     same flag, whole corpus                                 │
+   │     blast radius: back to exactly the old output            │
+   │     cost: one flag, ~4 seconds to recompile all 306         │
+   │           test programs, rebuild every database             │
+   ├─────────────────────────────────────────────────────────────┤
+   │  level 3 ── flip it on a live database                      │
+   │     ✗ DOES NOT EXIST AND WILL NOT                           │
+   └─────────────────────────────────────────────────────────────┘
+```
+
+### How we know the gun actually works
+
+By diffing it, on every commit.
+
+> Compile all 306 test programs with the flag off. The generated code must come
+> out **byte for byte identical to the commit before any of this landed.**
+
+Identical, which is a stronger bar than "close enough" and a stronger bar than
+"still passes the tests". It runs in four seconds, so it runs on every commit,
+so the gun cannot rust shut.
+
+### The expensive part
+
+Recompiling is seconds. Rebuilding the database is the real bill, and it depends
+entirely on what fills that database.
+
+Two ways out:
+
+**Way A, the normal one: rebuild from the source.** Code extraction re-reads the
+code. Test programs re-run their schedule. A server replays its arrival trail.
+Nothing custom, and you end up with the real answer rather than a translation.
+
+**Way B, the shortcut, only while the old program is still attached.** The
+decoder view is already the old shape, so dumping a relation back to plain text
+is one line each:
+
+```
+   CREATE TABLE relx_plain AS SELECT * FROM __txt_relx;
+```
+
+That is the second time the "view ships with the table" rule pays for itself.
+The escape hatch is one statement per relation precisely because the decoder was
+never optional.
+
+Do this BEFORE switching to the reverted program, while the views still exist.
+
+### Which mode built this?
+
+Every generated program stamps itself `dict` or `direct`. Attaching a `dict`
+program to a `direct` database is refused by name, with both modes printed. You
+never have to guess which world a database lives in.
+
+### Where the gun gets built
+
+In the same lane and the same commit as the interning itself.
+
+A period where the new thing exists and its off switch does not is exactly how
+this technique died the last four times: something you cannot back out of does
+not get backed out, it gets lived with.
+
+---
+
+## 15. Watching the word bag
+
+You want to see what the word bag does over time, and line that up against what
+the database is doing. That is the right ask: a technique nobody
+watches is a technique nobody can defend.
+
+### The shape: it is just another relation
+
+The engine already has one relation that the compiler owns and the runtime
+fills: the program catalog. It is declared through a normal contract, it gets a
+normal table, and you query it with normal rules. No special case, no name
+hardcoded anywhere in the engine.
+
+The word bag gets a second one:
+
+```
+   __str_stats  (one row per tick, oldest 4096 kept)
+
+   ┌────────┬────────┬───────────────┬──────────┬─────────────┐
+   │ tick   │ rows   │ content_bytes │ interned │ looked_up   │
+   ├────────┼────────┼───────────────┼──────────┼─────────────┤
+   │  41    │ 12,400 │   488,300     │   400    │   9,000     │
+   │  42    │ 12,400 │   488,300     │     0    │   8,700     │
+   │  43    │ 12,401 │   488,341     │     1    │   9,100     │
+   └────────┴────────┴───────────────┴──────────┴─────────────┘
+      │        │            │             │          │
+      │        │            │             │          └─ words asked about this tick
+      │        │            │             └──────────── words NEW this tick
+      │        │            └────────────────────────── total text stored
+      │        └─────────────────────────────────────── words in the bag
+      └──────────────────────────────────────────────── the join key
+```
+
+The hit rate is deliberately NOT stored. It is `looked_up` minus `interned`,
+over `looked_up`, and you compute it with a rule, because the engine answering
+questions about itself using its own rules is the entire point.
+
+### The trap we are avoiding
+
+The lazy way to fill `rows` and `content_bytes` is to count the bag every tick:
+
+```
+   SELECT count(*), sum(length(content)) FROM __str      ← reads EVERY row
+                                                            EVERY tick
+```
+
+At a million words that freezes the machine once per tick. Named here so nobody
+rediscovers it in three months.
+
+The real way: keep a running total. Each tick adds this tick's new words to last
+tick's number. Reading "last tick's number" is one backward step on an index,
+and the log is capped at 4096 rows anyway.
+
+Counting the new words is free too: the insert statement can hand back the rows
+it actually inserted, so the count and the byte total fall out of a statement
+that was already running.
+
+```
+   before telemetry:   2 statements per tick at the door
+   after telemetry:    3 statements per tick at the door
+   telemetry off:      2 statements, and no table exists at all
+   nothing arriving:   0 statements
+```
+
+Turning it off is not a flag. A program that never mentions `__str_stats` gets
+no table, no column definitions, no insert. The cost is zero because the thing
+does not exist.
+
+### Lining it up with everything else
+
+Every one of these reads the same tick counter, so `tick` joins them all:
+
+```
+                     tick counter
+                    (bumped once per tick)
+                          │
+        ┌─────────────────┼─────────────────┬────────────────┐
+        ▼                 ▼                 ▼                ▼
+   __str_stats       the tick log      the trace line    live channel
+   rows, bytes,      which relations   how many          for a watcher
+   new, asked        moved, and how    statements ran,   that wants it
+                     many rows         how long          right now
+```
+
+Nothing new gets built for the last three. The tick log exists. The trace line
+exists and already counts statements, because the database wrapper refuses to
+run a statement that escapes the count. The live channel exists and costs one
+boolean check when nobody is listening.
+
+One thing stays deliberately separate: the true on-disk size of the word bag.
+That number comes from asking SQLite to walk its pages, which is not cheap, so
+it stays where it already lives, at the server's stats endpoint, on demand.
+`content_bytes` is the cheap running number. Page bytes are the expensive true
+number. Both are available; only the cheap one runs per tick.
+
+And because it all lives in the database, it survives a hard kill. After a crash
+you can still ask what the word bag was doing.
+
+### One question, answered end to end
+
+> "Did the dictionary stop growing when ingest went quiet?"
+
+Two rules:
+
+```
+  rel dict_converged(tick: int).
+  dict_converged(Tick) <-
+    __str_stats(Tick, _Rows, _Bytes, 0, LookedUp), LookedUp > 0.
+```
+
+Read out loud: give me every tick where the door RAN, was asked about words, and
+added none. That is the bag having learned everything.
+
+```
+  rel dict_hit_pct(tick: int, pct: int).
+  dict_hit_pct(Tick, ((LookedUp - Interned) * 100) / LookedUp) <-
+    __str_stats(Tick, _Rows, _Bytes, Interned, LookedUp), LookedUp > 0.
+```
+
+Multiply by 100 first, then divide, because integer division throws away the
+fraction otherwise.
+
+Written as rx, the same two questions:
+
+```ts
+const dictStats$ = tickResult$.pipe(
+  map((result) => result.dictionary),
+  shareReplay({ bufferSize: 4096, refCount: true }),   // keep(count(4096))
+);
+
+const dictConverged$ = dictStats$.pipe(
+  filter((stat) => stat.lookedUp > 0 && stat.interned === 0),
+  map((stat) => ({ tick: stat.tick })),
+);
+
+const dictHitPct$ = dictStats$.pipe(
+  filter((stat) => stat.lookedUp > 0),
+  map((stat) => ({
+    tick: stat.tick,
+    pct: Math.trunc(((stat.lookedUp - stat.interned) * 100) / stat.lookedUp),
+  })),
+);
+```
+
+Now read the answer:
+
+```
+   tick 40   interned 400   hit 95%     ← still learning
+   tick 41   interned 400   hit 95%
+   tick 42   interned   0   hit 100%    ← dict_converged fires
+   tick 43   interned   1   hit 99%
+   tick 44   ─── no row ───             ← the door did not run at all
+```
+
+Tick 44 having no row is information rather than a gap. The tick log says tick
+44 happened, so the absence means nothing arrived that tick. Growth stopped
+because ingest stopped. Ticks 42 and 43 are the interesting ones: work was
+arriving and the bag had already seen almost all of it, which is the technique
+paying off.
+
+### Who builds it
+
+| lane | job | who |
+|---|---|---|
+| F | declare the stats relation the same way the catalog is declared, and make it vanish when unused | the fast model: the catalog is a copy-paste template |
+| F review | does a program that never mentions it come out byte-identical to before | the fast model |
+| G | the one extra statement, the running totals, the live channel, the statement-count test | the fast model: the SQL is written out |
+| G review | **does anything in here read the whole word bag**, and does the running total survive a crash | the careful model: a hidden full scan is what turns monitoring into the outage |
