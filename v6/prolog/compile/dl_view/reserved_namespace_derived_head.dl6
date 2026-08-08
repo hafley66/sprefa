@@ -1,0 +1,1 @@
+__str_stats(Tick, Rows) <- tick_row(Tick, Rows).
