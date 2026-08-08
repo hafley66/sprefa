@@ -26,9 +26,9 @@ legend: {
   d: "measured payoff" { class: prizebox; width: 190 }
 }
 
-s1: "1. one word each" {
-  merge: "merge PR #17\n(interning phase 1,\nverified green)" { class: word }
-  cull: "cull race/ dir\n(logs salvaged first)" { class: word }
+s1: "1. DONE 2026-08-08" {
+  merge: "PR #17 merged (b4431308):\ninterning phase 1 on main,\nsnake_case collision resolved,\nall gates re-run green" { class: side }
+  cull: "race/ culled, one sweep;\nflash+terra logs salvaged\nto plans/" { class: side }
 }
 
 s2: "2. contract rev 3.1 (planner)" {
@@ -129,11 +129,67 @@ s7: "7. endgame" {
 }
 
 anytime: "anytime, no dependency" {
-  ci: "release-workflow CI\n(tag-driven, checksum gate)" { class: side }
+  ci: "release-workflow CI:\nflash lane dispatched" { class: lane }
   pack: "pack1 follow-ups: libexec\nlayout, module trim,\nbun:sqlite" { class: side }
-  debur: "debur: dead recompute code,\ngen-index flip" { class: side }
-  v5w: "v5 items on your word:\norphan roots, lazy tier,\nfilesize decision" { class: word }
+  debur: "debur: dead recompute code,\ngen-index flip (coordinator)" { class: lane }
 }
+
+v5: "v5 items, expanded: each is one word from you" {
+  roots: "orphan db roots: rm 3, frees 1.86GB" {
+    class: word
+    ex: |`text
+      'dl daemon health' already prints:
+      "3 orphan roots, 1.86GB, no daemon
+       nor .dl file references them"
+      yes = one rm, nothing referenced
+    `| { class: code }
+  }
+  port: "drop rel_port_of_reach + VACUUM" {
+    class: word
+    ex: |`text
+      dead rel's table still on disk;
+      drop + VACUUM reclaims 15.5MB.
+      yes = 2 statements, one-time
+    `| { class: code }
+  }
+  lazy: "lazy-rel-tier: wake or keep parked" {
+    class: word
+    ex: |`text
+      plan 2026-07-19: rels nobody read
+      recently stop being maintained,
+      recompute on next demand.
+      yes = a real lane, not a chore
+    `| { class: code }
+  }
+  fsize: "filesize rail: 29 files > 500 lines" {
+    class: word
+    ex: |`text
+      decide: a .dl rail failing new
+      500+ files (waivers allowed),
+      or drop the idea. 29 existing
+      would need waive-or-split calls
+    `| { class: code }
+  }
+  dmatch: "instant dom-match.dl rewrite:\nschedule or park" { class: word }
+}
+
+v6note: |||md
+  ## when to expand the v6 side of this diagram
+  Trigger: the FLIP lands (stage 4 referee green).
+  Then redraw stages 5-7 at lane grain:
+
+  | expand | into |
+  |---|---|
+  | stage 5 | I-E head shapes per rel family + bench cases |
+  | stage 6 | transport lab candidates w/ measured rows/s |
+  | stage 7 | codegen walk-by-walk vs DD schedule table |
+
+  Also fold in: telemetry queries as .dl snippets once
+  I-F/I-G land, and the anim board (cytoscape <-> d2)
+  when ~/projects/anim is ready for the queue to live there.
+|||
+v6note.shape: rectangle
+v6note.class: side
 
 s1.merge -> s2.defects
 s2.defects -> s3.ic
