@@ -401,6 +401,22 @@ export interface IReloadPlanner {
   ): IReloadPlan;
 }
 
+/** A swap that recreates or drops a rel discards its rows, so the trail has to
+ *  carry what was thrown away; `loaded` alone cannot answer that afterwards. */
+export interface IReloadOutcome {
+  readonly program: string;
+  readonly verdicts: readonly (readonly [rel: string, verdict: RelVerdict])[];
+  readonly statements: readonly string[];
+  readonly refusals: readonly string[];
+}
+
+/** The entry file plus the directory `use "path".` resolves against. Serving
+ *  writes source under gen_served/, so the root cannot be the file's own dir. */
+export interface IProgramEntry {
+  readonly text: string;
+  readonly root_dir: string;
+}
+
 /** Which lowering built a module: `dict` stores every text column as an id
  *  into `__str`, `direct` stores the text. */
 export type IInternMode = "dict" | "direct";
@@ -772,6 +788,7 @@ export type IServeEvent =
       readonly close: () => Observable<void>;
     }
   | { readonly kind: "loaded"; readonly program: string }
+  | { readonly kind: "reloaded"; readonly outcome: IReloadOutcome }
   | { readonly kind: "tick"; readonly outcome: ITickOutcome }
   | { readonly kind: "effect"; readonly done: IHostEffectDone }
   | { readonly kind: "bind"; readonly fired: IBindFired }
